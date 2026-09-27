@@ -244,6 +244,17 @@ describe('certifyBodyVersion', () => {
     if (result.ok) throw new Error('unreachable');
     expect(result.violations.map((v) => v.code)).toContain('invalid-evidence');
   });
+
+  it('refuses garbage input without crashing (defensive error paths)', () => {
+    const garbage = certifyBodyVersion({} as BodyVersion, evidence());
+    expect(garbage.ok).toBe(false);
+    if (garbage.ok) throw new Error('unreachable');
+    expect(garbage.violations.map((v) => v.code)).toContain('invalid-version');
+    const nullEvidence = certifyBodyVersion(exampleBodyVersion, null as unknown as CertificationEvidence);
+    expect(nullEvidence.ok).toBe(false);
+    if (nullEvidence.ok) throw new Error('unreachable');
+    expect(nullEvidence.violations.map((v) => v.code)).toContain('invalid-evidence');
+  });
 });
 
 describe('certified-version freezing (L3 runtime guard)', () => {

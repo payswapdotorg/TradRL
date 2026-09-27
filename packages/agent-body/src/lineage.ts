@@ -15,6 +15,7 @@ import {
   type BodyId,
   type BodyVersionId,
   compareSemVer,
+  isEnum,
   isRecord,
   parseBodyVersionIdString,
 } from './primitives';
@@ -40,13 +41,7 @@ export const LINEAGE_VIOLATION_CODES = [
 export type LineageViolationCode = (typeof LINEAGE_VIOLATION_CODES)[number];
 
 /** Guard: `LineageViolationCode`. */
-function isLineageViolationCodeLike(v: unknown): v is LineageViolationCode {
-  return (
-    typeof v === 'string' &&
-    (LINEAGE_VIOLATION_CODES as readonly string[]).includes(v)
-  );
-}
-export { isLineageViolationCodeLike as isLineageViolationCode };
+export const isLineageViolationCode = isEnum(LINEAGE_VIOLATION_CODES);
 
 /** One lineage violation. */
 export interface LineageViolation {

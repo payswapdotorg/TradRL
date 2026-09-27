@@ -833,23 +833,25 @@ export function certifyBodyVersion(
       violations.push({ code: 'missing-evaluation-evidence', message: 'evidence.evaluationRefs: at least one evaluation reference is required' });
     }
   }
-  const manifest = version.composition.substrateCompatibility;
-  if (manifest.testedSubstrates.length === 0) {
-    violations.push({
-      code: 'no-tested-substrates',
-      message: 'composition.substrateCompatibility.testedSubstrates: at least one substitution test must be recorded before certification',
-    });
-  } else if (!manifest.testedSubstrates.some((r) => r.result === 'pass')) {
-    violations.push({
-      code: 'no-passing-substrate-test',
-      message: 'composition.substrateCompatibility.testedSubstrates: at least one substitution test must have result "pass"',
-    });
-  }
-  if (version.certified) {
-    violations.push({
-      code: 'already-certified',
-      message: 'version is already certified; certification is terminal — produce a new version instead (L3)',
-    });
+  if (isBodyVersion(version)) {
+    const manifest = version.composition.substrateCompatibility;
+    if (manifest.testedSubstrates.length === 0) {
+      violations.push({
+        code: 'no-tested-substrates',
+        message: 'composition.substrateCompatibility.testedSubstrates: at least one substitution test must be recorded before certification',
+      });
+    } else if (!manifest.testedSubstrates.some((r) => r.result === 'pass')) {
+      violations.push({
+        code: 'no-passing-substrate-test',
+        message: 'composition.substrateCompatibility.testedSubstrates: at least one substitution test must have result "pass"',
+      });
+    }
+    if (version.certified) {
+      violations.push({
+        code: 'already-certified',
+        message: 'version is already certified; certification is terminal — produce a new version instead (L3)',
+      });
+    }
   }
 
   if (violations.length > 0) {
