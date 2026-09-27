@@ -8,7 +8,7 @@ One Work Order = one branch = one PR = one worker. Maximum active workers = 3.
 |---|---|---|---|
 | T001 | Repository foundation, governance, CI, test harness, package boundaries | — | root, apps/, packages/, services/, adapters/, scripts/, .github/ |
 | T002 | Canonical domain contracts | T001 | packages/domain-core/, contracts/domain/ |
-| T003 | Agent Body/substrate/possession/instance | T001 | packages/agent-body/, contracts/agent/ |
+| T003 | Agent Body/substrate/possession/instance and substrate capability registry contracts | T001 | packages/agent-body/, contracts/agent/ |
 | T004 | Market event/data/time contracts | T001 | packages/market-protocol/, packages/time-engine/, contracts/market/ |
 
 ## Environment/control plane
