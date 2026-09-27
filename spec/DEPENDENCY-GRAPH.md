@@ -1,0 +1,59 @@
+# TradRL Dependency Graph
+
+The dependency graph is authoritative for readiness.
+
+T001 -> T002,T003,T004
+T002 -> T005,T007,T011,T012
+T003 -> T006,T007,T017,T021,T022,T023,T024,T025
+T004 -> T005,T008,T009,T010,T026,T036
+T005 -> T009,T011,T014,T044
+T006 -> T016,T011
+T007 -> T016,T018,T020,T034,T041
+T008 -> T026,T021,T023,T029,T036
+T009 -> T010,T013,T022,T026,T027,T032
+T010 -> T013,T018,T019,T027,T028
+T011 -> T012,T013,T014,T015,T017,T031,T032,T033,T034
+T012 -> T013,T015,T016,T017,T018,T021,T022,T023,T031,T032
+T013 -> T014,T015,T018,T019,T027
+T014 -> T015
+T015 -> T017,T027,T028,T035
+T016 -> T017,T018,T024
+T017 -> T021,T022,T023,T024,T025,T035,T045,T047
+T018 -> T019,T024,T048
+T019 -> T020,T025,T030,T039,T040
+T020 -> T025,T030,T040
+T021,T022,T023 -> T024
+T024,T025 -> T048
+T026 -> T027,T028,T029
+T027 -> T030,T048
+T028 -> T031,T032,T049
+T029 -> T030
+T030 -> T033,T035,T048
+T031 -> T032,T035
+T032 -> T049
+T033 -> T034,T035
+T034 -> T035,T041,T047
+T035 -> T049,T050
+T036 -> T037,T038,T039
+T037,T038 -> T048
+T039 -> T040
+T040 -> T041,T043,T044,T048
+T041 -> T042,T045,T046,T047
+T042,T043,T044 -> T050
+T045 -> T046
+T046 -> terminal
+T047 -> T050
+T048 -> T049,T050
+T049 -> T050
+
+## Initial frontier
+T001 only.
+
+After T001, T002/T003/T004 are the intended first independent trio, subject to live-state verification.
+
+## Concurrency invariants
+- maximum 3 active workers;
+- pairwise-disjoint write surfaces;
+- no shared root manifest or lockfile in parallel;
+- shared contracts land before consumers;
+- readiness comes from merged state, not examples.
