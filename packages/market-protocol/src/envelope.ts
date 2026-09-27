@@ -37,7 +37,7 @@
 import { isAssetClass, isNonEmptyString, isNonNegativeSafeInteger, isRecord, invalidField, invalidType, missingField, type AssetClass, type EventId, type InstrumentId, type ProviderId, type VenueId } from './fields';
 import type { MarketProtocolError, ValidationResult } from './errors';
 import { isTimestampMs, type TimestampMs } from './timestamp';
-import { isEventType, type EventType, type PayloadOf } from './event-types';
+import { isEventType, EVENT_TYPES, type EventType, type PayloadOf } from './event-types';
 import { payloadRegistry } from './payloads/registry';
 import { validateProvenance, type Provenance } from './provenance';
 
@@ -105,7 +105,7 @@ export function validateMarketEvent(value: unknown): ValidationResult<MarketEven
     errors.push({
       code: 'unknown_event_type',
       path: 'event_type',
-      message: `"${String(eventType)}" is not a canonical event type (${'trade | quote | book_snapshot | book_delta | ohlcv | news | macro_release | social_signal | fundamental | option_chain_mark | other'})`,
+      message: `"${String(eventType)}" is not a canonical event type (${EVENT_TYPES.join(' | ')})`,
     });
   }
 
