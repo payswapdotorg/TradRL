@@ -1,0 +1,93 @@
+/**
+ * @tradrl/market-protocol — decimal string numerics.
+ *
+ * Prices, sizes and other market quantities are carried as DECIMAL STRINGS
+ * (`"43125.10"`), not JSON numbers: binary floating point cannot represent
+ * decimal exchange ticks exactly, and a canonical contract must not bake a
+ * precision hazard into every downstream computation. All comparisons are
+ * exact (lexical), never float-mediated.
+ *
+ * Forms:
+ * - unsigned decimal: /^\d+(\.\d+)?$/          e.g. "43125.10", "0", "0.5"
+ * - signed decimal:   /^[+-]?\d+(\.\d+)?$/     e.g. "-0.0021", "+3.14"
+ */
+
+const UNSIGNED_DECIMAL_RE = /^\d+(?:\.\d+)?$/;
+const SIGNED_DECIMAL_RE = /^[+-]?\d+(?:\.\d+)?$/;
+
+/** A precision-safe base-10 numeric string. */
+export type DecimalString = string;
+
+/** True iff the string is a well-formed unsigned decimal. */
+export function isUnsignedDecimal(value: unknown): value is string {
+  return typeof value === 'string' && UNSIGNED_DECIMAL_RE.test(value);
+}
+
+/** True iff the string is a well-formed signed decimal. */
+export function isSignedDecimal(value: unknown): value is string {
+  return typeof value === 'string' && SIGNED_DECIMAL_RE.test(value);
+}
+
+interface ParsedDecimal {
+  readonly sign: 1 | -1;
+  readonly int: string;
+  readonly frac: string;
+}
+
+function parseDecimal(value: string): ParsedDecimal {
+  let sign: 1 | -1 = 1;
+  let body = value;
+  if (body.startsWith('-')) {
+    sign = -1;
+    body = body.slice(1);
+  } else if (body.startsWith('+')) {
+    body = body.slice(1);
+  }
+  const dot = body.indexOf('.');
+  const int = (dot === -1 ? body : body.slice(0, dot)).replace(/^0+/, '') || '0';
+  const frac = (dot === -1 ? '' : body.slice(dot + 1)).replace(/0+$/, '');
+  return { sign, int, frac };
+}
+
+function isZero(parsed: ParsedDecimal): boolean {
+  return parsed.int === '0' && parsed.frac === '';
+}
+
+function compareMagnitude(x: ParsedDecimal, y: ParsedDecimal): -1 | 0 | 1 {
+  if (x.int.length !== y.int.length) return x.int.length < y.int.length ? -1 : 1;
+  if (x.int !== y.int) return x.int < y.int ? -1 : 1;
+  const width = Math.max(x.frac.length, y.frac.length);
+  const fx = x.frac.padEnd(width, '0');
+  const fy = y.frac.padEnd(width, '0');
+  return fx < fy ? -1 : fx > fy ? 1 : 0;
+}
+
+/**
+ * EXACT decimal comparison: -1 if a < b, 0 if equal, 1 if a > b.
+ * Correct beyond float precision (e.g. 0.0000001 vs 0.00000001).
+ * Inputs must be valid signed decimals (validate first).
+ */
+export function compareDecimal(a: string, b: string): -1 | 0 | 1 {
+  const x = parseDecimal(a);
+  const y = parseDecimal(b);
+  const xZero = isZero(x);
+  const yZero = isZero(y);
+  if (xZero && yZero) return 0;
+  if (xZero) return y.sign; // 0 vs ±b
+  if (yZero) return x.sign === 1 ? 1 : -1; // ±a vs 0
+  if (x.sign !== y.sign) return x.sign < y.sign ? -1 : 1;
+  const magnitude = compareMagnitude(x, y);
+  if (magnitude === 0) return 0;
+  if (x.sign === 1) return magnitude;
+  return magnitude === 1 ? -1 : 1;
+}
+
+/** True iff a well-formed unsigned decimal is strictly greater than zero. */
+export function isPositiveDecimal(value: unknown): value is string {
+  return isUnsignedDecimal(value) && !isZero(parseDecimal(value));
+}
+
+/** True iff a well-formed signed decimal is strictly greater than zero. */
+export function isSignedPositiveDecimal(value: unknown): value is string {
+  return isSignedDecimal(value) && compareDecimal(value, '0') === 1;
+}
