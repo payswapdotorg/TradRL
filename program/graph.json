@@ -1,0 +1,921 @@
+{
+  "schema_version": 1,
+  "program": "TradRL",
+  "updated_at": "2026-09-27T06:41:47Z",
+  "policies": {
+    "max_concurrent_work_orders": 3,
+    "allowed_statuses": [
+      "blocked",
+      "ready",
+      "in_progress",
+      "in_review",
+      "merged"
+    ],
+    "merge_method": "squash",
+    "branch_prefix": "work/"
+  },
+  "items": [
+    {
+      "id": "T001",
+      "title": "Repository foundation, governance, CI, test harness, package boundaries",
+      "deps": [],
+      "write_surface": [
+        "root",
+        "apps/",
+        "packages/",
+        "services/",
+        "adapters/",
+        "scripts/",
+        ".github/"
+      ],
+      "status": "in_progress",
+      "branch": "work/T001-repository-foundation",
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T002",
+      "title": "Canonical domain contracts",
+      "deps": [
+        "T001"
+      ],
+      "write_surface": [
+        "packages/domain-core/",
+        "contracts/domain/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T003",
+      "title": "Agent Body/substrate/possession/instance",
+      "deps": [
+        "T001"
+      ],
+      "write_surface": [
+        "packages/agent-body/",
+        "contracts/agent/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T004",
+      "title": "Market event/data/time contracts",
+      "deps": [
+        "T001"
+      ],
+      "write_surface": [
+        "packages/market-protocol/",
+        "packages/time-engine/",
+        "contracts/market/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T005",
+      "title": "Environment protocol/runner",
+      "deps": [
+        "T002",
+        "T004"
+      ],
+      "write_surface": [
+        "packages/environment-protocol/",
+        "services/environment-runner/",
+        "contracts/environment/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T006",
+      "title": "Agent OS kernel/runtime",
+      "deps": [
+        "T003"
+      ],
+      "write_surface": [
+        "packages/agent-os/",
+        "services/agent-runtime/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T007",
+      "title": "Goal/constraint/project control plane",
+      "deps": [
+        "T002",
+        "T003"
+      ],
+      "write_surface": [
+        "packages/control-domain/",
+        "services/control-plane/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T008",
+      "title": "Data ingestion/event store/provenance",
+      "deps": [
+        "T004"
+      ],
+      "write_surface": [
+        "services/data-ingestion/",
+        "services/event-store/",
+        "packages/provenance/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T009",
+      "title": "Historical replay World",
+      "deps": [
+        "T004",
+        "T005"
+      ],
+      "write_surface": [
+        "packages/market-world/",
+        "services/market-world/replay/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T010",
+      "title": "Exchange/order-book simulation",
+      "deps": [
+        "T004",
+        "T009"
+      ],
+      "write_surface": [
+        "packages/exchange-sim/",
+        "services/market-world/exchange/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T011",
+      "title": "Trajectory/experiment protocol",
+      "deps": [
+        "T002",
+        "T005",
+        "T006"
+      ],
+      "write_surface": [
+        "packages/trajectory/",
+        "packages/experiments/",
+        "contracts/learning/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T012",
+      "title": "Evaluation/verification",
+      "deps": [
+        "T002",
+        "T011"
+      ],
+      "write_surface": [
+        "packages/evaluation/",
+        "packages/verification/",
+        "contracts/evaluation/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T013",
+      "title": "RL interface/trainer bridge",
+      "deps": [
+        "T009",
+        "T010",
+        "T011",
+        "T012"
+      ],
+      "write_surface": [
+        "packages/rl-protocol/",
+        "services/learning/rl/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T014",
+      "title": "Distributed episode generation",
+      "deps": [
+        "T005",
+        "T011",
+        "T013"
+      ],
+      "write_surface": [
+        "services/learning/compute/",
+        "packages/compute/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T015",
+      "title": "Curriculum/self-play/adversarial populations",
+      "deps": [
+        "T011",
+        "T012",
+        "T013",
+        "T014"
+      ],
+      "write_surface": [
+        "services/learning/curriculum/",
+        "services/learning/populations/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T016",
+      "title": "Organization compiler/team search",
+      "deps": [
+        "T006",
+        "T007",
+        "T012"
+      ],
+      "write_surface": [
+        "packages/organization/",
+        "services/organization-compiler/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T017",
+      "title": "Skill extraction/body forge",
+      "deps": [
+        "T003",
+        "T011",
+        "T012",
+        "T015",
+        "T016"
+      ],
+      "write_surface": [
+        "packages/skills/",
+        "services/body-forge/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T018",
+      "title": "Portfolio strategy domain",
+      "deps": [
+        "T007",
+        "T010",
+        "T012",
+        "T013",
+        "T016"
+      ],
+      "write_surface": [
+        "packages/trading-strategy/",
+        "services/strategy/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T019",
+      "title": "Execution policy/simulation",
+      "deps": [
+        "T010",
+        "T013",
+        "T018"
+      ],
+      "write_surface": [
+        "packages/execution-policy/",
+        "services/execution-sim/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T020",
+      "title": "Risk policy engine",
+      "deps": [
+        "T007",
+        "T019"
+      ],
+      "write_surface": [
+        "packages/risk/",
+        "services/risk/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T021",
+      "title": "Sentiment/event research body",
+      "deps": [
+        "T003",
+        "T008",
+        "T012",
+        "T017"
+      ],
+      "write_surface": [
+        "bodies/sentiment-researcher/",
+        "services/research/sentiment/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T022",
+      "title": "Market-regime research body",
+      "deps": [
+        "T003",
+        "T009",
+        "T012",
+        "T017"
+      ],
+      "write_surface": [
+        "bodies/regime-researcher/",
+        "services/research/regime/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T023",
+      "title": "Fundamental/cross-market research",
+      "deps": [
+        "T003",
+        "T008",
+        "T012",
+        "T017"
+      ],
+      "write_surface": [
+        "bodies/fundamental-researcher/",
+        "bodies/cross-market-researcher/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T024",
+      "title": "Trading Director body",
+      "deps": [
+        "T003",
+        "T016",
+        "T017",
+        "T018",
+        "T021",
+        "T022",
+        "T023"
+      ],
+      "write_surface": [
+        "bodies/trading-director/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T025",
+      "title": "Execution body",
+      "deps": [
+        "T003",
+        "T017",
+        "T019",
+        "T020"
+      ],
+      "write_surface": [
+        "bodies/execution/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T026",
+      "title": "Point-in-time knowledge firewall",
+      "deps": [
+        "T004",
+        "T008",
+        "T009"
+      ],
+      "write_surface": [
+        "packages/time-engine/",
+        "services/knowledge-firewall/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T027",
+      "title": "Reactive market simulation",
+      "deps": [
+        "T009",
+        "T010",
+        "T013",
+        "T015",
+        "T026"
+      ],
+      "write_surface": [
+        "services/market-world/reactive/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T028",
+      "title": "Generative/counterfactual population",
+      "deps": [
+        "T010",
+        "T015",
+        "T026"
+      ],
+      "write_surface": [
+        "services/market-world/generative/",
+        "research/market-generation/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T029",
+      "title": "Rolling near-real-time Time Machine",
+      "deps": [
+        "T008",
+        "T026"
+      ],
+      "write_surface": [
+        "services/time-machine/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T030",
+      "title": "Shadow trading",
+      "deps": [
+        "T019",
+        "T020",
+        "T027",
+        "T029"
+      ],
+      "write_surface": [
+        "services/shadow-trading/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T031",
+      "title": "Backtest-overfitting/search integrity",
+      "deps": [
+        "T011",
+        "T012",
+        "T028"
+      ],
+      "write_surface": [
+        "research/evaluation-integrity/",
+        "packages/search-lineage/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T032",
+      "title": "Walk-forward/regime/holdout suite",
+      "deps": [
+        "T009",
+        "T011",
+        "T012",
+        "T028",
+        "T031"
+      ],
+      "write_surface": [
+        "research/benchmarks/",
+        "packages/evaluation-splits/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T033",
+      "title": "Outcome/post-mortem learning",
+      "deps": [
+        "T011",
+        "T030"
+      ],
+      "write_surface": [
+        "services/outcome-learning/",
+        "packages/outcomes/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T034",
+      "title": "Firm Brain",
+      "deps": [
+        "T007",
+        "T011",
+        "T033"
+      ],
+      "write_surface": [
+        "packages/firm-memory/",
+        "services/firm-memory/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T035",
+      "title": "Continuous autonomous improvement",
+      "deps": [
+        "T015",
+        "T017",
+        "T030",
+        "T031",
+        "T033",
+        "T034"
+      ],
+      "write_surface": [
+        "services/autonomous-learning/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T036",
+      "title": "Provider-neutral adapter SDK",
+      "deps": [
+        "T004",
+        "T008"
+      ],
+      "write_surface": [
+        "packages/provider-sdk/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T037",
+      "title": "Binance/Coinbase adapters",
+      "deps": [
+        "T036"
+      ],
+      "write_surface": [
+        "adapters/binance/",
+        "adapters/coinbase/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T038",
+      "title": "Equities/index/news/alternative-data adapters",
+      "deps": [
+        "T036"
+      ],
+      "write_surface": [
+        "adapters/equities/",
+        "adapters/news/",
+        "adapters/alternative-data/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T039",
+      "title": "Broker/OMS/EMS adapters",
+      "deps": [
+        "T019",
+        "T036"
+      ],
+      "write_surface": [
+        "adapters/brokers/",
+        "adapters/oms-ems/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T040",
+      "title": "Execution gateway/policy enforcement",
+      "deps": [
+        "T019",
+        "T020",
+        "T039"
+      ],
+      "write_surface": [
+        "services/execution-gateway/",
+        "packages/execution-authority/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T041",
+      "title": "Public/private API/SDK",
+      "deps": [
+        "T007",
+        "T034",
+        "T040"
+      ],
+      "write_surface": [
+        "packages/sdk/",
+        "services/api/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T042",
+      "title": "Web project console",
+      "deps": [
+        "T041"
+      ],
+      "write_surface": [
+        "apps/web/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T043",
+      "title": "Observability/audit/operations",
+      "deps": [
+        "T040"
+      ],
+      "write_surface": [
+        "packages/observability/",
+        "services/observability/",
+        "services/audit/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T044",
+      "title": "Security/tenancy/secrets/isolation",
+      "deps": [
+        "T005",
+        "T040"
+      ],
+      "write_surface": [
+        "packages/security/",
+        "services/security/",
+        "tests/security/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T045",
+      "title": "Capability-provider interface",
+      "deps": [
+        "T017",
+        "T041"
+      ],
+      "write_surface": [
+        "packages/capability-provider/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T046",
+      "title": "Arena provider adapter",
+      "deps": [
+        "T041",
+        "T045"
+      ],
+      "write_surface": [
+        "adapters/arena/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T047",
+      "title": "Commercial capability marketplace",
+      "deps": [
+        "T017",
+        "T034",
+        "T041"
+      ],
+      "write_surface": [
+        "services/marketplace/",
+        "packages/entitlements/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T048",
+      "title": "Reference end-to-end trading slice",
+      "deps": [
+        "T018",
+        "T024",
+        "T025",
+        "T027",
+        "T030",
+        "T037",
+        "T038",
+        "T040"
+      ],
+      "write_surface": [
+        "examples/end-to-end-trading/",
+        "tests/end-to-end-trading/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T049",
+      "title": "Benchmark/evidence publication",
+      "deps": [
+        "T028",
+        "T032",
+        "T035",
+        "T048"
+      ],
+      "write_surface": [
+        "benchmarks/",
+        "research/public-evaluation/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    },
+    {
+      "id": "T050",
+      "title": "Production reliability/performance/release",
+      "deps": [
+        "T035",
+        "T042",
+        "T043",
+        "T044",
+        "T047",
+        "T048",
+        "T049"
+      ],
+      "write_surface": [
+        "deploy/",
+        "ops/",
+        "docs/release/",
+        "tests/performance/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": []
+    }
+  ]
+}

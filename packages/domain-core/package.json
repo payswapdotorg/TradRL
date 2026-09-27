@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/domain-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Canonical provider-neutral trading domain contracts: Goal, ConstraintSet, Project, Instrument, Portfolio, Order, Position, Organization and related primitives (spec/DOMAIN-MODEL.md).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

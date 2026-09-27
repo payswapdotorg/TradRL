@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/time-engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Time protocol and point-in-time availability contracts: event/source/available/ingestion timestamps, SimulationClock, information-boundary firewall interfaces (spec/ARCHITECTURE.md).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
