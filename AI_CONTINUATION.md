@@ -2,7 +2,7 @@
 
 ## Current state
 Repository: payswapdotorg/TradRL
-State: T001-T004 merged (main at 257aff2, 430/430 tests); T005/T006/T007 dispatched (wave 3)
+State: T001-T004 merged (last WO merge 257aff2; 430/430 tests; main now 1f96e2c after operator capability-discovery governance 171ad39..366bda3 ratified as D-006 + state syncs); T005/T006/T007 dispatched (wave 3, in flight)
 Current authorized Work Order: T005, T006, T007
 Active workers: 3 (T005, T006, T007)
 In-flight: T005/T006/T007 (environment protocol, Agent OS, control plane)
