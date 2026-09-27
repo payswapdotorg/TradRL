@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/agent-body",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent Body / BodyVersion / CognitiveSubstrate / Possession / AgentInstance contracts: model-independent, immutable, versioned capability compositions (spec/DOMAIN-MODEL.md).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

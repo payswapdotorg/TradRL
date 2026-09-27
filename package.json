@@ -6,6 +6,15 @@
   "packageManager": "pnpm@10.34.5",
   "scripts": {
     "governance:test": "node scripts/validate-governance.mjs",
-    "test": "pnpm governance:test"
+    "program:check": "node scripts/program/check.mjs",
+    "program:frontier": "node scripts/program/frontier.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify": "pnpm typecheck && pnpm test && pnpm program:check && pnpm governance:test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.5"
   }
 }
