@@ -1,0 +1,11 @@
+{
+  "name": "tradrl",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Autonomous trading research, simulation, learning and operations platform",
+  "packageManager": "pnpm@10.34.5",
+  "scripts": {
+    "governance:test": "node scripts/validate-governance.mjs",
+    "test": "pnpm governance:test"
+  }
+}
