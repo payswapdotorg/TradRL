@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "program": "TradRL",
-  "updated_at": "2026-09-27T07:47:14Z",
+  "updated_at": "2026-09-27T11:04:01Z",
   "policies": {
     "max_concurrent_work_orders": 3,
     "allowed_statuses": [
@@ -34,7 +34,7 @@
       "merged_sha": "c0e4e47ae4898e341448a0aade939202ca24aa25",
       "evidence": [
         "PR #1 squash-merged at c0e4e47ae4898e341448a0aade939202ca24aa25 (dispatch base 7e4a24d, head 53ecec2)",
-        "GitHub Actions run 36301049674 (ci): success \u2014 typecheck, vitest 19/19, program:check valid, governance passed",
+        "GitHub Actions run 36301049674 (ci): success — typecheck, vitest 19/19, program:check valid, governance passed",
         "Local verification: pnpm verify green before push (tsc clean, 19/19 tests, program state valid, governance passed)"
       ]
     },
@@ -60,7 +60,7 @@
     },
     {
       "id": "T003",
-      "title": "Agent Body/substrate/possession/instance",
+      "title": "Agent Body/substrate/possession/instance and substrate capability registry contracts",
       "deps": [
         "T001"
       ],
