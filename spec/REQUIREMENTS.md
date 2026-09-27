@@ -50,3 +50,5 @@
 | R46 | Graceful provider degradation |
 | R47 | Canonical contracts independent of vendors |
 | R48 | Firm/Project learning across hundreds of projects |
+| R49 | Discover missing capabilities and required specializations from task/project evidence |
+| R50 | Discover and empirically select compatible Agent Bodies and Cognitive Substrates without predefined role/model pairings |
