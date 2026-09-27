@@ -2,10 +2,10 @@
 
 ## Current state
 Repository: payswapdotorg/TradRL
-State: T001 merged (c0e4e47); T002/T003/T004 dispatched (wave 2)
-Current authorized Work Order: T002, T003, T004
-Active workers: 3 (T002, T003, T004)
-In-flight: T002/T003/T004 contract lanes
+State: T001-T004 merged (main at 257aff2, 430/430 tests); T005/T006/T007 dispatched (wave 3)
+Current authorized Work Order: T005, T006, T007
+Active workers: 3 (T005, T006, T007)
+In-flight: T005/T006/T007 (environment protocol, Agent OS, control plane)
 Blocked: none
 Maximum concurrent workers: 3
 Arena dependency in core: forbidden

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "program": "TradRL",
-  "updated_at": "2026-09-27T06:57:35Z",
+  "updated_at": "2026-09-27T07:47:14Z",
   "policies": {
     "max_concurrent_work_orders": 3,
     "allowed_statuses": [
@@ -48,11 +48,15 @@
         "packages/domain-core/",
         "contracts/domain/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T002-domain-contracts",
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "pr": 2,
+      "merged_sha": "4b6bd2595d",
+      "evidence": [
+        "PR #2 squash-merged at 4b6bd2595d (base 8ccab08, head f0b0783); CI success",
+        "Tech Lead verification in isolated worktree at f0b0783: tsc clean, 133/133 tests, program valid, governance passed; write surface compliant (packages/domain-core/, contracts/domain/ only)",
+        "14 domain concepts with executable ConstraintSet evaluator (fail-closed), branded ids, 11 machine-validated contract docs"
+      ]
     },
     {
       "id": "T003",
@@ -64,11 +68,15 @@
         "packages/agent-body/",
         "contracts/agent/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T003-agent-body",
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "pr": 3,
+      "merged_sha": "866a4ac4ee",
+      "evidence": [
+        "PR #3 squash-merged at 866a4ac4ee (base 8ccab08, head a17b8b7); CI success",
+        "Tech Lead verification in isolated worktree at a17b8b7: tsc clean, 172/172 tests, program valid, governance passed; write surface compliant (packages/agent-body/, contracts/agent/ only)",
+        "Possession law + compatibility verdicts + immutable certified versions + lineage acyclicity; contracts/agent state machines documented"
+      ]
     },
     {
       "id": "T004",
@@ -81,11 +89,16 @@
         "packages/time-engine/",
         "contracts/market/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T004-market-protocol",
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "pr": 4,
+      "merged_sha": "257aff2391",
+      "evidence": [
+        "PR #4 squash-merged at 257aff2391 (base 8ccab08, head 9e22123); CI success",
+        "Tech Lead verification in isolated worktree at 9e22123: tsc clean, 163/163 tests, program valid, governance passed; write surface compliant; lockfile untouched",
+        "Worker final report received and reconciled against branch (base 8ccab08, head 9e22123, 51 files +5431/-20); 5 spec interpretations ratified as D-003",
+        "L4 firewall: future-dated events withheld until available_time (ms-exact); leakageCheck catches 1ms-early observations; synthetic events permanently distinguishable"
+      ]
     },
     {
       "id": "T005",
@@ -99,8 +112,8 @@
         "services/environment-runner/",
         "contracts/environment/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T005-environment-protocol",
       "pr": null,
       "merged_sha": null,
       "evidence": []
@@ -115,8 +128,8 @@
         "packages/agent-os/",
         "services/agent-runtime/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T006-agent-os",
       "pr": null,
       "merged_sha": null,
       "evidence": []
@@ -132,8 +145,8 @@
         "packages/control-domain/",
         "services/control-plane/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T007-control-plane",
       "pr": null,
       "merged_sha": null,
       "evidence": []
@@ -923,13 +936,13 @@
     }
   ],
   "dispatch": {
-    "wave": 2,
-    "base_sha": "c0e4e47ae4898e341448a0aade939202ca24aa25",
+    "wave": 3,
+    "base_sha": "257aff2391",
     "active": [
-      "T002",
-      "T003",
-      "T004"
+      "T005",
+      "T006",
+      "T007"
     ],
-    "dispatched_at": "2026-09-27T06:57:35Z"
+    "dispatched_at": "2026-09-27T07:47:14Z"
   }
 }
