@@ -18,6 +18,8 @@ L13 — Provider neutrality: vendor specifics stay in adapters.
 L14 — External substrates: data vendors, brokers, exchanges, OMS/EMS and model providers are replaceable.
 L15 — Project continuity: goal, research, decision, execution and outcome share lineage.
 L16 — Strategic/execution separation: strategic and order-level control have distinct clocks and authority.
+
+L16a — Autonomous capability discovery: organization search may discover missing capabilities and candidate Body/Substrate assignments from evidence; labels alone never establish suitability.
 L17 — Human expertise optional: Arena can augment but cannot be required.
 L18 — Human artifacts localizable: imported expert artifacts become independently versionable and locally usable.
 L19 — No professional qualification inference from trading performance.
