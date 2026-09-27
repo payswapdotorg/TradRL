@@ -136,7 +136,7 @@ export const isEvaluationLayer = isEnum(EVALUATION_LAYERS);
 
 /**
  * Market World fidelity modes, mirroring spec/ARCHITECTURE-LOCK.md L5
-// (exact replay != reactive replay != generative simulation). The canonical
+ * (exact replay != reactive replay != generative simulation). The canonical
  * enum is owned by the market lanes (T004/T009); if those lanes rename these
  * values, this mirror must be reconciled (flagged for Tech Lead).
  */

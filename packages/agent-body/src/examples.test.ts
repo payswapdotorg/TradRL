@@ -3,6 +3,9 @@
 // in contracts/agent/*.md are renderings of these exact records.
 
 import { describe, expect, it } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import {
   adoptCertifiedBodyVersion,
   buildLineageIndex,
@@ -111,5 +114,24 @@ describe('core law mapping (spec/ARCHITECTURE-LOCK.md L2)', () => {
     expect(typeof exampleAgentInstance.runtimeStateRef).toBe('string');
     // And the instance ties it together:
     expect(exampleAgentInstance.possessionId).toBe(examplePossession.id);
+  });
+});
+
+describe('contract documentation integrity (contracts/agent/)', () => {
+  const docsDir = fileURLToPath(new URL('../../../contracts/agent/', import.meta.url));
+
+  it('every ```json block in every contract doc parses as JSON', () => {
+    const docs = readdirSync(docsDir).filter((name) => name.endsWith('.md'));
+    expect(docs.length).toBeGreaterThanOrEqual(6);
+    let blocksChecked = 0;
+    for (const doc of docs) {
+      const markdown = readFileSync(path.join(docsDir, doc), 'utf8');
+      const matches = markdown.matchAll(/```json\n([\s\S]*?)```/g);
+      for (const match of matches) {
+        expect(() => JSON.parse(match[1] as string), `${doc}: invalid JSON block`).not.toThrow();
+        blocksChecked += 1;
+      }
+    }
+    expect(blocksChecked).toBeGreaterThanOrEqual(6); // at least one per concept doc
   });
 });
