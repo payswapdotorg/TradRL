@@ -18,7 +18,7 @@ This matrix prevents architectural requirements from becoming orphaned during im
 | R36-R38 project UX/watch/evidence | T042 |
 | R39-R40 jobs/audit/observability | T014,T043 |
 | R41-R43 entitlements/export/API | T047,T041 |
-| R44-R48 reference bodies, uncertainty, graceful degradation, provider neutrality, long-term project learning | T021-T025,T035,T036,T048,T049,T050 |
+| R44-R50 reference bodies, uncertainty, graceful degradation, provider neutrality, long-term project learning, autonomous capability/substrate discovery | T016,T021-T025,T035,T036,T048,T049,T050 |
 
 ## Completion rule
 Tech Lead must not mark an individual requirement complete merely because its primary Work Order merged. Verify the actual implemented behavior and evidence.
