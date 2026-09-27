@@ -2,10 +2,10 @@
 
 ## Current state
 Repository: payswapdotorg/TradRL
-State: governance/foundation initialized
-Current authorized Work Order: T001
-Active workers: 0
-In-flight: none
+State: T001 merged (c0e4e47); T002/T003/T004 dispatched (wave 2)
+Current authorized Work Order: T002, T003, T004
+Active workers: 3 (T002, T003, T004)
+In-flight: T002/T003/T004 contract lanes
 Blocked: none
 Maximum concurrent workers: 3
 Arena dependency in core: forbidden

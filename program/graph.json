@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "program": "TradRL",
-  "updated_at": "2026-09-27T06:41:47Z",
+  "updated_at": "2026-09-27T06:57:35Z",
   "policies": {
     "max_concurrent_work_orders": 3,
     "allowed_statuses": [
@@ -28,11 +28,15 @@
         "scripts/",
         ".github/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T001-repository-foundation",
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "pr": 1,
+      "merged_sha": "c0e4e47ae4898e341448a0aade939202ca24aa25",
+      "evidence": [
+        "PR #1 squash-merged at c0e4e47ae4898e341448a0aade939202ca24aa25 (dispatch base 7e4a24d, head 53ecec2)",
+        "GitHub Actions run 36301049674 (ci): success \u2014 typecheck, vitest 19/19, program:check valid, governance passed",
+        "Local verification: pnpm verify green before push (tsc clean, 19/19 tests, program state valid, governance passed)"
+      ]
     },
     {
       "id": "T002",
@@ -44,8 +48,8 @@
         "packages/domain-core/",
         "contracts/domain/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T002-domain-contracts",
       "pr": null,
       "merged_sha": null,
       "evidence": []
@@ -60,8 +64,8 @@
         "packages/agent-body/",
         "contracts/agent/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T003-agent-body",
       "pr": null,
       "merged_sha": null,
       "evidence": []
@@ -77,8 +81,8 @@
         "packages/time-engine/",
         "contracts/market/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T004-market-protocol",
       "pr": null,
       "merged_sha": null,
       "evidence": []
@@ -917,5 +921,15 @@
       "merged_sha": null,
       "evidence": []
     }
-  ]
+  ],
+  "dispatch": {
+    "wave": 2,
+    "base_sha": "c0e4e47ae4898e341448a0aade939202ca24aa25",
+    "active": [
+      "T002",
+      "T003",
+      "T004"
+    ],
+    "dispatched_at": "2026-09-27T06:57:35Z"
+  }
 }

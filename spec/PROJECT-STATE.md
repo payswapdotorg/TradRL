@@ -4,17 +4,21 @@
 |---|---|
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
-| Program phase | foundation |
-| Current authorized Work Order | T001 |
-| Active workers | 0 |
-| In-flight | none |
+| Program phase | contracts (T002-T004 wave) |
+| Current authorized Work Order | T002, T003, T004 |
+| Active workers | 3 |
+| In-flight | T002 (work/T002-domain-contracts), T003 (work/T003-agent-body), T004 (work/T004-market-protocol) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
 | Default branch | main |
 
 ## Current implementation truth
-The repository is intentionally governance-first. No production capability is assumed complete.
+T001 MERGED at c0e4e47ae4898e341448a0aade939202ca24aa25 (PR #1, CI run 36301049674 green):
+repository foundation — CI, test harness, package boundaries, machine-checkable
+program state (program/graph.json + scripts/program/check.mjs). Wave 2 (T002/T003/T004,
+pairwise-disjoint contract lanes) dispatched from base c0e4e47. No production capability
+beyond the foundation is assumed complete.
 
 ## State transition
 A Work Order becomes complete only after implementation, verification, evidence, ownership compliance, Tech Lead acceptance and merge. Record exact merged SHA.

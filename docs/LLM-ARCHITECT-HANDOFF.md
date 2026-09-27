@@ -6,10 +6,10 @@ You must implement the complete product without relying on conversation history.
 
 ## Current repository state
 - Default branch: main
-- State: governance/foundation initialized
-- Current authorized Work Order: T001
-- Active workers: 0
-- In-flight: none
+- State: T001 merged (c0e4e47); T002/T003/T004 in flight (wave 2)
+- Current authorized Work Order: T002, T003, T004
+- Active workers: 3
+- In-flight: T002/T003/T004 contract lanes
 - Blocked: none
 - Maximum concurrent workers: 3
 - Arena core dependency: forbidden
