@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/control-domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Goal/constraint/project control-plane contracts: GoalStatement and ConstraintSetStatement structural mirrors, the AcceptanceCriteria compiler (objective-and-constraint attainment), the ProjectLifecycle state machine and the ProjectRecord lineage spine (T007).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
