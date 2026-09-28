@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/control-domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Placeholder stub — owning Work Order implements this package.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

@@ -1,0 +1,172 @@
+// Test-side operation builders. Fields arrive as plain strings/numbers and
+// are branded through the package factories/casts, so call sites stay terse
+// while the constructed operations remain fully type-checked.
+
+function spawn(
+  opId: string,
+  actor: AgentInstanceId,
+  target: AgentInstanceId,
+  managerId: AgentInstanceId | null,
+  scope: KernelAuthority,
+  timestamp: number,
+  tenant: string = TENANT,
+): SpawnOperation {
+  return createKernelOperation({
+    opId,
+    type: 'SPAWN',
+    timestamp: timestamp as TimestampMs,
+    actor,
+    tenantId: tenant as TenantId,
+    target,
+    managerId,
+    bodyVersionRef: 'body/atlas@1.2.0' as BodyVersionRef,
+    substrateRef: 'acme/reasoner-2@2026.03' as SubstrateRef,
+    authority: scope,
+  });
+}
+
+function op(opId: string, type: string, fields: Record<string, unknown>): KernelOperation {
+  const tenantId = (((fields.tenant as string | undefined) ?? TENANT) as TenantId);
+  const timestamp = fields.timestamp as TimestampMs;
+  const actor = fields.actor as AgentInstanceId;
+  const target = fields.target as AgentInstanceId;
+  switch (type) {
+    case 'TERMINATE':
+      return createKernelOperation({
+        opId,
+        type: 'TERMINATE',
+        timestamp,
+        actor,
+        tenantId,
+        target,
+        reason: fields.reason as ReasonText,
+      });
+    case 'DELEGATE':
+      return createKernelOperation({
+        opId,
+        type: 'DELEGATE',
+        timestamp,
+        actor,
+        tenantId,
+        target,
+        taskRef: fields.taskRef as TaskRef,
+        managerChain: fields.managerChain as readonly AgentInstanceId[],
+      });
+    case 'REQUEST':
+      return createKernelOperation({
+        opId,
+        type: 'REQUEST',
+        timestamp,
+        actor,
+        tenantId,
+        target,
+        payload: fields.payload as MessagePayload,
+      });
+    case 'PUBLISH':
+      return createKernelOperation({
+        opId,
+        type: 'PUBLISH',
+        timestamp,
+        actor,
+        tenantId,
+        topic: fields.topic as TopicName,
+        payload: fields.payload as MessagePayload,
+      });
+    case 'SUBSCRIBE':
+      return createKernelOperation({
+        opId,
+        type: 'SUBSCRIBE',
+        timestamp,
+        actor,
+        tenantId,
+        topic: fields.topic as TopicName,
+        payload: fields.payload as MessagePayload,
+      });
+    case 'CHALLENGE':
+      return createKernelOperation({
+        opId,
+        type: 'CHALLENGE',
+        timestamp,
+        actor,
+        tenantId,
+        target,
+        proposalRef: fields.proposalRef as ProposalRef,
+        verdict: 'challenged',
+      });
+    case 'PROPOSE':
+      return createKernelOperation({
+        opId,
+        type: 'PROPOSE',
+        timestamp,
+        actor,
+        tenantId,
+        target,
+        proposalRef: fields.proposalRef as ProposalRef,
+        verdict: 'proposed',
+      });
+    case 'APPROVE':
+      return createKernelOperation({
+        opId,
+        type: 'APPROVE',
+        timestamp,
+        actor,
+        tenantId,
+        target,
+        proposalRef: fields.proposalRef as ProposalRef,
+        verdict: fields.verdict as 'approved' | 'rejected',
+      });
+    case 'EXECUTE':
+      return createKernelOperation({
+        opId,
+        type: 'EXECUTE',
+        timestamp,
+        actor,
+        tenantId,
+        intentRef: fields.intentRef as IntentRef,
+        authorityTokenRef: fields.authorityTokenRef as AuthorityTokenRef,
+      });
+    case 'ESCALATE':
+      return createKernelOperation({
+        opId,
+        type: 'ESCALATE',
+        timestamp,
+        actor,
+        tenantId,
+        reason: fields.reason as ReasonText,
+        chain: fields.chain as readonly AgentInstanceId[],
+      });
+    case 'OBSERVE':
+      return createKernelOperation({
+        opId,
+        type: 'OBSERVE',
+        timestamp,
+        actor,
+        tenantId,
+        queryRef: fields.ref as QueryRef,
+      });
+    case 'LEARN':
+      return createKernelOperation({
+        opId,
+        type: 'LEARN',
+        timestamp,
+        actor,
+        tenantId,
+        lessonRef: fields.ref as LessonRef,
+      });
+    case 'REPORT':
+      return createKernelOperation({
+        opId,
+        type: 'REPORT',
+        timestamp,
+        actor,
+        tenantId,
+        summary: {
+          subject: fields.subject as AgentInstanceId,
+          headline: fields.headline as string,
+          detailRef: fields.detailRef as string,
+        },
+      });
+    default:
+      throw new Error(`test helper: unsupported op type ${type}`);
+  }
+}
