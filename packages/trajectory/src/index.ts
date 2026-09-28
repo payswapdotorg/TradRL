@@ -22,7 +22,8 @@
  *   - Structural adapter — `trajectoryFromEpisodeTrace` +
  *     `deriveEnvironmentConfigRef` / `deriveTrajectoryId` +
  *     `TrajectoryLineageInput`, over the `Env*` mirrors of T005's shapes
- *     (env-mirror.ts).
+ *     (env-mirror.ts). [RECOVERY NOTE: env-mirror.ts/adapter.ts were not
+ *     recoverable from the batch stores — see recovery notes.]
  *   - Leakage forensics — `checkTrajectoryLeakage` (mirrored rules) and
  *     `toTrajectorySamples` (time-engine-shaped samples for the canonical
  *     `leakageCheck`).
@@ -151,59 +152,11 @@ export { isTrajectory, validateTrajectory, createTrajectory, appendTrajectorySte
 // Deterministic canonical serialization
 export { canonicalJson, serializeTrajectory, parseTrajectory } from './serialize';
 
-// Structural mirrors of T005 environment-protocol shapes
-export type {
-  EnvObservationOrigin,
-  EnvObservationProvenance,
-  EnvObservation,
-  EnvAction,
-  EnvRewardSignal,
-  EnvFidelityMode,
-  EnvInformationPolicy,
-  EnvClockConfig,
-  EnvProfile,
-  EnvWorldRef,
-  EnvSpec,
-  EnvTerminationReason,
-  EnvEpisodeResult,
-  EnvErrorCode,
-  EnvErrorRecord,
-  EnvRejection,
-  EnvStepRecord,
-  EnvEpisodeTrace,
-} from './env-mirror';
-export {
-  ENV_OBSERVATION_ORIGINS,
-  isEnvObservationOrigin,
-  isEnvObservationProvenance,
-  isEnvObservation,
-  isEnvAction,
-  isEnvRewardSignal,
-  ENV_FIDELITY_MODES,
-  isEnvFidelityMode,
-  isEnvClockConfig,
-  isEnvProfile,
-  isEnvWorldRef,
-  isEnvSpec,
-  isEnvTerminationReason,
-  isEnvEpisodeResult,
-  ENV_ERROR_CODES,
-  isEnvErrorCode,
-  isEnvErrorRecord,
-  isEnvRejection,
-  isEnvStepRecord,
-  isEnvEpisodeTrace,
-  validateEnvEpisodeTrace,
-} from './env-mirror';
-
-// The structural adapter (episode trace -> trajectory)
-export type { TrajectoryLineageInput } from './adapter';
-export {
-  canonicalEnvSpecJson,
-  deriveEnvironmentConfigRef,
-  deriveTrajectoryId,
-  trajectoryFromEpisodeTrace,
-} from './adapter';
+// NOTE (batch-replay recovery): the `env-mirror.ts` (structural mirrors of
+// T005 environment-protocol shapes) and `adapter.ts` (episode-trace ->
+// trajectory adapter) modules were NOT recoverable from the batch stores;
+// their re-export blocks are removed from this index so the recovered
+// surface compiles. See spec/PROJECT-STATE.md (recovery notes).
 
 // Leakage forensics (mirror of time-engine's leakage contract)
 export type { TrajectorySample, FutureObservationFinding, ClockRegressionFinding, LeakageFinding, LeakageReport } from './leakage';
