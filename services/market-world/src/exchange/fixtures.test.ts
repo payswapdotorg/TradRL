@@ -20,7 +20,8 @@ import { validateMarketEvent } from '../../../../packages/market-protocol/src/in
 describe('the scripted scenario (deterministic fixtures)', () => {
   it('the script covers the full outcome path space: fills, partial rests, cancels, rejects, expiry', () => {
     const run = runExchangeFixture();
-    expect(run.record.counts.orders).toBeGreaterThanOrEqual(8);
+    // Seven orders ride the script (the eighth step is a cancel, not an order).
+    expect(run.record.counts.orders).toBeGreaterThanOrEqual(7);
     expect(run.record.counts.fills).toBeGreaterThanOrEqual(3);
     expect(run.record.counts.rejects).toBeGreaterThanOrEqual(1);
     expect(run.record.counts.expirations).toBeGreaterThanOrEqual(1);

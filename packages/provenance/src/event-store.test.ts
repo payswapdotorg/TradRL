@@ -474,7 +474,9 @@ describe('lineage (acceptance 6)', () => {
     expect(view?.depth).toBe(1);
     expect(view?.roots).toEqual(['ext-1', 'ext-2']);
     expect(view?.external_parents).toEqual(['ext-1', 'ext-2']);
-    expect(view?.ancestors).toEqual(['ext-1', 'ext-2']);
+    // Ancestors are the IN-STORE chain only — dangling parents are external
+    // (reported separately), never ancestors.
+    expect(view?.ancestors).toEqual([]);
   });
 
   it('a derived event available BEFORE its in-store parent is rejected (derived_before_inputs)', () => {
@@ -503,7 +505,9 @@ describe('point-in-time window queries (acceptance 10)', () => {
       store,
       [
         trade({ id: 'w-a', sequence: 1, eventTime: 100, availableTime: 200 }),
-        trade({ id: 'w-b', sequence: 2, eventTime: 220, availableTime: 120 }),
+        // w-b: event_time INSIDE the window, available_time AFTER it (a lawful
+        // quartet — availability may lag the event; the reverse is illegal).
+        trade({ id: 'w-b', sequence: 2, eventTime: 220, availableTime: 300 }),
         trade({ id: 'w-c', sequence: 3, eventTime: 100, availableTime: 150 }),
         trade({ id: 'w-d', sequence: 4, eventTime: 100, availableTime: 250 }),
         trade({ id: 'w-e', sequence: 5, eventTime: 100, availableTime: 149 }),
@@ -519,19 +523,20 @@ describe('point-in-time window queries (acceptance 10)', () => {
     const store = windowStore();
     const ids = store.query({ from:(150) as TimestampMs, to:(250) as TimestampMs }).map((event) => event.event_id);
     // 150 (w-c) and 250 (w-d) are IN; 149 and 251 are OUT.
-    expect(ids).toEqual(['w-c', 'w-a', 'w-d']);
+    // w-n (news, available 200) is inside the window too.
+    expect(ids).toEqual(['w-c', 'w-a', 'w-n', 'w-d']);
   });
 
   it('never filters on event_time: an event INSIDE the window by event_time but OUTSIDE by available_time is excluded', () => {
     const store = windowStore();
     const ids = store.query({ from:(150) as TimestampMs, to:(250) as TimestampMs }).map((event) => event.event_id);
-    expect(ids).not.toContain('w-b'); // event_time 220 in window; available_time 120 out
+    expect(ids).not.toContain('w-b'); // event_time 220 in window; available_time 300 out
   });
 
   it('half-open windows and unbounded ends', () => {
     const store = windowStore();
-    expect(store.query({ from:(200) as TimestampMs }).map((event) => event.event_id)).toEqual(['w-a', 'w-n', 'w-d', 'w-f']);
-    expect(store.query({ to:(150) as TimestampMs }).map((event) => event.event_id)).toEqual(['w-b', 'w-e', 'w-c']);
+    expect(store.query({ from:(200) as TimestampMs }).map((event) => event.event_id)).toEqual(['w-a', 'w-n', 'w-d', 'w-f', 'w-b']);
+    expect(store.query({ to:(150) as TimestampMs }).map((event) => event.event_id)).toEqual(['w-e', 'w-c']);
     expect(store.query({}).length).toBe(7);
   });
 
@@ -576,7 +581,8 @@ describe('corrections (append-only amendments)', () => {
     const stored = store.corrections()[0];
     expect(stored?.custody.batch.batch_id).toBe('b-fix-2');
     expect(stored?.custody.commit.commit_sequence).toBe(2);
-    expect(stored?.custody.commit.ingestion_time).toBe(30_000);
+    // The deterministic commit clock steps per commit: 30_000 (trade), 30_001 (correction).
+    expect(stored?.custody.commit.ingestion_time).toBe(30_001);
 
     const duplicateId = store.appendCorrections(
       [{ correction_id: 'fix-1', corrected_event_id: 'evt-fix-1', reason: 'again', amendment: {} }],

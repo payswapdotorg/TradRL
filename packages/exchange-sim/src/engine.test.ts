@@ -54,7 +54,7 @@ const BOOK_SEED = {
 };
 
 function intentFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
+  const intent: Record<string, unknown> = {
     clientOrderId: 'cli-1',
     instrumentId: 'BTC-USDT',
     venueId: 'BINANCE',
@@ -66,6 +66,13 @@ function intentFixture(overrides: Record<string, unknown> = {}): Record<string, 
     createdAt: '2026-01-01T00:00:00Z',
     ...overrides,
   };
+  // The price/stopPrice presence matrix (domain-mirror): market orders carry
+  // NEITHER price nor stopPrice; stop orders carry stopPrice only.
+  if (intent.kind === 'market') {
+    delete intent.price;
+    delete intent.stopPrice;
+  }
+  return intent;
 }
 
 function newEngine(overrides: Record<string, unknown> = {}, seed: unknown = BOOK_SEED): EngineState {
@@ -118,7 +125,7 @@ describe('order intake against a seeded book', () => {
 
   it('walks levels on depth: a larger buy consumes the seed level then the next, one fill per maker', () => {
     const engine = newEngine();
-    const outcome = submit(engine, intentFixture({ quantity: '5' }), T0 + 10);
+    const outcome = submit(engine, intentFixture({ quantity: '5', price: '101.00' }), T0 + 10);
     expect((outcome.ack as OrderAck).status).toBe('filled');
     expect(outcome.fills.length).toBe(2);
     expect(outcome.fills.map((fill) => fill.price)).toEqual(['100.5', '101']);
@@ -271,7 +278,9 @@ describe('cancels', () => {
     if (!byVenue.ok) return;
     expect(byVenue.value.cancel.reason).toBe('cancel_requested');
     expect(byVenue.value.cancel.remaining_quantity).toBe('2');
-    expect(topOfBook(byVenue.value.state.book)?.ask_price).toBe('101');
+    // The canceled sell rested at 100.51, ABOVE the seed's 100.50 level —
+    // the best ask is unchanged (price-time priority).
+    expect(topOfBook(byVenue.value.state.book)?.ask_price).toBe('100.5');
 
     // By client id on a second order.
     state = submit(byVenue.value.state, intentFixture({ side: 'sell', price: '100.52', quantity: '1', clientOrderId: 'rest-2' }), T0 + 30).state;
@@ -342,7 +351,8 @@ describe('gtt expiry (advance)', () => {
     expect(at.value.expirations[0]?.reason).toBe('expired');
     expect(at.value.expirations[0]?.remaining_quantity).toBe('2');
     expect(at.value.state.orders[0]?.status).toBe('expired');
-    expect(topOfBook(at.value.state.book)?.ask_price).toBe('101');
+    // The expired sell rested above the seed's best level — unchanged top.
+    expect(topOfBook(at.value.state.book)?.ask_price).toBe('100.5');
   });
 
   it('advance fails typed on regressions and invalid targets; equal instant is a no-op', () => {

@@ -135,18 +135,26 @@ export type FixtureStep =
 
 /** The scripted order-flow fixture: the full path space in one deterministic scenario. */
 export function fixtureScript(): readonly FixtureStep[] {
-  const intent = (clientOrderId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
-    clientOrderId,
-    instrumentId: 'BTC-USDT',
-    venueId: 'BINANCE',
-    side: 'buy',
-    kind: 'limit',
-    quantity: '3',
-    price: '100.50',
-    timeInForce: 'gtc',
-    createdAt: '2026-01-01T00:00:00Z',
-    ...overrides,
-  });
+  const intent = (clientOrderId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> => {
+    const built: Record<string, unknown> = {
+      clientOrderId,
+      instrumentId: 'BTC-USDT',
+      venueId: 'BINANCE',
+      side: 'buy',
+      kind: 'limit',
+      quantity: '3',
+      price: '100.50',
+      timeInForce: 'gtc',
+      createdAt: '2026-01-01T00:00:00Z',
+      ...overrides,
+    };
+    // The action payload must be a JSON value: undefined fields (e.g. a
+    // market order's absent price — the presence matrix) are dropped.
+    for (const key of Object.keys(built)) {
+      if (built[key] === undefined) delete built[key];
+    }
+    return built;
+  };
   const action = (id: string, sequence: number, payload: Record<string, unknown>, at: number): Record<string, unknown> => ({
     action_id: `act-${id}`,
     actor: 'agent-fixture',
@@ -219,8 +227,14 @@ export function runExchangeFixture(overrides: Partial<ExchangeFixtureOptions> = 
       unwrap(service.advance(episodeId, (step.to) as TimestampMs));
       clockNow = step.to;
     } else {
+      // The causal law: an action may not claim submission after `now` (and
+      // the engine matches in arrival order) — advance the clock to the
+      // step's instant before submitting (a no-op when already there).
+      if (step.at > clockNow) {
+        unwrap(service.advance(episodeId, (step.at) as TimestampMs));
+        clockNow = step.at;
+      }
       unwrap(service.submit(episodeId, step.action));
-      clockNow = Math.max(clockNow, step.at);
     }
   }
   // Advance to the horizon so every latency window elapses (all outcomes

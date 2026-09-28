@@ -204,6 +204,9 @@ describe.skipIf(!protocolPresent)('environment-protocol interop (T005 merged on 
     if (!submitted.ok) throw new Error(`submit failed: ${JSON.stringify(submitted.errors)}`);
     expect(loaded.isEpisodeState(submitted.value)).toBe(true); // submission IS an episode state
     expect(loaded.isAction(submitted.value.accepted_actions[0])).toBe(true);
+    // observe polices `at <= now` — advance past the latency windows first.
+    const advance2 = service.advance(episode, (T0 + 199_000) as never);
+    if (!advance2.ok) throw new Error('advance to horizon failed');
     const observed = service.observe(episode, (T0 + 199_000) as never);
     if (!observed.ok) throw new Error('observe failed');
     expect(observed.value.length).toBeGreaterThan(0);

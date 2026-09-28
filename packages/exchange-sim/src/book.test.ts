@@ -101,7 +101,7 @@ describe('BookLevel / BookSnapshotSeed structural mirror (market-protocol)', () 
     if (first === undefined) return;
     const asMarket: MarketBookLevel = mirrorLevelIsMarketLevel(first);
     const asMirror: BookLevel = marketLevelIsMirrorLevel(asMarket);
-    expect(asMirror.price).toBe('43100.00');
+    expect(asMirror.price).toBe('43100'); // canonical form strips trailing zeros
     void marketSnapshotIsSeed;
   });
 
@@ -150,8 +150,8 @@ describe('validateBookSeed (venue grid rules)', () => {
         VENUE_RULES,
       ),
     );
-    expect(seeded.bids.map((level) => level.price)).toEqual(['43100.00', '43098.00']);
-    expect(seeded.asks.map((level) => level.price)).toEqual(['43102.00', '43104.00']);
+    expect(seeded.bids.map((level) => level.price)).toEqual(['43100', '43098']);
+    expect(seeded.asks.map((level) => level.price)).toEqual(['43102', '43104']);
     expect(Object.isFrozen(seeded)).toBe(true);
   });
 
@@ -186,7 +186,8 @@ describe('validateBookSeed (venue grid rules)', () => {
       VENUE_RULES,
     );
     expect(tooDeep.ok).toBe(false);
-    if (!tooDeep.ok) expect(tooDeep.errors[0]?.message).toMatch(/depth/);
+    // The over-depth message names the cap ("caps the book at 5 per side").
+    if (!tooDeep.ok) expect(tooDeep.errors[0]?.message).toMatch(/caps the book|depth/);
   });
 
   it('accepts an empty book (both sides may be empty)', () => {
