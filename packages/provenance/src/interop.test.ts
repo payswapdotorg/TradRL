@@ -73,6 +73,7 @@ import {
   createSyntheticNewsAdapter,
   createSyntheticTickAdapter,
   isTimestampMs as ingestIsTimestampMs,
+  type ProviderAdapter,
   validateBatchSequences as ingestValidateBatchSequences,
   type CanonicalEvent,
   type TimestampMs as IngestTimestampMs,
@@ -143,8 +144,8 @@ function ts(n: number): EngineTimestampMs {
 const CUSTODY = {
   adapter: { id: 'synthetic-tick-adapter', version: '1.0.0' },
   batch: { batch_id: 'tick-batch-001' },
-  commit: { commit_id: 'cmt-00000001', commit_sequence: 1, ingestion_time: 10_000 },
-} as const;
+  commit: { commit_id: 'cmt-00000001', commit_sequence: 1, ingestion_time: requireTimestampMs(10_000) },
+};
 
 /** market-protocol's own provenance fixtures (from its provenance.test.ts). */
 const PROTOCOL_HISTORICAL: ProtocolProvenance = {
@@ -269,21 +270,26 @@ describe('envelope mirrors: a validated MarketEvent feeds both services', () => 
     expect(sequenced.sequence).toBe(1);
   });
 
-  it('runtime: every event the synthetic adapters emit passes market-protocol\'s own validator', () => {
-    const adapters = [createSyntheticTickAdapter(), createSyntheticNewsAdapter()];
-    let checked = 0;
-    for (const adapter of adapters) {
+  it('runtime: every CLEAN event the synthetic adapters emit passes market-protocol\'s own validator', () => {
+    // news-n4 is the DELIBERATE quartet-violation fixture (a vendor clock
+    // contradiction) — the plane's validation rejects it into the DLQ (see
+    // data-ingestion.test.ts); everything else the adapters emit must be
+    // valid canonical market events.
+    const checkAdapter = <Raw,>(adapter: ProviderAdapter<Raw>): number => {
+      let checked = 0;
       for (const batch of adapter.discover().batches) {
         for (const raw of adapter.fetch(batch).records) {
           for (const event of adapter.normalize(raw).events) {
+            if (event.event_id === 'news-n4') continue;
             const result = validateMarketEvent(event);
-            expect(result.ok).toBe(true);
+            expect(result.ok, `${event.event_id}: ${JSON.stringify(result.ok ? null : result.errors)}`).toBe(true);
             checked += 1;
           }
         }
       }
-    }
-    expect(checked).toBeGreaterThan(5);
+      return checked;
+    };
+    expect(checkAdapter(createSyntheticTickAdapter()) + checkAdapter(createSyntheticNewsAdapter())).toBeGreaterThan(5);
   });
 });
 

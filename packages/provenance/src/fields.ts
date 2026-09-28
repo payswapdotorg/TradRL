@@ -66,8 +66,3 @@ export function missingField(path: string): ProvenanceError {
 export function invalidField(path: string, message: string): ProvenanceError {
   return { code: 'invalid_field', path, message: `field "${path}": ${message}` };
 }
-
-/** The root value is not an object. */
-export function invalidType(message: string): ProvenanceError {
-  return { code: 'invalid_type', path: '', message };
-}

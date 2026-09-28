@@ -25,6 +25,7 @@
 import {
   invalidField,
   isNonEmptyString,
+  isNonNegativeSafeInteger,
   isRecord,
   missingField,
   type BatchId,
@@ -240,7 +241,7 @@ export function validateCustodyChain(value: unknown): StoreError[] {
     else if (!isNonEmptyString(value.commit.commit_id))
       errors.push(invalidField('custody.commit.commit_id', 'must be a non-empty string'));
     if (value.commit.commit_sequence === undefined) errors.push(missingField('custody.commit.commit_sequence'));
-    else if (!Number.isSafeInteger(value.commit.commit_sequence) || value.commit.commit_sequence < 1)
+    else if (!isNonNegativeSafeInteger(value.commit.commit_sequence) || value.commit.commit_sequence < 1)
       errors.push(invalidField('custody.commit.commit_sequence', 'must be a positive safe integer'));
     if (value.commit.ingestion_time === undefined) errors.push(missingField('custody.commit.ingestion_time'));
     else if (!isTimestampMs(value.commit.ingestion_time))

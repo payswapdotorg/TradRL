@@ -74,12 +74,13 @@ export function isBatchRef(value: unknown): value is BatchRef {
   return isRecord(value) && isNonEmptyString(value.batch_id);
 }
 
-/** Runtime guard for a CommitRef. */
+/** Runtime guard for a CommitRef (commit sequences are positive: the first commit is 1). */
 export function isCommitRef(value: unknown): value is CommitRef {
   return (
     isRecord(value) &&
     isNonEmptyString(value.commit_id) &&
     isNonNegativeSafeInteger(value.commit_sequence) &&
+    value.commit_sequence >= 1 &&
     isTimestampMs(value.ingestion_time)
   );
 }
@@ -131,8 +132,8 @@ export function validateCustodyChain(value: unknown): ProvenanceError[] {
     else if (!isNonEmptyString(value.commit.commit_id))
       errors.push(invalidField('custody.commit.commit_id', 'must be a non-empty string'));
     if (value.commit.commit_sequence === undefined) errors.push(missingField('custody.commit.commit_sequence'));
-    else if (!isNonNegativeSafeInteger(value.commit.commit_sequence))
-      errors.push(invalidField('custody.commit.commit_sequence', 'must be a non-negative safe integer'));
+    else if (!isNonNegativeSafeInteger(value.commit.commit_sequence) || value.commit.commit_sequence < 1)
+      errors.push(invalidField('custody.commit.commit_sequence', 'must be a positive safe integer (the first commit is 1)'));
     if (value.commit.ingestion_time === undefined) errors.push(missingField('custody.commit.ingestion_time'));
     else if (!isTimestampMs(value.commit.ingestion_time))
       errors.push(invalidField('custody.commit.ingestion_time', 'must be a valid epoch-millisecond timestamp'));
@@ -143,7 +144,7 @@ export function validateCustodyChain(value: unknown): ProvenanceError[] {
   return errors;
 }
 
-/** Structural: anything carrying a custody chain. */
+/** Structural: a record carrying a custody chain. */
 interface HasCustody {
   readonly custody: CustodyChain;
 }

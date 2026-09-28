@@ -63,7 +63,6 @@ export {
   isNonEmptyStringArray,
   missingField,
   invalidField,
-  invalidType,
 } from './fields';
 
 // JSON value model (amendment payloads)

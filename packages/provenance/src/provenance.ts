@@ -178,7 +178,7 @@ export function validateProvenanceRecord(value: unknown, eventId: EventId): Prov
   return errors;
 }
 
-/** Structural requirement: anything carrying a store-level provenance record. */
+/** Structural requirement for a record carrying a store-level provenance record. */
 interface HasProvenanceRecord {
   readonly provenance: ProvenanceRecord;
 }
