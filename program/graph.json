@@ -715,12 +715,15 @@
       "write_surface": [
         "packages/provider-sdk/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T036-provider-sdk",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, no PR \u2014 lead-verified integration)",
+      "merged_sha": "55df36b",
       "evidence": [
-        "dispatched wave-7 (chat session, assault round 4); stalled pod released + kicked 2026-09-29; generating on fresh allocation"
+        "delivery https://tmpfiles.org/wsAgwK0lgQ4q/t036-delivery.tar.gz sha e61611d30229c9f001e96cfbfcd3ca9deb9280efe5a9465981e8b48d53d7088e",
+        "worker HEAD 07430179a400f89a90af2ec216352e3b02157c0b; gate typecheck PASS | test 563/563 | program PASS | governance PASS",
+        "integration at 55df36b on main-line: typecheck 0, vitest 1693 passed/0 failed/1 skipped (+133), program valid, governance pass",
+        "zombie-turn recovery: wave-7 turn froze at block 102; two kicks + workspace release revived the lane (turn 55d62415, 140 blocks)"
       ]
     },
     {
