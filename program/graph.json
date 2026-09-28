@@ -254,11 +254,15 @@
         "packages/verification/",
         "contracts/evaluation/"
       ],
-      "status": "blocked",
-      "branch": null,
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "status": "merged",
+      "branch": "work/T012-recovered",
+      "pr": 12,
+      "merged_sha": "c3ce70a",
+      "evidence": [
+        "merge: T012 (batch-replay recovery) \u2014 work/T012-recovered replayed from batches/T012live.json (39 Write paths + Edits), integrated on recover/13-50 at merge 834f4ac, suites green at c3ce70a",
+        "Pod gates (T012's own tree): 590/590 tests, typecheck/program/governance PASS (worker report in batch store)",
+        "Local verification on recover/13-50 @ c3ce70a: pnpm typecheck clean; packages/evaluation + packages/verification 158/158 PASS after integration-seam fixes (vendored mirrors aligned to recovered sibling shapes; contract-law test alignments documented per contracts/evaluation/*.md)"
+      ]
     },
     {
       "id": "T013",
