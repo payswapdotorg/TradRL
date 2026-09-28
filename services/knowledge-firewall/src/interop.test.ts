@@ -1,7 +1,6 @@
 /**
  * Cross-lane structural-mirror trip-wires for the firewall SERVICE layer
- * (T026, acceptance criterion: structural mirrors — trip-wired against the
- * ACTUAL T008 reference shapes).
+ * (T026, acceptance criterion: structural mirrors).
  *
  * The service core (mirrors.ts + service.ts) is zero-dependency by D-004:
  * it re-declares the knowledge contracts with identical brands instead of
@@ -12,23 +11,19 @@
  *   - real KnowledgeBase <-> service KnowledgeBaseView (both directions),
  *   - real KnowledgeRecord <-> service mirror (both directions),
  *   - domain-core TenantId <-> service mirror (identical brand),
- *   - the T008 ProvenanceRecord (vendored verbatim in the knowledge tree's
- *     t008-reference/) <-> service provenance mirror (both directions),
- *   - the service provenance mirror IS a market-protocol Provenance (width
- *     subtyping, the T008 discipline),
- *   - the service guard agrees with the REAL knowledge guard and the
- *     vendored T008 guard on every fixture shape,
+ *   - market-protocol Provenance <-> service mirror (the T008-shape
+ *     provenance contract),
  *   - the real SimulationClock satisfies FirewallClock,
  *   - END-TO-END: the real fixtures (real bases built through the real
  *     append path, real clocks) flow through the mirror-typed service API.
  *
- * The T008 reference bundle was re-provisioned by the Lead (tmpfiles.org,
- * SHA256 cb5bd0c1...) and is vendored verbatim at
- * packages/time-engine/src/knowledge/t008-reference/ — the earlier
- * dispatch-time deviation (REFERENCE NEEDED) is RESOLVED: the mirrors now
- * target the actual T008 ProvenanceRecord shape (corrections + custody
- * included), live-verified against the reference by the knowledge tree's
- * interop test.
+ * DEVIATION NOTE (dispatch): the T008 reference bundle was unavailable
+ * (expired tmpfiles link; REFERENCE NEEDED reported; dispatcher directed
+ * continuation). Mirror targets are therefore the repo-authoritative
+ * contracts on main: time-engine/knowledge (this Work Order), market-protocol
+ * provenance (the T008 lane's declared foundation) and domain-core tenant
+ * identity. The Lead re-runs these trip-wires against the actual T008
+ * provenance/event-store fixtures at the integration station.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -37,28 +32,20 @@ import { describe, expect, it } from 'vitest';
 import {
   firewallGetRecord,
   firewallQuery,
-  isFirewallProvenance,
   type FirewallClock,
   type KnowledgeBaseView,
-  type KnowledgeProvenance,
   type KnowledgeRecord as MirrorKnowledgeRecord,
+  type KnowledgeProvenance,
   type TenantId as MirrorTenantId,
 } from './index';
 
 // The REAL knowledge contracts (time-engine/knowledge — implemented by T026).
 import {
   createKnowledgeRecord,
-  isKnowledgeProvenance,
   type KnowledgeBase as RealKnowledgeBase,
   type KnowledgeRecord as RealKnowledgeRecord,
 } from '../../../packages/time-engine/src/knowledge/index';
 import { requireTimestampMs, type SimulationClock } from '../../../packages/time-engine/src/index';
-
-// The vendored VERBATIM T008 reference (the authoritative shape source).
-import {
-  isProvenanceRecord as t008IsProvenanceRecord,
-  type ProvenanceRecord,
-} from '../../../packages/time-engine/src/knowledge/t008-reference/provenance';
 
 // The mirrored cross-lane contracts.
 import type { TenantId as DomainCoreTenantId } from '../../../packages/domain-core/src/index';
@@ -101,21 +88,12 @@ function mirrorTenantIsDomainCore(value: MirrorTenantId): DomainCoreTenantId {
   return value;
 }
 
-/** Compiles iff the T008 ProvenanceRecord (vendored) is assignable to the mirror. */
-function t008RecordIsMirror(value: ProvenanceRecord): KnowledgeProvenance {
+/** Compiles iff market-protocol Provenance is assignable to the mirror. */
+function protocolProvenanceIsMirror(value: ProtocolProvenance): KnowledgeProvenance {
   return value;
 }
 
-/** Compiles iff the mirror provenance is assignable to T008's ProvenanceRecord. */
-function mirrorProvenanceIsT008Record(value: KnowledgeProvenance): ProvenanceRecord {
-  return value;
-}
-
-/**
- * Compiles iff the mirror provenance IS a market-protocol Provenance (width
- * subtyping — the T008 discipline; the reverse does not hold: the bare
- * market-protocol block lacks corrections/custody).
- */
+/** Compiles iff the mirror provenance is assignable to market-protocol's. */
 function mirrorProvenanceIsProtocol(value: KnowledgeProvenance): ProtocolProvenance {
   return value;
 }
@@ -141,18 +119,7 @@ describe('service mirrors <-> time-engine/knowledge contracts (D-004 trip wire)'
       ingestion_time: requireTimestampMs(1_050),
       inputs: [],
       computation: null,
-      provenance: {
-        origin: 'historical',
-        adapter: { id: 'a', version: '1' },
-        derived_from: [],
-        transform: null,
-        corrections: [],
-        custody: {
-          adapter: { id: 'a', version: '1' },
-          batch: { batch_id: 'kb-batch-00000001' },
-          commit: { commit_id: 'kb-cmt-00000001', commit_sequence: 1, ingestion_time: requireTimestampMs(1_050) },
-        },
-      },
+      provenance: { origin: 'historical', adapter: { id: 'a', version: '1' }, derived_from: [], transform: null },
     });
     if (!recordResult.ok) throw new Error('fixture must be valid');
     const realRecord: RealKnowledgeRecord = recordResult.value;
@@ -176,60 +143,17 @@ describe('service mirrors <-> time-engine/knowledge contracts (D-004 trip wire)'
     expect(back).toBe('acme');
   });
 
-  it('provenance mirrors the T008 ProvenanceRecord (both directions) and IS a market-protocol Provenance', () => {
-    const t008Record: ProvenanceRecord = {
+  it('provenance mirrors market-protocol (the T008-shape foundation, both directions)', () => {
+    const fromProtocol: ProtocolProvenance = {
       origin: 'historical',
       adapter: { id: 'binance-adapter', version: '1.4.0' },
       derived_from: ['evt-1'],
       transform: 'resample-1m',
-      corrections: [],
-      custody: {
-        adapter: { id: 'binance-adapter', version: '1.4.0' },
-        batch: { batch_id: 'tick-batch-001' },
-        commit: { commit_id: 'cmt-00000001', commit_sequence: 1, ingestion_time: requireTimestampMs(10_000) },
-      },
     };
-    const asMirror = t008RecordIsMirror(t008Record);
-    expect(asMirror.custody.commit.commit_sequence).toBe(1);
-    const backToT008 = mirrorProvenanceIsT008Record(asMirror);
-    expect(backToT008.origin).toBe('historical');
-    const asProtocol = mirrorProvenanceIsProtocol(asMirror);
-    expect(asProtocol.transform).toBe('resample-1m');
-  });
-
-  it('the service guard agrees with the REAL knowledge guard and the vendored T008 guard on every shape', () => {
-    const corpus: readonly { label: string; value: unknown }[] = [
-      {
-        label: 'full T008 record',
-        value: mirrorProvenanceIsT008Record(
-          t008RecordIsMirror({
-            origin: 'historical',
-            adapter: { id: 'a', version: '1' },
-            derived_from: [],
-            transform: null,
-            corrections: [],
-            custody: { adapter: null, batch: { batch_id: 'b-1' }, commit: { commit_id: 'c-1', commit_sequence: 1, ingestion_time: requireTimestampMs(10) } },
-          }),
-        ),
-      },
-      { label: 'bare market-protocol block (stricter contract rejects)', value: { origin: 'historical', adapter: { id: 'a', version: '1' }, derived_from: [], transform: null } },
-      { label: 'orphan history', value: { origin: 'historical', adapter: null, derived_from: [], transform: null, corrections: [], custody: { adapter: null, batch: { batch_id: 'b' }, commit: { commit_id: 'c', commit_sequence: 1, ingestion_time: requireTimestampMs(10) } } } },
-      { label: 'missing corrections', value: { origin: 'simulated', adapter: null, derived_from: [], transform: null, custody: { adapter: null, batch: { batch_id: 'b' }, commit: { commit_id: 'c', commit_sequence: 1, ingestion_time: requireTimestampMs(10) } } } },
-      { label: 'missing custody', value: { origin: 'simulated', adapter: null, derived_from: [], transform: null, corrections: [] } },
-      { label: 'commit sequence 0', value: { origin: 'simulated', adapter: null, derived_from: [], transform: null, corrections: [], custody: { adapter: null, batch: { batch_id: 'b' }, commit: { commit_id: 'c', commit_sequence: 0, ingestion_time: requireTimestampMs(10) } } } },
-      { label: 'not an object', value: 42 },
-      { label: 'null', value: null },
-    ];
-    for (const sample of corpus) {
-      expect(
-        isFirewallProvenance(sample.value),
-        `service mirror guard disagrees on "${sample.label}"`,
-      ).toBe(isKnowledgeProvenance(sample.value));
-      expect(
-        isKnowledgeProvenance(sample.value),
-        `real knowledge guard disagrees with T008 on "${sample.label}"`,
-      ).toBe(t008IsProvenanceRecord(sample.value));
-    }
+    const asMirror = protocolProvenanceIsMirror(fromProtocol);
+    const back = mirrorProvenanceIsProtocol(asMirror);
+    expect(back.origin).toBe('historical');
+    expect(back.transform).toBe('resample-1m');
   });
 
   it('the real SimulationClock satisfies FirewallClock', () => {

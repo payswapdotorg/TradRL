@@ -18,19 +18,6 @@ import { isDeeplyFrozen } from './freeze';
 
 const T = (ms: number) => requireTimestampMs(ms);
 
-/**
- * The T008 store-layer extension fields every valid provenance carries
- * (corrections + custody — see provenance.ts and ./t008-reference/).
- */
-const STORE_LEVEL = {
-  corrections: [],
-  custody: {
-    adapter: { id: 'kb-ingest-adapter', version: '1.0.0' },
-    batch: { batch_id: 'kb-batch-001' },
-    commit: { commit_id: 'kb-commit-00000001', commit_sequence: 1, ingestion_time: T(10_000) },
-  },
-};
-
 /** A structurally valid primitive (raw) record fixture. */
 function rawRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -43,13 +30,7 @@ function rawRecord(overrides: Record<string, unknown> = {}): Record<string, unkn
     ingestion_time: T(1_050),
     inputs: [],
     computation: null,
-    provenance: {
-      origin: 'historical',
-      adapter: { id: 'binance-adapter', version: '1.4.0' },
-      derived_from: [],
-      transform: null,
-      ...STORE_LEVEL,
-    },
+    provenance: { origin: 'historical', adapter: { id: 'binance-adapter', version: '1.4.0' }, derived_from: [], transform: null },
     ...overrides,
   };
 }
@@ -65,28 +46,9 @@ function derivedRecord(overrides: Record<string, unknown> = {}): Record<string, 
     ingestion_time: T(3_300),
     inputs: ['kr-raw-1'],
     computation: { transform_id: 'vwap-1m-aggregator', delay: { milliseconds: 250 } },
-    provenance: {
-      origin: 'simulated',
-      adapter: null,
-      derived_from: ['evt-raw-1'],
-      transform: 'vwap-1m-aggregator',
-      ...STORE_LEVEL,
-    },
+    provenance: { origin: 'simulated', adapter: null, derived_from: ['evt-raw-1'], transform: 'vwap-1m-aggregator' },
     ...overrides,
   });
-}
-
-/** A full valid T008-shaped provenance with overridable fields (test support). */
-function validProvenance(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    origin: 'historical',
-    adapter: { id: 'binance-adapter', version: '1.4.0' },
-    derived_from: [],
-    transform: null,
-    corrections: [],
-    custody: { ...STORE_LEVEL.custody },
-    ...overrides,
-  };
 }
 
 function unwrap(value: ReturnType<typeof createKnowledgeRecord>): KnowledgeRecord {
@@ -187,138 +149,41 @@ describe('computation policy consistency (policy iff lineage)', () => {
   });
 });
 
-describe('provenance rules (T008 ProvenanceRecord shapes, mirrored)', () => {
+describe('provenance rules (T008 shapes, mirrored)', () => {
   it('rejects historical knowledge without an adapter reference', () => {
-    const orphan = createKnowledgeRecord(
-      rawRecord({ provenance: { origin: 'historical', adapter: null, derived_from: [], transform: null, ...STORE_LEVEL } }),
-    );
+    const orphan = createKnowledgeRecord(rawRecord({ provenance: { origin: 'historical', adapter: null, derived_from: [], transform: null } }));
     expect(orphan.ok).toBe(false);
     if (!orphan.ok) expect(orphan.error.code).toBe('invalid_provenance');
   });
 
   it('rejects transform without event lineage and lineage without transform', () => {
     const transformWithoutParents = createKnowledgeRecord(
-      rawRecord({ provenance: { origin: 'historical', adapter: { id: 'a', version: '1' }, derived_from: [], transform: 'xform', ...STORE_LEVEL } }),
+      rawRecord({ provenance: { origin: 'historical', adapter: { id: 'a', version: '1' }, derived_from: [], transform: 'xform' } }),
     );
     expect(transformWithoutParents.ok).toBe(false);
     if (!transformWithoutParents.ok) expect(transformWithoutParents.error.code).toBe('invalid_provenance');
 
     const parentsWithoutTransform = createKnowledgeRecord(
-      rawRecord({ provenance: { origin: 'historical', adapter: { id: 'a', version: '1' }, derived_from: ['evt-1'], transform: null, ...STORE_LEVEL } }),
+      rawRecord({ provenance: { origin: 'historical', adapter: { id: 'a', version: '1' }, derived_from: ['evt-1'], transform: null } }),
     );
     expect(parentsWithoutTransform.ok).toBe(false);
     if (!parentsWithoutTransform.ok) expect(parentsWithoutTransform.error.code).toBe('invalid_provenance');
   });
 
   it('rejects unknown origins, self-referential event lineage and duplicate parents', () => {
-    const badOrigin = createKnowledgeRecord(
-      rawRecord({ provenance: { origin: 'mythic', adapter: null, derived_from: [], transform: null, ...STORE_LEVEL } }),
-    );
+    const badOrigin = createKnowledgeRecord(rawRecord({ provenance: { origin: 'mythic', adapter: null, derived_from: [], transform: null } }));
     expect(badOrigin.ok).toBe(false);
 
     const selfLineage = createKnowledgeRecord(
-      rawRecord({ provenance: { origin: 'historical', adapter: { id: 'a', version: '1' }, derived_from: ['kr-raw-1'], transform: 'xform', ...STORE_LEVEL } }),
+      rawRecord({ provenance: { origin: 'historical', adapter: { id: 'a', version: '1' }, derived_from: ['kr-raw-1'], transform: 'xform' } }),
     );
     expect(selfLineage.ok).toBe(false);
     if (!selfLineage.ok) expect(selfLineage.error.code).toBe('invalid_provenance');
 
     const duplicateLineage = createKnowledgeRecord(
-      rawRecord({ provenance: { origin: 'historical', adapter: { id: 'a', version: '1' }, derived_from: ['evt-1', 'evt-1'], transform: 'xform', ...STORE_LEVEL } }),
+      rawRecord({ provenance: { origin: 'historical', adapter: { id: 'a', version: '1' }, derived_from: ['evt-1', 'evt-1'], transform: 'xform' } }),
     );
     expect(duplicateLineage.ok).toBe(false);
-  });
-});
-
-describe('provenance store-layer extension (T008: corrections + custody)', () => {
-  it('accepts the full T008-shaped provenance, including non-empty corrections', () => {
-    const amended = createKnowledgeRecord(
-      rawRecord({
-        provenance: {
-          origin: 'historical',
-          adapter: { id: 'binance-adapter', version: '1.4.0' },
-          derived_from: [],
-          transform: null,
-          corrections: [{ correction_id: 'crt-00000001', reason: 'vendor restatement' }],
-          custody: {
-            adapter: { id: 'binance-adapter', version: '1.4.0' },
-            batch: { batch_id: 'ing-batch-0007' },
-            commit: { commit_id: 'cmt-00000042', commit_sequence: 42, ingestion_time: T(1_050) },
-          },
-        },
-      }),
-    );
-    expect(amended.ok).toBe(true);
-    if (amended.ok) expect(amended.value.provenance.corrections.length).toBe(1);
-  });
-
-  it('REJECTS the bare market-protocol block (the full record is a stricter contract)', () => {
-    const bare = createKnowledgeRecord(
-      rawRecord({
-        provenance: { origin: 'historical', adapter: { id: 'binance-adapter', version: '1.4.0' }, derived_from: [], transform: null },
-      }),
-    );
-    expect(bare.ok).toBe(false);
-    if (!bare.ok) expect(bare.error.code).toBe('invalid_provenance');
-  });
-
-  it('rejects missing or non-array corrections and invalid correction entries', () => {
-    for (const corrections of ['nope', [42], [{ correction_id: '', reason: 'x' }], [{ correction_id: 'crt-1' }], [{ reason: 'x' }]]) {
-      const result = createKnowledgeRecord(rawRecord({ provenance: validProvenance({ corrections }) }));
-      expect(result.ok, `corrections=${JSON.stringify(corrections)}`).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe('invalid_provenance');
-    }
-  });
-
-  it('rejects missing or non-object custody', () => {
-    for (const custody of [undefined, 'nope', 42, null]) {
-      const candidate = validProvenance();
-      if (custody === undefined) delete candidate.custody;
-      else candidate.custody = custody;
-      const result = createKnowledgeRecord(rawRecord({ provenance: candidate }));
-      expect(result.ok, `custody=${JSON.stringify(custody)}`).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe('invalid_provenance');
-    }
-  });
-
-  it('rejects invalid custody adapters and batches', () => {
-    for (const custody of [
-      { ...STORE_LEVEL.custody, adapter: { id: '', version: '1' } },
-      { ...STORE_LEVEL.custody, adapter: { id: 'a' } },
-      { ...STORE_LEVEL.custody, batch: { batch_id: '' } },
-      { ...STORE_LEVEL.custody, batch: 42 },
-    ]) {
-      const result = createKnowledgeRecord(rawRecord({ provenance: validProvenance({ custody }) }));
-      expect(result.ok, `custody=${JSON.stringify(custody)}`).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe('invalid_provenance');
-    }
-  });
-
-  it('rejects commit rule violations (id, sequence >= 1, safe integer, ingestion_time)', () => {
-    for (const commit of [
-      { commit_id: '', commit_sequence: 1, ingestion_time: T(10_000) },
-      { commit_id: 'cmt-1', commit_sequence: 0, ingestion_time: T(10_000) },
-      { commit_id: 'cmt-1', commit_sequence: -1, ingestion_time: T(10_000) },
-      { commit_id: 'cmt-1', commit_sequence: 1.5, ingestion_time: T(10_000) },
-      { commit_id: 'cmt-1', commit_sequence: 1, ingestion_time: -1 },
-      { commit_id: 'cmt-1', commit_sequence: 1, ingestion_time: 8_640_000_000_000_000 },
-      { commit_id: 'cmt-1', commit_sequence: 1 },
-      { commit_sequence: 1, ingestion_time: T(10_000) },
-    ]) {
-      const result = createKnowledgeRecord(
-        rawRecord({ provenance: validProvenance({ custody: { ...STORE_LEVEL.custody, commit } }) }),
-      );
-      expect(result.ok, `commit=${JSON.stringify(commit)}`).toBe(false);
-      if (!result.ok) expect(result.error.code).toBe('invalid_provenance');
-    }
-  });
-
-  it('custody.adapter may be null (self-contained chains for simulated knowledge)', () => {
-    const simulated = createKnowledgeRecord(
-      rawRecord({
-        provenance: validProvenance({ origin: 'simulated', adapter: null, custody: { ...STORE_LEVEL.custody, adapter: null } }),
-      }),
-    );
-    expect(simulated.ok).toBe(true);
   });
 });
 

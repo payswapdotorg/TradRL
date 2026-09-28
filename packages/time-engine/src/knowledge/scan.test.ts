@@ -9,8 +9,6 @@ import { describe, expect, it } from 'vitest';
 
 import { requireTimestampMs } from '../index';
 import {
-  appendKnowledgeRecord,
-  createKnowledgeBase,
   createKnowledgeRecord,
   knowledgeLeakageScan,
   loadKnowledgeRecords,
@@ -24,16 +22,6 @@ import { isDeeplyFrozen } from './freeze';
 
 const T = (ms: number) => requireTimestampMs(ms);
 
-/** The T008 store-layer extension fields (corrections + custody). */
-const STORE_LEVEL = {
-  corrections: [],
-  custody: {
-    adapter: { id: 'kb-ingest-adapter', version: '1.0.0' },
-    batch: { batch_id: 'kb-batch-001' },
-    commit: { commit_id: 'kb-commit-00000001', commit_sequence: 1, ingestion_time: T(10_000) },
-  },
-};
-
 function raw(id: string, available: number, tenant = 'acme'): Record<string, unknown> {
   return {
     record_id: id,
@@ -45,13 +33,7 @@ function raw(id: string, available: number, tenant = 'acme'): Record<string, unk
     ingestion_time: T(available + 100),
     inputs: [],
     computation: null,
-    provenance: {
-      origin: 'historical',
-      adapter: { id: 'binance-adapter', version: '1.4.0' },
-      derived_from: [],
-      transform: null,
-      ...STORE_LEVEL,
-    },
+    provenance: { origin: 'historical', adapter: { id: 'binance-adapter', version: '1.4.0' }, derived_from: [], transform: null },
   };
 }
 
@@ -66,13 +48,7 @@ function derived(id: string, inputs: readonly string[], available: number, tenan
     ingestion_time: T(available + 10),
     inputs: [...inputs],
     computation: { transform_id: 'test-transform', delay: { milliseconds: 250 } },
-    provenance: {
-      origin: 'simulated',
-      adapter: null,
-      derived_from: inputs.map((input) => `evt-${input}`),
-      transform: 'test-transform',
-      ...STORE_LEVEL,
-    },
+    provenance: { origin: 'simulated', adapter: null, derived_from: inputs.map((input) => `evt-${input}`), transform: 'test-transform' },
   };
 }
 
@@ -157,10 +133,12 @@ describe('knowledgeLeakageScan — the deliberately-leaky fixture', () => {
   });
 
   it('the append path REJECTS the leaky record, so guarded bases never leak', () => {
-    const guardedParent = unwrapAppend(
+    // Cross-check with the write path: the same record cannot be appended.
+    const { appendKnowledgeRecord, createKnowledgeBase } = await import('./index');
+    const guardedBase = unwrapBaseLike(
       appendKnowledgeRecord(createKnowledgeBase(), unwrapRecord(createKnowledgeRecord(raw('r1', 10_000)))),
     );
-    const rejected = appendKnowledgeRecord(guardedParent, unwrapRecord(createKnowledgeRecord(derived('d1', ['r1'], 9_000))));
+    const rejected = appendKnowledgeRecord(guardedBase, unwrapRecord(createKnowledgeRecord(derived('d1', ['r1'], 9_000))));
     expect(rejected.ok).toBe(false);
     if (!rejected.ok) expect(rejected.error.code).toBe('derived_before_inputs');
   });
@@ -260,7 +238,7 @@ describe('requireCleanKnowledgeBase — the typed gate', () => {
 });
 
 /** Local unwrappers to keep this file self-contained. */
-function unwrapAppend(value: ReturnType<typeof appendKnowledgeRecord>): KnowledgeBase {
+function unwrapBaseLike(value: ReturnType<typeof import('./index').appendKnowledgeRecord>): KnowledgeBase {
   if (value.ok) return value.value;
   throw new Error(`unexpected failure: ${value.error.code}: ${value.error.message}`);
 }
