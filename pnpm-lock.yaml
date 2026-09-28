@@ -20,11 +20,33 @@ importers:
 
   packages/agent-body: {}
 
+  packages/agent-os: {}
+
+  packages/control-domain: {}
+
   packages/domain-core: {}
+
+  packages/environment-protocol: {}
+
+  packages/evaluation: {}
+
+  packages/exchange-sim: {}
 
   packages/market-protocol: {}
 
+  packages/provider-sdk: {}
+
   packages/time-engine: {}
+
+  packages/verification: {}
+
+  services/agent-runtime: {}
+
+  services/control-plane: {}
+
+  services/environment-runner: {}
+
+  services/knowledge-firewall: {}
 
 packages:
 

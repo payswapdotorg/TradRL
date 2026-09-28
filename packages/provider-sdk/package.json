@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/provider-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider-neutral adapter SDK: source descriptors, capability declarations, normalized sessions over an injected transport port, canonical event emission with mapping provenance, availability quartets, entitlement envelopes, declarative rate/quota records, health heartbeats, a typed error taxonomy and a contract test harness (spec/ADAPTERS.md, Work Order T036).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
