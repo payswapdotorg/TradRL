@@ -82,7 +82,8 @@ describe('exact arithmetic', () => {
   it('multiplies exactly', () => {
     expect(multiply('43125.10', '0.017')).toBe('733.1267');
     expect(multiply('0.1', '0.1')).toBe('0.01');
-    expect(multiply('123456789.123456789', '987654321.987654321')).toBe('121932631356500531347203169112.635266430982221');
+    // The exact product: ~1.219e17 (the classic full-precision value).
+    expect(multiply('123456789.123456789', '987654321.987654321')).toBe('121932631356500531.347203169112635269');
   });
 
   it('normalizes loose grammar to canonical form', () => {

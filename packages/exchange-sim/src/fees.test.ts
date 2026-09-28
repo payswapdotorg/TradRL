@@ -81,8 +81,9 @@ describe('fee computation (exact but for the declared half-up rounding)', () => 
     expect(feeOf(schedule, 'maker', '1', '1').fee).toBe('0.0001');
     // 0.1 * 0.1 = 0.01 notional; taker 2bps -> 0.000002 exact at 8dp.
     expect(feeOf(schedule, 'taker', '0.1', '0.1').fee).toBe('0.000002');
-    // Half-up boundary: notional 0.125, maker 1bps -> 0.0000125 -> 8dp half-up 0.000013.
-    expect(feeOf(schedule, 'maker', '0.125', '1').fee).toBe('0.000013');
+    // 0.125 * 1 / 10000 = 0.0000125 — exactly representable at 8dp (7 fractional
+    // digits), so no rounding occurs; canonical form strips the trailing zero.
+    expect(feeOf(schedule, 'maker', '0.125', '1').fee).toBe('0.0000125');
     // Just below the half: notional 0.115, maker 1bps -> 0.0000115 -> 0.000012? no: half-up on 0.0000115 at 8dp = 0.0000115 (9 digits -> rounds 115->12? compute: 0.0000115 * 10^8 = 1150 -> half-up -> 1150/100 = 11.5 -> 12 -> 0.0000012? Let me not confuse: 0.0000115 at 8dp -> 0.00000115? No.
     // Precisely: 0.125 * 1 / 10000 = 0.0000125. At 8dp: 0.00001250 -> digits 125 at 9th place... 0.0000125 has 7 decimal places, fits in 8. Exact.
   });

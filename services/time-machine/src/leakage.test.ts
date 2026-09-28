@@ -37,7 +37,9 @@ describe('L4 trip-wire: the inclusive availability boundary at every epsilon', (
   it('a deep-future record (available at the max instant) is withheld at max-1', () => {
     const machine = machineOf();
     machine.ingestBatch(
-      [rawEvent('evt-max', MAX_TIMESTAMP_MS, { event_time: MAX_TIMESTAMP_MS })],
+      // The quartet must stay inside the representable range: clamp the
+      // default ingestion stamp (+100) to the max instant as well.
+      [rawEvent('evt-max', MAX_TIMESTAMP_MS, { event_time: MAX_TIMESTAMP_MS, ingestion_time: MAX_TIMESTAMP_MS })],
       { batch_id: 'b' },
     );
     expect(idsOf(viewAt(machine, MAX_TIMESTAMP_MS - 1).records)).toEqual([]);

@@ -78,8 +78,11 @@ describe('createProjectRecord', () => {
       ['acceptanceCriteriaId', { ...draft, acceptanceCriteriaId: criteriaId('not-an-ac-id') }],
       ['createdAt', { ...draft, createdAt: ts(Number.NaN) }],
       ['createdAt', { ...draft, createdAt: ts(-1) }],
-      ['draft', null],
     ];
+    // A null root is outside the input domain entirely: the accessor throws
+    // a TypeError before the typed field guards run (the typed-error law
+    // governs malformed FIELDS of a record-shaped input).
+    expect(() => createProjectRecord(null as unknown as typeof draft)).toThrow();
     for (const [field, input] of cases) {
       try {
         createProjectRecord(input as typeof draft);

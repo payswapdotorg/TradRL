@@ -22,11 +22,15 @@ const tenantB = 'tenant_beta' as TenantId;
 const T0 = 1_800_300_000_000 as TimestampMs;
 const ORG = 'org_compiled_1' as OrganizationRef;
 
-function cloneGoal(): GoalStatement {
-  return JSON.parse(JSON.stringify(exampleGoalStatement)) as GoalStatement;
+function cloneGoal(tenant: TenantId = exampleGoalStatement.tenantId): GoalStatement {
+  const cloned = JSON.parse(JSON.stringify(exampleGoalStatement)) as GoalStatement;
+  (cloned as { tenantId: TenantId }).tenantId = tenant;
+  return cloned;
 }
-function cloneSet(): ConstraintSetStatement {
-  return JSON.parse(JSON.stringify(exampleConstraintSetStatement)) as ConstraintSetStatement;
+function cloneSet(tenant: TenantId = exampleConstraintSetStatement.tenantId): ConstraintSetStatement {
+  const cloned = JSON.parse(JSON.stringify(exampleConstraintSetStatement)) as ConstraintSetStatement;
+  (cloned as { tenantId: TenantId }).tenantId = tenant;
+  return cloned;
 }
 
 function expectTypedError(code: string, run: () => void): ControlDomainError {
@@ -156,7 +160,7 @@ describe('acceptanceCriteriaFor — the T012/T016 read path', () => {
   it('every entry of the registry is guard-valid and listed per tenant', () => {
     const plane = createControlPlane();
     plane.createProject({ id: 'prj_1' as ProjectId, tenantId: tenantA, name: 'One', executionMode: 'simulation', goal: cloneGoal(), constraintSet: cloneSet(), at: T0 });
-    plane.createProject({ id: 'prj_2' as ProjectId, tenantId: tenantB, name: 'Two', executionMode: 'shadow', goal: cloneGoal(), constraintSet: cloneSet(), at: (T0 + 1) as TimestampMs });
+    plane.createProject({ id: 'prj_2' as ProjectId, tenantId: tenantB, name: 'Two', executionMode: 'shadow', goal: cloneGoal(tenantB), constraintSet: cloneSet(tenantB), at: (T0 + 1) as TimestampMs });
     expect(plane.acceptanceCriteriaOf(tenantA)).toHaveLength(1);
     expect(plane.acceptanceCriteriaOf(tenantB)).toHaveLength(1);
   });

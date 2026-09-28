@@ -32,8 +32,8 @@ describe('book_walk (the honest default)', () => {
   const config = unwrap(validateSlippageConfig({ kind: 'book_walk' })) as SlippageConfig;
 
   it('passes the book price through unchanged for both sides (the walk IS the slippage)', () => {
-    expect(aggressorPrice(config, 'buy', '43100.00', '0.01')).toBe('43100.00');
-    expect(aggressorPrice(config, 'sell', '43100.00', '0.01')).toBe('43100.00');
+    expect(aggressorPrice(config, 'buy', '43100.00', '0.01')).toBe('43100'); // canonical form
+    expect(aggressorPrice(config, 'sell', '43100.00', '0.01')).toBe('43100'); // canonical form
     expect(aggressorPrice(config, 'buy', '43100.50', '0.01')).toBe('43100.5'); // canonicalized
   });
 });

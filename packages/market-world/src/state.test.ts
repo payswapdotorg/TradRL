@@ -119,9 +119,10 @@ describe('sequence trackers (mirror of market-protocol discipline)', () => {
     const ingested = ingestWorld(state.value, [trade('t1', 1, T0), quote('q1', 1, T0), trade('t2', 2, T0 + 1), quote('q2', 5, T0 + 1)]);
     if (!ingested.ok) throw new Error('fixture');
     const trackers = ingested.value.sequences;
+    // Canonically sorted by `venue|instrument|stream` — 'quote' sorts before 'trade'.
     expect(trackers.map((tracker) => [tracker.stream, tracker.last_sequence, tracker.event_count])).toEqual([
-      ['trade', 2, 2],
       ['quote', 5, 2],
+      ['trade', 2, 2],
     ]);
     // The forensic rebuild agrees with the incrementally-maintained trackers.
     expect(sequenceTrackersOf(ingested.value.history)).toEqual(trackers);

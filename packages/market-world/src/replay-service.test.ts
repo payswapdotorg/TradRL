@@ -155,7 +155,7 @@ describe('determinism (criterion 3)', () => {
     const recordA = await driveRun(STREAM, STOPS);
     const recordB = await driveRun(STREAM, { firstAdvance: BASE + 1_500, secondAdvance: BASE + 5_000 });
     expect(JSON.stringify(recordA)).not.toBe(JSON.stringify(recordB));
-    expect(recordB.clock_timeline[0]?.to).toBe(BASE + 5_000 - 3_500 + 1_500); // sanity: the second stop's own timeline
+    expect(recordB.clock_timeline[0]?.to).toBe(BASE + 1_500); // sanity: the first stop's own timeline entry
     expect(recordB.clock_timeline[1]?.to).toBe(BASE + 5_000);
   });
 });

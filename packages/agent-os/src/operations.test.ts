@@ -356,21 +356,21 @@ describe('KernelAuthority', () => {
         deniedActions: ['OBSERVE'],
         maxDelegationDepth: 0,
       }),
-    ).toThrow(/allows and denies OBSERVE/);
+    ).toThrow(/OBSERVE is also denied/);
     expect(() =>
       createKernelAuthority({
         allowedActions: ['OBSERVE', 'OBSERVE'],
         deniedActions: [],
         maxDelegationDepth: 0,
       }),
-    ).toThrow(/duplicates/);
+    ).toThrow(/duplicate action/);
     expect(() =>
       createKernelAuthority({
         allowedActions: ['OBSERVE'],
         deniedActions: ['LEARN', 'LEARN'],
         maxDelegationDepth: 0,
       }),
-    ).toThrow(/duplicates/);
+    ).toThrow(/duplicate action/);
   });
 });
 

@@ -27,11 +27,15 @@ const tenantA = 'tenant_acme' as TenantId;
 const tenantB = 'tenant_beta' as TenantId;
 const T0 = 1_800_200_000_000 as TimestampMs;
 
-function cloneGoal(): GoalStatement {
-  return JSON.parse(JSON.stringify(exampleGoalStatement)) as GoalStatement;
+function cloneGoal(tenant: TenantId = exampleGoalStatement.tenantId): GoalStatement {
+  const cloned = JSON.parse(JSON.stringify(exampleGoalStatement)) as GoalStatement;
+  (cloned as { tenantId: TenantId }).tenantId = tenant;
+  return cloned;
 }
-function cloneSet(): ConstraintSetStatement {
-  return JSON.parse(JSON.stringify(exampleConstraintSetStatement)) as ConstraintSetStatement;
+function cloneSet(tenant: TenantId = exampleConstraintSetStatement.tenantId): ConstraintSetStatement {
+  const cloned = JSON.parse(JSON.stringify(exampleConstraintSetStatement)) as ConstraintSetStatement;
+  (cloned as { tenantId: TenantId }).tenantId = tenant;
+  return cloned;
 }
 
 function expectTypedError(code: string, run: () => void): void {
@@ -139,7 +143,7 @@ describe('ProjectAuditLog', () => {
   it('entriesFor filters by tenant without leaking other tenants', () => {
     const plane = createControlPlane();
     plane.createProject({ id: 'prj_a' as ProjectId, tenantId: tenantA, name: 'A', executionMode: 'simulation', goal: cloneGoal(), constraintSet: cloneSet(), at: T0 });
-    plane.createProject({ id: 'prj_b' as ProjectId, tenantId: tenantB, name: 'B', executionMode: 'live', goal: cloneGoal(), constraintSet: cloneSet(), at: (T0 + 1) as TimestampMs });
+    plane.createProject({ id: 'prj_b' as ProjectId, tenantId: tenantB, name: 'B', executionMode: 'live', goal: cloneGoal(tenantB), constraintSet: cloneSet(tenantB), at: (T0 + 1) as TimestampMs });
     const aEntries = plane.auditLog(tenantA);
     const bEntries = plane.auditLog(tenantB);
     expect(aEntries.every((e) => e.tenantId === tenantA)).toBe(true);

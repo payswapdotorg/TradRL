@@ -158,7 +158,7 @@ describe('validateOrderIntent (collect-all + engine binding)', () => {
     expect(validateOrderIntent(intentFixture({ kind: 'market', price: undefined }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(true);
     expect(validateOrderIntent(intentFixture({ kind: 'market', price: '100' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(false);
     expect(validateOrderIntent(intentFixture({ kind: 'limit', price: undefined }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(false);
-    expect(validateOrderIntent(intentFixture({ kind: 'stop', stopPrice: '43000' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(true);
+    expect(validateOrderIntent(intentFixture({ kind: 'stop', stopPrice: '43000', price: undefined }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(true);
     expect(validateOrderIntent(intentFixture({ timeInForce: 'gtt', expiresAt: '2026-02-01T00:00:00Z' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(true);
     expect(validateOrderIntent(intentFixture({ timeInForce: 'gtc', expiresAt: '2026-02-01T00:00:00Z' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(false);
     expect(validateOrderIntent(intentFixture({ timeInForce: 'gtt' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(false);
