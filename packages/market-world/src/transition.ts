@@ -43,8 +43,7 @@ import type { ReplayWorldState, StreamSequenceState } from './state';
 import { isReplayWorldState } from './state';
 import type { WorldEvent } from './event';
 import { sequenceKeyOf, sequenceStream, validateWorldEvent } from './event';
-import type { VenueId } from './ids';
-import type { InstrumentId } from './ids';
+import type { VenueId, InstrumentId, WorldSnapshotRef } from './ids';
 import { streamSelectionKey } from './config';
 import type { TerminationReason } from './env-mirror';
 
@@ -179,7 +178,7 @@ export function ingestWorld(state: ReplayWorldState, batch: readonly unknown[]):
   const snapshotRefs = [...state.snapshot_refs];
   for (const event of accepted) {
     if (event.event_type === 'book_snapshot') {
-      snapshotRefs.push(event.event_id as import('./ids').WorldSnapshotRef);
+      snapshotRefs.push(event.event_id as WorldSnapshotRef);
     }
   }
 

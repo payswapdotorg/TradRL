@@ -22,7 +22,7 @@
  */
 
 import { hashOf } from './hash';
-import { isDeeplyFrozen } from './freeze';
+import { deepFreeze } from './freeze';
 import { fail, ok, type TimeMachineResult } from './errors';
 import { isDatasetRef, isLineageHash, isTenantId, type DatasetRef, type SnapshotHash, type TenantId } from './ids';
 import { isTimeMachineRecord, type TimeMachineRecord } from './record';
@@ -30,7 +30,7 @@ import { isDeterministicClockState, type DeterministicClockState } from './clock
 import { validateProjectionSelector, type KnowledgeQueryFilter } from './firewall';
 import { isNonNegativeSafeInteger, isRecord } from './canonical-event';
 import { isTimestampMs, type TimestampMs } from './timestamp';
-import { isEventOrigin, isCorrectionRef, isCustodyChain } from './provenance';
+import { isEventOrigin } from './provenance';
 
 /** Snapshot discriminator + format version. */
 export const SNAPSHOT_KIND = 'tradrl.time-machine.snapshot/v1' as const;
@@ -67,8 +67,12 @@ export interface TimeMachineSnapshot {
   readonly frontier: TimestampMs | null;
   /** Total records ever admitted (the arrival/stamp counter). */
   readonly ingest_count: number;
+  /** Every record id ever admitted (append-only identity outlives the window — exact restore). */
+  readonly admitted_ids: readonly string[];
   /** The 1-based ordinal the NEXT ingest batch will receive. */
   readonly batch_ordinal: number;
+  /** The 1-based ordinal the NEXT opened cursor will receive (cursor ids are deterministic). */
+  readonly cursor_ordinal: number;
   readonly quarantine: readonly unknown[];
   readonly rejections: readonly unknown[];
   readonly cursors: readonly CursorSnapshotEntry[];
@@ -88,7 +92,9 @@ function snapshotContent(snapshot: Omit<TimeMachineSnapshot, 'lineage_hash'>): u
     window: snapshot.window.map((record) => record),
     frontier: snapshot.frontier,
     ingest_count: snapshot.ingest_count,
+    admitted_ids: snapshot.admitted_ids,
     batch_ordinal: snapshot.batch_ordinal,
+    cursor_ordinal: snapshot.cursor_ordinal,
     quarantine: snapshot.quarantine,
     rejections: snapshot.rejections,
     cursors: snapshot.cursors,
@@ -107,7 +113,6 @@ export function sealSnapshot(content: Omit<TimeMachineSnapshot, 'lineage_hash'>)
 
 /** Deeply freeze a snapshot in place (records already frozen stay shared). */
 function deepFreezeSnapshot(snapshot: TimeMachineSnapshot): TimeMachineSnapshot {
-  const { deepFreeze } = require('./freeze') as typeof import('./freeze'); // eslint-disable-line @typescript-eslint/no-require-imports
   return deepFreeze(snapshot);
 }
 
@@ -144,7 +149,8 @@ export function isQuarantinedEventEntry(value: unknown): boolean {
   if (!isTimestampMs(event.available_time)) return false;
   if (!isTimestampMs(event.ingestion_time)) return false;
   if (!isNonNegativeSafeInteger(event.sequence)) return false;
-  if (!isEventOrigin(event.provenance?.origin)) return false;
+  const provenance = event.provenance;
+  if (!isRecord(provenance) || !isEventOrigin(provenance.origin)) return false;
   return true;
 }
 
@@ -208,8 +214,27 @@ export function validateTimeMachineSnapshot(value: unknown): TimeMachineResult<V
   if (!isNonNegativeSafeInteger(value.ingest_count)) {
     return fail('invalid_snapshot', 'snapshot.ingest_count must be a non-negative safe integer');
   }
+  if (!Array.isArray(value.admitted_ids)) {
+    return fail('invalid_snapshot', 'snapshot.admitted_ids must be an array of record ids');
+  }
+  const admittedIds = new Set<string>();
+  for (const id of value.admitted_ids) {
+    if (typeof id !== 'string' || id.length === 0) {
+      return fail('invalid_snapshot', 'every snapshot.admitted_ids entry must be a non-empty record id');
+    }
+    if (admittedIds.has(id)) {
+      return fail('invalid_snapshot', `duplicate admitted id "${id}"`);
+    }
+    admittedIds.add(id);
+  }
+  if (admittedIds.size !== value.ingest_count) {
+    return fail('invalid_snapshot', 'snapshot.admitted_ids must contain exactly one id per admitted record (ingest_count)');
+  }
   if (!isNonNegativeSafeInteger(value.batch_ordinal)) {
     return fail('invalid_snapshot', 'snapshot.batch_ordinal must be a non-negative safe integer');
+  }
+  if (!isNonNegativeSafeInteger(value.cursor_ordinal)) {
+    return fail('invalid_snapshot', 'snapshot.cursor_ordinal must be a non-negative safe integer');
   }
   if (!Array.isArray(value.quarantine)) {
     return fail('invalid_snapshot', 'snapshot.quarantine must be an array');
@@ -239,6 +264,9 @@ export function validateTimeMachineSnapshot(value: unknown): TimeMachineResult<V
       return fail('invalid_snapshot', `duplicate record id "${record.record_id}" in snapshot.window`);
     }
     seenIds.add(record.record_id);
+    if (!admittedIds.has(record.record_id)) {
+      return fail('invalid_snapshot', `window record "${record.record_id}" is not in admitted_ids`);
+    }
     if (record.arrival_sequence >= value.ingest_count) {
       return fail('invalid_snapshot', 'a window record arrival sequence exceeds ingest_count');
     }
@@ -307,7 +335,9 @@ export function validateTimeMachineSnapshot(value: unknown): TimeMachineResult<V
     window: Object.freeze([...value.window]),
     frontier: value.frontier,
     ingest_count: value.ingest_count,
+    admitted_ids: Object.freeze([...(value.admitted_ids as readonly string[])]),
     batch_ordinal: value.batch_ordinal,
+    cursor_ordinal: value.cursor_ordinal,
     quarantine: Object.freeze([...value.quarantine]),
     rejections: Object.freeze([...value.rejections]),
     cursors: Object.freeze([...(value.cursors as CursorSnapshotEntry[])]),
@@ -322,6 +352,3 @@ export function validateTimeMachineSnapshot(value: unknown): TimeMachineResult<V
 
   return ok({ content, lineage_hash: value.lineage_hash, builtinClock });
 }
-
-/** Re-export parity helpers used by tests (frozen-ness is a snapshot invariant). */
-export { isDeeplyFrozen, isCorrectionRef, isCustodyChain };

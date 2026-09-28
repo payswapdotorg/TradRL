@@ -70,6 +70,12 @@ export type VenueId = Brand<string, 'VenueId'>;
 /** Instrument reference (T002/T004 market lanes). Mirror brand. */
 export type InstrumentId = Brand<string, 'InstrumentId'>;
 
+/** Latency policy reference (T010 exchange simulation lane). Mirror brand. */
+export type LatencyPolicyId = Brand<string, 'LatencyPolicyId'>;
+
+/** Fee policy reference (T010 exchange simulation lane). Mirror brand. */
+export type FeePolicyId = Brand<string, 'FeePolicyId'>;
+
 /**
  * The deterministic seed of a world config / environment profile. Opaque
  * non-empty string; its interpretation belongs to the world implementation
@@ -92,6 +98,8 @@ export const isRewardId = (v: unknown): v is RewardId => isNonEmptyString(v);
 export const isAgentInstanceId = (v: unknown): v is AgentInstanceId => isNonEmptyString(v);
 export const isVenueId = (v: unknown): v is VenueId => isNonEmptyString(v);
 export const isInstrumentId = (v: unknown): v is InstrumentId => isNonEmptyString(v);
+export const isLatencyPolicyId = (v: unknown): v is LatencyPolicyId => isNonEmptyString(v);
+export const isFeePolicyId = (v: unknown): v is FeePolicyId => isNonEmptyString(v);
 export const isSeed = (v: unknown): v is Seed => isNonEmptyString(v);
 
 // --- Trusted internal constructors -------------------------------------------
@@ -118,15 +126,3 @@ export function requireVenueId(value: string): VenueId {
 export function requireInstrumentId(value: string): InstrumentId {
   return requireId(isInstrumentId, value, 'requireInstrumentId');
 }
-
-/** Fee policy reference (T009 lane). Identifies a declared latency/fee policy binding. */
-export type FeePolicyId = Brand<string, 'FeePolicyId'>;
-
-/** Latency policy reference (T009 lane). Identifies a declared latency policy binding. */
-export type LatencyPolicyId = Brand<string, 'LatencyPolicyId'>;
-
-/** Runtime guard for {@link FeePolicyId}. */
-export const isFeePolicyId = (v: unknown): v is FeePolicyId => isNonEmptyString(v);
-
-/** Runtime guard for {@link LatencyPolicyId}. */
-export const isLatencyPolicyId = (v: unknown): v is LatencyPolicyId => isNonEmptyString(v);

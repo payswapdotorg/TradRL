@@ -25,6 +25,8 @@ deliberate semantic difference from a live `SimulationClock`. Episode
 progression is explicit (`advanceEpisode`); `paused` governs any runtime
 auto-driver exactly as in time-engine. Constructors: `createClockConfig`
 (defaults: `now = asOf`, speed 1, unpaused — the engine's defaults) and
+`validateClockConfig` (collect-all over untrusted values, deep-freezes). Constructors: `createClockConfig`
+(defaults: `now = asOf`, speed 1, unpaused — the engine's defaults) and
 `validateClockConfig` (collect-all over untrusted values, deep-freezes).
 
 ## Identifiers
@@ -82,6 +84,30 @@ Fully determines an environment instance (L9):
 
 `validateEnvironmentSpec` (collect-all, deep-freezes) and `isEnvironmentSpec`
 (total guard) are the entry points. A complete, guard-valid example:
+
+```json
+{
+  "profile": {
+    "environment_id": "env-stub-1",
+    "fidelity": "reactive_replay",
+    "clock": {
+      "now": 1000,
+      "asOf": 6000,
+      "playbackSpeed": 1,
+      "paused": false,
+      "fidelity": "reactive_replay",
+      "informationPolicy": "point-in-time"
+    },
+    "seed": "seed-alpha-1",
+    "venue_scope": ["STUB"],
+    "instrument_scope": ["STUB-1"],
+    "latency_policy": null,
+    "fee_policy": null
+  },
+  "world": { "world_id": "world-stub", "kind": "stub" },
+  "information_policy": "point-in-time"
+}
+``` A complete, guard-valid example:
 
 ```json
 {

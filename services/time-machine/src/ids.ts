@@ -16,6 +16,7 @@
  */
 
 import { fail, ok, type TimeMachineResult } from './errors';
+import { isTimestampMs, type TimestampMs } from './timestamp';
 
 /** Opaque identity of a rolling dataset served by one time machine. Mirror-compatible string. */
 export type DatasetRef = string & { readonly __brand: 'TradRL.DatasetRef' };
@@ -105,8 +106,7 @@ export function requireCursorId(value: string): CursorId {
 }
 
 /** Trusted-literal timestamp constructor used by fixtures and tests. */
-export function requireTimestampMs(value: number): import('./timestamp').TimestampMs {
-  const { isTimestampMs } = require('./timestamp') as typeof import('./timestamp');
+export function requireTimestampMs(value: number): TimestampMs {
   if (!isTimestampMs(value)) {
     throw new TypeError(`requireTimestampMs: ${value} is not a valid epoch-millisecond timestamp`);
   }

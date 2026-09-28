@@ -52,8 +52,8 @@ import {
 import type { StoreError } from './fields';
 import { isTimestampMs, type TimestampMs } from './timestamp';
 import { isAssetClass, isEventType, type AssetClass, type EventType } from './taxonomy';
-import { payloadKindOf, type SequencedEvent } from './sequence';
-import { validateStorableProvenance, type StorableProvenance } from './provenance';
+import { payloadKindOf } from './sequence';
+import { validateStorableProvenance, type StoredProvenance, type StorableProvenance } from './provenance';
 
 /** The event as it is SUBMITTED for commit (ingestion_time advisory — re-stamped at commit). */
 export interface StorableEvent {
@@ -77,7 +77,7 @@ export interface StorableEvent {
 export interface StoredEvent extends Omit<StorableEvent, 'ingestion_time' | 'provenance'> {
   /** Stamped by the store at commit — the definitive ingestion time. */
   readonly ingestion_time: TimestampMs;
-  readonly provenance: import('./provenance').StoredProvenance;
+  readonly provenance: StoredProvenance;
 }
 
 /**
@@ -207,14 +207,6 @@ export function checkDerivedAvailability(
     };
   }
   return null;
-}
-
-/** Type re-export used by the sequence module consumers. */
-export type { SequencedEvent };
-
-/** Structural: a storable event is a sequenced event. */
-export function asSequencedEvent(event: StorableEvent): SequencedEvent {
-  return event;
 }
 
 /** Lineage list of an event (its derived_from parent ids). */

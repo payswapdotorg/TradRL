@@ -18,6 +18,19 @@ import { isDeeplyFrozen } from './freeze';
 
 const T = (ms: number) => requireTimestampMs(ms);
 
+/**
+ * The T008 store-layer extension fields every valid provenance carries
+ * (corrections + custody — see provenance.ts and ./t008-reference/).
+ */
+const STORE_LEVEL = {
+  corrections: [],
+  custody: {
+    adapter: { id: 'kb-ingest-adapter', version: '1.0.0' },
+    batch: { batch_id: 'kb-batch-001' },
+    commit: { commit_id: 'kb-commit-00000001', commit_sequence: 1, ingestion_time: T(10_000) },
+  },
+};
+
 /** A structurally valid primitive (raw) record fixture. */
 function rawRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -46,9 +59,28 @@ function derivedRecord(overrides: Record<string, unknown> = {}): Record<string, 
     ingestion_time: T(3_300),
     inputs: ['kr-raw-1'],
     computation: { transform_id: 'vwap-1m-aggregator', delay: { milliseconds: 250 } },
-    provenance: { origin: 'simulated', adapter: null, derived_from: ['evt-raw-1'], transform: 'vwap-1m-aggregator' },
+    provenance: {
+      origin: 'simulated',
+      adapter: null,
+      derived_from: ['evt-raw-1'],
+      transform: 'vwap-1m-aggregator',
+      ...STORE_LEVEL,
+    },
     ...overrides,
   });
+}
+
+/** A full valid T008-shaped provenance with overridable fields (test support). */
+function validProvenance(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    origin: 'historical',
+    adapter: { id: 'binance-adapter', version: '1.4.0' },
+    derived_from: [],
+    transform: null,
+    corrections: [],
+    custody: { ...STORE_LEVEL.custody },
+    ...overrides,
+  };
 }
 
 function unwrap(value: ReturnType<typeof createKnowledgeRecord>): KnowledgeRecord {

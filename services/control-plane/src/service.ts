@@ -175,6 +175,19 @@ export function createControlPlane(): ControlPlane {
           ],
         );
       }
+      // L12: the project's tenant scope, the goal statement and the
+      // constraint set must be ONE scope — a project may never carry
+      // another tenant's compiled criteria.
+      if (criteria.tenantId !== input.tenantId) {
+        throw new ControlDomainError(
+          'project-tenant-mismatch',
+          'createProject: the goal/constraint-set tenant scope differs from the project tenant scope',
+          [
+            `project tenant: ${JSON.stringify(input.tenantId)}`,
+            `goal/constraint-set tenant: ${JSON.stringify(criteria.tenantId)}`,
+          ],
+        );
+      }
 
       // 2. Pure record construction (validates draft, lineage identity).
       const lineage: ProjectLineage = deepFreeze({

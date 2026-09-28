@@ -71,7 +71,7 @@ function runScenario() {
     tenantId: tenantA,
     name: 'Alpha Two',
     executionMode: 'shadow',
-    goal: { ...cloneGoal(), id: 'goal_beta' as never, version: 2 },
+    goal: { ...cloneGoal(), id: 'goal_beta' as GoalRef, version: 2 },
     constraintSet: { ...cloneSet(), version: 3 },
     at: (T0 + 6) as TimestampMs,
   });
@@ -102,8 +102,8 @@ describe('ProjectAuditLog', () => {
       projectId: 'prj_x' as ProjectId,
       lineage: {
         projectId: 'prj_x' as ProjectId,
-        goal: { goalId: 'g', version: 1 },
-        constraintSet: { id: 'c', version: 1 },
+        goal: { goalId: 'g' as GoalRef, version: 1 },
+        constraintSet: { id: 'c' as ConstraintSetRef, version: 1 },
       },
     };
     const e1 = log.append({ kind: 'project.transitioned', event: 'activate' }, context);
@@ -157,8 +157,8 @@ describe('replayAuditLog — determinism proof', () => {
   const plane = runScenario();
   const log = plane.auditLog(tenantA);
 
-  it('the scenario journal is well-formed, gapless and 14 entries long', () => {
-    expect(log).toHaveLength(14);
+  it('the scenario journal is well-formed, gapless and 13 entries long', () => {
+    expect(log).toHaveLength(13);
     expect(log.map((e, i) => e.sequence === i + 1).every(Boolean)).toBe(true);
   });
 
@@ -223,10 +223,8 @@ describe('replayAuditLog — corruption rejection', () => {
 
   it('rejects a duplicate creation of the same project id', () => {
     const created = log[1] as ProjectAuditEntry; // project.created for prj_one
-    const duplicated = [log[0], created, created, ...log.slice(2)] as ProjectAuditEntry[];
-    // Entry 3 has sequence 2 (duplicate of entry 2's sequence... same object,
-    // same sequence) -> watermark skip keeps it silent UNLESS sequences
-    // differ. Build an explicit sequence-3 duplicate to force re-execution.
+    // A second creation of the same project with a FRESH sequence number
+    // must be refused: the id already exists in the replayed state.
     const forced: ProjectAuditEntry = deepFreeze({ ...created, sequence: 3 });
     const entries = [log[0], created, forced] as ProjectAuditEntry[];
     expectTypedError('invalid-audit-log', () => replayAuditLog(entries));

@@ -69,9 +69,9 @@ describe('fee computation (exact but for the declared half-up rounding)', () => 
     const maker = feeOf(schedule, 'maker', '100', '0.5');
     const taker = feeOf(schedule, 'taker', '100', '0.5');
     expect(maker.notional).toBe('50');
-    expect(maker.fee).toBe('0.0005'); // 50 * 1 / 10000
-    expect(taker.fee).toBe('0.001'); // 50 * 2 / 10000
-    expect(feesOfFill(schedule, '100', '0.5').taker.fee).toBe('0.001');
+    expect(maker.fee).toBe('0.005'); // 50 * 1 / 10000
+    expect(taker.fee).toBe('0.01'); // 50 * 2 / 10000
+    expect(feesOfFill(schedule, '100', '0.5').taker.fee).toBe('0.01');
   });
 
   it('rounds half-up at the schedule precision (the declared approximation)', () => {

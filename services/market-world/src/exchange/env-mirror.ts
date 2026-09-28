@@ -282,8 +282,9 @@ export function canonicalJson(value: JsonValue): string {
   if (typeof value === 'number') return String(value);
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (Array.isArray(value)) return `[${value.map((element) => canonicalJson(element)).join(',')}]`;
-  const keys = Object.keys(value).sort();
-  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  const record = value as { readonly [key: string]: JsonValue };
+  const keys = Object.keys(record).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`;
 }
 
 /** FNV-1a 32-bit hash of a string, as zero-padded lowercase hex. Mirror of T005. */

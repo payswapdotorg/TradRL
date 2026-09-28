@@ -290,10 +290,15 @@ describe('tenant isolation through the service (L12)', () => {
     const unknown = expectTypedError('project-not-found', () =>
       plane.getProject(tenantB, 'prj_nonexistent' as ProjectId),
     );
-    // The two errors are indistinguishable in code AND message: tenant B
-    // learns nothing about tenant A's project.
-    expect(cross.message).toBe(unknown.message);
+    // The two errors share the code and the semantic message: tenant B
+    // learns nothing about tenant A's project. (Each error echoes the id
+    // the CALLER itself supplied — never the owning tenant, never a
+    // confirmation that the id exists elsewhere.)
+    expect(cross.code).toBe(unknown.code);
+    expect(cross.message).toContain('project not found for the requesting tenant');
+    expect(unknown.message).toContain('project not found for the requesting tenant');
     expect(cross.message).not.toContain(String(tenantA));
+    expect(cross.details.length).toBe(unknown.details.length);
   });
 
   it('cross-tenant transition, binding and criteria reads are all rejected', () => {
@@ -356,5 +361,25 @@ describe('service object discipline', () => {
     a.createProject({ id: 'prj_iso' as ProjectId, tenantId: tenantA, name: 'A', executionMode: 'simulation', goal: cloneGoal(), constraintSet: cloneSet(), at: T0 });
     expect(b.projectsOf(tenantA)).toEqual([]);
     expect(a.projectsOf(tenantA)).toHaveLength(1);
+  });
+});
+
+describe('service package index (single import site for consumers)', () => {
+  it('re-exports the domain contract surface and the service surface without collision', async () => {
+    const index = await import('./index');
+    // Domain contract surface (what T012/T016 code against).
+    expect(typeof index.compileAcceptance).toBe('function');
+    expect(typeof index.transitionProject).toBe('function');
+    expect(typeof index.isProjectRecord).toBe('function');
+    expect(typeof index.isTimestampMs).toBe('function');
+    // Service surface.
+    expect(typeof index.createControlPlane).toBe('function');
+    expect(typeof index.replayAuditLog).toBe('function');
+    expect(typeof index.ProjectStore).toBe('function');
+    expect(index.packageInfo).toEqual({
+      name: '@tradrl/control-plane',
+      owner: 'T007',
+      status: 'implemented',
+    });
   });
 });

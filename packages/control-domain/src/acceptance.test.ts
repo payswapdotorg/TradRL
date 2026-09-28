@@ -3,6 +3,8 @@ import {
   type AcceptanceCriteria,
   type ConstraintSetStatement,
   type GoalStatement,
+  type ConstraintStatement,
+  type SuccessCriterion,
   type GoalRef,
   type ConstraintSetRef,
   type TenantId,
@@ -37,11 +39,14 @@ function validSet(): ConstraintSetStatement {
   return JSON.parse(JSON.stringify(exampleConstraintSetStatement)) as ConstraintSetStatement;
 }
 
-function compileError(code: string): (error: unknown) => void {
-  return (error: unknown) => {
+function expectTypedError(code: string, run: () => void): void {
+  try {
+    run();
+    expect.unreachable(`expected a typed error with code ${code}`);
+  } catch (error) {
     expect(error).toBeInstanceOf(ControlDomainError);
     expect((error as ControlDomainError).code).toBe(code);
-  };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -62,22 +67,23 @@ describe('compileAcceptance — determinism', () => {
     expect(() => {
       (compiled as Mutable<AcceptanceCriteria>).version = 99;
     }).toThrow(TypeError);
+    const tamperedCriterion: SuccessCriterion = {
+      id: 'x',
+      metric: 'hacked.path',
+      predicate: { kind: 'flag', expected: true },
+    };
     expect(() => {
-      (compiled.criteria[0] as Mutable<{ criterion: { [key: string]: unknown } }>).criterion = {
-        id: 'x',
-        metric: 'hacked.path',
-        predicate: { kind: 'flag', expected: true },
-      };
+      (compiled.criteria[0] as Mutable<{ criterion: SuccessCriterion }>).criterion = tamperedCriterion;
     }).toThrow(TypeError);
   });
 
   it('mutating the INPUTS after compilation cannot affect the compiled artifact', () => {
-    const goal: Mutable<GoalStatement> = JSON.parse(JSON.stringify(exampleGoalStatement));
-    const set: Mutable<ConstraintSetStatement> = JSON.parse(JSON.stringify(exampleConstraintSetStatement));
+    const goal = JSON.parse(JSON.stringify(exampleGoalStatement)) as Mutable<GoalStatement>;
+    const set = JSON.parse(JSON.stringify(exampleConstraintSetStatement)) as Mutable<ConstraintSetStatement>;
     const compiled = compileAcceptance(goal as GoalStatement, set as ConstraintSetStatement);
-    (goal.successCriteria.criteria[0] as { metric: string }).metric = 'tampered.metric';
-    (set.constraints[0] as { subject: string }).subject = 'tampered.subject';
-    expect(compiled.criteria[0].criterion.metric).toBe('returns.sharpe');
+    (goal.successCriteria.criteria[0] as Mutable<SuccessCriterion>).metric = 'tampered.metric';
+    (set.constraints[0] as Mutable<ConstraintStatement>).subject = 'tampered.subject';
+    expect(compiled.criteria[0]?.criterion.metric).toBe('returns.sharpe');
     expect(compiled.constraints[0].subject).toBe('risk.maxDrawdown');
   });
 
@@ -160,8 +166,8 @@ describe('gatesConstraint — the gating rule', () => {
   it('is total: rejects non-strings and empty paths', () => {
     expect(gatesConstraint('a.b', '')).toBe(false);
     expect(gatesConstraint('', 'a.b')).toBe(false);
-    expect(gatesConstraint(1 as unknown as string, 'a.b')).toBe(false);
-    expect(gatesConstraint('a.b', null as unknown as string)).toBe(false);
+    expect(gatesConstraint(1, 'a.b')).toBe(false);
+    expect(gatesConstraint('a.b', null)).toBe(false);
   });
 });
 
@@ -173,9 +179,9 @@ describe('compileAcceptance — typed errors', () => {
   it('FAILS to compile unstructured success criteria (prose) with `unstructured-criteria`', () => {
     const prose: Mutable<GoalStatement> = validGoal();
     prose.successCriteria = 'make as much money as possible, safely' as unknown as GoalStatement['successCriteria'];
-    expect(() =>
+    expectTypedError('unstructured-criteria', () =>
       compileAcceptance(prose as unknown as GoalStatement, validSet()),
-    ).toThrow(compileError('unstructured-criteria') as unknown as RegExp);
+    );
   });
 
   it('FAILS to compile criteria entries that are not structured records', () => {
@@ -184,56 +190,56 @@ describe('compileAcceptance — typed errors', () => {
       criteria: ['be very profitable'],
       requiredSatisfaction: 1,
     } as unknown as GoalStatement['successCriteria'];
-    expect(() =>
+    expectTypedError('unstructured-criteria', () =>
       compileAcceptance(partial as unknown as GoalStatement, validSet()),
-    ).toThrow(compileError('unstructured-criteria') as unknown as RegExp);
+    );
 
     const missingPredicate: Mutable<GoalStatement> = validGoal();
     missingPredicate.successCriteria = {
       criteria: [{ id: 'a', metric: 'returns.sharpe' }],
       requiredSatisfaction: 1,
     } as unknown as GoalStatement['successCriteria'];
-    expect(() =>
+    expectTypedError('unstructured-criteria', () =>
       compileAcceptance(missingPredicate as unknown as GoalStatement, validSet()),
-    ).toThrow(compileError('unstructured-criteria') as unknown as RegExp);
+    );
   });
 
   it('FAILS to compile a vacuous criteria list with `empty-success-criteria`', () => {
     const empty: Mutable<GoalStatement> = validGoal();
     empty.successCriteria = { criteria: [], requiredSatisfaction: 1 } as unknown as GoalStatement['successCriteria'];
-    expect(() =>
+    expectTypedError('empty-success-criteria', () =>
       compileAcceptance(empty as unknown as GoalStatement, validSet()),
-    ).toThrow(compileError('empty-success-criteria') as unknown as RegExp);
+    );
   });
 
   it('FAILS with `invalid-goal` for structured goals with field-level problems', () => {
     const broken: unknown = { ...validGoal(), objective: '' };
-    expect(() => compileAcceptance(broken as GoalStatement, validSet())).toThrow(compileError('invalid-goal') as unknown as RegExp);
-    expect(() => compileAcceptance(null as unknown as GoalStatement, validSet())).toThrow(compileError('invalid-goal') as unknown as RegExp);
+    expectTypedError('invalid-goal', () => compileAcceptance(broken as GoalStatement, validSet()));
+    expectTypedError('invalid-goal', () => compileAcceptance(null as unknown as GoalStatement, validSet()));
     const inverted: unknown = { ...validGoal(), horizon: { startsAt: ts(200), endsAt: ts(100) } };
-    expect(() => compileAcceptance(inverted as GoalStatement, validSet())).toThrow(compileError('invalid-goal') as unknown as RegExp);
+    expectTypedError('invalid-goal', () => compileAcceptance(inverted as GoalStatement, validSet()));
   });
 
   it('FAILS with `invalid-constraint-set` for malformed constraint sets', () => {
     const broken: unknown = { ...validSet(), version: 0 };
-    expect(() => compileAcceptance(validGoal(), broken as ConstraintSetStatement)).toThrow(
-      compileError('invalid-constraint-set'),
+    expectTypedError('invalid-constraint-set', () =>
+      compileAcceptance(validGoal(), broken as ConstraintSetStatement),
     );
     const duplicateIds: unknown = {
       ...validSet(),
       constraints: [validSet().constraints[0], { ...validSet().constraints[1], id: 'max_drawdown' }],
     };
-    expect(() => compileAcceptance(validGoal(), duplicateIds as ConstraintSetStatement)).toThrow(
-      compileError('invalid-constraint-set'),
+    expectTypedError('invalid-constraint-set', () =>
+      compileAcceptance(validGoal(), duplicateIds as ConstraintSetStatement),
     );
-    expect(() => compileAcceptance(validGoal(), 'safe' as unknown as ConstraintSetStatement)).toThrow(
-      compileError('invalid-constraint-set'),
+    expectTypedError('invalid-constraint-set', () =>
+      compileAcceptance(validGoal(), 'safe' as unknown as ConstraintSetStatement),
     );
   });
 
   it('FAILS with `goal-set-tenant-mismatch` for cross-tenant goal/constraint-set pairs (L12)', () => {
     const foreign: ConstraintSetStatement = { ...validSet(), tenantId: tenant('tenant_other') };
-    expect(() => compileAcceptance(validGoal(), foreign)).toThrow(compileError('goal-set-tenant-mismatch') as unknown as RegExp);
+    expectTypedError('goal-set-tenant-mismatch', () => compileAcceptance(validGoal(), foreign));
   });
 
   it('error details are field-prefixed diagnostics (never executed)', () => {
@@ -395,22 +401,29 @@ describe('L7 — PnL solicitude (structural)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Type-level trip wires for L7 (fail `pnpm typecheck` if a PnL field ever
-// appears on the record surface)
+// Type-level trip wires for L7 (fail `pnpm typecheck` if a PnL/outcome
+// field ever appears on the record surface)
 // ---------------------------------------------------------------------------
 
-/** Compiles iff AcceptanceCriteria has no `pnl`/`attained`/`verdict`/`result` key. */
-function acceptanceCarriesNoOutcomeField(
-  value: Exclude<
-    'pnl' | 'attained' | 'verdict' | 'result' | 'pass' | 'success' | 'score',
-    keyof AcceptanceCriteria
-  >,
-): true {
-  return true;
-}
+/** `true` iff `pnl` is not a key of AcceptanceCriteria. */
+type PnlNotOnCriteria = 'pnl' extends keyof AcceptanceCriteria ? never : true;
+const pnlNotOnCriteria: PnlNotOnCriteria = true;
+/** `true` iff `attained` is not a key of AcceptanceCriteria. */
+type AttainedNotOnCriteria = 'attained' extends keyof AcceptanceCriteria ? never : true;
+const attainedNotOnCriteria: AttainedNotOnCriteria = true;
+/** `true` iff `verdict` is not a key of AcceptanceCriteria. */
+type VerdictNotOnCriteria = 'verdict' extends keyof AcceptanceCriteria ? never : true;
+const verdictNotOnCriteria: VerdictNotOnCriteria = true;
+/** `true` iff `result` is not a key of AcceptanceCriteria. */
+type ResultNotOnCriteria = 'result' extends keyof AcceptanceCriteria ? never : true;
+const resultNotOnCriteria: ResultNotOnCriteria = true;
 
 it('type-level: the artifact surface has no outcome/PnL field', () => {
-  // Runtime exercise of the compile-time witness (the assertion is that
-  // this line typechecks at all).
-  expect(acceptanceCarriesNoOutcomeField('pnl')).toBe(true);
+  // Runtime exercise of the compile-time witnesses (the assertion is that
+  // these constants typecheck at all — each is `never` the moment the
+  // forbidden key appears on the record).
+  expect(pnlNotOnCriteria).toBe(true);
+  expect(attainedNotOnCriteria).toBe(true);
+  expect(verdictNotOnCriteria).toBe(true);
+  expect(resultNotOnCriteria).toBe(true);
 });

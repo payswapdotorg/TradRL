@@ -20,6 +20,7 @@ import { validateBookSnapshotPayload } from '../../market-protocol/src/payloads/
 import type { BookLevel as MarketBookLevel, BookSnapshotPayload as MarketBookSnapshotPayload } from '../../market-protocol/src/payloads/book';
 import { validateMarketEvent } from '../../market-protocol/src/envelope';
 import { add } from './decimals';
+import type { ExchangeOrderId } from './ids';
 import { deepFreeze } from './primitives';
 
 // ---------------------------------------------------------------------------
@@ -98,8 +99,8 @@ describe('BookLevel / BookSnapshotSeed structural mirror (market-protocol)', () 
     // Type-level witnesses compile both directions.
     const first = seeded.ok ? seeded.value.bids[0] : undefined;
     if (first === undefined) return;
-    const asMarket: MarketBookLevel = mirrorLevelIsMarketLevel(first) as MarketBookLevel;
-    const asMirror: BookLevel = marketLevelIsMirrorLevel(asMarket) as BookLevel;
+    const asMarket: MarketBookLevel = mirrorLevelIsMarketLevel(first);
+    const asMirror: BookLevel = marketLevelIsMirrorLevel(asMarket);
     expect(asMirror.price).toBe('43100.00');
     void marketSnapshotIsSeed;
   });
@@ -196,14 +197,14 @@ describe('validateBookSeed (venue grid rules)', () => {
 describe('book views', () => {
   it('topOfBook aggregates the best level and is null on one-sided books', () => {
     const book: BookState = deepFreeze({
-      bids: [{ price: '100.00', orders: [{ order_id: 'xo-1', remaining: '2' }, { order_id: 'xo-2', remaining: '3' }] }],
+      bids: [{ price: '100.00', orders: [{ order_id: 'xo-1' as ExchangeOrderId, remaining: '2' }, { order_id: 'xo-2' as ExchangeOrderId, remaining: '3' }] }],
       asks: [],
-    }) as BookState;
+    });
     expect(topOfBook(book)).toBeNull();
     const twoSided: BookState = deepFreeze({
       bids: book.bids,
-      asks: [{ price: '100.50', orders: [{ order_id: 'xo-3', remaining: '1' }] }],
-    }) as BookState;
+      asks: [{ price: '100.50', orders: [{ order_id: 'xo-3' as ExchangeOrderId, remaining: '1' }] }],
+    });
     const top = topOfBook(twoSided);
     expect(top?.bid_price).toBe('100.00');
     expect(top?.bid_size).toBe('5');
@@ -213,11 +214,11 @@ describe('book views', () => {
   it('bookSnapshotView emits the aggregated levels in best-first order', () => {
     const book: BookState = deepFreeze({
       bids: [
-        { price: '100.00', orders: [{ order_id: 'xo-1', remaining: '1.5' }, { order_id: 'xo-2', remaining: '2.5' }] },
-        { price: '99.50', orders: [{ order_id: 'xo-3', remaining: '4' }] },
+        { price: '100.00', orders: [{ order_id: 'xo-1' as ExchangeOrderId, remaining: '1.5' }, { order_id: 'xo-2' as ExchangeOrderId, remaining: '2.5' }] },
+        { price: '99.50', orders: [{ order_id: 'xo-3' as ExchangeOrderId, remaining: '4' }] },
       ],
-      asks: [{ price: '100.50', orders: [{ order_id: 'xo-4', remaining: '0.5' }] }],
-    }) as BookState;
+      asks: [{ price: '100.50', orders: [{ order_id: 'xo-4' as ExchangeOrderId, remaining: '0.5' }] }],
+    });
     const view = bookSnapshotView(book);
     expect(view.bids).toEqual([
       { price: '100.00', size: '4' },

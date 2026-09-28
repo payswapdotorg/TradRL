@@ -208,14 +208,12 @@ export function divideRoundHalfUp(numerator: string, denominator: string, decima
   if (isZero(denominator)) throw new Error('divideRoundHalfUp: zero denominator');
   const n = requireScaled(numerator);
   const d = requireScaled(denominator);
-  // value = n/d; scale both to `decimals` fractional digits, then half-up.
-  const target = 10n ** BigInt(decimals);
-  const numeratorScaled = upScale(n, n.scale > decimals ? n.scale : decimals) * target;
-  // Bring both to a common scale first, then multiply the ratio by 10^decimals.
+  // Bring both to a common scale, then form the ratio scaled by 10^decimals
+  // and round half-up: value ≈ (n*10^decimals)/d, one exact division.
   const commonScale = Math.max(n.scale, d.scale);
+  const target = 10n ** BigInt(decimals);
   const ratioNumerator = upScale(n, commonScale) * target;
   const ratioDenominator = upScale(d, commonScale);
-  void numeratorScaled;
   const quotient = ratioNumerator / ratioDenominator;
   const remainder = ratioNumerator % ratioDenominator;
   const rounded = remainder * 2n >= ratioDenominator ? quotient + 1n : quotient;
@@ -282,5 +280,3 @@ export function isDecimalPair(value: unknown): value is { price: string; size: s
   if (!isRecord(value)) return false;
   return isNonEmptyString(value.price) && isNonEmptyString(value.size);
 }
-
-export { ZERO_SCALED };

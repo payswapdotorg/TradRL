@@ -175,8 +175,8 @@ describe('transitionProject — every ILLEGAL edge (typed errors)', () => {
         }
       }
     }
-    // 6 statuses x 6 events = 36 pairs, 14 legal edges -> 22 illegal edges.
-    expect(illegalCount).toBe(22);
+    // 36 pairs total, 10 legal edges -> 26 illegal edges.
+    expect(illegalCount).toBe(26);
   });
 
   it('rejects EVERY terminal-state escape (completed/abandoned/archived accept no event)', () => {

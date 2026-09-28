@@ -63,7 +63,7 @@ function submissionSatisfiesT005(value: ExchangeSubmission): EpisodeStateMirror 
 
 /** Compiles iff an ExchangeEvent is assignable to a canonical MarketEvent. */
 function eventSatisfiesMarketProtocol(value: ExchangeEvent): MarketEvent {
-  return value as MarketEvent;
+  return value as unknown as MarketEvent;
 }
 
 function observationsOf(): readonly ReturnType<typeof firstObservation>[] {

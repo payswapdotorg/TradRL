@@ -37,7 +37,8 @@
  */
 
 import { isTimestampMs, type TimestampMs } from './timestamp';
-import { isDuration, type ComputationPolicy } from './computation';
+import { isDuration } from './duration';
+import type { ComputationPolicy } from './computation';
 import { deepFreeze } from './freeze';
 import { fail, ok, type TimeMachineResult } from './errors';
 import { isKnowledgeRecordId, isTenantId, type KnowledgeRecordId, type TenantId } from './ids';
@@ -140,6 +141,23 @@ export interface AdmissionStamp {
   readonly ingestion_time: TimestampMs;
   /** The 0-based admission ordinal of this record. */
   readonly arrival_sequence: number;
+}
+
+/** Runtime guard for an admission stamp. */
+export function isAdmissionStamp(value: unknown): value is AdmissionStamp {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.batch_ordinal !== 'number' ||
+    !Number.isSafeInteger(candidate.batch_ordinal) ||
+    candidate.batch_ordinal < 1
+  ) {
+    return false;
+  }
+  if (typeof candidate.batch_id !== 'string' || candidate.batch_id.length === 0) return false;
+  if (!isTimestampMs(candidate.ingestion_time)) return false;
+  if (!isNonNegativeSafeInteger(candidate.arrival_sequence)) return false;
+  return true;
 }
 
 /**

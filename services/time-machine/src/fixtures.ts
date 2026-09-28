@@ -18,16 +18,22 @@ import {
   type CanonicalEvent,
   type CursorDrain,
   type CursorId,
+  type CursorOptions,
   type EventOrigin,
   type EventType,
   type FirewallProjectionPort,
+  type IngestClock,
   type IngestReceipt,
   type KnowledgeQueryFilter,
+  type KnowledgeRecordId,
   type LateArrivalPolicy,
+  type PointInTimeCursor,
   type RollingTimeMachine,
   type TimeMachineConfig,
+  type TimeMachineRecord,
   type TimeMachineResult,
 } from './index';
+import { admitCanonicalEvent } from './record';
 
 /** The fixture tenant (L12 scope). */
 export const TENANT = requireTenantId('acme');
@@ -75,7 +81,7 @@ export function rawEvent(eventId: string, available: number, overrides: EventOve
     asset_class: 'crypto',
     event_type: overrides.event_type ?? 'trade',
     event_time: T(overrides.event_time ?? available - 50),
-    source_time: overrides.source_time === undefined ? null : T(overrides.source_time),
+    source_time: overrides.source_time === undefined || overrides.source_time === null ? null : T(overrides.source_time),
     available_time: T(available),
     ingestion_time: T(overrides.ingestion_time ?? available + 100),
     sequence: overrides.sequence ?? 0,
@@ -120,6 +126,8 @@ export interface MachineOptions {
   readonly lateArrival?: LateArrivalPolicy;
   /** `null` constructs the NO-PASSAGE machine (projections must fail `firewall_required`). */
   readonly firewall?: FirewallProjectionPort | null;
+  /** An injected ingest clock (deterministic by contract, L9). */
+  readonly ingestClock?: IngestClock;
 }
 
 /**
@@ -134,6 +142,7 @@ export function machineOf(options: MachineOptions = {}): RollingTimeMachine {
     maxRecords: options.maxRecords ?? 1_000,
     lateArrival: options.lateArrival ?? 'recompute',
     ...(options.firewall === null ? {} : { firewall: options.firewall ?? createReferenceFirewallPort() }),
+    ...(options.ingestClock === undefined ? {} : { ingestClock: options.ingestClock }),
   };
   return unwrap(createRollingTimeMachine(config));
 }
@@ -143,9 +152,42 @@ export function feed(machine: RollingTimeMachine, events: readonly unknown[], ba
   return unwrap(machine.ingestBatch(events, { batch_id: batchId }));
 }
 
+/** A test-shaped projection selector (trusted literals; branded internally). */
+export interface SelectorSpec {
+  readonly ids?: readonly string[];
+  readonly from?: number;
+  readonly to?: number;
+}
+
+/** Build a KnowledgeQueryFilter from a test-shaped spec. */
+export function buildSelector(spec: SelectorSpec | undefined): KnowledgeQueryFilter {
+  if (spec === undefined) return {};
+  return {
+    ...(spec.ids === undefined ? {} : { ids: spec.ids.map((id) => id as KnowledgeRecordId) }),
+    ...(spec.from === undefined ? {} : { availableFrom: T(spec.from) }),
+    ...(spec.to === undefined ? {} : { availableTo: T(spec.to) }),
+  };
+}
+
 /** Query the as-of view, unwrapping the result. */
-export function viewAt(machine: RollingTimeMachine, at: number, selector?: KnowledgeQueryFilter): AsOfView {
-  return unwrap(machine.asOf({ dataset: DATASET, at: T(at), ...(selector === undefined ? {} : { selector }) }));
+export function viewAt(machine: RollingTimeMachine, at: number, spec?: SelectorSpec): AsOfView {
+  return unwrap(
+    machine.asOf({ dataset: DATASET, at: T(at), ...(spec === undefined ? {} : { selector: buildSelector(spec) }) }),
+  );
+}
+
+/** Open a cursor, unwrapping the result. */
+export function openCursor(machine: RollingTimeMachine, spec?: SelectorSpec, from?: 'start' | 'tip'): PointInTimeCursor {
+  const options: CursorOptions = {
+    ...(from === undefined ? {} : { from }),
+    ...(spec === undefined ? {} : { selector: buildSelector(spec) }),
+  };
+  return unwrap(machine.openCursor(options));
+}
+
+/** Fork a cursor, unwrapping the result. */
+export function forkCursor(machine: RollingTimeMachine, cursorId: string): PointInTimeCursor {
+  return unwrap(machine.forkCursor(cursorId as CursorId));
 }
 
 /** Drain a cursor, unwrapping the result. */
@@ -156,6 +198,17 @@ export function drainAt(machine: RollingTimeMachine, cursorId: string, at: numbe
 /** The record ids of a list of records, in order. */
 export function idsOf(records: readonly { readonly record_id: string }[]): string[] {
   return records.map((record) => record.record_id);
+}
+
+/** One admitted record through the real admission path (interop/port suites). */
+export function admittedRecord(): TimeMachineRecord {
+  const admission = admitCanonicalEvent(rawEvent('kr-admitted', 2_000), TENANT, {
+    batch_ordinal: 1,
+    batch_id: 'fixture-batch',
+    ingestion_time: T(2_100),
+    arrival_sequence: 0,
+  });
+  return unwrap(admission);
 }
 
 /** Silence the unused-type warning for the re-exported result type. */

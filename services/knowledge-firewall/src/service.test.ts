@@ -80,7 +80,7 @@ describe('firewallQuery — clock-policed, tenant-scoped reads over the clean fi
 
   it('the decision audit log explains every inclusion and exclusion', () => {
     const result = unwrapQuery(firewallQuery(fixture.base, firewallClockAt(3_000), ids.acme(), {}));
-    const byId = new Map(result.audit.decisions.map((decision) => [decision.record_id, decision]));
+    const byId = new Map(result.audit.decisions.map((decision) => [decision.record_id as string, decision]));
     expect(byId.get('kr-trade-3')).toMatchObject({ decision: 'included', reason: 'visible', available_time: 3_000 });
     expect(byId.get('kr-feature-vwap')).toMatchObject({ decision: 'excluded', reason: 'not_yet_available', available_time: 3_250 });
     expect(byId.get('kr-aggregate-daily')).toMatchObject({ decision: 'excluded', reason: 'not_yet_available', available_time: 4_250 });

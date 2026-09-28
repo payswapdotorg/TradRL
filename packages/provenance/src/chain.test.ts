@@ -83,11 +83,13 @@ describe('validateDerivationChain', () => {
   });
 
   it('collects multiple violations in node order', () => {
+    // A parent equal to the node's own id is a self-reference; listing it
+    // twice produces one violation PER occurrence (b reports two).
     const validation = validateDerivationChain([node('a', ['a']), node('b', ['b', 'b'])]);
     expect(validation.violations).toEqual([
       { kind: 'chain_self_reference', node: 'a', parent: 'a' },
       { kind: 'chain_self_reference', node: 'b', parent: 'b' },
-      { kind: 'chain_duplicate_parent', node: 'b', parent: 'b' },
+      { kind: 'chain_self_reference', node: 'b', parent: 'b' },
     ]);
   });
 

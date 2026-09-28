@@ -321,7 +321,7 @@ type ClockIdentity =
  * divergence).
  */
 function probeClockIdentity(clock: IngestClock): TimeMachineResult<ClockIdentity> {
-  const stateFn = (clock as Record<string, unknown>).state;
+  const stateFn = (clock as unknown as Record<string, unknown>).state;
   if (typeof stateFn !== 'function') return ok({ kind: 'injected' });
   let state: unknown;
   try {
@@ -762,10 +762,7 @@ function buildMachine(
     drainCursor(cursorId, at) {
       const state = core.cursors.get(cursorId);
       if (state === undefined) {
-        return fail('unknown_cursor', `cursor "${cursorId}" does not resolve on this machine`);
-      }
-      if (!isCursorId(cursorId)) {
-        return fail('unknown_cursor', 'the cursor id must be a non-empty string');
+        return fail('unknown_cursor', `cursor "${String(cursorId)}" does not resolve on this machine`);
       }
       if (!isTimestampMs(at)) {
         return fail('invalid_query', 'the drain instant `at` must be a valid epoch-millisecond timestamp');

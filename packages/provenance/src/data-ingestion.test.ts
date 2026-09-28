@@ -212,10 +212,10 @@ describe('provider neutrality (L13/L14)', () => {
             instrument: 'TEST-USD',
             asset_class: 'other',
             event_type: 'other',
-            event_time: 1_000,
+            event_time: 1_000 as TimestampMs,
             source_time: null,
-            available_time: 1_050,
-            ingestion_time: 1_100,
+            available_time: 1_050 as TimestampMs,
+            ingestion_time: 1_100 as TimestampMs,
             sequence: 1,
             provider: 'test',
             provenance: {

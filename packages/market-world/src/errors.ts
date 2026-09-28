@@ -97,6 +97,8 @@ export type WorldErrorCode =
   | 'ingestion_pending'
   /** Ingestion was attempted after episodes bound to the world (the reference service closes the stream at first start). */
   | 'ingestion_closed'
+  /** Ingestion was attempted after episodes bound to the world (the reference service closes the stream at first start). */
+  | 'ingestion_closed'
   // --- serialization / resume -------------------------------------------------
   /** A serialized world/run state is malformed (collect-all detail in `errors`). */
   | 'invalid_state'

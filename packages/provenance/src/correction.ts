@@ -15,7 +15,7 @@
  * the events they amend.
  */
 
-import { invalidField, isNonEmptyString, isRecord, isNonEmptyStringArray, missingField, type CorrectionId, type CorrectionReason, type EventId } from './fields';
+import { invalidField, isNonEmptyString, isRecord, missingField, type CorrectionId, type CorrectionReason, type EventId } from './fields';
 import type { ProvenanceError } from './errors';
 import { isJsonObject, type JsonObject } from './json';
 import { isCustodyChain, validateCustodyChain, type CustodyChain } from './custody';
@@ -147,13 +147,4 @@ export function correctionIds(corrections: readonly CorrectionRecord[]): readonl
 /** Whether a correction list contains a given correction id. */
 export function hasCorrectionId(corrections: readonly CorrectionRecord[], id: CorrectionId): boolean {
   return corrections.some((correction) => correction.correction_id === id);
-}
-
-/** Guard helper reused by consumers that validate amendment payload arrays. */
-export function isAmendmentList(value: unknown): value is readonly JsonObject[] {
-  return Array.isArray(value) && value.every((element) => isJsonObject(element)) && isNonEmptyStringArray(
-    value.map((element) => String(Object.keys(element).length)),
-  ) === false
-    ? false
-    : true;
 }

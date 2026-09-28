@@ -78,7 +78,7 @@ describe('createProjectRecord', () => {
       ['acceptanceCriteriaId', { ...draft, acceptanceCriteriaId: criteriaId('not-an-ac-id') }],
       ['createdAt', { ...draft, createdAt: ts(Number.NaN) }],
       ['createdAt', { ...draft, createdAt: ts(-1) }],
-      ['goal', null],
+      ['draft', null],
     ];
     for (const [field, input] of cases) {
       try {
@@ -119,7 +119,7 @@ describe('isProjectRecord', () => {
       { ...record, createdAt: '2027-01-01T00:00:00Z' },
       { ...record, executionMode: 'paper' },
       { ...record, tenantId: '' },
-      // active-without-criteria: not a state the machine can produce.
+      // active-without-organization: not a state the machine can produce.
       {
         ...record,
         lifecycle: { ...record.lifecycle, status: 'active' },
@@ -127,7 +127,7 @@ describe('isProjectRecord', () => {
       // completed without the organization binding: unreachable.
       {
         ...record,
-        lifecycle: { ...record.lifecycle, status: 'completed', organizationRef: ORG },
+        lifecycle: { ...record.lifecycle, status: 'completed' },
       },
     ];
     for (const v of invalid) expect(isProjectRecord(v)).toBe(false);
@@ -197,7 +197,7 @@ describe('bindOrganizationToProject', () => {
     expectTypedError('invalid-binding-state', () =>
       bindOrganizationToProject(draftAbandoned, orgRef('org_x'), ts(record.createdAt + 2)),
     );
-    const archived = advanceProject(draftAbandoned, 'archive', ts(record.createdAt + 2)).record;
+    const archived = advanceProject(record, 'archive', ts(record.createdAt + 2)).record;
     expectTypedError('invalid-binding-state', () =>
       bindOrganizationToProject(archived, orgRef('org_x'), ts(record.createdAt + 3)),
     );

@@ -12,12 +12,23 @@ import {
   createKnowledgeRecord,
   derivedKnowledgeAvailableTime,
   knowledgePropagationFloor,
+  requireKnowledgeRecordId,
   validateKnowledgeRecord,
   type KnowledgeRecord,
 } from './index';
 import type { KnowledgeRecordId } from './ids';
 
 const T = (ms: number) => requireTimestampMs(ms);
+
+/** The T008 store-layer extension fields (corrections + custody). */
+const STORE_LEVEL = {
+  corrections: [],
+  custody: {
+    adapter: { id: 'kb-ingest-adapter', version: '1.0.0' },
+    batch: { batch_id: 'kb-batch-001' },
+    commit: { commit_id: 'kb-commit-00000001', commit_sequence: 1, ingestion_time: T(10_000) },
+  },
+};
 
 function raw(id: string, available: number): Record<string, unknown> {
   return {
@@ -30,7 +41,13 @@ function raw(id: string, available: number): Record<string, unknown> {
     ingestion_time: T(available + 100),
     inputs: [],
     computation: null,
-    provenance: { origin: 'historical', adapter: { id: 'binance-adapter', version: '1.4.0' }, derived_from: [], transform: null },
+    provenance: {
+      origin: 'historical',
+      adapter: { id: 'binance-adapter', version: '1.4.0' },
+      derived_from: [],
+      transform: null,
+      ...STORE_LEVEL,
+    },
   };
 }
 
@@ -45,7 +62,13 @@ function derived(id: string, inputs: readonly string[], available: number, tenan
     ingestion_time: T(available + 10),
     inputs: [...inputs],
     computation: { transform_id: 'test-transform', delay: { milliseconds: 250 } },
-    provenance: { origin: 'simulated', adapter: null, derived_from: inputs.map((input) => `evt-${input}`), transform: 'test-transform' },
+    provenance: {
+      origin: 'simulated',
+      adapter: null,
+      derived_from: inputs.map((input) => `evt-${input}`),
+      transform: 'test-transform',
+      ...STORE_LEVEL,
+    },
   };
 }
 
@@ -111,8 +134,8 @@ describe('validateKnowledgeRecord — the append-time propagation law', () => {
   const t1 = unwrap(createKnowledgeRecord(raw('t1', 1_000)));
   const t2 = unwrap(createKnowledgeRecord(raw('t2', 3_000)));
   const parents = new Map<KnowledgeRecordId, KnowledgeRecord>([
-    ['t1', t1],
-    ['t2', t2],
+    [requireKnowledgeRecordId('t1'), t1],
+    [requireKnowledgeRecordId('t2'), t2],
   ]);
 
   it('accepts a derived record available at or after its latest input', () => {
@@ -156,19 +179,17 @@ describe('validateKnowledgeRecord — the append-time propagation law', () => {
       ),
     );
     const aggregate = unwrap(
-      createKnowledgeRecord(
-        derived('agg', ['feat', 'r2'], 3_250), // canonical: max(2_250, 2_000) + 1_000 -> 3_250
-        ),
+      createKnowledgeRecord(derived('agg', ['feat', 'r2'], 3_250)), // floor is max(2_250, 2_000) = 2_250; 3_250 is beyond it (legitimate embargo)
     );
 
     const level1 = new Map<KnowledgeRecordId, KnowledgeRecord>([
-      ['r1', raw1],
-      ['r2', raw2],
+      [requireKnowledgeRecordId('r1'), raw1],
+      [requireKnowledgeRecordId('r2'), raw2],
     ]);
     const level2 = new Map<KnowledgeRecordId, KnowledgeRecord>([
-      ['r1', raw1],
-      ['r2', raw2],
-      ['feat', feature],
+      [requireKnowledgeRecordId('r1'), raw1],
+      [requireKnowledgeRecordId('r2'), raw2],
+      [requireKnowledgeRecordId('feat'), feature],
     ]);
 
     expect(validateKnowledgeRecord(feature, level1).ok).toBe(true);
@@ -177,8 +198,10 @@ describe('validateKnowledgeRecord — the append-time propagation law', () => {
     // Transitive law: the aggregate cannot precede the raw ancestor.
     const aggregateFloor = knowledgePropagationFloor([feature, raw2]);
     expect(aggregateFloor.ok).toBe(true);
-    if (aggregateFloor.ok) expect(aggregateFloor.value).toBe(2_250);
-    expect(aggregate.available_time).toBeGreaterThanOrEqual(aggregateFloor.value);
+    if (aggregateFloor.ok) {
+      expect(aggregateFloor.value).toBe(2_250);
+      expect(aggregate.available_time).toBeGreaterThanOrEqual(aggregateFloor.value);
+    }
     expect(aggregate.available_time).toBeGreaterThanOrEqual(raw2.available_time);
     expect(feature.available_time).toBeGreaterThanOrEqual(raw2.available_time);
   });

@@ -23,9 +23,9 @@
  * queue-position estimation, no synthetic depth.
  */
 
-import { deepFreeze, isNonEmptyString, isNonNegativeSafeInteger, isPositiveSafeInteger, isRecord } from './primitives';
+import { deepFreeze, isNonEmptyString, isNonNegativeSafeInteger, isRecord } from './primitives';
 import { invalidField, invalidType, missingField, ok, type ExchangeError, type ExchangeResult } from './errors';
-import { compare, isPositiveDecimal, isUnsignedDecimal, normalize } from './decimals';
+import { add, compare, isAlignedToGrid, isPositiveDecimal, isUnsignedDecimal, normalize } from './decimals';
 import type { ExchangeOrderId } from './ids';
 import { isExchangeOrderId } from './ids';
 
@@ -160,10 +160,6 @@ function validateLevels(levels: readonly unknown[], path: string, venue: { reado
       continue;
     }
     const canonicalPrice = normalize(level.price);
-    if (canonicalPrice !== level.price && !isUnsignedDecimal(level.price)) {
-      errors.push(invalidField(`${path}[${index}].price`, `"${level.price}" is not a decimal string`));
-      continue;
-    }
     if (seen.has(canonicalPrice)) {
       errors.push(invalidField(`${path}[${index}].price`, `duplicate level price "${canonicalPrice}" — aggregate levels before seeding`));
       continue;
@@ -171,30 +167,14 @@ function validateLevels(levels: readonly unknown[], path: string, venue: { reado
     seen.add(canonicalPrice);
     // Venue grid rules (L6 explicit): seed prices sit on the tick grid,
     // seed sizes on the lot grid.
-    if (!isMultipleOf(canonicalPrice, venue.tick_size)) {
+    if (!isAlignedToGrid(canonicalPrice, venue.tick_size)) {
       errors.push(invalidField(`${path}[${index}].price`, `"${canonicalPrice}" is not a multiple of the tick size ${venue.tick_size}`));
     }
-    if (!isMultipleOf(normalize(level.size), venue.lot_size)) {
+    if (!isAlignedToGrid(normalize(level.size), venue.lot_size)) {
       errors.push(invalidField(`${path}[${index}].size`, `"${level.size}" is not a multiple of the lot size ${venue.lot_size}`));
     }
   }
   return errors;
-}
-
-/** Exact grid-multiple check (import-avoiding alias kept local for clarity). */
-function isMultipleOf(value: string, grid: string): boolean {
-  // Exact: bring both to a common scale and test the remainder.
-  const [vd, vs] = splitDecimal(value);
-  const [gd, gs] = splitDecimal(grid);
-  const scale = Math.max(vs, gs);
-  return (vd * 10n ** BigInt(scale - vs)) % (gd * 10n ** BigInt(scale - gs)) === 0n;
-}
-
-function splitDecimal(value: string): [bigint, number] {
-  const dot = value.indexOf('.');
-  const intPart = dot === -1 ? value : value.slice(0, dot);
-  const fracPart = dot === -1 ? '' : value.slice(dot + 1);
-  return [BigInt(`${intPart || '0'}${fracPart}`), fracPart.length];
 }
 
 /** Sort levels by price (desc for bids, asc for asks) and normalize decimals. */
@@ -309,26 +289,9 @@ export function topOfBook(book: BookState): TopOfBook | null {
 function aggregate(orders: readonly RestingOrder[]): string {
   let total = '0';
   for (const order of orders) {
-    total = addExact(total, order.remaining);
+    total = add(total, order.remaining);
   }
   return total;
-}
-
-function addExact(a: string, b: string): string {
-  const [ad, as] = splitDecimal(a);
-  const [bd, bs] = splitDecimal(b);
-  const scale = Math.max(as, bs);
-  return joinDecimal(ad * 10n ** BigInt(scale - as) + bd * 10n ** BigInt(scale - bs), scale);
-}
-
-function joinDecimal(digits: bigint, scale: number): string {
-  const text = digits.toString();
-  if (scale === 0) return text;
-  const padded = text.padStart(scale + 1, '0');
-  const intPart = padded.slice(0, padded.length - scale);
-  let fracPart = padded.slice(padded.length - scale);
-  while (fracPart.length > 0 && fracPart.endsWith('0')) fracPart = fracPart.slice(0, -1);
-  return fracPart.length === 0 ? intPart : `${intPart}.${fracPart}`;
 }
 
 /**
@@ -345,6 +308,3 @@ export function bookSnapshotView(book: BookState): {
     asks: book.asks.map((level) => deepFreeze({ price: level.price, size: aggregate(level.orders) })),
   });
 }
-
-/** Guard re-export used by config validation for depth sanity. */
-export { isPositiveSafeInteger };

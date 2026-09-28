@@ -24,7 +24,7 @@
  */
 
 import { hashOf } from './hash';
-import type { KnowledgeQueryFilter } from './firewall';
+import type { FirewallAuditLog, KnowledgeQueryFilter } from './firewall';
 import type { DatasetRef, ViewHash } from './ids';
 import type { TimestampMs } from './timestamp';
 import type { TimeMachineRecord } from './record';
@@ -48,7 +48,7 @@ export interface AsOfView {
   /** Firewall-passed records, (available_time, record_id) ascending; quartet carried unmodified. */
   readonly records: readonly TimeMachineRecord[];
   /** The firewall's replayable decision log — the delegation evidence. */
-  readonly audit: Readonly<import('./firewall').FirewallAuditLog>;
+  readonly audit: FirewallAuditLog;
   /** Deterministic lineage checksum, recomputable via {@link recomputeViewHash}. */
   readonly hash: ViewHash;
 }
@@ -87,8 +87,16 @@ function recordSkeleton(record: TimeMachineRecord): unknown {
   };
 }
 
+/** The lineage-hashable content of a view (the audit log is evidence, not lineage — excluded). */
+export interface ViewHashInput {
+  readonly dataset: DatasetRef;
+  readonly at: TimestampMs;
+  readonly selector: KnowledgeQueryFilter;
+  readonly records: readonly TimeMachineRecord[];
+}
+
 /** The hashable lineage content of a view (everything except the hash itself). */
-export function viewHashContent(view: Omit<AsOfView, 'hash'>): unknown {
+export function viewHashContent(view: ViewHashInput): unknown {
   return {
     dataset: view.dataset,
     at: view.at,
@@ -98,7 +106,7 @@ export function viewHashContent(view: Omit<AsOfView, 'hash'>): unknown {
 }
 
 /** Compute the deterministic lineage hash of a view's content. */
-export function computeViewHash(view: Omit<AsOfView, 'hash'>): ViewHash {
+export function computeViewHash(view: ViewHashInput): ViewHash {
   return hashOf(viewHashContent(view)) as ViewHash;
 }
 

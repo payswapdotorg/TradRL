@@ -2,13 +2,14 @@
 // firewall passage is a TYPED error, every projection passes through the
 // port (call-count evidence), the production source contains no import
 // path to any store/firewall package (law D-004 mirrors only), and the
-// acceptance grep ("no ': any' / 'as any'") holds as a self-check.
+// acceptance grep (no untyped escapes) holds as a self-check.
 //
 // This file reads the package's own sources — the same evidence the gate
 // greps — so a violation fails the suite, not just the review.
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import {
   createReferenceFirewallPort,
@@ -17,6 +18,15 @@ import {
   type FirewallProjectionPort,
 } from './index';
 import { DATASET, TENANT, drainAt, feed, idsOf, machineOf, openCursor, rawEvent, viewAt } from './fixtures';
+
+/** Extract the module specifier of an import/export-from line (null when the line carries none). */
+function moduleSpecifierOf(line: string): string | null {
+  const match = /\bfrom\s+['"]([^'"]+)['"]/.exec(line);
+  if (match !== null) return match[1] ?? null;
+  const bareImport = /^\s*import\s+['"]([^'"]+)['"]/.exec(line);
+  if (bareImport !== null) return bareImport[1] ?? null;
+  return null;
+}
 
 /** Recursively collect file paths under a directory. */
 function collectFiles(dir: string): string[] {
@@ -32,7 +42,7 @@ function collectFiles(dir: string): string[] {
   return files;
 }
 
-const SRC_DIR = join(__dirname);
+const SRC_DIR = fileURLToPath(new URL('.', import.meta.url));
 
 describe('structural no-bypass: the source cannot reach a store or firewall package', () => {
   it('production modules import ONLY relative paths (zero runtime deps; law D-004 mirrors)', () => {
@@ -42,39 +52,44 @@ describe('structural no-bypass: the source cannot reach a store or firewall pack
     for (const path of production) {
       const source = readFileSync(path, 'utf8');
       for (const line of source.split('\n')) {
-        const importMatch = /^\s*import\b/.test(line) || /^\s*export\b.*\bfrom\b/.test(line);
-        if (!importMatch) continue;
-        if (line.includes("'./") || line.includes('"./')) continue;
+        const specifier = moduleSpecifierOf(line);
+        if (specifier === null) continue; // multi-line imports resolve on their `from` line
+        if (specifier.startsWith('./')) continue;
         offenders.push(`${path}: ${line.trim()}`);
       }
     }
     expect(offenders).toEqual([]);
   });
 
-  it('test modules import only vitest and relative paths (no sibling-package reach)', () => {
+  it('test modules import only vitest, node builtins and relative paths (no sibling-package reach)', () => {
     const tests = collectFiles(SRC_DIR).filter((path) => path.endsWith('.test.ts'));
     expect(tests.length).toBeGreaterThan(5);
     const offenders: string[] = [];
     for (const path of tests) {
       const source = readFileSync(path, 'utf8');
       for (const line of source.split('\n')) {
-        const importMatch = /^\s*import\b/.test(line) || /^\s*export\b.*\bfrom\b/.test(line);
-        if (!importMatch) continue;
-        if (line.includes("'./") || line.includes('"./')) continue;
-        if (line.includes("'vitest'")) continue;
+        const specifier = moduleSpecifierOf(line);
+        if (specifier === null) continue;
+        if (specifier.startsWith('./')) continue;
+        if (specifier === 'vitest') continue;
+        if (specifier.startsWith('node:')) continue; // test tooling may read sources
         offenders.push(`${path}: ${line.trim()}`);
       }
     }
     expect(offenders).toEqual([]);
   });
 
-  it('the acceptance self-check: no ": any" and no "as any" anywhere in the package sources', () => {
+  it('the acceptance self-check: no untyped escapes anywhere in the package sources', () => {
+    // Patterns are built by concatenation so this file itself stays clean
+    // under the very grep it asserts (raw substring match, comments included).
+    const colonAny = ': ' + 'any';
+    const asAny = 'as ' + 'any';
     const offenders: string[] = [];
     for (const path of collectFiles(SRC_DIR)) {
       const source = readFileSync(path, 'utf8');
       const lines = source.split('\n');
       lines.forEach((line, index) => {
-        if (/: any\b/.test(line) || /as any\b/.test(line)) {
+        if (line.includes(colonAny) || line.includes(asAny)) {
           offenders.push(`${path}:${index + 1}: ${line.trim()}`);
         }
       });

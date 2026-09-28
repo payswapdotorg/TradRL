@@ -224,9 +224,9 @@ describe('resume (criterion 9)', () => {
     const service1 = unwrap(createReplayWorldService(fixtureWorldConfig(STREAM), createFixtureEventSource(STREAM)));
     await unwrapAsync(service1.loadAll());
     const view = unwrap(service1.start(fixtureSpec(STREAM)));
-    unwrap(service.observe(view.episode_id, t(BASE)));
-    unwrap(service.advance(view.episode_id, t(STOPS.firstAdvance)));
-    unwrap(service.observe(view.episode_id, t(STOPS.firstAdvance)));
+    unwrap(service1.observe(view.episode_id, t(BASE)));
+    unwrap(service1.advance(view.episode_id, t(STOPS.firstAdvance)));
+    unwrap(service1.observe(view.episode_id, t(STOPS.firstAdvance)));
     unwrap(
       service1.submit(view.episode_id, {
         action_id: 'intent-1',

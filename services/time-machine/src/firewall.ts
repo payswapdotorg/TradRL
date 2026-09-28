@@ -33,7 +33,7 @@
 
 import { isTimestampMs, type TimestampMs } from './timestamp';
 import { fail, ok, type TimeMachineResult } from './errors';
-import { isKnowledgeRecordId, isTenantId, type KnowledgeRecordId, type TenantId } from './ids';
+import { isKnowledgeRecordId, type KnowledgeRecordId, type TenantId } from './ids';
 import { isTimeMachineRecord, type TimeMachineRecord } from './record';
 
 /** Minimal clock contract: the firewall decision needs exactly `now`. Mirror of T026. */
@@ -220,6 +220,3 @@ export function isFirewallProjectionPort(value: unknown): value is FirewallProje
     typeof (value as Record<string, unknown>).project === 'function'
   );
 }
-
-/** Guard re-exports used by the machine's projection path. */
-export { isTenantId };

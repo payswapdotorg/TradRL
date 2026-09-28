@@ -31,7 +31,32 @@
  */
 
 import { isTimestampMs, type TimestampMs } from './timestamp';
-import { isEventOrigin, validateIngestionProvenance, type AssetClass, type EventType } from './provenance';
+import { validateIngestionProvenance, type IngestionProvenance } from './provenance';
+
+/** The canonical event-type discriminator (mirror of market-protocol / data-ingestion). */
+export type EventType =
+  | 'trade'
+  | 'quote'
+  | 'book_snapshot'
+  | 'book_delta'
+  | 'ohlcv'
+  | 'news'
+  | 'macro_release'
+  | 'social_signal'
+  | 'fundamental'
+  | 'option_chain_mark'
+  | 'other';
+
+/** The canonical asset-class discriminator (mirror of market-protocol / data-ingestion). */
+export type AssetClass =
+  | 'equity'
+  | 'crypto'
+  | 'fx'
+  | 'commodity'
+  | 'future'
+  | 'option'
+  | 'bond'
+  | 'index';
 
 /** The canonical event-type taxonomy (mirror of market-protocol / data-ingestion). */
 export const EVENT_TYPES: readonly EventType[] = [
@@ -127,7 +152,7 @@ export interface CanonicalEvent {
   readonly ingestion_time: TimestampMs;
   readonly sequence: number;
   readonly provider: string;
-  readonly provenance: import('./provenance').IngestionProvenance;
+  readonly provenance: IngestionProvenance;
   /** Opaque payload record — semantics owned by @tradrl/market-protocol. */
   readonly payload: object;
 }

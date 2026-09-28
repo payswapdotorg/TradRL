@@ -176,28 +176,25 @@ export function isKnowledgeOrigin(value: unknown): value is KnowledgeOrigin {
 
 /** Runtime type guard for an adapter reference (mirror of T008's isAdapterRef). */
 export function isAdapterRef(value: unknown): value is AdapterRef {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    !Array.isArray(value) &&
-    typeof (value as Record<string, unknown>).id === 'string' &&
-    (value as Record<string, unknown>).id !== null &&
-    ((value as Record<string, unknown>).id as string).length > 0 &&
-    typeof (value as Record<string, unknown>).version === 'string' &&
-    ((value as Record<string, unknown>).version as string).length > 0
+    typeof candidate.id === 'string' &&
+    candidate.id.length > 0 &&
+    typeof candidate.version === 'string' &&
+    candidate.version.length > 0
   );
 }
 
 /** Runtime type guard for a correction reference. */
 export function isCorrectionRef(value: unknown): value is CorrectionRef {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    !Array.isArray(value) &&
-    typeof (value as Record<string, unknown>).correction_id === 'string' &&
-    ((value as Record<string, unknown>).correction_id as string).length > 0 &&
-    typeof (value as Record<string, unknown>).reason === 'string' &&
-    ((value as Record<string, unknown>).reason as string).length > 0
+    typeof candidate.correction_id === 'string' &&
+    candidate.correction_id.length > 0 &&
+    typeof candidate.reason === 'string' &&
+    candidate.reason.length > 0
   );
 }
 

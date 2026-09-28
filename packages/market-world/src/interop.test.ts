@@ -352,6 +352,44 @@ describe.skipIf(!protocolPresent)('environment-protocol interop (T005 merged on 
     expect(loaded.isEpisodeFinish(finished.value)).toBe(true);
   });
 
+  it('the ReplayWorldService (services/market-world) also passes the REAL isEnvironment guard', async () => {
+    const protocolSpecifier = '../../environment-protocol/src/index';
+    const loaded: unknown = await import(/* @vite-ignore */ protocolSpecifier);
+    if (!isProtocolModule(loaded)) throw new Error('environment-protocol module shape mismatch');
+
+    const { createReplayWorldService, createFixtureEventSource, fixtureSpec, fixtureWorldConfig } =
+      await import(/* @vite-ignore */ '../../../services/market-world/src/index');
+    const serviceResult = createReplayWorldService(fixtureWorldConfig({ seed: 'interop-seed' }), createFixtureEventSource({ seed: 'interop-seed' }));
+    if (!serviceResult.ok) throw new Error('service fixture failed');
+    const service = serviceResult.value;
+    expect(loaded.isEnvironment(service)).toBe(true);
+
+    // A full episode through the service: every output passes the REAL guards.
+    const loadAll = await service.loadAll();
+    if (!loadAll.ok) throw new Error('loadAll failed');
+    const started = service.start(fixtureSpec({ seed: 'interop-seed' }));
+    if (!started.ok) throw new Error('start failed');
+    expect(loaded.isEpisodeState(started.value)).toBe(true);
+    const advanced = service.advance(started.value.episode_id, requireTimestampMs(T0 + 2_000));
+    if (!advanced.ok) throw new Error('advance failed');
+    expect(loaded.isEpisodeState(advanced.value)).toBe(true);
+    const observed = service.observe(started.value.episode_id, requireTimestampMs(T0 + 2_000));
+    if (!observed.ok) throw new Error('observe failed');
+    expect(observed.value.every((observation) => loaded.isObservation(observation))).toBe(true);
+    const submitted = service.submit(started.value.episode_id, {
+      action_id: 'interop-1',
+      actor: 'agent-interop',
+      submitted_at: T0 + 2_000,
+      client_sequence: 1,
+      payload: null,
+    });
+    if (!submitted.ok) throw new Error('submit failed');
+    expect(loaded.isEpisodeState(submitted.value)).toBe(true);
+    const finished = service.finish(started.value.episode_id, { code: 'completed', detail: 'interop trip wire' });
+    if (!finished.ok) throw new Error('finish failed');
+    expect(loaded.isEpisodeFinish(finished.value)).toBe(true);
+  });
+
   it('deriveEpisodeId parity: the mirrored derivation equals the REAL one for the same spec', async () => {
     const protocolSpecifier = '../../environment-protocol/src/index';
     const loaded: unknown = await import(/* @vite-ignore */ protocolSpecifier);

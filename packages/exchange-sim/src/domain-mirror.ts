@@ -35,7 +35,8 @@ import { deepFreeze, isNonEmptyString, isRecord } from './primitives';
 import { invalidField, invalidType, missingField, ok, type ExchangeError, type ExchangeResult } from './errors';
 import type { InstrumentId, VenueId } from './ids';
 import { isInstrumentId, isVenueId } from './ids';
-import { isCanonicalDecimal, isCanonicalPositiveDecimal } from './decimals';
+import { isCanonicalDecimal } from './decimals';
+import { compare as compareDecimal } from './decimals';
 
 // ---------------------------------------------------------------------------
 // Primitive mirrors (domain-core primitives.ts — the exact same laws)
@@ -70,7 +71,7 @@ export function isDecimalString(v: unknown): v is DecimalString {
 
 /** Precondition: a valid DecimalString. True when its value is > 0. Mirror of domain-core's `isPositiveDecimal`. */
 export function isPositiveDecimal(a: DecimalString): boolean {
-  return a !== '0' && !/^0(\.0+)?$/.test(a) && !/^-/.test(a);
+  return compareDecimal(a, '0') > 0;
 }
 
 /**

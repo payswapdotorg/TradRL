@@ -125,7 +125,7 @@ describe('canonical serialization and digest (L9)', () => {
     const baseHash = configHash(base);
     for (const variant of variants) {
       const validated = unwrap(validateExchangeConfig(variant));
-      expect(configHash(validized), canonicalConfigJson(validized).slice(0, 120)).not.toBe(baseHash);
+      expect(configHash(validated), canonicalConfigJson(validated).slice(0, 120)).not.toBe(baseHash);
     }
     // Identical re-validation: same hash, twice.
     expect(configHash(unwrap(validateExchangeConfig(configFixture())))).toBe(baseHash);

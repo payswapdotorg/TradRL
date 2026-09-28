@@ -97,15 +97,6 @@ export type ProjectLifecycleEvent = (typeof PROJECT_LIFECYCLE_EVENTS)[number];
 export const isProjectLifecycleEvent = isOneOf(PROJECT_LIFECYCLE_EVENTS);
 
 /**
- * The transition table: for each status, the events that MAY be applied.
- * DERIVED from `EVENT_TARGETS` below, so the table and the target map can
- * never disagree.
- */
-export const PROJECT_LIFECYCLE_TRANSITIONS: Readonly<
-  Record<ProjectLifecycleStatus, readonly ProjectLifecycleEvent[]>
-> = buildTransitionTable();
-
-/**
  * For each event, the legal (source status -> target status) edges.
  * The single source of truth of the state machine.
  */
@@ -139,6 +130,15 @@ function buildTransitionTable(): Readonly<
   }
   return deepFreeze(table);
 }
+
+/**
+ * The transition table: for each status, the events that MAY be applied.
+ * DERIVED from `EVENT_TARGETS` above, so the table and the target map can
+ * never disagree.
+ */
+export const PROJECT_LIFECYCLE_TRANSITIONS: Readonly<
+  Record<ProjectLifecycleStatus, readonly ProjectLifecycleEvent[]>
+> = buildTransitionTable();
 
 /**
  * `true` when applying `event` in `status` is a legal edge of the machine.

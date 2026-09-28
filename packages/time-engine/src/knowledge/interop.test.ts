@@ -63,7 +63,7 @@ import {
   EVENT_ORIGINS as PROTOCOL_EVENT_ORIGINS,
   isProvenance as protocolIsProvenance,
   isTimestampMs as protocolIsTimestampMs,
-  validateProvenance,
+  validateProvenance as protocolValidateProvenance,
   type EventOrigin,
   type Provenance as ProtocolProvenance,
 } from '../../../market-protocol/src/index';

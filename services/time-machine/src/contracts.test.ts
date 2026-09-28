@@ -28,6 +28,7 @@ import {
   validateCanonicalEvent,
   validateIngestionProvenance,
   validateProjectionSelector,
+  type IngestClock,
 } from './index';
 import { rawEvent } from './fixtures';
 
@@ -169,7 +170,8 @@ describe('canonical event validation (T008 envelope mirror)', () => {
   });
 
   it('enforces the ONE quartet ordering (D-003): available_time >= event_time', () => {
-    const early = validateCanonicalEvent({ ...rawEvent('evt-4', 1_000), available_time: 999 });
+    // rawEvent('evt-4', 1_000) has event_time 950 — availability 900 precedes it.
+    const early = validateCanonicalEvent({ ...rawEvent('evt-4', 1_000), available_time: 900 });
     expect(early.ok).toBe(false);
     expect(early.errors.some((error) => error.code === 'timestamp_order')).toBe(true);
     // Equal is the boundary: information about an event is observable at the event instant.
@@ -290,9 +292,9 @@ describe('ingest clock (L9 — injected, deterministic)', () => {
     expect(clock.value.state()).toEqual({ kind: 'builtin-stepping', base: 500, step_ms: 2, consumed: 1 });
 
     const throwing = { next: (): number => { throw new Error('boom'); } };
-    expect(nextIngestStamp(throwing).ok).toBe(false);
+    expect(nextIngestStamp(throwing as unknown as IngestClock).ok).toBe(false);
     const invalid = { next: (): number => -5 };
-    const result = nextIngestStamp(invalid);
+    const result = nextIngestStamp(invalid as unknown as IngestClock);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.code).toBe('invalid_ingest_clock');

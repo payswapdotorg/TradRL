@@ -15,6 +15,7 @@ import {
   sequenceTrackersOf,
   serializeReplayWorldState,
   validateWorldConfig,
+  type TimestampMs,
 } from './index';
 import { ingestWorld } from './transition';
 
@@ -151,7 +152,7 @@ describe('serialize / deserialize (the resume contract)', () => {
     const serialized = serializeReplayWorldState(state.value);
     if (!serialized.ok) throw new Error('fixture');
     const asRecord = serialized.value as Record<string, unknown>;
-    const tampered = { ...asRecord, clock: { ...asRecord.clock, now: 'not-a-timestamp' } };
+    const tampered = { ...asRecord, clock: { ...(asRecord.clock as Record<string, unknown>), now: 'not-a-timestamp' } };
     const result = deserializeReplayWorldState(tampered);
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -170,7 +171,7 @@ describe('replayBaseStateFrom (the pristine loading state)', () => {
     const ingested = ingestWorld(state.value, [eventFixture()]);
     if (!ingested.ok) throw new Error('fixture');
     // Simulate episode-bound evolution:
-    const evolved = { ...ingested.value, clock: { ...ingested.value.clock, now: T0 }, status: 'finished' as const, termination: { code: 'completed' as const, detail: 'done' } };
+    const evolved = { ...ingested.value, clock: { ...ingested.value.clock, now: T0 as TimestampMs }, status: 'finished' as const, termination: { code: 'completed' as const, detail: 'done' } };
     const base = replayBaseStateFrom(evolved);
     expect(base.spec).toBeNull();
     expect(base.intents).toEqual([]);

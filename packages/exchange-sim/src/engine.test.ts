@@ -368,7 +368,7 @@ describe('order rejects (typed outcomes that ride the stream)', () => {
     expect(second.ok).toBe(true);
     if (!second.ok) return;
     expect(isOrderReject(second.value.ack)).toBe(true);
-    if ((second.value.ack as OrderReject).kind === undefined) return;
+    if (!isOrderReject(second.value.ack)) return;
     expect((second.value.ack as OrderReject).reason).toBe('duplicate_client_order_id');
     expect(second.value.ack.client_order_id).toBe('dup');
     // The reject is RECORDED in the order log with its audit trail.

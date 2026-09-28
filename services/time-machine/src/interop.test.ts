@@ -43,8 +43,8 @@ describe('type-level mirror compatibility (verified by pnpm typecheck)', () => {
 
   it('the T026 floor accepts machine records; the machine type demands the arrival axis', () => {
     const firewallShaped = {
-      record_id: 'kr-1',
-      tenant: 'acme',
+      record_id: 'kr-1' as t026.KnowledgeRecordId,
+      tenant: 'acme' as t026.TenantId,
       payload: { price: '1' },
       event_time: 1_000 as t026.TimestampMs,
       source_time: null,
@@ -79,7 +79,7 @@ describe('type-level mirror compatibility (verified by pnpm typecheck)', () => {
   });
 
   it('branded mirrors are mutually assignable with the T026 brands (identical brand strings)', () => {
-    const id: t026.KnowledgeRecordId = 'kr-1';
+    const id: t026.KnowledgeRecordId = 'kr-1' as t026.KnowledgeRecordId;
     const asMachineId: KnowledgeRecordId = id;
     const back: t026.KnowledgeRecordId = asMachineId;
     expect(back).toBe('kr-1');
