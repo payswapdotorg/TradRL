@@ -236,7 +236,7 @@ describe.skipIf(!protocolPresent)('environment-protocol interop (T005 merged on 
 });
 
 describe.skipIf(!protocolPresent)('market-world package interop (T009 merged on the integration tree)', () => {
-  it('the exchange service’s event outputs pass T009's WorldEvent mirror validation (the shared market-protocol envelope)', async () => {
+  it('the exchange service’s event outputs pass T009’s WorldEvent mirror validation (the shared market-protocol envelope)', async () => {
     const specifier = '../../../../packages/market-world/src/index';
     const loaded: unknown = await import(/* @vite-ignore */ specifier);
     const candidate = loaded as Record<string, unknown>;
