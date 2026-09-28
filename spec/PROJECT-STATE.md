@@ -4,10 +4,10 @@
 |---|---|
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
-| Program phase | environment/control plane (T005-T007 wave) |
-| Current authorized Work Order | T005, T006, T007 |
-| Active workers | 3 |
-| In-flight | T005 (work/T005-environment-protocol), T006 (work/T006-agent-os), T007 (work/T007-control-plane) |
+| Program phase | wave-3/4 recovery complete (T005-T011, T026, T029 reconstructed) |
+| Current authorized Work Order | none (awaiting wave-5 dispatch) |
+| Active workers | 0 |
+| In-flight | none |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
@@ -21,6 +21,18 @@ Merged (all CI-verified, Tech Lead verified in isolated worktrees, 430/430 tests
 - T004 257aff2 — market event/data/time protocol + point-in-time firewall (163 tests)
 Wave 3 (T005 environment protocol/runner, T006 Agent OS kernel, T007 control plane)
 dispatched from base 257aff2; surfaces pairwise disjoint. T008 ready for wave 4.
+
+
+## Recovery note (2026-09-28, batch-replay recovery)
+Sandbox reset at ~18:32 UTC destroyed the local repository state including nine
+merged work orders (T005-T011, T026, T029). The branch `recover/13-50` was
+reconstructed from preserved batch stores (Write args + post-Write Edit/MultiEdit
+deltas) and oracle candidate versions; each ticket re-merged on the recovery
+branch with a `merge: TXXX (recovered...)` commit. Local verification at 987b1e3:
+`pnpm typecheck` clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped —
+the failures are cross-version behavioral mismatches between sibling verbatim
+writes (engine/session/scan suites) and remain under triage. `program/graph.json`
+marks the nine tickets merged with recovery evidence; frontier is T012, T036.
 
 ## State transition
 A Work Order becomes complete only after implementation, verification, evidence, ownership compliance, Tech Lead acceptance and merge. Record exact merged SHA.

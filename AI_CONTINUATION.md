@@ -23,3 +23,12 @@ After every accepted wave: reconcile exact merged SHA, update spec/PROJECT-STATE
 Native: market experience -> trajectory -> evaluation -> capability gap -> autonomous learning -> new Body Version.
 Optional: capability gap -> Arena/expert -> imported artifact -> local evaluation -> reusable capability.
 Arena is never in the critical native learning loop.
+## Recovery record (2026-09-28)
+Sandbox reset ~18:32 UTC lost the local tree including nine merged work orders
+(T005, T006, T007, T008, T009, T010, T011, T026, T029). Recovery on branch
+`recover/13-50` (pushed): batch-store replay (Write args + post-Write Edit
+deltas mined from /home/z/my-project/recovery/batches), oracle candidate swaps,
+and mechanical joins. Status at 987b1e3: typecheck 0 errors; vitest 1319/1394
+passing (74 failures = cross-version behavioral mismatches, under triage);
+program:check valid (13/50 merged, frontier T012 + T036); governance passed.
+Next: triage the 74 failing tests, then dispatch wave 5 from the frontier.
