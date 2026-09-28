@@ -115,7 +115,6 @@ export function isKnowledgeRecord(value: unknown): value is KnowledgeRecord {
     seen.add(input);
   }
 
-  if (!Array.isArray(candidate.inputs)) return false;
   const derived = candidate.inputs.length > 0;
   if (derived && !isComputationPolicy(candidate.computation)) return false;
   if (!derived && candidate.computation !== null) return false;
@@ -199,6 +198,7 @@ export function createKnowledgeRecord(input: unknown): KnowledgeResult<Knowledge
   if (!Array.isArray(candidate.inputs)) {
     return fail('invalid_record', 'inputs must be an array of parent record ids');
   }
+  const inputs: KnowledgeRecordId[] = [];
   const seen = new Set<string>();
   for (const parent of candidate.inputs) {
     if (!isKnowledgeRecordId(parent)) {
@@ -211,8 +211,9 @@ export function createKnowledgeRecord(input: unknown): KnowledgeResult<Knowledge
       return fail('invalid_record', `duplicate input id "${parent}" in the knowledge lineage`);
     }
     seen.add(parent);
+    inputs.push(parent);
   }
-  const derived = (candidate.inputs as unknown[]).length > 0;
+  const derived = inputs.length > 0;
 
   // Computation policy iff lineage.
   if (candidate.computation === undefined) {
@@ -241,7 +242,7 @@ export function createKnowledgeRecord(input: unknown): KnowledgeResult<Knowledge
     source_time: candidate.source_time,
     available_time: candidate.available_time,
     ingestion_time: candidate.ingestion_time,
-    inputs: Object.freeze([...(candidate.inputs as unknown[])]) as readonly KnowledgeRecordId[],
+    inputs: Object.freeze(inputs),
     computation: candidate.computation,
     provenance: deepFreeze(candidate.provenance) as KnowledgeProvenance,
   };
