@@ -5,7 +5,7 @@
  * Lane 1 (present on this branch): @tradrl/market-protocol and
  * @tradrl/exchange-sim and @tradrl/time-engine — statically imported.
  * Every emitted event must satisfy the CANONICAL MarketEvent validator;
- * the service's session records and episode views satisfy the exchange
+ * the service’s session records and episode views satisfy the exchange
  * contract's own guards.
  *
  * Lane 2 (conditional): @tradrl/environment-protocol (T005) and
@@ -14,7 +14,7 @@
  * The trip wires against the REAL packages load them DYNAMICALLY when
  * present — on the integration tree they run the FULL battery
  * (isEnvironment over the ExchangeService, the REAL observation/episode
- * guards over the service's outputs, and deriveEpisodeId parity); on
+ * guards over the service’s outputs, and deriveEpisodeId parity); on
  * this branch they are skipped with an explicit notice and the
  * mirror-based proofs below (type-level witnesses + the local guards in
  * env-mirror.ts) carry the guarantee.
@@ -78,7 +78,7 @@ function firstObservation(): never {
 // Lane 1: statically present packages
 // ---------------------------------------------------------------------------
 
-describe('the service's outputs satisfy the canonical lanes (present on this branch)', () => {
+describe('the service’s outputs satisfy the canonical lanes (present on this branch)', () => {
   const run = runExchangeFixture();
 
   it('every emitted event IS a canonical MarketEvent (validateMarketEvent accepts each one)', () => {
@@ -186,7 +186,7 @@ describe.skipIf(!protocolPresent)('environment-protocol interop (T005 merged on 
     expect(loaded.isEnvironment(service)).toBe(true);
   });
 
-  it('the service's outputs pass the REAL observation/episode/finish guards', async () => {
+  it('the service’s outputs pass the REAL observation/episode/finish guards', async () => {
     const specifier = '../../../../packages/environment-protocol/src/index';
     const loaded: unknown = await import(/* @vite-ignore */ specifier);
     if (!isProtocolModule(loaded)) throw new Error('environment-protocol module shape mismatch');
@@ -236,7 +236,7 @@ describe.skipIf(!protocolPresent)('environment-protocol interop (T005 merged on 
 });
 
 describe.skipIf(!protocolPresent)('market-world package interop (T009 merged on the integration tree)', () => {
-  it('the exchange service's event outputs pass T009's WorldEvent mirror validation (the shared market-protocol envelope)', async () => {
+  it('the exchange service’s event outputs pass T009's WorldEvent mirror validation (the shared market-protocol envelope)', async () => {
     const specifier = '../../../../packages/market-world/src/index';
     const loaded: unknown = await import(/* @vite-ignore */ specifier);
     const candidate = loaded as Record<string, unknown>;
