@@ -231,13 +231,15 @@ export function deserializeReplayRunState(value: unknown): WorldResult<ReplayRun
   if (value.schema !== 'tradrl/replay-run-state@1') {
     errors.push({ code: 'invalid_state', path: 'runState.schema', message: `expected schema "tradrl/replay-run-state@1", got ${JSON.stringify(value.schema)}` });
   }
-  if (value.phase !== 'loading' && value.phase !== 'episode') {
-    errors.push({ code: 'invalid_state', path: 'runState.phase', message: `phase must be 'loading' or 'episode', got ${JSON.stringify(value.phase)}` });
+  const phase: unknown = value.phase;
+  if (phase !== 'loading' && phase !== 'episode') {
+    errors.push({ code: 'invalid_state', path: 'runState.phase', message: `phase must be 'loading' or 'episode', got ${JSON.stringify(phase)}` });
   }
   if (!isNonNegativeSafeInteger(value.batches_consumed)) {
     errors.push({ code: 'invalid_state', path: 'runState.batches_consumed', message: 'must be a non-negative safe integer' });
   }
-  if (!Array.isArray(value.ingest_chain) || !value.ingest_chain.every((head) => typeof head === 'string' && head.length === 8)) {
+  const ingestChain: unknown = value.ingest_chain;
+  if (!Array.isArray(ingestChain) || !ingestChain.every((head) => typeof head === 'string' && head.length === 8)) {
     errors.push({ code: 'invalid_state', path: 'runState.ingest_chain', message: 'must be an array of 8-hex-char chain heads' });
   }
   if (typeof value.source_done !== 'boolean') {
@@ -246,10 +248,13 @@ export function deserializeReplayRunState(value: unknown): WorldResult<ReplayRun
   if (!isRecord(value.world_state)) {
     errors.push({ code: 'invalid_state', path: 'runState.world_state', message: 'must be a ReplayWorldState object' });
   }
-  if (!isReplayRunLog(value.run_log)) {
+  const runLog: unknown = value.run_log;
+  if (!isReplayRunLog(runLog)) {
     errors.push({ code: 'invalid_state', path: 'runState.run_log', message: 'must be a run log object' });
   }
   if (errors.length > 0) return { ok: false, errors };
+  const validPhase = phase as 'loading' | 'episode';
+  const validChain = ingestChain as readonly string[];
 
   // The world state and config go through the CONTRACT's total validators.
   const configResult = validateWorldConfig(value.config, 'runState.config');
@@ -259,26 +264,26 @@ export function deserializeReplayRunState(value: unknown): WorldResult<ReplayRun
 
   const worldState = stateResult.value;
   // Coherence: the run state's phase agrees with the world state's spec binding.
-  if (value.phase === 'episode' && worldState.spec === null) {
+  if (validPhase === 'episode' && worldState.spec === null) {
     return fail('invalid_state', "phase is 'episode' but the world state carries no bound spec", 'runState.phase');
   }
-  if (value.phase === 'loading' && worldState.spec !== null) {
+  if (validPhase === 'loading' && worldState.spec !== null) {
     return fail('invalid_state', "phase is 'loading' but the world state carries a bound spec", 'runState.phase');
   }
-  if (value.ingest_chain.length !== value.batches_consumed) {
-    return fail('invalid_state', `ingest_chain length (${value.ingest_chain.length}) must equal batches_consumed (${String(value.batches_consumed)})`, 'runState.ingest_chain');
+  if (validChain.length !== value.batches_consumed) {
+    return fail('invalid_state', `ingest_chain length (${validChain.length}) must equal batches_consumed (${String(value.batches_consumed)})`, 'runState.ingest_chain');
   }
 
   return ok(
     deepFreeze({
       schema: 'tradrl/replay-run-state@1',
-      phase: value.phase,
+      phase: validPhase,
       config: configResult.value,
       batches_consumed: value.batches_consumed as number,
-      ingest_chain: (value.ingest_chain as readonly string[]).slice(),
+      ingest_chain: validChain.slice(),
       source_done: value.source_done as boolean,
       world_state: worldState,
-      run_log: deepFreeze({ ...value.run_log }),
+      run_log: deepFreeze({ ...(runLog as ReplayRunLog) }),
     }),
   );
 }

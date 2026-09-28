@@ -52,8 +52,8 @@ import { isReplayEventSource } from './event-source';
 import {
   buildRunRecord,
   chainDigest,
+  deserializeReplayRunState,
   emptyRunLog,
-  serializeReplayRunState,
   untrustedBatchDigest,
   type ClockAdvance,
   type ReplayRunLog,
@@ -165,7 +165,6 @@ export async function resumeReplayWorldService(state: unknown, source: ReplayEve
   if (!isReplayEventSource(source)) {
     return fail('invalid_source', 'the event source must be an async iterable of event batches');
   }
-  const { deserializeReplayRunState } = await import('./run-state');
   const restored = deserializeReplayRunState(state);
   if (!restored.ok) return restored;
   const runState = restored.value;
@@ -237,7 +236,7 @@ function ensureAdapter(core: ServiceCore): WorldAdapter {
   return core.adapter;
 }
 
-function buildService(core: ServiceCore, iterator: AsyncIterator<readonly unknown[], undefined, undefined>): ReplayWorldService {
+function buildService(core: ServiceCore, iterator: AsyncIterator<readonly unknown[], void, undefined>): ReplayWorldService {
   const chainHead = (): string => (core.ingestChain.length > 0 ? core.ingestChain[core.ingestChain.length - 1] as string : core.configHashValue);
 
   const applyBatch = (batch: readonly unknown[]): WorldResult<{ events: number; head: string }> => {
@@ -372,7 +371,7 @@ function buildService(core: ServiceCore, iterator: AsyncIterator<readonly unknow
         if (core.adapter !== null) {
           return fail('ingestion_closed', 'episodes have bound; export the run state OF an episode instead');
         }
-        return serializeReplayRunState({
+        return ok({
           schema: 'tradrl/replay-run-state@1',
           phase: 'loading',
           config: core.config,
@@ -388,7 +387,7 @@ function buildService(core: ServiceCore, iterator: AsyncIterator<readonly unknow
       const state = adapter.episodeState(episode);
       if (state === undefined) return fail('unknown_episode', `episode ${episode} is not known to this service`);
       const log = core.runLogs.get(episode) ?? emptyRunLog();
-      return serializeReplayRunState({
+      return ok({
         schema: 'tradrl/replay-run-state@1',
         phase: 'episode',
         config: core.config,

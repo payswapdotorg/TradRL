@@ -266,7 +266,8 @@ describe.skipIf(!protocolPresent)('environment-protocol interop (T005 merged on 
   });
 
   it('the WorldAdapter passes the REAL isEnvironment guard and its outputs pass the REAL observation/episode guards', async () => {
-    const loaded: unknown = await import(/* @vite-ignore */ '../../environment-protocol/src/index');
+    const protocolSpecifier = '../../environment-protocol/src/index';
+    const loaded: unknown = await import(/* @vite-ignore */ protocolSpecifier);
     if (!isProtocolModule(loaded)) throw new Error('environment-protocol module shape mismatch');
 
     const world = unwrap(initReplayWorld({
@@ -299,11 +300,12 @@ describe.skipIf(!protocolPresent)('environment-protocol interop (T005 merged on 
 
     const view = unwrap(adapter.start(spec));
     expect(loaded.isEpisodeState(view)).toBe(true);
-    const observation = unwrap(adapter.observe(view.episode_id, T0));
-    expect(observation.length).toBe(1);
+    unwrap(adapter.advance(view.episode_id, requireTimestampMs(T0 + 200)));
+    const observation = unwrap(adapter.observe(view.episode_id, requireTimestampMs(T0 + 200)));
+    expect(observation.length).toBe(2); // both fixture events are available by T0+200
     expect(observation.every((item) => loaded.isObservation(item))).toBe(true);
 
-    const submission = unwrap(adapter.submit(view.episode_id, { action_id: 'act-1', actor: 'agent-alpha', submitted_at: T0, client_sequence: 1, payload: null }));
+    const submission = unwrap(adapter.submit(view.episode_id, { action_id: 'act-1', actor: 'agent-alpha', submitted_at: T0 + 200, client_sequence: 1, payload: null }));
     expect(loaded.isEpisodeState(submission)).toBe(true); // the submission is an episode state + receipt
     expect(loaded.isAction(submission.accepted_actions[0])).toBe(true);
 
@@ -351,7 +353,8 @@ describe.skipIf(!protocolPresent)('environment-protocol interop (T005 merged on 
   });
 
   it('deriveEpisodeId parity: the mirrored derivation equals the REAL one for the same spec', async () => {
-    const loaded: unknown = await import(/* @vite-ignore */ '../../environment-protocol/src/index');
+    const protocolSpecifier = '../../environment-protocol/src/index';
+    const loaded: unknown = await import(/* @vite-ignore */ protocolSpecifier);
     if (!isProtocolModule(loaded)) throw new Error('environment-protocol module shape mismatch');
     const spec = {
       profile: {

@@ -23,7 +23,7 @@
  */
 
 import { deepFreeze, isFiniteNumber, isNonEmptyString, isRecord } from './primitives';
-import { invalidField, invalidType, missingField, type WorldError, type WorldResult } from './errors';
+import { invalidField, invalidType, missingField, ok, type WorldError, type WorldResult } from './errors';
 import { isTimestampMs, type TimestampMs } from './timestamp';
 import type { FidelityMode, InformationPolicy } from './clock';
 import { isFidelityMode, isInformationPolicy } from './clock';
