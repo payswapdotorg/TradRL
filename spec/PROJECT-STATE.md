@@ -5,9 +5,9 @@
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
 | Program phase | wave-8 dispatch (T013 RL bridge, T016 organization compiler; T036 in flight from wave-7) |
-| Current authorized Work Order | T013, T016 |
+| Current authorized Work Order | T013, T016, T037 |
 | Active workers | 3 |
-| In-flight | T013 (rl-bridge, turn spawned), T016 (organization-compiler, queued for slot) |
+| In-flight | T013 (rl-bridge, generating), T016 (organization-compiler, re-dispatched fresh), T037 (exchange adapters) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
@@ -61,3 +61,4 @@ A Work Order becomes complete only after implementation, verification, evidence,
 | D-006 | 2026-09-27 | Operator governance update (main 171ad39..366bda3) ratified: spec/CAPABILITY-DISCOVERY.md adopted; L16a + R49/R50 added; WORK-ITEMS T003 title extended with 'substrate capability registry contracts' and program/graph.json title synced. T003 merged WITHOUT the registry contracts — tracked open gap on the packages/agent-body/ + contracts/agent/ surface. Absorption: the registry contracts join T016's scope and write surface when T016 is dispatched (operator traceability maps R49-R50 to T016); T016's packet will cite spec/CAPABILITY-DISCOVERY.md verbatim. No earlier work order is blocked by the gap. |
 
 | D-007 | 2026-09-29 | Wave-8 dispatch ratified: T013 (RL interface/trainer bridge; base = this commit) and T016 (organization compiler/team search; base = this commit). Per D-006, T016's write surface is EXTENDED to absorb the substrate capability registry gap: additive files only — `contracts/agent/capability-registry.md` (new doc), `packages/agent-body/src/capability-registry.ts` + `capability-registry.test.ts` (new modules; existing T003 modules untouched), plus one additive row in `contracts/agent/README.md`'s document map. T016's packet cites spec/CAPABILITY-DISCOVERY.md verbatim. T036 remains in flight on its own base (39db424 + wave-6 prelude); the Lead reconciles placeholders at merge. Registry consumption by the compiler is via structural mirrors (D-003/D-004), never imports. |
+| D-008 | 2026-09-29 | Wave-9 dispatch ratified: T037 (Binance/Coinbase adapters) from base = this commit; dep T036 merged at 367bcad (provider-sdk on main — no ref bundle needed; adapters consume it via structural mirrors per D-004). T016 re-dispatched fresh (first vehicle's queued turn never spawned in 65 min and the site rolled the session — queued-turn lesson reaffirmed: never-spawned sends are inert; re-dispatch, do not wait). Worker limit held at 3: T013, T016, T037. |

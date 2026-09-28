@@ -736,11 +736,13 @@
         "adapters/binance/",
         "adapters/coinbase/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T037-exchange-adapters",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-008 wave-9 dispatch; dep T036 merged at 367bcad"
+      ]
     },
     {
       "id": "T038",
