@@ -94,6 +94,15 @@ function actionFixture(id: string, sequence: number, payload: Record<string, unk
   return { action_id: `act-${id}`, actor: 'agent-alpha', submitted_at: at, client_sequence: sequence, payload };
 }
 
+/**
+ * Advance the episode clock to `t` (the causal-law-compliant way to make a
+ * submit at instant `t` legal: actions may not claim submission after now,
+ * and the engine matches in arrival order — see the submit laws).
+ */
+function clockTo(service: ExchangeService, episode: string, t: number): void {
+  unwrapView(service.advance(episode, t as TimestampMs));
+}
+
 type Serviceish = { readonly ok: true; readonly value: ExchangeService } | { readonly ok: false; readonly errors: readonly { code: string; message: string }[] };
 
 function unwrapService(result: Serviceish): ExchangeService {
@@ -204,6 +213,7 @@ describe('submit (engine processing + observation emission)', () => {
   function scenario(): { service: ExchangeService; episode: string; submission: ExchangeSubmission } {
     const service = unwrapService(createExchangeService(configFixture(), BOOK_SEED));
     const episode = unwrapView(service.start(specFixture())).episode_id;
+    clockTo(service, episode, T0 + 10);
     const submission = unwrapSubmit(
       service.submit(episode, actionFixture('buy-1', 1, { type: 'submit_order', intent: intentFixture() }, T0 + 10)),
     );
@@ -239,6 +249,10 @@ describe('submit (engine processing + observation emission)', () => {
     if (fillEvent === undefined) return;
     expect(fillEvent.available_time).toBe(T0 + 10 + FIXED_LATENCY);
 
+    // The episode clock must first reach the boundary (observe polices `at
+    // <= now`); advancing emits nothing (no resting gtt orders yet).
+    clockTo(service, episode, fillEvent.available_time);
+
     // Not visible 1ms before the boundary.
     const before = service.observe(episode, (fillEvent.available_time - 1) as TimestampMs);
     expect(before.ok).toBe(true);
@@ -273,11 +287,11 @@ describe('submit (engine processing + observation emission)', () => {
     expect(fromFuture.ok).toBe(false);
     if (!fromFuture.ok) expect(fromFuture.errors[0]?.code).toBe('action_from_future');
 
-    const stale = service.submit(episode, actionFixture('stale', 1, { type: 'cancel_order', order_id: 'xo-00000001' }, T0 + 20));
+    const stale = service.submit(episode, actionFixture('stale', 1, { type: 'cancel_order', order_id: 'xo-00000001' }, T0 + 10));
     expect(stale.ok).toBe(false);
     if (!stale.ok) expect(stale.errors[0]?.code).toBe('stale_sequence');
 
-    const duplicate = service.submit(episode, actionFixture('buy-1', 2, { type: 'cancel_order', order_id: 'xo-00000001' }, T0 + 20));
+    const duplicate = service.submit(episode, actionFixture('buy-1', 2, { type: 'cancel_order', order_id: 'xo-00000001' }, T0 + 10));
     expect(duplicate.ok).toBe(false);
     if (!duplicate.ok) expect(duplicate.errors[0]?.code).toBe('duplicate_action');
 
@@ -285,7 +299,7 @@ describe('submit (engine processing + observation emission)', () => {
     expect(malformed.ok).toBe(false);
     if (!malformed.ok) expect(malformed.errors[0]?.code).toBe('invalid_action');
 
-    const badPayload = service.submit(episode, actionFixture('bad', 2, { type: 'modify_order' }, T0 + 20));
+    const badPayload = service.submit(episode, actionFixture('bad', 2, { type: 'modify_order' }, T0 + 10));
     expect(badPayload.ok).toBe(false);
     if (!badPayload.ok) expect(badPayload.errors[0]?.code).toBe('invalid_action');
 
@@ -296,6 +310,7 @@ describe('submit (engine processing + observation emission)', () => {
   it('forwards engine operation errors typed (unknown order, malformed intent)', () => {
     const service = unwrapService(createExchangeService(configFixture(), BOOK_SEED));
     const episode = unwrapView(service.start(specFixture())).episode_id;
+    clockTo(service, episode, T0 + 10);
     const unknown = service.submit(episode, actionFixture('unknown', 1, { type: 'cancel_order', order_id: 'xo-99999999' }, T0 + 10));
     expect(unknown.ok).toBe(false);
     if (!unknown.ok) expect(unknown.errors[0]?.code).toBe('unknown_order');
@@ -308,6 +323,7 @@ describe('submit (engine processing + observation emission)', () => {
   it('a submit before the engine clock fails typed (arrival order is monotonic)', () => {
     const service = unwrapService(createExchangeService(configFixture(), BOOK_SEED));
     const episode = unwrapView(service.start(specFixture())).episode_id;
+    clockTo(service, episode, T0 + 10);
     unwrapSubmit(service.submit(episode, actionFixture('first', 1, { type: 'submit_order', intent: intentFixture({ clientOrderId: 'a' }) }, T0 + 10)));
     unwrapView(service.advance(episode, (T0 + 1000) as TimestampMs));
     const retro = service.submit(episode, actionFixture('retro', 2, { type: 'submit_order', intent: intentFixture({ clientOrderId: 'b' }) }, T0 + 500));
@@ -318,10 +334,12 @@ describe('submit (engine processing + observation emission)', () => {
   it('cancels by venue id and client id through the action vocabulary', () => {
     const service = unwrapService(createExchangeService(configFixture(), BOOK_SEED));
     const episode = unwrapView(service.start(specFixture())).episode_id;
+    clockTo(service, episode, T0 + 10);
     const submission = unwrapSubmit(
       service.submit(episode, actionFixture('rest', 1, { type: 'submit_order', intent: intentFixture({ side: 'sell', price: '101.50', quantity: '2' }) }, T0 + 10)),
     );
     expect(submission.receipt.outcome.status).toBe('open');
+    clockTo(service, episode, T0 + 20);
     const canceled = service.submit(episode, actionFixture('cancel', 2, { type: 'cancel_client_order', client_order_id: 'cli-1' }, T0 + 20));
     expect(canceled.ok).toBe(true);
     if (canceled.ok) expect(canceled.value.receipt.outcome.status).toBe('canceled:cancel_requested');
@@ -369,6 +387,7 @@ describe('advance and finish', () => {
   it('expires gtt orders at their expiry instant through advance', () => {
     const service = unwrapService(createExchangeService(configFixture(), BOOK_SEED));
     const episode = unwrapView(service.start(specFixture())).episode_id;
+    clockTo(service, episode, T0 + 10);
     unwrapSubmit(
       service.submit(
         episode,
@@ -383,21 +402,23 @@ describe('advance and finish', () => {
     const at = service.advance(episode, (T0 + 20_000) as TimestampMs);
     expect(at.ok).toBe(true);
     if (!at.ok) return;
-    // The expiration event rides the stream as other:order_expired... via
-    // the cancel vocabulary (order_cancel with reason 'expired').
+    // The expiration event rides the stream as other:order_expired
+    // (orderExpiredEventOf — the expiry vocabulary, reason 'expired').
     const events = service.events(episode);
     expect(events.ok).toBe(true);
     if (!events.ok) return;
     const kinds = events.value.map((event) => eventPayloadKind(event));
     expect(kinds).toContain('order_ack');
-    expect(kinds).toContain('order_cancel');
+    expect(kinds).toContain('order_expired');
   });
 
   it('sessionRecord: identical runs -> identical hashes (L9, criterion 9); mid-run access fails typed', () => {
     function runOnce(): { digest: string; outcomeHash: string; configHash: string } {
       const service = unwrapService(createExchangeService(configFixture(), BOOK_SEED));
       const episode = unwrapView(service.start(specFixture())).episode_id;
+      clockTo(service, episode, T0 + 10);
       unwrapSubmit(service.submit(episode, actionFixture('s1', 1, { type: 'submit_order', intent: intentFixture() }, T0 + 10)));
+      clockTo(service, episode, T0 + 20);
       unwrapSubmit(service.submit(episode, actionFixture('s2', 2, { type: 'submit_order', intent: intentFixture({ clientOrderId: 'cli-2', side: 'sell', price: '101.50', quantity: '2' }) }, T0 + 20)));
       unwrapView(service.advance(episode, (T0 + 50_000) as TimestampMs));
       service.finish(episode, { code: 'completed', detail: 'lineage run' });
@@ -429,8 +450,11 @@ describe('every emitted event is a CANONICAL MarketEvent (market-protocol valida
   it('validates the full outcome stream of a mixed scenario through the real market-protocol validator', () => {
     const service = unwrapService(createExchangeService(configFixture(), BOOK_SEED));
     const episode = unwrapView(service.start(specFixture())).episode_id;
+    clockTo(service, episode, T0 + 10);
     unwrapSubmit(service.submit(episode, actionFixture('s1', 1, { type: 'submit_order', intent: intentFixture() }, T0 + 10)));
+    clockTo(service, episode, T0 + 20);
     unwrapSubmit(service.submit(episode, actionFixture('s2', 2, { type: 'submit_order', intent: intentFixture({ clientOrderId: 'cli-2', timeInForce: 'ioc', quantity: '9' }) }, T0 + 20)));
+    clockTo(service, episode, T0 + 30);
     unwrapSubmit(service.submit(episode, actionFixture('s3', 3, { type: 'submit_order', intent: intentFixture({ clientOrderId: 'cli-3', price: '100.505' }) }, T0 + 30)));
     unwrapView(service.advance(episode, (T0 + 50_000) as TimestampMs));
     const events = service.events(episode);

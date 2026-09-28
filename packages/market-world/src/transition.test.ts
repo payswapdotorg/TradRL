@@ -51,6 +51,17 @@ function freshWorld() {
   return world.value;
 }
 
+/**
+ * Re-anchor a loaded world's clock at `now` — exactly what the WorldAdapter
+ * does when binding an episode (the spec's clock replaces the loading
+ * clock). Exercised here so the transition laws are tested on an
+ * episode-like state.
+ */
+function reanchored(state: ReturnType<typeof freshWorld>, now: number): ReturnType<typeof freshWorld> {
+  const clock = { ...state.clock, now };
+  return { ...state, clock } as ReturnType<typeof freshWorld>;
+}
+
 function unwrap<T>(result: { ok: true; value: T } | { ok: false; errors: readonly { code: string; message: string }[] }): T {
   if (result.ok) return result.value;
   throw new Error(`unexpected failure: ${JSON.stringify(result.errors)}`);
@@ -192,7 +203,7 @@ describe('ingestWorld — anti-poisoning: recorded history only (criterion 10)',
 describe('observeWorld — the inclusive L4 boundary (criterion 4)', () => {
   function loadedHistory() {
     const world = freshWorld();
-    return unwrap(
+    const ingested = unwrap(
       ingestWorld(world, [
         eventFixture({ event_id: 'past', event_time: T0, available_time: T0 + 100, sequence: 1 }),
         eventFixture({ event_id: 'at-now', event_time: T0 + 200, available_time: T0 + 200, sequence: 2 }),
@@ -219,6 +230,9 @@ describe('observeWorld — the inclusive L4 boundary (criterion 4)', () => {
         }),
       ]),
     );
+    // The episode-like clock stands at the stream start (the loading clock
+    // stands at the anchor; binding re-anchors — see the adapter).
+    return reanchored(ingested, T0);
   }
 
   it('delivers an event with available_time == now (INCLUSIVE) and withholds == now + 1', () => {

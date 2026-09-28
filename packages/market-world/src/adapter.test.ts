@@ -133,7 +133,7 @@ describe('start — spec validation and world binding', () => {
     expect(view.rewards).toEqual([]); // replay never fabricates rewards
     expect(isDeeplyFrozen(view)).toBe(true);
     // Pending carries the full offered set (future-dated = embargoed), in arrival order.
-    expect(view.pending.map((observation) => observation.observation_id)).toEqual(['t1', 'a1', 't2', 't3']);
+    expect(view.pending.map((observation) => observation.observation_id)).toEqual(['t1', 't2', 't3', 'a1']);
   });
 
   it('rejects a malformed spec with the mirrored collect-all diagnostics', () => {
@@ -207,7 +207,7 @@ describe('observe — the inclusive L4 boundary through the adapter', () => {
     expect(advanced.clock.now).toBe(T0 + 200);
 
     const visible = unwrap(adapter.observe(view.episode_id, t(T0 + 200)));
-    expect(visible.map((observation) => observation.observation_id)).toEqual(['t1', 'a1', 't2']);
+    expect(visible.map((observation) => observation.observation_id)).toEqual(['t1', 't2', 'a1']);
     // The withheld one (t3, available at T0+300):
     expect(visible.some((observation) => observation.observation_id === 't3')).toBe(false);
 
@@ -266,7 +266,7 @@ describe('submit — intents with typed receipts, never fills (criterion 7)', ()
     return {
       action_id: 'act-1',
       actor: 'agent-alpha',
-      submitted_at: T0 + 100,
+      submitted_at: T0, // the episode clock's now (causal law: submit at <= now)
       client_sequence: 1,
       payload: { kind: 'order_intent', side: 'buy', instrument: 'BTC-USDT', quantity: '0.01' },
       ...overrides,
