@@ -204,11 +204,7 @@ export type KernelOpId = Brand<string, 'KernelOpId'>;
 export type TenantId = Brand<string, 'TenantId'>;
 /** Identity of a topic on the kernel's topic-addressed message fabric. */
 export type TopicName = Brand<string, 'TopicName'>;
-/**
- * Identity of one message envelope. Kernel-derived ids have the deterministic
- * form `msg:${opId}:${sender}:${sequence}` and can exceed the identifier
- * pattern's 256-char budget, so this uses the opaque-reference discipline.
- */
+/** Identity of one message envelope on the fabric. */
 export type MessageId = Brand<string, 'MessageId'>;
 
 // --- Structural mirrors of cross-lane ids (opaque — never imported) -----------
@@ -276,9 +272,9 @@ export function topicName(value: string): TopicName {
   return value as TopicName;
 }
 
-/** Constructs a `MessageId`, throwing on invalid input. */
+/** Constructs a `MessageId`, throwing on invalid identifiers. */
 export function messageId(value: string): MessageId {
-  if (!isValidOpaqueRefString(value)) throw opaqueRefError('MessageId', value);
+  if (!isValidIdentifierString(value)) throw identifierError('MessageId', value);
   return value as MessageId;
 }
 
@@ -369,7 +365,7 @@ export function isTopicName(v: unknown): v is TopicName {
 
 /** Guard: `MessageId`. */
 export function isMessageId(v: unknown): v is MessageId {
-  return isValidOpaqueRefString(v);
+  return isValidIdentifierString(v);
 }
 
 /** Guard: `AgentInstanceId` (identifier discipline mirrored from agent-body). */

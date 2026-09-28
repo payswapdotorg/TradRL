@@ -43,6 +43,7 @@ import {
   type TopicName,
   deepFreeze,
   isAgentInstanceId,
+  isArrayOfTypeGuard,
   isAuthorityTokenRef,
   isBodyVersionRef,
   isIntentRef,
@@ -82,7 +83,9 @@ const HEADLINE_MAX_LENGTH = 256;
 
 /** Guard: `ReportSummary`. */
 export function isReportSummary(v: unknown): v is ReportSummary {
-  if (!isPlainRecord(v)) return false;
+  if (typeof v !== 'object' || v === null) return false;
+  const proto: unknown = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return false;
   return (
     isAgentInstanceId(v.subject) &&
     typeof v.headline === 'string' &&
@@ -491,10 +494,12 @@ export function createKernelOperation(op: KernelOperation): KernelOperation {
   if (!isAgentInstanceId(op.actor)) problems.push('actor: invalid AgentInstanceId');
   if (!isTenantId(op.tenantId)) problems.push('tenantId: invalid TenantId');
   if (!isKernelOperation(op)) {
-    problems.push(`type-specific fields: invalid ${typeof op.type === 'string' ? op.type : 'unknown'} operation payload`);
+    problems.push(`type-specific fields: invalid ${String(op.type) ?? 'unknown'} operation payload`);
   }
   if (problems.length > 0) {
     throw new TypeError(`createKernelOperation: ${problems.join('; ')}`);
   }
-  return deepFreeze({ ...op });
+  return deepFreeze({
+    ...(op as Record<string, unknown>),
+  }) as KernelOperation;
 }
