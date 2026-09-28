@@ -10,6 +10,7 @@ import {
   recomputeViewHash,
 } from './index';
 import { DATASET, TENANT, derivedEvent, feed, idsOf, machineOf, rawEvent, viewAt } from './fixtures';
+import type { KnowledgeRecordId, TimestampMs } from './index';
 
 describe('machine construction', () => {
   it('rejects invalid configurations with typed invalid_config', () => {
@@ -302,7 +303,7 @@ describe('as-of queries', () => {
     const machine = machineOf();
     feed(machine, [rawEvent('evt-1', 1_000)], 'batch-1');
 
-    const wrongDataset = machine.asOf({ dataset: 'other-dataset' as never, at: 5_000 });
+    const wrongDataset = machine.asOf({ dataset: 'other-dataset' as never, at:(5_000) as TimestampMs });
     expect(wrongDataset.ok).toBe(false);
     if (wrongDataset.ok) return;
     expect(wrongDataset.error.code).toBe('unknown_dataset');
@@ -312,7 +313,7 @@ describe('as-of queries', () => {
     if (badAt.ok) return;
     expect(badAt.error.code).toBe('invalid_query');
 
-    const badSelector = machine.asOf({ dataset: DATASET, at: 5_000, selector: { availableFrom: 10, availableTo: 5 } });
+    const badSelector = machine.asOf({ dataset: DATASET, at:(5_000) as TimestampMs, selector: { availableFrom:(10) as TimestampMs, availableTo:(5) as TimestampMs } });
     expect(badSelector.ok).toBe(false);
     if (badSelector.ok) return;
     expect(badSelector.error.code).toBe('invalid_query');
@@ -330,9 +331,9 @@ describe('as-of queries', () => {
   it('applies the selector through the firewall passage (ids / availableFrom / availableTo)', () => {
     const machine = machineOf();
     feed(machine, [rawEvent('evt-1', 1_000), rawEvent('evt-2', 2_000), rawEvent('evt-3', 3_000)], 'batch-1');
-    expect(idsOf(viewAt(machine, 10_000, { ids: ['evt-2'] }).records)).toEqual(['evt-2']);
-    expect(idsOf(viewAt(machine, 10_000, { availableFrom: 2_000 }).records)).toEqual(['evt-2', 'evt-3']);
-    expect(idsOf(viewAt(machine, 10_000, { availableTo: 2_000 }).records)).toEqual(['evt-1', 'evt-2']);
+    expect(idsOf(viewAt(machine, 10_000, { ids: ['evt-2' as KnowledgeRecordId] }).records)).toEqual(['evt-2']);
+    expect(idsOf(viewAt(machine, 10_000, { availableFrom:(2_000) as TimestampMs }).records)).toEqual(['evt-2', 'evt-3']);
+    expect(idsOf(viewAt(machine, 10_000, { availableTo:(2_000) as TimestampMs }).records)).toEqual(['evt-1', 'evt-2']);
   });
 
   it('the view is deeply frozen, hash-recomputable, and audit-carrying', () => {

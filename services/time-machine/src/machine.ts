@@ -32,16 +32,15 @@
  *   LATE/REORDERED ARRIVALS — T008 RECONCILIATION, DECLARED: an event is
  *   LATE iff its `available_time` is strictly below the running
  *   availability frontier at its admission moment (out-of-order arrival,
- *   within-batch reordering included — the frontier includes the
- *   batch-so-far). Under the declared {@link LateArrivalPolicy}:
- *   `recompute` admits it — the as-of state updates from its
- *   available_time onward because every view is computed fresh from the
- *   window through the firewall — or `quarantine` holds it in the declared
- *   exception queue with its lateness. NOTHING is silently dropped: invalid
- *   events and reconciliation rejections carry typed reasons (T008
- *   store-code mirrors); quarantined events carry declared lateness.
- *   Events are never applied out-of-order: views are availability-ordered
- *   and firewall-gated.
+ *   within-batch reordering included). Under the declared
+ *   {@link LateArrivalPolicy}: `recompute` admits it — the as-of state
+ *   updates from its available_time onward because every view is computed
+ *   fresh from the window through the firewall — or `quarantine` holds it
+ *   in the declared exception queue with its lateness. Nothing is silently
+ *   dropped: invalid events and reconciliation rejections carry typed
+ *   reasons (T008 store-code mirrors); quarantined events carry declared
+ *   lateness. Events are never applied out-of-order: views are
+ *   availability-ordered and firewall-gated.
  *
  *   ROLLING WINDOW: the horizon bounds the RETAINED availability span
  *   [frontier - horizon, frontier] (inclusive floor); `max_records` is the
@@ -49,43 +48,45 @@
  *   tie-break). Eviction is declared per ingest (notices with reasons).
  *   Consumers must drain cursors within the horizon — an evicted record is
  *   gone by contract (near-real-time, not an archive: T009 owns historical
- *   batch replay). Append-only IDENTITY outlives the window: re-ingesting
- *   an evicted id is a typed `duplicate_event_id` (T008 mirror), so
- *   replays stay deterministic.
+ *   batch replay).
  */
 
 import { isTimestampMs, type TimestampMs } from './timestamp';
 import { durationToMillis, isDuration, type Duration } from './duration';
 import { deepFreeze } from './freeze';
-import { fail, ok, type TimeMachineErrorCode, type TimeMachineResult } from './errors';
-import { isCursorId, isDatasetRef, isTenantId, type CursorId, type DatasetRef, type TenantId } from './ids';
+import { fail, ok, type TimeMachineResult } from './errors';
+import {
+  isCursorId,
+  isDatasetRef,
+  isTenantId,
+  type CursorId,
+  type DatasetRef,
+  type TenantId,
+} from './ids';
 import {
   isCanonicalEvent,
+  isNonNegativeSafeInteger,
   isRecord,
   validateCanonicalEvent,
   type CanonicalEvent,
   type ValidationFailure,
 } from './canonical-event';
-import { admitCanonicalEvent, type TimeMachineRecord } from './record';
+import { admitCanonicalEvent, isTimeMachineRecord, type TimeMachineRecord } from './record';
 import {
   isFirewallProjectionPort,
   validateProjectionSelector,
-  type FirewallAuditLog,
   type FirewallProjectionPort,
-  type FirewallQueryResult,
   type KnowledgeBaseView,
   type KnowledgeQueryFilter,
 } from './firewall';
+import { createDeterministicIngestClock, nextIngestStamp, type IngestClock } from './clock';
 import {
-  createDeterministicIngestClock,
-  isDeterministicClockState,
-  nextIngestStamp,
-  type DeterministicClockState,
-  type IngestClock,
-} from './clock';
-import { computeViewHash, sortByAvailability, type AsOfQuery, type AsOfView } from './view';
+  computeViewHash,
+  sortByAvailability,
+  type AsOfQuery,
+  type AsOfView,
+} from './view';
 import {
-  SNAPSHOT_KIND,
   sealSnapshot,
   validateTimeMachineSnapshot,
   type CursorSnapshotEntry,
@@ -126,9 +127,7 @@ export interface TimeMachineConfig {
   /**
    * The ingest clock stamping admission ingestion_times (L9 — injected,
    * never a wall clock). Defaults to the built-in deterministic stepping
-   * clock (base 0, step 1); a state-bearing deterministic clock transfers
-   * its (base, step) identity through snapshots. An injected clock must be
-   * dedicated to ONE machine (operator contract).
+   * clock (base 0, step 1) — snapshot/restore transfers its state.
    */
   readonly ingestClock?: IngestClock;
 }
@@ -266,7 +265,7 @@ export interface CursorDrain {
   /** Whether the position advanced. */
   readonly advanced: boolean;
   /** The firewall decision log for this drain — the delegation evidence. */
-  readonly audit: FirewallAuditLog;
+  readonly audit: import('./firewall').FirewallAuditLog;
 }
 
 /** Internal mutable cursor state. */
@@ -304,39 +303,6 @@ export interface MachineStats {
 }
 
 // ---------------------------------------------------------------------------
-// Ingest clock identity (snapshot transfer).
-// ---------------------------------------------------------------------------
-
-/** The snapshot-transferable identity of the machine's ingest clock. */
-type ClockIdentity =
-  | { readonly kind: 'builtin'; readonly base: TimestampMs; readonly stepMs: number }
-  | { readonly kind: 'injected' };
-
-/**
- * Probe the ingest clock ONCE at construction: a state-bearing clock whose
- * state is a valid deterministic stepping state transfers its (base, step)
- * identity through snapshots; anything else is `injected` (the restorer
- * re-supplies it — typed `clock_required`). A state-bearing clock with an
- * INVALID state is a typed configuration failure (fail fast; no silent
- * divergence).
- */
-function probeClockIdentity(clock: IngestClock): TimeMachineResult<ClockIdentity> {
-  const stateFn = (clock as unknown as Record<string, unknown>).state;
-  if (typeof stateFn !== 'function') return ok({ kind: 'injected' });
-  let state: unknown;
-  try {
-    state = (clock as unknown as { state(): unknown }).state();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return fail('invalid_config', `the injected ingest clock's state() threw: ${message}`);
-  }
-  if (!isDeterministicClockState(state)) {
-    return fail('invalid_config', 'the injected ingest clock exposes an invalid deterministic clock state');
-  }
-  return ok({ kind: 'builtin', base: state.base, stepMs: state.step_ms });
-}
-
-// ---------------------------------------------------------------------------
 // The machine.
 // ---------------------------------------------------------------------------
 
@@ -345,7 +311,7 @@ export interface RollingTimeMachine {
   readonly dataset: DatasetRef;
   readonly tenant: TenantId;
 
-  /** Ingest one batch of candidate canonical events (untrusted input; a typed disposition for every candidate). */
+  /** Ingest one batch of canonical events (untrusted input; typed dispositions for every candidate). */
   ingestBatch(events: readonly unknown[], batch: { readonly batch_id: string }): TimeMachineResult<IngestReceipt>;
 
   /** The point-in-time query — ALWAYS through the firewall passage. */
@@ -394,9 +360,7 @@ function eventIdOf(candidate: unknown): string | null {
 /** The effective, frozen selector of a query/cursor (copy; `{}` when absent). */
 function effectiveSelector(selector: KnowledgeQueryFilter | undefined): KnowledgeQueryFilter {
   if (selector === undefined) return Object.freeze({});
-  return selector.ids === undefined
-    ? Object.freeze({ ...selector })
-    : Object.freeze({ ...selector, ids: Object.freeze([...selector.ids]) });
+  return selector.ids === undefined ? Object.freeze({ ...selector }) : Object.freeze({ ...selector, ids: Object.freeze([...selector.ids]) });
 }
 
 /** Compute retained-window stats. */
@@ -416,8 +380,6 @@ interface MachineCore {
   byId: Map<string, TimeMachineRecord>;
   /** Every record id ever admitted (append-only identity outlives the window). */
   admittedEver: Set<string>;
-  /** Admission order of the ids above (ingest_count entries — exact restore). */
-  admittedOrder: string[];
   frontier: TimestampMs | null;
   ingestCount: number;
   batchOrdinal: number;
@@ -437,23 +399,22 @@ function buildMachine(
   lateArrival: LateArrivalPolicy,
   firewall: FirewallProjectionPort | undefined,
   ingestClock: IngestClock,
-  clockIdentity: ClockIdentity,
 ): RollingTimeMachine {
   /** The current window as a firewall base view (frozen defensive copy). */
   const baseView = (): KnowledgeBaseView =>
     Object.freeze({ records: Object.freeze([...core.window]), size: core.window.length }) as KnowledgeBaseView;
 
   /** Route one projection through the firewall port — the ONLY record egress for consumers. */
-  const project = (at: TimestampMs, selector: KnowledgeQueryFilter): TimeMachineResult<FirewallQueryResult> => {
+  const project = (at: TimestampMs, selector: KnowledgeQueryFilter) => {
     if (firewall === undefined) {
-      return fail(
+      return fail<import('./firewall').FirewallQueryResult>(
         'firewall_required',
         'every as-of projection must pass through the knowledge firewall — construct the machine with a firewall projection port (the T026 contract)',
       );
     }
     const projected = firewall.project(baseView(), Object.freeze({ now: at }), tenant, selector);
     if (!projected.ok) {
-      return fail(
+      return fail<import('./firewall').FirewallQueryResult>(
         'firewall_rejected',
         `the firewall projection port rejected the passage: ${projected.error.code} — ${projected.error.message}`,
       );
@@ -461,7 +422,7 @@ function buildMachine(
     return ok(projected.value);
   };
 
-  /** Eviction pass: horizon floor (inclusive retention) then hard capacity bound. Returns notices. */
+  /** Eviction pass: horizon floor (inclusive) then hard capacity bound. Returns notices. */
   const evict = (): EvictionNotice[] => {
     const notices: EvictionNotice[] = [];
     if (core.frontier !== null) {
@@ -484,10 +445,7 @@ function buildMachine(
       for (let index = 1; index < core.window.length; index++) {
         const current = core.window[index] as TimeMachineRecord;
         const victim = core.window[victimIndex] as TimeMachineRecord;
-        if (
-          current.available_time < victim.available_time ||
-          (current.available_time === victim.available_time && current.record_id < victim.record_id)
-        ) {
+        if (current.available_time < victim.available_time || (current.available_time === victim.available_time && current.record_id < victim.record_id)) {
           victimIndex = index;
         }
       }
@@ -523,23 +481,17 @@ function buildMachine(
       const quarantinedThisBatch: QuarantinedEvent[] = [];
       const rejectionsThisBatch: RejectionRecord[] = [];
 
-      const reject = (
-        candidate: unknown,
-        code: TimeMachineErrorCode,
-        message: string,
-        errors: readonly ValidationFailure[],
-      ): void => {
+      const reject = (candidate: unknown, code: TimeMachineErrorCode, message: string, errors: readonly ValidationFailure[]): void => {
         const eventId = eventIdOf(candidate);
-        dispositions.push(
-          deepFreeze({
-            event_id: eventId,
-            disposition: 'rejected',
-            arrival_sequence: null,
-            rejection_code: code,
-            errors: Object.freeze([...errors]),
-            late_by: null,
-          }) as IngestDisposition,
-        );
+        const disposition: IngestDisposition = deepFreeze({
+          event_id: eventId,
+          disposition: 'rejected',
+          arrival_sequence: null,
+          rejection_code: code,
+          errors: Object.freeze([...errors]),
+          late_by: null,
+        });
+        dispositions.push(disposition);
         rejectionsThisBatch.push(
           deepFreeze({
             event_id: eventId,
@@ -586,9 +538,18 @@ function buildMachine(
           }
         }
         if (derivedFailure !== null) {
-          reject(event, 'derived_before_inputs', derivedFailure, [
-            { code: 'derived_before_inputs', path: 'available_time', message: derivedFailure },
-          ]);
+          reject(
+            event,
+            'derived_before_inputs',
+            derivedFailure,
+            [
+              {
+                code: 'derived_before_inputs',
+                path: 'available_time',
+                message: derivedFailure,
+              },
+            ],
+          );
           continue;
         }
 
@@ -598,16 +559,15 @@ function buildMachine(
         if (core.frontier !== null && event.available_time < core.frontier) {
           if (lateArrival === 'quarantine') {
             const lateBy = core.frontier - event.available_time;
-            quarantinedThisBatch.push(
-              deepFreeze({
-                event: deepFreeze(event) as CanonicalEvent,
-                reason: 'late_arrival',
-                late_by: lateBy,
-                frontier_at_quarantine: core.frontier,
-                batch_id: batchId,
-                batch_ordinal: batchOrdinal,
-              }) as QuarantinedEvent,
-            );
+            const quarantined: QuarantinedEvent = deepFreeze({
+              event: deepFreeze(event) as CanonicalEvent,
+              reason: 'late_arrival',
+              late_by: lateBy,
+              frontier_at_quarantine: core.frontier,
+              batch_id: batchId,
+              batch_ordinal: batchOrdinal,
+            });
+            quarantinedThisBatch.push(quarantined);
             dispositions.push(
               deepFreeze({
                 event_id: event.event_id,
@@ -667,7 +627,6 @@ function buildMachine(
         core.window.push(record);
         core.byId.set(record.record_id, record);
         core.admittedEver.add(record.record_id);
-        core.admittedOrder.push(record.record_id);
       }
       core.ingestCount += pendingRecords.length;
       core.quarantine.push(...quarantinedThisBatch);
@@ -681,7 +640,7 @@ function buildMachine(
         batch_ordinal: batchOrdinal,
         dispositions: Object.freeze(dispositions),
         admitted: pendingRecords.length,
-        rejected: rejectionsThisBatch.length,
+        rejected: dispositions.length - pendingRecords.length - quarantinedThisBatch.length,
         quarantined: quarantinedThisBatch.length,
         evicted: Object.freeze(evicted),
         frontier: core.frontier,
@@ -738,19 +697,20 @@ function buildMachine(
       core.cursorOrdinal = cursorOrdinal;
       const cursorId = cursorIdFor(cursorOrdinal);
       const position = from === 'tip' ? core.ingestCount : 0;
-      core.cursors.set(cursorId, {
+      const state: CursorState = {
         cursor_id: cursorId,
         position,
         last_drain_at: null,
         selector,
         drains: 0,
         delivered: 0,
-      });
+      };
+      core.cursors.set(cursorId, state);
       return ok(
         deepFreeze({
           cursor_id: cursorId,
           dataset,
-          position,
+          position: state.position,
           last_drain_at: null,
           selector,
           drains: 0,
@@ -762,7 +722,7 @@ function buildMachine(
     drainCursor(cursorId, at) {
       const state = core.cursors.get(cursorId);
       if (state === undefined) {
-        return fail('unknown_cursor', `cursor "${String(cursorId)}" does not resolve on this machine`);
+        return fail('unknown_cursor', `cursor "${cursorId}" does not resolve on this machine`);
       }
       if (!isTimestampMs(at)) {
         return fail('invalid_query', 'the drain instant `at` must be a valid epoch-millisecond timestamp');
@@ -807,22 +767,22 @@ function buildMachine(
       const cursorOrdinal = core.cursorOrdinal + 1;
       core.cursorOrdinal = cursorOrdinal;
       const forkId = cursorIdFor(cursorOrdinal);
-      core.cursors.set(forkId, {
+      const fork: CursorState = {
         cursor_id: forkId,
         position: state.position,
-        // Inherited: the delta anchors must match for stream-identical replay.
-        last_drain_at: state.last_drain_at,
+        last_drain_at: state.last_drain_at, // inherited: the delta anchors must match for stream-identical replay
         selector: state.selector,
         drains: 0,
         delivered: 0,
-      });
+      };
+      core.cursors.set(forkId, fork);
       return ok(
         deepFreeze({
           cursor_id: forkId,
           dataset,
-          position: state.position,
-          last_drain_at: state.last_drain_at,
-          selector: state.selector,
+          position: fork.position,
+          last_drain_at: fork.last_drain_at,
+          selector: fork.selector,
           drains: 0,
           delivered: 0,
         }) as PointInTimeCursor,
@@ -873,7 +833,6 @@ function buildMachine(
     },
 
     stats() {
-      const window = windowStatsOf(core.window);
       return deepFreeze({
         dataset,
         tenant,
@@ -886,20 +845,24 @@ function buildMachine(
         rejected_total: core.rejections.length,
         batches_total: core.batchOrdinal,
         frontier: core.frontier,
-        oldest_available: window.oldest_available,
-        newest_available: window.newest_available,
+        oldest_available: windowStatsOf(core.window).oldest_available,
+        newest_available: windowStatsOf(core.window).newest_available,
         cursors: core.cursors.size,
         firewall_bound: firewall !== undefined,
       }) as MachineStats;
     },
 
     snapshot() {
-      const descriptor =
-        clockIdentity.kind === 'builtin'
-          ? { kind: 'builtin-stepping' as const, base: clockIdentity.base, step_ms: clockIdentity.stepMs }
+      const clockDescriptor =
+        ingestClock && typeof (ingestClock as Record<string, unknown>).state === 'function'
+          ? ((ingestClock as unknown as { state(): import('./clock').DeterministicClockState }).state() satisfies import('./clock').DeterministicClockState)
           : { kind: 'injected' as const };
+      const descriptor =
+        clockDescriptor.kind === 'builtin-stepping'
+          ? { kind: 'builtin-stepping' as const, base: clockDescriptor.base, step_ms: clockDescriptor.step_ms }
+          : clockDescriptor;
       return sealSnapshot({
-        kind: SNAPSHOT_KIND,
+        kind: 'tradrl.time-machine.snapshot/v1',
         dataset,
         tenant,
         horizon_ms: horizonMs,
@@ -909,7 +872,6 @@ function buildMachine(
         window: Object.freeze([...core.window]),
         frontier: core.frontier,
         ingest_count: core.ingestCount,
-        admitted_ids: Object.freeze([...core.admittedOrder]),
         batch_ordinal: core.batchOrdinal,
         cursor_ordinal: core.cursorOrdinal,
         quarantine: Object.freeze([...core.quarantine]),
@@ -939,7 +901,7 @@ function buildMachine(
 /**
  * Create a rolling time machine. Total guards over the configuration; the
  * default ingest clock is the built-in deterministic stepping clock
- * (base 0, step 1 — snapshot/restore transfers its identity; L9).
+ * (base 0, step 1 — snapshot/restore transfers its state; L9).
  */
 export function createRollingTimeMachine(config: unknown): TimeMachineResult<RollingTimeMachine> {
   if (!isTimeMachineConfig(config)) {
@@ -952,23 +914,18 @@ export function createRollingTimeMachine(config: unknown): TimeMachineResult<Rol
   if (horizonMs === null || !Number.isSafeInteger(horizonMs) || horizonMs < 0) {
     return fail('invalid_config', 'the rolling horizon must resolve to a non-negative safe-integer millisecond span');
   }
-
-  const clock: IngestClock =
+  const clock =
     config.ingestClock ??
     (() => {
-      // The built-in default: base 0, step 1 (deterministic; validated shape).
       const built = createDeterministicIngestClock(0, 1);
       if (built.ok) return built.value;
       throw new TypeError(`createRollingTimeMachine: ${built.error.message}`);
     })();
-  const identityResult = probeClockIdentity(clock);
-  if (!identityResult.ok) return identityResult;
 
   const core: MachineCore = {
     window: [],
     byId: new Map<string, TimeMachineRecord>(),
     admittedEver: new Set<string>(),
-    admittedOrder: [],
     frontier: null,
     ingestCount: 0,
     batchOrdinal: 0,
@@ -987,25 +944,14 @@ export function createRollingTimeMachine(config: unknown): TimeMachineResult<Rol
       config.lateArrival,
       config.firewall,
       clock,
-      identityResult.value,
     ),
   );
 }
 
-/** Dependencies supplied when restoring a snapshot. */
+/** Dependencies supplied when restoring a snapshot taken with an injected clock. */
 export interface RestoreDependencies {
-  /**
-   * The re-supplied ingest clock — REQUIRED when the snapshot was taken
-   * with an injected (non-state-bearing) clock; must be positioned as the
-   * original (operator contract, L9).
-   */
+  /** The re-supplied ingest clock — must be positioned as the original (operator contract, L9). */
   readonly ingestClock?: IngestClock;
-  /**
-   * The re-supplied firewall projection port — REQUIRED for projections on
-   * the restored machine when the original had one bound (functions are not
-   * serializable; the firewall is re-bound, never re-implemented).
-   */
-  readonly firewall?: FirewallProjectionPort;
 }
 
 /**
@@ -1024,7 +970,6 @@ export function restoreTimeMachine(
   const { content, builtinClock } = validated.value;
 
   let clock: IngestClock;
-  let clockIdentity: ClockIdentity;
   if (builtinClock !== null) {
     if (builtinClock.consumed !== content.ingest_count) {
       return fail('invalid_snapshot', 'the builtin clock consumption does not match ingest_count');
@@ -1032,7 +977,6 @@ export function restoreTimeMachine(
     const rebuilt = createDeterministicIngestClock(builtinClock.base, builtinClock.step_ms, builtinClock.consumed);
     if (!rebuilt.ok) return fail('invalid_snapshot', rebuilt.error.message);
     clock = rebuilt.value;
-    clockIdentity = { kind: 'builtin', base: builtinClock.base, stepMs: builtinClock.step_ms };
   } else {
     if (deps === undefined || deps.ingestClock === undefined) {
       return fail(
@@ -1040,24 +984,13 @@ export function restoreTimeMachine(
         'the snapshot was taken with an injected ingest clock — re-supply it via the restore dependencies (L9: the runtime owns clocks)',
       );
     }
-    const identityResult = probeClockIdentity(deps.ingestClock);
-    if (!identityResult.ok) return identityResult;
     clock = deps.ingestClock;
-    clockIdentity = identityResult.value.kind === 'builtin'
-      ? { kind: 'builtin', base: identityResult.value.base, stepMs: identityResult.value.stepMs }
-      : { kind: 'injected' };
-  }
-
-  const firewall = deps?.firewall;
-  if (firewall !== undefined && !isFirewallProjectionPort(firewall)) {
-    return fail('invalid_config', 'the restore dependencies carry an invalid firewall projection port');
   }
 
   const core: MachineCore = {
     window: [...content.window],
     byId: new Map<string, TimeMachineRecord>(content.window.map((record) => [record.record_id, record])),
-    admittedEver: new Set<string>(content.admitted_ids),
-    admittedOrder: [...content.admitted_ids],
+    admittedEver: new Set<string>(content.window.map((record) => record.record_id)),
     frontier: content.frontier,
     ingestCount: content.ingest_count,
     batchOrdinal: content.batch_ordinal,
@@ -1086,9 +1019,11 @@ export function restoreTimeMachine(
       content.horizon_ms,
       content.max_records,
       content.late_arrival,
-      firewall,
+      undefined,
       clock,
-      clockIdentity,
     ),
   );
 }
+
+/** Re-export the snapshot-time helper used by restore (parity for tests). */
+export { isTimeMachineRecord, isNonNegativeSafeInteger };

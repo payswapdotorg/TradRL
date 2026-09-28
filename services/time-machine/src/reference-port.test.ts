@@ -8,6 +8,7 @@ import { createReferenceFirewallPort, isReferenceFirewallPort, referenceFirewall
 import { admittedFixture } from './interop.fixture';
 import { requireTenantId } from './ids';
 import type { FirewallClock, KnowledgeBaseView, TimeMachineRecord, TimestampMs } from './index';
+import type { KnowledgeRecordId } from './index';
 
 describe('the reference port decision rule (T026 mirror)', () => {
   it('includes a tenant record at the inclusive boundary and withholds one millisecond earlier', () => {
@@ -56,7 +57,7 @@ describe('the reference port decision rule (T026 mirror)', () => {
     expect(referenceFirewallProject(null as never, { now: 1 as never }, tenant, {}).ok).toBe(false);
     expect(referenceFirewallProject(baseOf(record), { now: -1 as never }, tenant, {}).ok).toBe(false);
     expect(referenceFirewallProject(baseOf(record), { now: 1 as never }, '' as never, {}).ok).toBe(false);
-    expect(referenceFirewallProject(baseOf(record), { now: 1 as never }, tenant, { ids: [''] }).ok).toBe(false);
+    expect(referenceFirewallProject(baseOf(record), { now: 1 as never }, tenant, { ids: ['' as KnowledgeRecordId] }).ok).toBe(false);
     expect(referenceFirewallProject(baseOf(record), { now: 1 as never }, tenant, { availableFrom: 5 as never, availableTo: 1 as never }).ok).toBe(false);
   });
 

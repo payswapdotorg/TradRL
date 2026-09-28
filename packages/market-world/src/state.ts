@@ -34,14 +34,13 @@ import type {
   ActionId,
   AgentInstanceId,
   EpisodeId,
-  InstrumentId,
   IntentReceiptId,
   VenueId,
   WorldId,
   WorldSnapshotRef,
 } from './ids';
 import { isIntentReceiptId, isWorldSnapshotRef } from './ids';
-import type { ActionMirror } from './env-mirror';
+import type { JsonValue } from './json';
 
 // ---------------------------------------------------------------------------
 // Per-stream sequence trackers (mirror of market-protocol's discipline)
@@ -56,7 +55,7 @@ import type { ActionMirror } from './env-mirror';
  */
 export interface StreamSequenceState {
   readonly venue: VenueId;
-  readonly instrument: InstrumentId;
+  readonly instrument: VenueId extends never ? never : import('./ids').InstrumentId;
   /** The event-type stream name (`trade`, `quote`, ..., `other:<kind>`). */
   readonly stream: string;
   /** The highest sequence applied to this stream so far. */
@@ -126,7 +125,7 @@ export function isIntentReceipt(value: unknown): value is IntentReceipt {
 
 /** One entry of the world's intent log: the accepted request plus its receipt. */
 export interface IntentRecord {
-  readonly action: ActionMirror;
+  readonly action: import('./env-mirror').ActionMirror;
   readonly receipt: IntentReceipt;
 }
 

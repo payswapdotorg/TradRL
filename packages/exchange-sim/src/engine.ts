@@ -66,7 +66,7 @@ import { fail, ok, type ExchangeResult } from './errors';
 import { isTimestampMs, type TimestampMs } from './timestamp';
 import { mintFillId, mintOrderId, type ExchangeOrderId, type FillId } from './ids';
 import { add, compare, isAlignedToGrid, normalize, subtract } from './decimals';
-import type { OrderIntent, Timestamp } from './domain-mirror';
+import type { OrderIntent } from './domain-mirror';
 import { isCoreTimeInForce, isoToEpochMs, validateOrderIntent } from './domain-mirror';
 import type { BookSnapshotSeed, BookState, RestingLevel, RestingOrder } from './book';
 import { emptyBook, validateBookSeed } from './book';
@@ -286,7 +286,7 @@ export function submitOrder(state: EngineState, intent: unknown, at: unknown): E
   // --- Matching ------------------------------------------------------------
   const side = validIntent.side;
   const limitPrice = validIntent.kind === 'limit' ? normalize(validIntent.price as string) : null;
-  const expiresAtMs = validIntent.timeInForce === 'gtt' ? isoToEpochMs(validIntent.expiresAt as Timestamp) : null;
+  const expiresAtMs = validIntent.timeInForce === 'gtt' ? isoToEpochMs(validIntent.expiresAt as string) : null;
 
   let book = state.book;
   let orders = state.orders;
@@ -610,7 +610,7 @@ function intakeRejection(state: EngineState, intent: OrderIntent, at: TimestampM
 
   // gtt expiry must be in the future at arrival.
   if (intent.timeInForce === 'gtt') {
-    const expiryMs = isoToEpochMs(intent.expiresAt as Timestamp);
+    const expiryMs = isoToEpochMs(intent.expiresAt as string);
     if (expiryMs <= at) {
       return {
         reason: 'gtt_expired_on_arrival',

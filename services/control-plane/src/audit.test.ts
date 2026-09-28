@@ -121,7 +121,7 @@ describe('ProjectAuditLog', () => {
         at: T0,
         tenantId: tenantA,
         projectId: 'prj_x' as ProjectId,
-        lineage: { projectId: 'prj_x' as ProjectId, goal: { goalId: 'g', version: 1 }, constraintSet: { id: 'c', version: 1 } },
+        lineage: { projectId: 'prj_x' as ProjectId, goal: { goalId:'g' as GoalRef, version: 1 }, constraintSet: { id:'c' as ConstraintSetRef, version: 1 } },
       }),
     );
     expectTypedError('invalid-audit-log', () =>
@@ -129,7 +129,7 @@ describe('ProjectAuditLog', () => {
         at: T0,
         tenantId: tenantA,
         projectId: 'prj_x' as ProjectId,
-        lineage: { projectId: 'prj_OTHER' as ProjectId, goal: { goalId: 'g', version: 1 }, constraintSet: { id: 'c', version: 1 } },
+        lineage: { projectId: 'prj_OTHER' as ProjectId, goal: { goalId:'g' as GoalRef, version: 1 }, constraintSet: { id:'c' as ConstraintSetRef, version: 1 } },
       }),
     );
   });

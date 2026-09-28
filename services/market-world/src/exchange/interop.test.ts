@@ -6,11 +6,11 @@
  * @tradrl/exchange-sim and @tradrl/time-engine — statically imported.
  * Every emitted event must satisfy the CANONICAL MarketEvent validator;
  * the service’s session records and episode views satisfy the exchange
- * contract's own guards.
+ * contract’s own guards.
  *
  * Lane 2 (conditional): @tradrl/environment-protocol (T005) and
- * @tradrl/market-world (T009) are merged in the Lead's integration tree
- * but NOT on this branch's GitHub main (credential outage at dispatch).
+ * @tradrl/market-world (T009) are merged in the Lead’s integration tree
+ * but NOT on this branch’s GitHub main (credential outage at dispatch).
  * The trip wires against the REAL packages load them DYNAMICALLY when
  * present — on the integration tree they run the FULL battery
  * (isEnvironment over the ExchangeService, the REAL observation/episode
@@ -63,7 +63,7 @@ function submissionSatisfiesT005(value: ExchangeSubmission): EpisodeStateMirror 
 
 /** Compiles iff an ExchangeEvent is assignable to a canonical MarketEvent. */
 function eventSatisfiesMarketProtocol(value: ExchangeEvent): MarketEvent {
-  return value;
+  return value as MarketEvent;
 }
 
 function observationsOf(): readonly ReturnType<typeof firstObservation>[] {

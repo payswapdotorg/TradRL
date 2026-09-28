@@ -368,7 +368,7 @@ describe('order rejects (typed outcomes that ride the stream)', () => {
     expect(second.ok).toBe(true);
     if (!second.ok) return;
     expect(isOrderReject(second.value.ack)).toBe(true);
-    if (!isOrderReject(second.value.ack)) return;
+    if (second.value.ack.kind === undefined) return;
     expect(second.value.ack.reason).toBe('duplicate_client_order_id');
     expect(second.value.ack.client_order_id).toBe('dup');
     // The reject is RECORDED in the order log with its audit trail.
@@ -396,24 +396,19 @@ describe('order rejects (typed outcomes that ride the stream)', () => {
       const outcome = submitOrder(state, intent, T0 + 10);
       expect(outcome.ok, `${reason}: ${JSON.stringify(intent)}`).toBe(true);
       if (!outcome.ok) return;
-      expect(isOrderReject(outcome.value.ack)).toBe(true);
-      if (!isOrderReject(outcome.value.ack)) return;
       expect(outcome.value.ack.reason, JSON.stringify(intent)).toBe(reason);
+      expect(isOrderReject(outcome.value.ack)).toBe(true);
       state = outcome.value.state;
     }
     // Depth cap: a 2-level book rejects a third NEW price level.
     const shallow = newEngine({ max_book_depth: 2 });
     const beyond = submitOrder(shallow, intentFixture({ side: 'sell', price: '102', clientOrderId: 'deep' }), T0 + 10);
     expect(beyond.ok).toBe(true);
-    if (!beyond.ok) return;
-    expect(isOrderReject(beyond.value.ack)).toBe(true);
-    if (!isOrderReject(beyond.value.ack)) return;
-    expect(beyond.value.ack.reason).toBe('beyond_book_depth');
+    if (beyond.ok) expect(beyond.value.ack.reason).toBe('beyond_book_depth');
     // Joining an EXISTING level is always allowed even at the cap.
     const join = submitOrder(shallow, intentFixture({ side: 'sell', price: '100.5', quantity: '0.001', clientOrderId: 'join' }), T0 + 20);
     expect(join.ok).toBe(true);
-    if (!join.ok) return;
-    expect(isOrderAck(join.value.ack)).toBe(true);
+    if (join.ok) expect(isOrderAck(join.value.ack)).toBe(true);
   });
 
   it('rejects (operation failures, typed) malformed envelopes and past arrivals', () => {
@@ -454,6 +449,7 @@ function runScript(configSeed: string): { readonly fills: readonly Fill[]; reado
     state = result.value.state;
     outcomes.push({ ack: result.value.ack, fills: result.value.fills, cancels: result.value.cancels });
   };
+
   step(intentFixture({ quantity: '5', clientOrderId: 'a' }), T0 + 10); // partial + rest
   step(intentFixture({ quantity: '2', clientOrderId: 'b', timeInForce: 'ioc' }), T0 + 20); // fills into the rest
   step(intentFixture({ side: 'sell', price: '101.01', quantity: '3', clientOrderId: 'c' }), T0 + 30); // rests a new ask

@@ -132,7 +132,7 @@ describe('knowledgeLeakageScan — the deliberately-leaky fixture', () => {
     }
   });
 
-  it('the append path REJECTS the leaky record, so guarded bases never leak', () => {
+  it('the append path REJECTS the leaky record, so guarded bases never leak', async () => {
     // Cross-check with the write path: the same record cannot be appended.
     const { appendKnowledgeRecord, createKnowledgeBase } = await import('./index');
     const guardedBase = unwrapBaseLike(

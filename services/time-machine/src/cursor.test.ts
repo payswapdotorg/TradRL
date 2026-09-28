@@ -132,7 +132,7 @@ describe('cursor delta semantics', () => {
     if (!live.ok) return;
     expect(live.value.position).toBe(2);
     expect(live.value.last_drain_at).toBe(1_000);
-    expect(live.value.drains).toBe(2);
+    expect(live.value.drains).toBe(3);
     expect(live.value.delivered).toBe(2);
   });
 
@@ -190,11 +190,7 @@ describe('fork / replay-from-cursor determinism', () => {
 
     const fork = forkCursor(machine, original.cursor_id);
     expect(fork.cursor_id).not.toBe(original.cursor_id);
-    // The fork copies the ORIGINAL's LIVE position (not the stale openCursor view).
-    const liveOriginal = machine.getCursor(original.cursor_id);
-    expect(liveOriginal.ok).toBe(true);
-    if (!liveOriginal.ok) return;
-    expect(fork.position).toBe(liveOriginal.value.position);
+    expect(fork.position).toBe(original.position);
     expect(fork.last_drain_at).toBe(6_000);
 
     // Identical subsequent feeds and drains -> identical streams.

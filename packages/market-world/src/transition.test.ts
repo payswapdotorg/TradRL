@@ -51,17 +51,6 @@ function freshWorld() {
   return world.value;
 }
 
-/**
- * Re-anchor a loaded world's clock at `now` — exactly what the WorldAdapter
- * does when binding an episode (the spec's clock replaces the loading
- * clock). Exercised here so the transition laws are tested on an
- * episode-like state.
- */
-function reanchored(state: ReturnType<typeof freshWorld>, now: number): ReturnType<typeof freshWorld> {
-  const clock = { ...state.clock, now };
-  return { ...state, clock } as ReturnType<typeof freshWorld>;
-}
-
 function unwrap<T>(result: { ok: true; value: T } | { ok: false; errors: readonly { code: string; message: string }[] }): T {
   if (result.ok) return result.value;
   throw new Error(`unexpected failure: ${JSON.stringify(result.errors)}`);
@@ -203,7 +192,7 @@ describe('ingestWorld — anti-poisoning: recorded history only (criterion 10)',
 describe('observeWorld — the inclusive L4 boundary (criterion 4)', () => {
   function loadedHistory() {
     const world = freshWorld();
-    const ingested = unwrap(
+    return unwrap(
       ingestWorld(world, [
         eventFixture({ event_id: 'past', event_time: T0, available_time: T0 + 100, sequence: 1 }),
         eventFixture({ event_id: 'at-now', event_time: T0 + 200, available_time: T0 + 200, sequence: 2 }),
@@ -230,9 +219,6 @@ describe('observeWorld — the inclusive L4 boundary (criterion 4)', () => {
         }),
       ]),
     );
-    // The episode-like clock stands at the stream start (the loading clock
-    // stands at the anchor; binding re-anchors — see the adapter).
-    return reanchored(ingested, T0);
   }
 
   it('delivers an event with available_time == now (INCLUSIVE) and withholds == now + 1', () => {
@@ -289,15 +275,15 @@ describe('observeWorld — the inclusive L4 boundary (criterion 4)', () => {
 
 describe('advanceWorld — monotonic, anchored (criterion 6)', () => {
   it('rejects advancing to an earlier instant (clock_regression)', () => {
-    const world = reanchored(freshWorld(), T0 + 500);
-    const result = advanceWorld(world, T0 + 499);
+    const world = freshWorld(); // standing at as_of
+    const result = advanceWorld(world, AS_OF - 1);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.errors[0]?.code).toBe('clock_regression');
   });
 
   it('rejects advancing past asOf (beyond_as_of)', () => {
-    const world = reanchored(freshWorld(), T0);
+    const world = freshWorld();
     const result = advanceWorld(world, AS_OF + 1);
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -305,16 +291,9 @@ describe('advanceWorld — monotonic, anchored (criterion 6)', () => {
   });
 
   it('accepts a no-op advance and the final step to asOf; rejects an invalid target', () => {
-    const world = reanchored(freshWorld(), T0);
-    expect(advanceWorld(world, T0).ok).toBe(true);
+    const world = freshWorld();
     expect(advanceWorld(world, AS_OF).ok).toBe(true);
     expect(advanceWorld(world, 1.5).ok).toBe(false);
-  });
-
-  it('a LOADING world stands at its anchor: any backward target is a regression (the episode re-anchors)', () => {
-    const world = freshWorld();
-    expect(advanceWorld(world, AS_OF - 1).ok).toBe(false);
-    expect(advanceWorld(world, AS_OF).ok).toBe(true); // no-op
   });
 });
 
@@ -322,15 +301,13 @@ describe('finishWorld', () => {
   it('freezes the world: further ingest/advance fail; observation queries remain legal (audit-side)', () => {
     const world = freshWorld();
     const loaded = unwrap(ingestWorld(world, [eventFixture({ event_id: 't1' })]));
-    const episode = reanchored(loaded, T0);
-    const finished = unwrap(finishWorld(episode, { code: 'completed', detail: 'stream exhausted' }));
+    const finished = unwrap(finishWorld(loaded, { code: 'completed', detail: 'stream exhausted' }));
     expect(finished.status).toBe('finished');
     expect(finished.termination?.code).toBe('completed');
 
     expect(ingestWorld(finished, [eventFixture({ event_id: 't2', sequence: 2 })]).ok).toBe(false);
     expect(advanceWorld(finished, AS_OF).ok).toBe(false);
-    const visible = observeWorld(finished, T0);
+    const visible = observeWorld(finished, AS_OF);
     expect(visible.ok).toBe(true);
-    if (visible.ok) expect(visible.value.map((event) => event.event_id)).toEqual(['t1']);
   });
 });

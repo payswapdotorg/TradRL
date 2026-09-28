@@ -6,6 +6,7 @@
  * deepFreeze immutability.
  */
 
+import type { CustodyChain } from './index';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -33,7 +34,7 @@ const HISTORICAL: ProvenanceRecord = {
   derived_from: [],
   transform: null,
   corrections: [],
-  custody: CUSTODY,
+  custody:(CUSTODY) as CustodyChain,
 };
 
 const SIMULATED: ProvenanceRecord = {
@@ -42,7 +43,7 @@ const SIMULATED: ProvenanceRecord = {
   derived_from: [],
   transform: null,
   corrections: [],
-  custody: CUSTODY,
+  custody:(CUSTODY) as CustodyChain,
 };
 
 const GENERATED: ProvenanceRecord = {
@@ -51,7 +52,7 @@ const GENERATED: ProvenanceRecord = {
   derived_from: [],
   transform: null,
   corrections: [],
-  custody: CUSTODY,
+  custody:(CUSTODY) as CustodyChain,
 };
 
 const DERIVED: ProvenanceRecord = {
@@ -60,7 +61,7 @@ const DERIVED: ProvenanceRecord = {
   derived_from: ['evt-0', 'evt-1'],
   transform: 'vwap-1m-aggregator',
   corrections: [],
-  custody: CUSTODY,
+  custody:(CUSTODY) as CustodyChain,
 };
 
 function codes(errors: readonly ProvenanceError[]): string[] {

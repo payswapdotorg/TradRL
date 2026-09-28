@@ -59,7 +59,7 @@ export const exampleGoalStatement: GoalStatement = deepFreeze({
   },
   createdAt: 1_799_900_000_000,
   description: 'Primary capital preservation goal.',
-});
+}) as GoalStatement;
 
 /** Reference constraint-set statement: alpha guardrails v2. */
 export const exampleConstraintSetStatement: ConstraintSetStatement = deepFreeze({
@@ -99,7 +99,7 @@ export const exampleConstraintSetStatement: ConstraintSetStatement = deepFreeze(
     },
   ],
   createdAt: 1_799_800_000_000,
-});
+}) as ConstraintSetStatement;
 
 /** The acceptance criteria compiled from the two example statements. */
 export const exampleAcceptanceCriteria = compileAcceptance(
@@ -123,4 +123,4 @@ export const exampleProjectRecordDraft: ProjectRecordDraft = deepFreeze({
   lineage: exampleProjectLineage,
   acceptanceCriteriaId: exampleAcceptanceCriteria.id as AcceptanceCriteriaId,
   createdAt: 1_800_100_000_000,
-});
+}) as ProjectRecordDraft;

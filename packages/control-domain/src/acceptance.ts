@@ -131,7 +131,7 @@ export interface AcceptanceCriteria {
   /** Non-empty; criterion ids unique. */
   readonly criteria: readonly CompiledCriterion[];
   /** Validated snapshot of the constraint set; constraint ids unique. May be empty (satisfies nothing). */
-  readonly constraints: readonly ConstraintSetStatement['constraints'];
+  readonly constraints: ConstraintSetStatement['constraints'];
   readonly policy: EvaluationPolicy;
 }
 

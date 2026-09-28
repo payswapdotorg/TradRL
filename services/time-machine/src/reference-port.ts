@@ -21,14 +21,13 @@
  * contract, mirrored.
  */
 
+import { isTimestampMs } from './timestamp';
 import { deepFreeze } from './freeze';
-import { isTenantId, type TenantId } from './ids';
-import type { TimeMachineRecord } from './record';
-import type { TimestampMs } from './timestamp';
 import {
   isFirewallClock,
   isFirewallProjectionPort,
   isKnowledgeBaseView,
+  isTenantId,
   validateProjectionSelector,
   type FirewallAuditLog,
   type FirewallClock,
@@ -38,7 +37,11 @@ import {
   type FirewallResult,
   type KnowledgeBaseView,
   type KnowledgeQueryFilter,
+  type TenantId,
+  type TimeMachineRecord,
 } from './firewall';
+import { fail } from './errors';
+import type { TimestampMs } from './timestamp';
 
 /** Does the record pass the data-shaped filter? (Assumes visibility passed.) Mirror of T026's passesFilter. */
 function passesFilter(record: TimeMachineRecord, filter: KnowledgeQueryFilter): boolean {
@@ -59,20 +62,20 @@ function passesFilter(record: TimeMachineRecord, filter: KnowledgeQueryFilter): 
  */
 function decide(
   record: TimeMachineRecord,
-  now: TimestampMs,
+  now: number,
   tenant: TenantId,
   filter: KnowledgeQueryFilter,
 ): FirewallDecision {
   if (record.tenant !== tenant) {
-    return { record_id: record.record_id, decision: 'excluded', reason: 'tenant_boundary', available_time: null, now };
+    return { record_id: record.record_id, decision: 'excluded', reason: 'tenant_boundary', available_time: null, now: now as TimestampMs };
   }
   if (record.available_time > now) {
-    return { record_id: record.record_id, decision: 'excluded', reason: 'not_yet_available', available_time: record.available_time, now };
+    return { record_id: record.record_id, decision: 'excluded', reason: 'not_yet_available', available_time: record.available_time, now: now as TimestampMs };
   }
   if (!passesFilter(record, filter)) {
-    return { record_id: record.record_id, decision: 'excluded', reason: 'filtered_out', available_time: record.available_time, now };
+    return { record_id: record.record_id, decision: 'excluded', reason: 'filtered_out', available_time: record.available_time, now: now as TimestampMs };
   }
-  return { record_id: record.record_id, decision: 'included', reason: 'visible', available_time: record.available_time, now };
+  return { record_id: record.record_id, decision: 'included', reason: 'visible', available_time: record.available_time, now: now as TimestampMs };
 }
 
 /**
@@ -149,3 +152,6 @@ export function createReferenceFirewallPort(): FirewallProjectionPort {
 export function isReferenceFirewallPort(value: unknown): boolean {
   return isFirewallProjectionPort(value) && value.project === referenceFirewallProject;
 }
+
+/** Fail helper re-export parity for the port's error construction sites. */
+export const portFail = fail;

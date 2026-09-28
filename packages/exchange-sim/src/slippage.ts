@@ -156,9 +156,8 @@ export function aggressorPrice(
 
   const price = parseExact(bookPrice);
   const bps = parseExact(config.bps);
-  // factor = (10_000 ± bps) / 10_000, held exactly as: value = price.digits
-  // * factorNumerator / 10^(price.scale + bps.scale + 4) — the +4 is the
-  // 10_000 basis-point divisor, bps.scale carries the rate's own decimals.
+  // factor = (10_000 ± bps) / 10_000 — held as the exact rational
+  // value = price.digits * factorNumerator / 10^(price.scale + bps.scale).
   const basis = 10_000n * 10n ** BigInt(bps.scale);
   const factorNumerator = aggressorSide === 'buy' ? basis + bps.digits : basis - bps.digits;
   if (factorNumerator <= 0n) {
@@ -167,7 +166,7 @@ export function aggressorPrice(
     return normalize(tickSize);
   }
   const valueNumerator = price.digits * factorNumerator;
-  const valueScale = price.scale + bps.scale + 4;
+  const valueScale = price.scale + bps.scale;
 
   // Quantize value/grid onto the grid, adversarially to the aggressor:
   // q = ceil-or-floor(value / grid); result = q * grid, at the grid's scale.

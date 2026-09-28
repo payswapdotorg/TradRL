@@ -98,8 +98,8 @@ describe('BookLevel / BookSnapshotSeed structural mirror (market-protocol)', () 
     // Type-level witnesses compile both directions.
     const first = seeded.ok ? seeded.value.bids[0] : undefined;
     if (first === undefined) return;
-    const asMarket: MarketBookLevel = mirrorLevelIsMarketLevel(first);
-    const asMirror: BookLevel = marketLevelIsMirrorLevel(asMarket);
+    const asMarket: MarketBookLevel = mirrorLevelIsMarketLevel(first) as MarketBookLevel;
+    const asMirror: BookLevel = marketLevelIsMirrorLevel(asMarket) as BookLevel;
     expect(asMirror.price).toBe('43100.00');
     void marketSnapshotIsSeed;
   });
@@ -198,12 +198,12 @@ describe('book views', () => {
     const book: BookState = deepFreeze({
       bids: [{ price: '100.00', orders: [{ order_id: 'xo-1', remaining: '2' }, { order_id: 'xo-2', remaining: '3' }] }],
       asks: [],
-    });
+    }) as BookState;
     expect(topOfBook(book)).toBeNull();
     const twoSided: BookState = deepFreeze({
       bids: book.bids,
       asks: [{ price: '100.50', orders: [{ order_id: 'xo-3', remaining: '1' }] }],
-    });
+    }) as BookState;
     const top = topOfBook(twoSided);
     expect(top?.bid_price).toBe('100.00');
     expect(top?.bid_size).toBe('5');
@@ -217,7 +217,7 @@ describe('book views', () => {
         { price: '99.50', orders: [{ order_id: 'xo-3', remaining: '4' }] },
       ],
       asks: [{ price: '100.50', orders: [{ order_id: 'xo-4', remaining: '0.5' }] }],
-    });
+    }) as BookState;
     const view = bookSnapshotView(book);
     expect(view.bids).toEqual([
       { price: '100.00', size: '4' },

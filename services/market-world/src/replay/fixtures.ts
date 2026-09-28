@@ -250,7 +250,7 @@ export function createFixtureEventSource(options: Partial<FixtureStreamOptions> 
       yield batch;
     }
   }
-  return generate();
+  return generate() as ReplayEventSource;
 }
 
 /** The latest instant the fixture stream can make anything available (for as_of). */

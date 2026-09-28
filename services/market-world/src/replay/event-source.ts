@@ -18,7 +18,7 @@
 
 /** A pure source of recorded event batches (async iterable; no I/O in this WO). */
 export interface ReplayEventSource {
-  [Symbol.asyncIterator](): AsyncIterator<readonly unknown[], void, undefined>;
+  [Symbol.asyncIterator](): AsyncIterator<readonly unknown[], undefined, undefined>;
 }
 
 /** Runtime guard: an object exposing an async iterator of event batches. */

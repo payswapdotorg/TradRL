@@ -210,7 +210,7 @@ describe('transitionProject — every ILLEGAL edge (typed errors)', () => {
     );
     expectTypedError('invalid-lifecycle-state', () =>
       transitionProject(
-        { projectId: ID, status: 'active', acceptanceCriteriaId: 'bad id', organizationRef: ORG },
+        { projectId: ID, status: 'active', acceptanceCriteriaId:'bad id' as AcceptanceCriteriaId, organizationRef: ORG },
         'pause',
       ),
     );

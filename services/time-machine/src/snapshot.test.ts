@@ -10,7 +10,6 @@ import {
   createReferenceFirewallPort,
   isDeeplyFrozen,
   restoreTimeMachine,
-  type TimestampMs,
 } from './index';
 import { DATASET, TENANT, drainAt, feed, idsOf, machineOf, openCursor, rawEvent, viewAt } from './fixtures';
 
@@ -39,7 +38,7 @@ describe('snapshot sealing', () => {
     expect(snapshot.lineage_hash).toMatch(/^[0-9a-f]{8}-[0-9a-f]{8}$/);
   });
 
-  it('the lineage hash binds the content: every mutation breaks it (tamper detection)', () => {
+  it('the lineage hash binds the content: any mutation breaks it (tamper detection)', () => {
     const machine = machineOf();
     feed(machine, [rawEvent('evt-1', 1_000)], 'batch-1');
     const snapshot = machine.snapshot();
@@ -190,12 +189,10 @@ describe('the restore contract (identical subsequent behavior)', () => {
   });
 
   it('an injected-clock snapshot demands the clock at restore (typed clock_required)', () => {
-    // A NON-state-bearing injected clock: the snapshot cannot transfer it.
-    let tick = 0;
-    const plainClock = {
-      next: (): TimestampMs => (9_000 + 7 * tick++) as TimestampMs,
-    };
-    const machine = machineOf({ ingestClock: plainClock });
+    const clock = createDeterministicIngestClock(9_000, 7);
+    expect(clock.ok).toBe(true);
+    if (!clock.ok) return;
+    const machine = machineOf({ ingestClock: clock.value });
     feed(machine, [rawEvent('evt-1', 1_000)], 'batch-1');
 
     const missing = restoreTimeMachine(machine.snapshot());

@@ -6,6 +6,7 @@
  * anchored, no-op legal), guard totality, and deep freezing.
  */
 
+import type { TimestampMs } from './index';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -21,7 +22,7 @@ const T0 = 1_700_000_000_000;
 
 describe('createClockState', () => {
   it('defaults: now = asOf, playbackSpeed = 1, paused = false, point-in-time policy', () => {
-    const result = createClockState({ asOf: T0, fidelity: 'exact_replay' });
+    const result = createClockState({ asOf:(T0) as TimestampMs, fidelity: 'exact_replay' });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.now).toBe(T0);
@@ -33,21 +34,21 @@ describe('createClockState', () => {
   });
 
   it('rejects now > asOf (beyond_as_of)', () => {
-    const result = createClockState({ asOf: T0, now: T0 + 1, fidelity: 'exact_replay' });
+    const result = createClockState({ asOf:(T0) as TimestampMs, now:(T0 + 1) as TimestampMs, fidelity: 'exact_replay' });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.errors[0]?.code).toBe('beyond_as_of');
   });
 
   it('rejects a non-positive playback speed', () => {
-    expect(createClockState({ asOf: T0, playbackSpeed: 0, fidelity: 'exact_replay' }).ok).toBe(false);
-    expect(createClockState({ asOf: T0, playbackSpeed: Number.POSITIVE_INFINITY, fidelity: 'exact_replay' }).ok).toBe(false);
+    expect(createClockState({ asOf:(T0) as TimestampMs, playbackSpeed: 0, fidelity: 'exact_replay' }).ok).toBe(false);
+    expect(createClockState({ asOf:(T0) as TimestampMs, playbackSpeed: Number.POSITIVE_INFINITY, fidelity: 'exact_replay' }).ok).toBe(false);
   });
 
   it('accepts all three L5 fidelity modes at the SHAPE level (the runtime world gate is separate)', () => {
     for (const fidelity of FIDELITY_MODES) {
       expect(isFidelityMode(fidelity)).toBe(true);
-      expect(createClockState({ asOf: T0, fidelity }).ok).toBe(true);
+      expect(createClockState({ asOf:(T0) as TimestampMs, fidelity }).ok).toBe(true);
     }
     expect(isFidelityMode('replay')).toBe(false); // no aliasing (L5)
     expect(isFidelityMode('exact')).toBe(false);
@@ -56,7 +57,7 @@ describe('createClockState', () => {
 
 describe('advanceClockStateTo (the mirrored advance law)', () => {
   it('advances forward within the anchor', () => {
-    const clock = createClockState({ asOf: T0 + 1000, now: T0, fidelity: 'exact_replay' });
+    const clock = createClockState({ asOf:(T0 + 1000) as TimestampMs, now:(T0) as TimestampMs, fidelity: 'exact_replay' });
     if (!clock.ok) throw new Error('fixture');
     const advanced = advanceClockStateTo(clock.value, T0 + 500);
     expect(advanced.ok).toBe(true);
@@ -64,7 +65,7 @@ describe('advanceClockStateTo (the mirrored advance law)', () => {
   });
 
   it('rejects regression (clock_regression)', () => {
-    const clock = createClockState({ asOf: T0 + 1000, now: T0 + 500, fidelity: 'exact_replay' });
+    const clock = createClockState({ asOf:(T0 + 1000) as TimestampMs, now:(T0 + 500) as TimestampMs, fidelity: 'exact_replay' });
     if (!clock.ok) throw new Error('fixture');
     const regressed = advanceClockStateTo(clock.value, T0 + 499);
     expect(regressed.ok).toBe(false);
@@ -73,7 +74,7 @@ describe('advanceClockStateTo (the mirrored advance law)', () => {
   });
 
   it('rejects advancing past asOf (beyond_as_of)', () => {
-    const clock = createClockState({ asOf: T0 + 1000, now: T0, fidelity: 'exact_replay' });
+    const clock = createClockState({ asOf:(T0 + 1000) as TimestampMs, now:(T0) as TimestampMs, fidelity: 'exact_replay' });
     if (!clock.ok) throw new Error('fixture');
     const beyond = advanceClockStateTo(clock.value, T0 + 1001);
     expect(beyond.ok).toBe(false);
@@ -82,7 +83,7 @@ describe('advanceClockStateTo (the mirrored advance law)', () => {
   });
 
   it('treats to == now as a legal no-op and to == asOf as the final legal step', () => {
-    const clock = createClockState({ asOf: T0 + 1000, now: T0 + 500, fidelity: 'exact_replay' });
+    const clock = createClockState({ asOf:(T0 + 1000) as TimestampMs, now:(T0 + 500) as TimestampMs, fidelity: 'exact_replay' });
     if (!clock.ok) throw new Error('fixture');
     expect(advanceClockStateTo(clock.value, T0 + 500).ok).toBe(true);
     expect(advanceClockStateTo(clock.value, T0 + 1000).ok).toBe(true);
@@ -91,7 +92,7 @@ describe('advanceClockStateTo (the mirrored advance law)', () => {
 
 describe('guards and immutability', () => {
   it('isClockState rejects malformed values totally', () => {
-    const good = createClockState({ asOf: T0, fidelity: 'exact_replay' });
+    const good = createClockState({ asOf:(T0) as TimestampMs, fidelity: 'exact_replay' });
     if (!good.ok) throw new Error('fixture');
     expect(isClockState(good.value)).toBe(true);
     expect(isClockState(null)).toBe(false);
@@ -103,7 +104,7 @@ describe('guards and immutability', () => {
   });
 
   it('constructed clocks are deeply frozen', () => {
-    const good = createClockState({ asOf: T0, fidelity: 'exact_replay' });
+    const good = createClockState({ asOf:(T0) as TimestampMs, fidelity: 'exact_replay' });
     if (!good.ok) throw new Error('fixture');
     expect(isDeeplyFrozen(good.value)).toBe(true);
   });

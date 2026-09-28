@@ -19,6 +19,7 @@ import {
 import type { Order, OrderSide } from '../../domain-core/src/order';
 import { isOrder as domainIsOrder, ORDER_SIDES as DOMAIN_SIDES, CORE_ORDER_KINDS as DOMAIN_KINDS, CORE_TIME_IN_FORCE as DOMAIN_TIF } from '../../domain-core/src/order';
 import { requireTimestampMs } from './timestamp';
+import type { InstrumentId, VenueId } from './index';
 
 // ---------------------------------------------------------------------------
 // TYPE-LEVEL WITNESSES (fail `pnpm typecheck` if the mirror drifts)
@@ -71,7 +72,7 @@ describe('OrderIntent structural mirror (domain-core Order)', () => {
     const domainShaped = intentFixture();
     expect(domainIsOrder(domainShaped)).toBe(true);
     expect(isOrderIntent(domainShaped)).toBe(true);
-    const validated = unwrap(validateOrderIntent(domainShaped, { venue: VENUE, instrument: INSTRUMENT }));
+    const validated = unwrap(validateOrderIntent(domainShaped, { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }));
     expect(domainIsOrder(validated)).toBe(true);
     // Type-level witnesses compile both directions.
     const asIntent: OrderIntent = domainOrderIsIntent(validated);
@@ -117,7 +118,7 @@ describe('OrderIntent structural mirror (domain-core Order)', () => {
 
 describe('validateOrderIntent (collect-all + engine binding)', () => {
   it('validates a good intent deeply frozen', () => {
-    const result = validateOrderIntent(intentFixture(), { venue: VENUE, instrument: INSTRUMENT });
+    const result = validateOrderIntent(intentFixture(), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(Object.isFrozen(result.value)).toBe(true);
@@ -127,7 +128,7 @@ describe('validateOrderIntent (collect-all + engine binding)', () => {
   it('collects every violation with dotted paths', () => {
     const result = validateOrderIntent(
       { side: 'up', quantity: '0', createdAt: 'nope' },
-      { venue: VENUE, instrument: INSTRUMENT },
+      { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId },
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -143,24 +144,24 @@ describe('validateOrderIntent (collect-all + engine binding)', () => {
   });
 
   it('rejects intents bound to a different venue or instrument (typed, before any state)', () => {
-    const wrongVenue = validateOrderIntent(intentFixture({ venueId: 'COINBASE' }), { venue: VENUE, instrument: INSTRUMENT });
+    const wrongVenue = validateOrderIntent(intentFixture({ venueId: 'COINBASE' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId });
     expect(wrongVenue.ok).toBe(false);
     if (wrongVenue.ok) return;
     expect(wrongVenue.errors[0]?.code).toBe('invalid_field');
     expect(wrongVenue.errors[0]?.path).toBe('intent.venueId');
 
-    const wrongInstrument = validateOrderIntent(intentFixture({ instrumentId: 'ETH-USDT' }), { venue: VENUE, instrument: INSTRUMENT });
+    const wrongInstrument = validateOrderIntent(intentFixture({ instrumentId: 'ETH-USDT' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId });
     expect(wrongInstrument.ok).toBe(false);
   });
 
   it('enforces the price matrix and the TIF expiry matrix (mirrored laws)', () => {
-    expect(validateOrderIntent(intentFixture({ kind: 'market', price: undefined }), { venue: VENUE, instrument: INSTRUMENT }).ok).toBe(true);
-    expect(validateOrderIntent(intentFixture({ kind: 'market', price: '100' }), { venue: VENUE, instrument: INSTRUMENT }).ok).toBe(false);
-    expect(validateOrderIntent(intentFixture({ kind: 'limit', price: undefined }), { venue: VENUE, instrument: INSTRUMENT }).ok).toBe(false);
-    expect(validateOrderIntent(intentFixture({ kind: 'stop', stopPrice: '43000' }), { venue: VENUE, instrument: INSTRUMENT }).ok).toBe(true);
-    expect(validateOrderIntent(intentFixture({ timeInForce: 'gtt', expiresAt: '2026-02-01T00:00:00Z' }), { venue: VENUE, instrument: INSTRUMENT }).ok).toBe(true);
-    expect(validateOrderIntent(intentFixture({ timeInForce: 'gtc', expiresAt: '2026-02-01T00:00:00Z' }), { venue: VENUE, instrument: INSTRUMENT }).ok).toBe(false);
-    expect(validateOrderIntent(intentFixture({ timeInForce: 'gtt' }), { venue: VENUE, instrument: INSTRUMENT }).ok).toBe(false);
+    expect(validateOrderIntent(intentFixture({ kind: 'market', price: undefined }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(true);
+    expect(validateOrderIntent(intentFixture({ kind: 'market', price: '100' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(false);
+    expect(validateOrderIntent(intentFixture({ kind: 'limit', price: undefined }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(false);
+    expect(validateOrderIntent(intentFixture({ kind: 'stop', stopPrice: '43000' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(true);
+    expect(validateOrderIntent(intentFixture({ timeInForce: 'gtt', expiresAt: '2026-02-01T00:00:00Z' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(true);
+    expect(validateOrderIntent(intentFixture({ timeInForce: 'gtc', expiresAt: '2026-02-01T00:00:00Z' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(false);
+    expect(validateOrderIntent(intentFixture({ timeInForce: 'gtt' }), { venue:(VENUE) as VenueId, instrument:(INSTRUMENT) as InstrumentId }).ok).toBe(false);
   });
 
   it('open vocabularies stay open (registered kinds/TIFs pass the envelope)', () => {

@@ -6,6 +6,7 @@
  * append-only log (never a rewrite).
  */
 
+import type { CustodyChain, TimestampMs } from './index';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -33,7 +34,7 @@ const INPUT: CorrectionInput = {
   amendment: { price: '43125.10', size: '0.017' },
 };
 
-const RECORD: CorrectionRecord = { ...INPUT, custody: CUSTODY };
+const RECORD: CorrectionRecord = { ...INPUT, custody:(CUSTODY) as CustodyChain };
 
 describe('correction input validation', () => {
   it('accepts a well-formed amendment', () => {
@@ -72,14 +73,14 @@ describe('latestCorrectionStatus (view over an append-only log)', () => {
     corrected_event_id: 'tick-001-1',
     reason: 'vendor restatement: side flipped after audit',
     amendment: { side: 'sell' },
-    custody: { ...CUSTODY, commit: { commit_id: 'cmt-00000006', commit_sequence: 6, ingestion_time: 60_000 } },
+    custody: { ...CUSTODY, commit: { commit_id: 'cmt-00000006', commit_sequence: 6, ingestion_time:(60_000) as TimestampMs } },
   };
   const otherTarget: CorrectionRecord = {
     correction_id: 'fix-003',
     corrected_event_id: 'tick-002-1',
     reason: 'duplicate print',
     amendment: {},
-    custody: CUSTODY,
+    custody:(CUSTODY) as CustodyChain,
   };
 
   it('uncorrected when no amendment names the event', () => {
@@ -122,6 +123,6 @@ function second(): CorrectionRecord {
     corrected_event_id: 'tick-001-1',
     reason: 'vendor restatement: side flipped after audit',
     amendment: { side: 'sell' },
-    custody: { ...CUSTODY, commit: { commit_id: 'cmt-00000006', commit_sequence: 6, ingestion_time: 60_000 } },
+    custody: { ...CUSTODY, commit: { commit_id: 'cmt-00000006', commit_sequence: 6, ingestion_time:(60_000) as TimestampMs } },
   };
 }

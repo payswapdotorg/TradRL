@@ -26,6 +26,7 @@ import {
 } from '../../../services/event-store/src/index';
 import { chainDepth, resolveRoots, type ChainNode } from './index';
 import { requireTimestampMs } from '../../time-engine/src/index';
+import type { TimestampMs } from './index';
 
 function ts(n: number): ReturnType<typeof requireTimestampMs> {
   return requireTimestampMs(n);
@@ -516,28 +517,28 @@ describe('point-in-time window queries (acceptance 10)', () => {
 
   it('filters on available_time with INCLUSIVE bounds — tested at the exact boundary', () => {
     const store = windowStore();
-    const ids = store.query({ from: 150, to: 250 }).map((event) => event.event_id);
+    const ids = store.query({ from:(150) as TimestampMs, to:(250) as TimestampMs }).map((event) => event.event_id);
     // 150 (w-c) and 250 (w-d) are IN; 149 and 251 are OUT.
     expect(ids).toEqual(['w-c', 'w-a', 'w-d']);
   });
 
   it('never filters on event_time: an event INSIDE the window by event_time but OUTSIDE by available_time is excluded', () => {
     const store = windowStore();
-    const ids = store.query({ from: 150, to: 250 }).map((event) => event.event_id);
+    const ids = store.query({ from:(150) as TimestampMs, to:(250) as TimestampMs }).map((event) => event.event_id);
     expect(ids).not.toContain('w-b'); // event_time 220 in window; available_time 120 out
   });
 
   it('half-open windows and unbounded ends', () => {
     const store = windowStore();
-    expect(store.query({ from: 200 }).map((event) => event.event_id)).toEqual(['w-a', 'w-n', 'w-d', 'w-f']);
-    expect(store.query({ to: 150 }).map((event) => event.event_id)).toEqual(['w-b', 'w-e', 'w-c']);
+    expect(store.query({ from:(200) as TimestampMs }).map((event) => event.event_id)).toEqual(['w-a', 'w-n', 'w-d', 'w-f']);
+    expect(store.query({ to:(150) as TimestampMs }).map((event) => event.event_id)).toEqual(['w-b', 'w-e', 'w-c']);
     expect(store.query({}).length).toBe(7);
   });
 
   it('venue/instrument/event_type filters combine with the window', () => {
     const store = windowStore();
-    expect(store.query({ instrument: 'BTC-USDT', event_type: 'news', from: 150, to: 250 }).map((e) => e.event_id)).toEqual(['w-n']);
-    expect(store.query({ venue: 'BINANCE', from: 150, to: 250 }).map((e) => e.event_id)).toEqual(['w-c', 'w-a', 'w-d']);
+    expect(store.query({ instrument: 'BTC-USDT', event_type: 'news', from:(150) as TimestampMs, to:(250) as TimestampMs }).map((e) => e.event_id)).toEqual(['w-n']);
+    expect(store.query({ venue: 'BINANCE', from:(150) as TimestampMs, to:(250) as TimestampMs }).map((e) => e.event_id)).toEqual(['w-c', 'w-a', 'w-d']);
   });
 
   it('results are sorted by (available_time, event_id) — deterministic', () => {
@@ -680,7 +681,7 @@ describe('determinism and replay (acceptance 8)', () => {
     if (replayed.ok) {
       expect(replayed.store.snapshot()).toEqual(original.snapshot());
       expect(replayed.store.commitLog()).toEqual(original.commitLog());
-      expect(replayed.store.query({ from: 1_000, to: 2_500 })).toEqual(original.query({ from: 1_000, to: 2_500 }));
+      expect(replayed.store.query({ from:(1_000) as TimestampMs, to:(2_500) as TimestampMs })).toEqual(original.query({ from:(1_000) as TimestampMs, to:(2_500) as TimestampMs }));
       expect(replayed.store.correctionStatus('d-1')).toEqual(original.correctionStatus('d-1'));
       expect(replayed.store.stats()).toEqual(original.stats());
     }
