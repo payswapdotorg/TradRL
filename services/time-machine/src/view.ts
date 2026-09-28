@@ -24,7 +24,7 @@
  */
 
 import { hashOf } from './hash';
-import type { FirewallAuditLog, KnowledgeQueryFilter } from './firewall';
+import type { KnowledgeQueryFilter } from './firewall';
 import type { DatasetRef, ViewHash } from './ids';
 import type { TimestampMs } from './timestamp';
 import type { TimeMachineRecord } from './record';
@@ -48,7 +48,7 @@ export interface AsOfView {
   /** Firewall-passed records, (available_time, record_id) ascending; quartet carried unmodified. */
   readonly records: readonly TimeMachineRecord[];
   /** The firewall's replayable decision log — the delegation evidence. */
-  readonly audit: FirewallAuditLog;
+  readonly audit: Readonly<import('./firewall').FirewallAuditLog>;
   /** Deterministic lineage checksum, recomputable via {@link recomputeViewHash}. */
   readonly hash: ViewHash;
 }

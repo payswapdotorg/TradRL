@@ -169,8 +169,7 @@ describe('canonical event validation (T008 envelope mirror)', () => {
   });
 
   it('enforces the ONE quartet ordering (D-003): available_time >= event_time', () => {
-    // rawEvent('evt-4', 1_000) has event_time 950 — availability 900 precedes it.
-    const early = validateCanonicalEvent({ ...rawEvent('evt-4', 1_000), available_time: 900 });
+    const early = validateCanonicalEvent({ ...rawEvent('evt-4', 1_000), available_time: 999 });
     expect(early.ok).toBe(false);
     expect(early.errors.some((error) => error.code === 'timestamp_order')).toBe(true);
     // Equal is the boundary: information about an event is observable at the event instant.

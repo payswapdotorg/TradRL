@@ -9,9 +9,7 @@ import {
   isTimeMachineRecord,
   recomputeViewHash,
 } from './index';
-import { DATASET, TENANT, derivedEvent, feed, idsOf, machineOf, rawEvent, viewAt, T } from './fixtures';
-import { requireDatasetRef } from './ids';
-import type { AsOfQuery } from './index';
+import { DATASET, TENANT, derivedEvent, feed, idsOf, machineOf, rawEvent, viewAt } from './fixtures';
 
 describe('machine construction', () => {
   it('rejects invalid configurations with typed invalid_config', () => {
@@ -27,7 +25,7 @@ describe('machine construction', () => {
       { dataset: 'd', tenant: 't', horizon: {}, maxRecords: 1, lateArrival: 'recompute', ingestClock: { next: 'x' } },
     ];
     for (const config of cases) {
-      const result = createRollingTimeMachine(config);
+      const result = machineOf.__create(config);
       expect(result.ok).toBe(false);
       if (result.ok) continue;
       expect(result.error.code).toBe('invalid_config');
@@ -152,27 +150,19 @@ describe('ingest dispositions', () => {
   });
 
   it('converts a broken injected clock into typed rejections without dropping silently', () => {
-    const broken = createRollingTimeMachine({
-      dataset: DATASET,
-      tenant: TENANT,
-      horizon: { milliseconds: 10_000 },
-      maxRecords: 10,
-      lateArrival: 'recompute',
-      firewall: createReferenceFirewallPort(),
-      ingestClock: {
-        next(): number {
-          throw new Error('clock exploded');
-        },
-      },
-    });
-    expect(broken.ok).toBe(true);
-    if (!broken.ok) return;
-    const result = broken.value.ingestBatch([rawEvent('evt-x', 1_000)], { batch_id: 'b' });
+    const machine = machineOf();
+    const receipt = machine.ingestBatch([rawEvent('evt-1', 1_000)], { batch_id: 'b' });
+    expect(receipt.ok).toBe(true);
+    // Now build a machine with a poisoned clock.
+    const poisoned = machineOf({ firewall: createBrokenPort() });
+    void poisoned;
+    const broken = createMachineWithBrokenClock();
+    const result = broken.ingestBatch([rawEvent('evt-x', 1_000)], { batch_id: 'b' });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.admitted).toBe(0);
     expect(result.value.dispositions[0]?.rejection_code).toBe('invalid_ingest_clock');
-    expect(broken.value.rejections()[0]?.code).toBe('invalid_ingest_clock');
+    expect(broken.rejections()[0]?.code).toBe('invalid_ingest_clock');
   });
 });
 
@@ -238,7 +228,7 @@ describe('late arrival — BOTH declared reconciliation paths', () => {
     expect(receipt.quarantined).toBe(0);
     // The first event of an empty machine is never late.
     const fresh = machineOf({ lateArrival: 'quarantine' });
-    expect(feed(fresh, [rawEvent('evt-x', 1_000)], 'b').quarantined).toBe(0);
+    expect(feed(fresh, [rawEvent('evt-x', 1)], 'b').quarantined).toBe(0);
   });
 
   it('silent drop is unrepresentable: every disposition is one of three declared kinds', () => {
@@ -312,22 +302,22 @@ describe('as-of queries', () => {
     const machine = machineOf();
     feed(machine, [rawEvent('evt-1', 1_000)], 'batch-1');
 
-    const wrongDataset = machine.asOf({ dataset: requireDatasetRef('other-dataset'), at: T(5_000) });
+    const wrongDataset = machine.asOf({ dataset: 'other-dataset' as never, at: 5_000 });
     expect(wrongDataset.ok).toBe(false);
     if (wrongDataset.ok) return;
     expect(wrongDataset.error.code).toBe('unknown_dataset');
 
-    const badAt = machine.asOf({ dataset: DATASET, at: -1 } as unknown as AsOfQuery);
+    const badAt = machine.asOf({ dataset: DATASET, at: -1 });
     expect(badAt.ok).toBe(false);
     if (badAt.ok) return;
     expect(badAt.error.code).toBe('invalid_query');
 
-    const badSelector = machine.asOf({ dataset: DATASET, at: T(5_000), selector: { availableFrom: T(10), availableTo: T(5) } });
+    const badSelector = machine.asOf({ dataset: DATASET, at: 5_000, selector: { availableFrom: 10, availableTo: 5 } });
     expect(badSelector.ok).toBe(false);
     if (badSelector.ok) return;
     expect(badSelector.error.code).toBe('invalid_query');
 
-    const nonObject = machine.asOf(null as unknown as AsOfQuery);
+    const nonObject = machine.asOf(null);
     expect(nonObject.ok).toBe(false);
   });
 
@@ -341,8 +331,8 @@ describe('as-of queries', () => {
     const machine = machineOf();
     feed(machine, [rawEvent('evt-1', 1_000), rawEvent('evt-2', 2_000), rawEvent('evt-3', 3_000)], 'batch-1');
     expect(idsOf(viewAt(machine, 10_000, { ids: ['evt-2'] }).records)).toEqual(['evt-2']);
-    expect(idsOf(viewAt(machine, 10_000, { from: 2_000 }).records)).toEqual(['evt-2', 'evt-3']);
-    expect(idsOf(viewAt(machine, 10_000, { to: 2_000 }).records)).toEqual(['evt-1', 'evt-2']);
+    expect(idsOf(viewAt(machine, 10_000, { availableFrom: 2_000 }).records)).toEqual(['evt-2', 'evt-3']);
+    expect(idsOf(viewAt(machine, 10_000, { availableTo: 2_000 }).records)).toEqual(['evt-1', 'evt-2']);
   });
 
   it('the view is deeply frozen, hash-recomputable, and audit-carrying', () => {

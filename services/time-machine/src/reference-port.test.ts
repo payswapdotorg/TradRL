@@ -4,25 +4,15 @@
 // total guards, replayable audit shape, purity.
 
 import { describe, expect, it } from 'vitest';
-import {
-  createReferenceFirewallPort,
-  isReferenceFirewallPort,
-  referenceFirewallProject,
-  type FirewallClock,
-  type FirewallQueryResult,
-  type KnowledgeBaseView,
-  type KnowledgeRecordId,
-  type KnowledgeQueryFilter,
-  type TimeMachineRecord,
-  type TimestampMs,
-} from './index';
-import { admittedRecord } from './fixtures';
+import { createReferenceFirewallPort, isReferenceFirewallPort, referenceFirewallProject } from './index';
+import { admittedFixture } from './interop.fixture';
 import { requireTenantId } from './ids';
+import type { FirewallClock, KnowledgeBaseView, TimeMachineRecord, TimestampMs } from './index';
 
 describe('the reference port decision rule (T026 mirror)', () => {
   it('includes a tenant record at the inclusive boundary and withholds one millisecond earlier', () => {
-    const record = admittedRecord(); // available at 2_000, tenant acme
-    const base = baseOf([record]);
+    const record = admittedFixture(); // available at 2_000, tenant acme
+    const base = baseOf(record);
     const tenant = requireTenantId('acme');
 
     const atBoundary = project(base, 2_000, tenant, {});
@@ -34,8 +24,8 @@ describe('the reference port decision rule (T026 mirror)', () => {
   });
 
   it('tenant boundary FIRST: another tenant\'s records are excluded with NULL availability (L12 — no timing disclosure)', () => {
-    const record = admittedRecord();
-    const base = baseOf([record]);
+    const record = admittedFixture();
+    const base = baseOf(record);
     const foreign = requireTenantId('globex');
 
     const result = project(base, 1_000_000, foreign, {});
@@ -47,13 +37,8 @@ describe('the reference port decision rule (T026 mirror)', () => {
   });
 
   it('the filter narrows AFTER visibility (ids, availableFrom, availableTo)', () => {
-    const early = admittedRecord(); // 2_000
-    const late: TimeMachineRecord = {
-      ...early,
-      record_id: 'kr-late' as KnowledgeRecordId,
-      available_time: 5_000 as TimestampMs,
-      arrival_sequence: 1,
-    };
+    const early = admittedFixture(); // 2_000
+    const late = { ...early, record_id: 'kr-late', available_time: 5_000 as TimestampMs, arrival_sequence: 1 };
     const base = baseOf([early, late]);
     const tenant = requireTenantId('acme');
 
@@ -66,14 +51,13 @@ describe('the reference port decision rule (T026 mirror)', () => {
   });
 
   it('total guards: invalid base, clock, tenant and filter are typed rejections', () => {
-    const record = admittedRecord();
-    const base = baseOf([record]);
+    const record = admittedFixture();
     const tenant = requireTenantId('acme');
     expect(referenceFirewallProject(null as never, { now: 1 as never }, tenant, {}).ok).toBe(false);
-    expect(referenceFirewallProject(base, { now: -1 as never }, tenant, {}).ok).toBe(false);
-    expect(referenceFirewallProject(base, { now: 1 as never }, '' as never, {}).ok).toBe(false);
-    expect(referenceFirewallProject(base, { now: 1 as never }, tenant, { ids: [''] as unknown as readonly KnowledgeRecordId[] }).ok).toBe(false);
-    expect(referenceFirewallProject(base, { now: 1 as never }, tenant, { availableFrom: 5 as never, availableTo: 1 as never }).ok).toBe(false);
+    expect(referenceFirewallProject(baseOf(record), { now: -1 as never }, tenant, {}).ok).toBe(false);
+    expect(referenceFirewallProject(baseOf(record), { now: 1 as never }, '' as never, {}).ok).toBe(false);
+    expect(referenceFirewallProject(baseOf(record), { now: 1 as never }, tenant, { ids: [''] }).ok).toBe(false);
+    expect(referenceFirewallProject(baseOf(record), { now: 1 as never }, tenant, { availableFrom: 5 as never, availableTo: 1 as never }).ok).toBe(false);
   });
 
   it('the port object is frozen, valid, and wraps the pure function', () => {
@@ -82,13 +66,13 @@ describe('the reference port decision rule (T026 mirror)', () => {
     expect(isReferenceFirewallPort({ project: () => null })).toBe(false);
     expect(Object.isFrozen(port)).toBe(true);
     expect(() => {
-      (port as unknown as Record<string, unknown>).project = () => null;
+      (port as Record<string, unknown>).project = () => null;
     }).toThrow();
   });
 
   it('decisions are pure: the same query over the same base reproduces the identical audit', () => {
-    const record = admittedRecord();
-    const base = baseOf([record]);
+    const record = admittedFixture();
+    const base = baseOf(record);
     const tenant = requireTenantId('acme');
     const first = project(base, 2_000, tenant, {});
     const second = project(base, 2_000, tenant, {});
@@ -105,20 +89,22 @@ function baseOf(records: readonly TimeMachineRecord[]): KnowledgeBaseView {
   return Object.freeze({ records: Object.freeze([...records]), size: records.length }) as KnowledgeBaseView;
 }
 
-/** Project through the reference port with test-shaped filter fields. */
 function project(
   base: KnowledgeBaseView,
   at: number,
   tenant: ReturnType<typeof requireTenantId>,
   filter: { ids?: readonly string[]; availableFrom?: number; availableTo?: number },
-): FirewallQueryResult {
-  const selector: KnowledgeQueryFilter = {
-    ...(filter.ids === undefined ? {} : { ids: filter.ids.map((id) => id as KnowledgeRecordId) }),
-    ...(filter.availableFrom === undefined ? {} : { availableFrom: filter.availableFrom as TimestampMs }),
-    ...(filter.availableTo === undefined ? {} : { availableTo: filter.availableTo as TimestampMs }),
-  };
-  const clock: FirewallClock = { now: at as TimestampMs };
-  const result = referenceFirewallProject(base, clock, tenant, selector);
+): { records: readonly TimeMachineRecord[]; audit: { decisions: readonly { reason: string }[] } } {
+  const result = referenceFirewallProject(
+    base,
+    { now: at as TimestampMs } satisfies FirewallClock,
+    tenant,
+    {
+      ...(filter.ids === undefined ? {} : { ids: filter.ids as readonly never[] }),
+      ...(filter.availableFrom === undefined ? {} : { availableFrom: filter.availableFrom as TimestampMs }),
+      ...(filter.availableTo === undefined ? {} : { availableTo: filter.availableTo as TimestampMs }),
+    },
+  );
   if (!result.ok) throw new Error(result.error.message);
   return result.value;
 }
