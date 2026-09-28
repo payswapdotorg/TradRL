@@ -1,7 +1,0 @@
-package.json merge=union
-tsconfig.json merge=union
-vitest.config.ts merge=union
-pnpm-workspace.yaml merge=union
-tsconfig.base.json merge=union
-packages/*/package.json merge=union
-services/*/package.json merge=union
