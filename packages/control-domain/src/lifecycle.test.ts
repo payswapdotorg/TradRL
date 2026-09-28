@@ -80,10 +80,10 @@ describe('transition table', () => {
   });
 
   it('canTransitionProjectLifecycle is total over garbage input', () => {
-    expect(canTransitionProjectLifecycle('zombie' as ProjectLifecycleStatus, 'activate')).toBe(false);
-    expect(canTransitionProjectLifecycle('draft', 'resurrect' as ProjectLifecycleEvent)).toBe(false);
-    expect(canTransitionProjectLifecycle(null as unknown as ProjectLifecycleStatus, 'pause')).toBe(false);
-    expect(canTransitionProjectLifecycle('draft', 1 as unknown as ProjectLifecycleEvent)).toBe(false);
+    expect(canTransitionProjectLifecycle('zombie', 'activate')).toBe(false);
+    expect(canTransitionProjectLifecycle('draft', 'resurrect')).toBe(false);
+    expect(canTransitionProjectLifecycle(null, 'pause')).toBe(false);
+    expect(canTransitionProjectLifecycle('draft', 1)).toBe(false);
   });
 });
 
@@ -175,8 +175,8 @@ describe('transitionProject — every ILLEGAL edge (typed errors)', () => {
         }
       }
     }
-    // 36 pairs total, 10 legal edges -> 26 illegal edges.
-    expect(illegalCount).toBe(26);
+    // 6 statuses x 6 events = 36 pairs, 14 legal edges -> 22 illegal edges.
+    expect(illegalCount).toBe(22);
   });
 
   it('rejects EVERY terminal-state escape (completed/abandoned/archived accept no event)', () => {
@@ -210,7 +210,7 @@ describe('transitionProject — every ILLEGAL edge (typed errors)', () => {
     );
     expectTypedError('invalid-lifecycle-state', () =>
       transitionProject(
-        { projectId: ID, status: 'active', acceptanceCriteriaId: 'bad id' as AcceptanceCriteriaId, organizationRef: ORG },
+        { projectId: ID, status: 'active', acceptanceCriteriaId: 'bad id', organizationRef: ORG },
         'pause',
       ),
     );

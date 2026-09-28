@@ -29,8 +29,6 @@ export const CONTROL_ERROR_CODES = [
   'invalid-constraint-set',
   /** Goal and constraint set belong to different tenants (L12). */
   'goal-set-tenant-mismatch',
-  /** Project tenant scope differs from the goal/constraint-set tenant scope (L12). */
-  'project-tenant-mismatch',
   /** A lifecycle state or event failed structural validation. */
   'invalid-lifecycle-state',
   /** The transition is not an edge of the lifecycle state machine. */

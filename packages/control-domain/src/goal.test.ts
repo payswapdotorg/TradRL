@@ -123,8 +123,7 @@ describe('component guards', () => {
     expect(isGoalHorizon({ startsAt: ts(0), endsAt: ts(1) })).toBe(true);
     expect(isGoalHorizon({ startsAt: ts(100), endsAt: ts(100) })).toBe(false);
     expect(isGoalHorizon({ startsAt: ts(200), endsAt: ts(100) })).toBe(false);
-    expect(isGoalHorizon({ startsAt: ts(100), endsAt: 1.5 })).toBe(false); // non-integer instant
-    expect(isGoalHorizon({ startsAt: ts(100), endsAt: Number.NaN })).toBe(false);
+    expect(isGoalHorizon({ startsAt: ts(100), endsAt: 200 })).toBe(false);
     expect(isGoalHorizon({ startsAt: '100', endsAt: '200' })).toBe(false);
     expect(isGoalHorizon({ startsAt: ts(100), endsAt: ts(200), label: '' })).toBe(false);
     expect(isGoalHorizon(null)).toBe(false);

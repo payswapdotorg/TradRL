@@ -8,7 +8,6 @@
 
 import { deepFreeze } from './primitives';
 import { GoalRef, ConstraintSetRef, ProjectId, TenantId, AcceptanceCriteriaId } from './ids';
-import { TimestampMs } from './timestamp';
 import { GoalStatement } from './goal';
 import { ConstraintSetStatement } from './constraints';
 import { ProjectRecordDraft, ProjectLineage } from './project';
@@ -25,8 +24,8 @@ export const exampleGoalStatement: GoalStatement = deepFreeze({
   objective: 'Grow risk-adjusted returns on crypto majors while staying within hard risk limits.',
   horizon: {
     // Opaque epoch-millisecond instants (2027 Q1 window).
-    startsAt: 1_801_200_000_000 as TimestampMs,
-    endsAt: (1_801_200_000_000 + 90 * 24 * 60 * 60 * 1000) as TimestampMs,
+    startsAt: 1_801_200_000_000,
+    endsAt: 1_801_200_000_000 + 90 * 24 * 60 * 60 * 1000,
     label: 'Q1 2027 window',
   },
   successCriteria: {
@@ -58,7 +57,7 @@ export const exampleGoalStatement: GoalStatement = deepFreeze({
     regimeRef: 'regime/trend-range-vol3',
     adversarialRequired: true,
   },
-  createdAt: 1_799_900_000_000 as TimestampMs,
+  createdAt: 1_799_900_000_000,
   description: 'Primary capital preservation goal.',
 });
 
@@ -99,7 +98,7 @@ export const exampleConstraintSetStatement: ConstraintSetStatement = deepFreeze(
       severity: 'advisory',
     },
   ],
-  createdAt: 1_799_800_000_000 as TimestampMs,
+  createdAt: 1_799_800_000_000,
 });
 
 /** The acceptance criteria compiled from the two example statements. */
@@ -123,5 +122,5 @@ export const exampleProjectRecordDraft: ProjectRecordDraft = deepFreeze({
   executionMode: 'simulation',
   lineage: exampleProjectLineage,
   acceptanceCriteriaId: exampleAcceptanceCriteria.id as AcceptanceCriteriaId,
-  createdAt: 1_800_100_000_000 as TimestampMs,
+  createdAt: 1_800_100_000_000,
 });
