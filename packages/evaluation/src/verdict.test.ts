@@ -40,7 +40,17 @@ import {
   type SplitConstraintReport,
   type VerdictCompilationInput,
   type Mutable,
+  type SuiteId,
+  type MetricId,
+  type EvaluatorVersionRef,
+  type SplitPolicyRef,
 } from './index';
+
+/** Trusted-literal id constructors (test-local, mirrors the ids module). */
+const suiteId = (id: string): SuiteId => id as SuiteId;
+const metricId = (id: string): MetricId => id as MetricId;
+const evaluatorVersionRef = (id: string): EvaluatorVersionRef => id as EvaluatorVersionRef;
+const splitPolicyRef = (id: string): SplitPolicyRef => id as SplitPolicyRef;
 import { createEvaluationSuite } from './index';
 import { requireTimestampMs } from './primitives';
 
@@ -89,9 +99,9 @@ function suiteFixture(): EvaluationSuite {
     grade: 'release',
     evaluatorVersion: 'evaluator.friction-suite@3',
     members: [
-      { kind: 'blind', splitPolicy: 'split.blind-2024q4', metricIds: ['metric.gate-ratio'] },
-      { kind: 'walk-forward', splitPolicy: 'split.wf-anchored', metricIds: ['metric.gate-ratio'] },
-      { kind: 'regime', splitPolicy: 'split.regime-crisis', metricIds: ['metric.gate-ratio'] },
+      { kind: 'blind', splitPolicy: splitPolicyRef('split.blind-2024q4'), metricIds: [metricId('metric.gate-ratio')] },
+      { kind: 'walk-forward', splitPolicy: splitPolicyRef('split.wf-anchored'), metricIds: [metricId('metric.gate-ratio')] },
+      { kind: 'regime', splitPolicy: splitPolicyRef('split.regime-crisis'), metricIds: [metricId('metric.gate-ratio')] },
     ],
     adversarialSuiteRefs: ['suite.adversarial-pop-1'],
   });
@@ -101,8 +111,8 @@ function suiteFixture(): EvaluationSuite {
 
 function configFixture(): EvaluationConfig {
   return {
-    evaluatorVersion: 'evaluator.friction-suite@3',
-    suite: 'suite.friction-2024q4',
+    evaluatorVersion: 'evaluator.friction-suite@3' as EvaluatorVersionRef,
+    suite: 'suite.friction-2024q4' as SuiteId,
     criteria: criteriaFixture().id,
     confidence: THRESHOLDS,
   };
@@ -169,8 +179,8 @@ describe('verdict input guards (T007/domain-core mirrors)', () => {
     expect(isSplitConstraintReport(built)).toBe(true);
     // Forged aggregates fail the guard.
     expect(isSplitConstraintReport({ ...built, satisfied: 99 })).toBe(false);
-    expect(splitConstraintReport('bad', []).ok).toBe(false);
-    expect(splitConstraintReport('split.x' as never, [{ constraintId: 'a', severity: 'weird', status: 'satisfied' }]).ok).toBe(false);
+    expect(splitConstraintReport('bad' as never, []).ok).toBe(false);
+    expect(splitConstraintReport('split.x' as never, [{ constraintId: 'a', severity: 'weird' as never, status: 'satisfied' }]).ok).toBe(false);
   });
 
   it('isEvaluationConfig enforces threshold ordering', () => {
@@ -340,8 +350,8 @@ describe('compileAttainmentVerdict (fail-closed)', () => {
       evaluatorVersion: 'evaluator.friction-suite@3',
       members: [
         { kind: 'blind', splitPolicy: 'split.blind-friendly', metricIds: ['metric.gate-ratio'] },
-        { kind: 'walk-forward', splitPolicy: 'split.wf-anchored', metricIds: ['metric.gate-ratio'] },
-        { kind: 'regime', splitPolicy: 'split.regime-crisis', metricIds: ['metric.gate-ratio'] },
+        { kind: 'walk-forward', splitPolicy: splitPolicyRef('split.wf-anchored'), metricIds: [metricId('metric.gate-ratio')] },
+        { kind: 'regime', splitPolicy: splitPolicyRef('split.regime-crisis'), metricIds: [metricId('metric.gate-ratio')] },
       ],
       adversarialSuiteRefs: ['suite.adversarial-pop-1'],
     });
@@ -526,16 +536,16 @@ describe('PnL solicitude (L7): a PnL-only success field is unrepresentable', () 
     // lineage, per-criterion evidence, limitations, confidence, digests —
     // nothing else compiles.
     expectTypeOf<AttainmentVerdict>().toEqualTypeOf<{
-      verdictId: AttainmentVerdict['verdictId'];
-      attained: boolean;
-      criteriaId: AttainmentVerdict['criteriaId'];
-      suite: AttainmentVerdict['suite'];
-      evaluatorVersion: AttainmentVerdict['evaluatorVersion'];
-      perCriterion: AttainmentVerdict['perCriterion'];
-      limitations: AttainmentVerdict['limitations'];
-      confidence: AttainmentVerdict['confidence'];
-      inputDigest: string;
-      verdictHash: string;
+      readonly verdictId: AttainmentVerdict['verdictId'];
+      readonly attained: boolean;
+      readonly criteriaId: AttainmentVerdict['criteriaId'];
+      readonly suite: AttainmentVerdict['suite'];
+      readonly evaluatorVersion: AttainmentVerdict['evaluatorVersion'];
+      readonly perCriterion: AttainmentVerdict['perCriterion'];
+      readonly limitations: AttainmentVerdict['limitations'];
+      readonly confidence: AttainmentVerdict['confidence'];
+      readonly inputDigest: string;
+      readonly verdictHash: string;
     }>();
   });
 });
@@ -563,9 +573,9 @@ describe('toAttainmentEvidence (T007 bridge)', () => {
   it('fail-closed on bad verdict / run ref / timestamp', () => {
     const result = compileAttainmentVerdict(compilationFixture());
     if (!result.ok) throw new Error('must succeed');
-    expect(toAttainmentEvidence(null as unknown as AttainmentVerdict, 'run', 1).ok).toBe(false);
-    expect(toAttainmentEvidence(result.value, '', 1).ok).toBe(false);
-    expect(toAttainmentEvidence(result.value, 'run', -1).ok).toBe(false);
-    expect(toAttainmentEvidence(result.value, 'run', 1.5).ok).toBe(false);
+    expect(toAttainmentEvidence(null as unknown as AttainmentVerdict, 'run', requireTimestampMs(1)).ok).toBe(false);
+    expect(toAttainmentEvidence(result.value, '', requireTimestampMs(1)).ok).toBe(false);
+    expect(toAttainmentEvidence(result.value, 'run', requireTimestampMs(-1)).ok).toBe(false);
+    expect(toAttainmentEvidence(result.value, 'run', requireTimestampMs(1.5)).ok).toBe(false);
   });
 });

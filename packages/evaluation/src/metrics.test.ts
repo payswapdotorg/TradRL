@@ -23,8 +23,11 @@ import {
   validateMetricResult,
   type ConstraintSatisfactionCounts,
   type MetricDefinition,
+  type MetricId,
   type MetricResult,
 } from './index';
+
+const metricId = (id: string): MetricId => id as MetricId;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -35,9 +38,9 @@ function counts(overrides: Partial<ConstraintSatisfactionCounts> = {}): Constrai
 }
 
 const DEFINITIONS: MetricDefinition[] = [
-  { kind: 'constraint-aggregate', metricId: 'metric.gate-ratio', aggregate: 'satisfiedRatio' },
-  { kind: 'constraint-aggregate', metricId: 'metric.blocking', aggregate: 'blockingViolations' },
-  { kind: 'risk-adjusted-ref', metricId: 'metric.figure.sharpe', figureRef: 'figure:sharpe@2' },
+  { kind: 'constraint-aggregate', metricId: metricId('metric.gate-ratio'), aggregate: 'satisfiedRatio' },
+  { kind: 'constraint-aggregate', metricId: metricId('metric.blocking'), aggregate: 'blockingViolations' },
+  { kind: 'risk-adjusted-ref', metricId: metricId('metric.figure.sharpe'), figureRef: 'figure:sharpe@2' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -119,14 +122,14 @@ describe('MetricRegistry', () => {
     if (!result.ok) throw new Error('fixture must be valid');
     expect(isMetricRegistry(result.value)).toBe(true);
     expect(Object.isFrozen(result.value)).toBe(true);
-    expect(lookupMetric(result.value, 'metric.gate-ratio')?.aggregate).toBe('satisfiedRatio');
-    expect(lookupMetric(result.value, 'metric.absent')).toBeUndefined();
+    expect(lookupMetric(result.value, metricId('metric.gate-ratio'))?.kind === 'constraint-aggregate' ? (lookupMetric(result.value, metricId('metric.gate-ratio')) as { aggregate: string }).aggregate : undefined).toBe('satisfiedRatio');
+    expect(lookupMetric(result.value, metricId('metric.absent'))).toBeUndefined();
   });
 
   it('rejects duplicate metric ids (typed duplicate_metric)', () => {
     const result = createMetricRegistry([
-      { kind: 'constraint-aggregate', metricId: 'metric.dup', aggregate: 'satisfied' },
-      { kind: 'constraint-aggregate', metricId: 'metric.dup', aggregate: 'violated' },
+      { kind: 'constraint-aggregate', metricId: metricId('metric.dup'), aggregate: 'satisfied' },
+      { kind: 'constraint-aggregate', metricId: metricId('metric.dup'), aggregate: 'violated' },
     ]);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('must fail');
@@ -137,8 +140,8 @@ describe('MetricRegistry', () => {
     const result = createMetricRegistry([
       'not-an-object',
       { kind: 'constraint-aggregate' },
-      { kind: 'constraint-aggregate', metricId: 'm', aggregate: 'bogus' },
-      { kind: 'risk-adjusted-ref', metricId: 'n' },
+      { kind: 'constraint-aggregate', metricId: metricId('m'), aggregate: 'bogus' },
+      { kind: 'risk-adjusted-ref', metricId: metricId('n') },
     ]);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('must fail');
@@ -160,13 +163,13 @@ describe('MetricRegistry', () => {
     const registry = createMetricRegistry(DEFINITIONS);
     if (!registry.ok) throw new Error('fixture must be valid');
     const good = validateMetricResult(registry.value, {
-      metricId: 'metric.gate-ratio',
+      metricId: metricId('metric.gate-ratio'),
       value: { kind: 'constraint-aggregate', aggregate: 'satisfiedRatio', value: 0.9 },
     });
     expect(good.ok).toBe(true);
 
     const unknown = validateMetricResult(registry.value, {
-      metricId: 'metric.absent',
+      metricId: metricId('metric.absent'),
       value: { kind: 'constraint-aggregate', aggregate: 'satisfied', value: 1 },
     });
     expect(unknown.ok).toBe(false);
@@ -174,14 +177,14 @@ describe('MetricRegistry', () => {
     expect(unknown.errors[0]?.code).toBe('unknown_metric');
 
     const mismatch = validateMetricResult(registry.value, {
-      metricId: 'metric.figure.sharpe',
+      metricId: metricId('metric.figure.sharpe'),
       value: { kind: 'constraint-aggregate', aggregate: 'satisfied', value: 1 },
     });
     expect(mismatch.ok).toBe(false);
     if (mismatch.ok) throw new Error('must fail');
     expect(mismatch.errors[0]?.code).toBe('invalid_metric');
 
-    const malformed = validateMetricResult(registry.value, { metricId: 'm' });
+    const malformed = validateMetricResult(registry.value, { metricId: metricId('m') });
     expect(malformed.ok).toBe(false);
   });
 
@@ -227,7 +230,7 @@ describe('PnL solicitude (L7): metric records cannot express performance figures
     const registry = createMetricRegistry(DEFINITIONS);
     if (!registry.ok) throw new Error('fixture must be valid');
     const result = validateMetricResult(registry.value, {
-      metricId: 'metric.figure.sharpe',
+      metricId: metricId('metric.figure.sharpe'),
       value: { kind: 'risk-adjusted-ref', figureResultRef: 'figure-result:opaque-1' },
     });
     if (!result.ok) throw new Error('fixture must be valid');
@@ -238,7 +241,8 @@ describe('PnL solicitude (L7): metric records cannot express performance figures
     const offenders = [...keys].filter((key) => PERFORMANCE_KEY_PATTERN.test(key));
     expect(offenders).toEqual([]);
     // The figure VALUE is an opaque ref string — never a number.
-    expect(typeof result.value.value.kind === 'risk-adjusted-ref' ? (result.value.value as { figureResultRef: string }).figureResultRef : '').toBe('string');
+    if (result.value.value.kind !== 'risk-adjusted-ref') throw new Error('fixture must be a risk-adjusted result');
+    expect(typeof result.value.value.figureResultRef).toBe('string');
   });
 
   it('a risk-adjusted metric result structurally cannot carry a numeric figure', () => {

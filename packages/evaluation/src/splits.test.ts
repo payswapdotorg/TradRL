@@ -25,7 +25,13 @@ import {
   type DatasetSegment,
   type RegimePartitionPolicy,
   type WalkForwardPolicy,
+  type DataRef,
+  type SplitPolicyRef,
 } from './index';
+
+/** Trusted-literal id constructors (test-local, mirrors the ids module). */
+const dataRef = (id: string): DataRef => id as DataRef;
+const splitPolicyRef = (id: string): SplitPolicyRef => id as SplitPolicyRef;
 import { requireTimestampMs } from './primitives';
 
 // ---------------------------------------------------------------------------
@@ -35,7 +41,7 @@ import { requireTimestampMs } from './primitives';
 function segment(index: number, regime = 'baseline', startOffset = 0): DatasetSegment {
   const start = requireTimestampMs(1_700_000_000_000 + index * 10_000 + startOffset);
   const end = requireTimestampMs(start + 10_000);
-  return { ref: `dataset.segment-${index}`, start, end, regime };
+  return { ref: dataRef(`dataset.segment-${index}`), start, end, regime };
 }
 
 function axis(count: number, regimes?: readonly string[]): DatasetAxis {
@@ -44,9 +50,9 @@ function axis(count: number, regimes?: readonly string[]): DatasetAxis {
   };
 }
 
-const WALK_FORWARD: WalkForwardPolicy = { kind: 'walk-forward', policyId: 'split.wf-anchored', minTrainSegments: 2, stepSegments: 1 };
-const BLIND: BlindHoldoutPolicy = { kind: 'blind-holdout', policyId: 'split.blind-2024q4', holdoutCount: 1 };
-const REGIME: RegimePartitionPolicy = { kind: 'regime-partition', policyId: 'split.regime-crisis', regime: 'crisis' };
+const WALK_FORWARD: WalkForwardPolicy = { kind: 'walk-forward', policyId: 'split.wf-anchored' as SplitPolicyRef, minTrainSegments: 2, stepSegments: 1 };
+const BLIND: BlindHoldoutPolicy = { kind: 'blind-holdout', policyId: 'split.blind-2024q4' as SplitPolicyRef, holdoutCount: 1 };
+const REGIME: RegimePartitionPolicy = { kind: 'regime-partition', policyId: 'split.regime-crisis' as SplitPolicyRef, regime: 'crisis' };
 
 // ---------------------------------------------------------------------------
 // Axis validation

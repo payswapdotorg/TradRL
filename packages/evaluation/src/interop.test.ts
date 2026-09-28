@@ -105,7 +105,8 @@ type VendoredSplitPolicyRef = string & { readonly __brand: 'SplitPolicyRef' };
 type VendoredExperimentId = string & { readonly __brand: 'ExperimentId' };
 type VendoredDataRef = string & { readonly __brand: 'DataRef' };
 type VendoredTimestampMs = number & { readonly __brand: 'TradRL.TimestampMs' };
-type VendoredJsonObject = { readonly [key: string]: unknown };
+type VendoredJsonValue = string | number | boolean | null | readonly VendoredJsonValue[] | VendoredJsonObject;
+type VendoredJsonObject = { readonly [key: string]: VendoredJsonValue };
 
 /** Verbatim structural copy of T011 experiments' `TrialStatus`. */
 type VendoredTrialStatus = 'planned' | 'running' | 'succeeded' | 'failed' | 'rejected';
@@ -158,10 +159,10 @@ interface VendoredEvaluationPolicy {
   readonly regimeRef: string;
 }
 
-/** Verbatim structural copy of T007's `AcceptanceCriteria`. */
+/** Structural mirror of T007's compiled `AcceptanceCriteria` (recovered tree shape). */
 interface VendoredAcceptanceCriteria {
   readonly id: VendoredAcceptanceCriteriaId;
-  readonly goal: { readonly goalId: VendoredGoalRef; readonly version: number };
+  readonly goal: { readonly goalId: string; readonly version: number };
   readonly constraintSet: { readonly id: VendoredConstraintSetId; readonly version: number };
   readonly criteria: readonly VendoredCriterionBinding[];
   readonly evaluationPolicy: VendoredEvaluationPolicy;
