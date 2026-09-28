@@ -1,145 +1,160 @@
-// @tradrl/control-domain — GoalStatement: mirror of the goal contract.
+// @tradrl/control-domain — GoalStatement: the control plane's authored goal
+// contract (R1, spec/DOMAIN-MODEL.md "Goal", spec/ARCHITECTURE.md core flow
+// "User -> Goal/Constraint Compiler -> ...").
 //
-// STRUCTURAL MIRROR of @tradrl/domain-core/src/goal.ts (T002) — DO NOT
-// DIVERGE IN SHAPE. The frozen workspace lockfile forbids a package
-// dependency between contract packages, so this module re-declares the goal
-// shapes by STRUCTURE (never by import):
-// - `objective` / `horizon` / `successCriteria` mirror domain-core's `Goal`
-//   fields one-for-one (see the mapping table in the package README).
-// - The scalar time representation is the control plane's canonical
-//   `TimestampMs` (time-engine mirror) instead of domain-core's ISO-string
-//   `Timestamp` — one time representation across the whole control plane.
-// - Where domain-core's `GoalSuccessCriteria` points at a versioned
-//   constraint set, the control plane requires the criteria to be
-//   STRUCTURED RECORDS carried in the statement itself: "user constraints
-//   are executable acceptance criteria" (R1 discipline; L5/L7) — prose
-//   criteria cannot compile.
+// The control plane IS the Goal/Constraint Compiler's host: goals enter the
+// program here as structured records and are compiled (see acceptance.ts)
+// into executable AcceptanceCriteria. The shapes below mirror
+// packages/domain-core/src/goal.ts BY STRUCTURE (never imported — D-004):
 //
-// Spec anchors: spec/DOMAIN-MODEL.md (Goal), spec/REQUIREMENTS.md R1,
-// spec/ARCHITECTURE-LOCK.md L12 (tenant scope), L15 (versioned goal
-// lineage), L7 (objective-and-constraint based attainment).
+// - `GoalHorizon` is an EXACT structural mirror of domain-core's GoalHorizon
+//   (assignable in both directions; trip-wired in src/interop.test.ts).
+// - `GoalStatement` carries the domain-core Goal's compile-relevant components
+//   (objective, horizon, constraint-set reference, success criteria) plus the
+//   control-plane additions the compiled artifact needs:
+//     * `version` — control-plane goal version. Domain-core goals are
+//       immutable with no in-record version ("identity is the version"); the
+//       control plane pins a {goalId, version} lineage ref (L15) so a project
+//       always records WHICH goal statement it was launched with.
+//     * `evaluationPolicy` — the goal pins its evaluation protocol (blind /
+//       walk-forward / regime) at authoring time, so evaluation cannot be
+//       shopped later (L10 adversarial evaluation, L11 search integrity).
+//       spec/ARCHITECTURE.md "Evaluation": "Acceptance is objective-and-
+//       constraint based. Use blind/unseen, walk-forward, regime ... tests".
+//     * `successCriteria` — a non-empty LIST of structured criteria. Each
+//       criterion mirrors the SHAPE of domain-core's GoalSuccessCriteria
+//       (constraint-set reference lifted to the goal level + required
+//       satisfaction share) and adds a criterion id and an optional gating
+//       constraint selector. A domain-core Goal maps to a GoalStatement with
+//       exactly one criterion carrying the same requiredSatisfaction —
+//       documented interpretation, generalizing the singular shape without
+//       contradicting it.
+//
+// Laws honored here (spec/ARCHITECTURE-LOCK.md):
+// - L5 "User constraints are executable acceptance criteria": success
+//   criteria are structured records, never prose — `objective` and
+//   `description` are human interpretation only, NEVER executed.
+// - L7: requiredSatisfaction compares against constraint-satisfaction ratios;
+//   no field on this record can express attainment by raw PnL.
+// - L12: goal statements carry no tenant field themselves — they are always
+//   handled inside a tenant-scoped ProjectRecord.
 
 import {
-  isFiniteNumber,
-  isIdentifierPath,
+  Timestamp,
+  compareTimestamps,
   isNonEmptyString,
   isPositiveInteger,
   isRecord,
+  isTimestamp,
   isUnitInterval,
 } from './primitives';
-import { GoalRef, TenantId, isGoalRef, isTenantId } from './ids';
-import { TimestampMs, isTimestampMs } from './timestamp';
+import { GoalRef, isGoalRef } from './ids';
+import { ConstraintSetRef, isConstraintSetRef } from './constraints';
 
 // ---------------------------------------------------------------------------
-// Predicate vocabulary (structural mirror of domain-core's `Predicate`)
+// GoalHorizon — EXACT structural mirror of domain-core's GoalHorizon
 // ---------------------------------------------------------------------------
 
-/** Scalar value observable in an evaluation metric space. */
-export type CriterionValue = number | string | boolean;
+/** Evaluation horizon. `endsAt` is EXCLUSIVE (the goal covers [startsAt, endsAt)). */
+export interface GoalHorizon {
+  readonly startsAt: Timestamp;
+  readonly endsAt: Timestamp;
+  readonly label?: string;
+}
+
+/** Guard — behaviorally identical to domain-core's `isGoalHorizon`. */
+export function isGoalHorizon(v: unknown): v is GoalHorizon {
+  if (!isRecord(v)) return false;
+  if (!isTimestamp(v.startsAt) || !isTimestamp(v.endsAt)) return false;
+  if (compareTimestamps(v.startsAt, v.endsAt) >= 0) return false; // non-empty horizon
+  if (v.label !== undefined && !isNonEmptyString(v.label)) return false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// GoalVersionRef — the L15 lineage reference to a goal statement
+// ---------------------------------------------------------------------------
 
 /**
- * Executable predicate over a criterion metric. Discriminated by `kind` —
- * the SAME closed vocabulary and the SAME semantics as
- * `@tradrl/domain-core`'s `Predicate` (limit bounds, typed equality,
- * membership, flags). The evaluation lane (T012) executes these mirrors;
- * the control plane never imports the domain-core originals.
+ * Versioned reference to a goal statement: identity is (goalId, version).
+ * Mirrors the versioning discipline of domain-core's ConstraintSetRef.
  */
-export type CriterionPredicate =
-  | { readonly kind: 'limit.max'; readonly bound: number }
-  | { readonly kind: 'limit.min'; readonly bound: number }
-  | { readonly kind: 'limit.range'; readonly min: number; readonly max: number }
-  | { readonly kind: 'equals'; readonly value: CriterionValue }
-  | { readonly kind: 'notEquals'; readonly value: CriterionValue }
-  | { readonly kind: 'oneOf'; readonly values: readonly string[] }
-  | { readonly kind: 'flag'; readonly expected: boolean };
+export interface GoalVersionRef {
+  readonly goalId: GoalRef;
+  readonly version: number;
+}
 
-export const CRITERION_PREDICATE_KINDS: readonly CriterionPredicate['kind'][] = [
-  'limit.max',
-  'limit.min',
-  'limit.range',
-  'equals',
-  'notEquals',
-  'oneOf',
-  'flag',
-] as const;
+/** Guard: non-empty goal id and an integer version >= 1. */
+export function isGoalVersionRef(v: unknown): v is GoalVersionRef {
+  if (!isRecord(v)) return false;
+  if (!isGoalRef(v.goalId)) return false;
+  if (!isPositiveInteger(v.version)) return false;
+  return true;
+}
 
 // ---------------------------------------------------------------------------
-// Structured success criteria
+// EvaluationPolicy — the goal pins its evaluation protocol
 // ---------------------------------------------------------------------------
 
 /**
- * One structured success criterion: WHAT must hold, over WHICH metric, and
- * the executable predicate that decides it. `metric` is an identifier path
- * into the outcome metric space the evaluation lane (T012) populates — the
- * same address space as domain-core constraint subjects, so criteria and
- * constraints speak about the same measurement families (see the gating
- * rule in acceptance.ts).
- *
- * This record is the unit of "structured success criteria": a goal whose
- * success criteria are prose (or anything that is not a list of these
- * records) FAILS TO COMPILE with a typed error — attainment is never
- * left to interpretation.
+ * Evaluation protocol pinned at goal authoring. All three references are
+ * OPAQUE STRINGS owned by the evaluation lane (T012) — the control plane only
+ * requires that they are pinned, non-empty and carried into the compiled
+ * AcceptanceCriteria, so the evaluator cannot choose a friendly protocol
+ * after the fact (L10/L11).
+ */
+export interface EvaluationPolicy {
+  /** Opaque reference to the blind / unseen evaluation protocol artifact. */
+  readonly blindEvaluationRef: string;
+  /** Opaque reference to the walk-forward split protocol artifact. */
+  readonly walkForwardRef: string;
+  /** Opaque reference to the regime coverage protocol artifact. */
+  readonly regimeRef: string;
+}
+
+/** Guard: all three protocol references are non-empty opaque strings. */
+export function isEvaluationPolicy(v: unknown): v is EvaluationPolicy {
+  if (!isRecord(v)) return false;
+  return isNonEmptyString(v.blindEvaluationRef) && isNonEmptyString(v.walkForwardRef) && isNonEmptyString(v.regimeRef);
+}
+
+// ---------------------------------------------------------------------------
+// SuccessCriterion — structured, executable attainment criterion
+// ---------------------------------------------------------------------------
+
+/**
+ * One structured success criterion. Shape-mirrors domain-core's
+ * GoalSuccessCriteria (required satisfaction share over a constraint set)
+ * with the constraint-set reference lifted to the goal level, plus:
+ * - `id`: criterion identity within the goal (evidence pairs back through it);
+ * - `gatingConstraintIds`: optional selector of the constraint ids from the
+ *   goal's constraint set that gate THIS criterion. Omitted (or `undefined`)
+ *   means "all constraints in the set gate it". The compiler resolves the
+ *   selector and rejects unknown, duplicate or empty selections.
  */
 export interface SuccessCriterion {
-  /** Unique within the goal statement. */
   readonly id: string;
-  /** Identifier path of the metric this criterion decides attainment on. */
-  readonly metric: string;
-  /** Executable predicate over the metric value. */
-  readonly predicate: CriterionPredicate;
+  /** Constraint ids from the goal's constraint set gating this criterion. Omitted = all. */
+  readonly gatingConstraintIds?: readonly string[];
+  /** Required share of applicable gating constraints satisfied, closed interval [0,1]. */
+  readonly requiredSatisfaction: number;
   /** Human context. NEVER interpreted. */
   readonly description?: string;
 }
 
-/**
- * The structured form of domain-core's `GoalSuccessCriteria`: the criteria
- * list replaces the constraint-set pointer (the constraint set is an
- * explicit second input to the compiler), and `requiredSatisfaction`
- * keeps the identical semantics — required share of applicable criteria
- * satisfied, closed interval [0, 1].
- */
-export interface GoalSuccessCriteria {
-  /** Non-empty; criterion ids unique. A goal that succeeds at nothing is degenerate. */
-  readonly criteria: readonly SuccessCriterion[];
-  /** Required share of criteria satisfied for attainment, [0, 1]. */
-  readonly requiredSatisfaction: number;
-}
-
-// ---------------------------------------------------------------------------
-// Horizon (structural mirror of domain-core's `GoalHorizon`)
-// ---------------------------------------------------------------------------
-
-/**
- * Evaluation horizon. `startsAt`/`endsAt` are epoch milliseconds;
- * `endsAt` is EXCLUSIVE — the horizon covers `[startsAt, endsAt)` —
- * matching domain-core's horizon semantics.
- */
-export interface GoalHorizon {
-  readonly startsAt: TimestampMs;
-  readonly endsAt: TimestampMs;
-  readonly label?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Evaluation policy declaration (authored with the goal)
-// ---------------------------------------------------------------------------
-
-/**
- * The evaluation discipline the goal demands, declared at authoring and
- * COMPILED into the AcceptanceCriteria. The three refs are OPAQUE STRING
- * references to policy records owned by the evaluation lane (T012):
- * blind/unseen policy, walk-forward split definition, regime coverage
- * definition. Opaque means exactly that: the control plane never resolves
- * or interprets them; it pins them so attainment can only be claimed
- * through the referenced discipline (L7/L10 — friendly replay alone can
- * never release a project).
- */
-export interface GoalEvaluationPolicy {
-  readonly blindRef: string;
-  readonly walkForwardRef: string;
-  readonly regimeRef: string;
-  /** Adversarial stress requirement before attainment is claimable (L10). */
-  readonly adversarialRequired: boolean;
+/** Guard: `SuccessCriterion`. */
+export function isSuccessCriterion(v: unknown): v is SuccessCriterion {
+  if (!isRecord(v)) return false;
+  if (!isNonEmptyString(v.id)) return false;
+  if (v.gatingConstraintIds !== undefined) {
+    if (!Array.isArray(v.gatingConstraintIds)) return false;
+    if (!v.gatingConstraintIds.every((x) => isNonEmptyString(x))) return false;
+    if (new Set(v.gatingConstraintIds).size !== v.gatingConstraintIds.length) return false;
+    if (v.gatingConstraintIds.length === 0) return false; // empty selector is meaningless — omit instead
+  }
+  if (!isUnitInterval(v.requiredSatisfaction)) return false;
+  if (v.description !== undefined && !isNonEmptyString(v.description)) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,114 +162,46 @@ export interface GoalEvaluationPolicy {
 // ---------------------------------------------------------------------------
 
 /**
- * The goal statement as the control plane receives it: objective (for
- * humans and compilers — never executed), horizon, STRUCTURED success
- * criteria, evaluation policy declaration, tenant scope and version.
- *
- * Versioning: goal statements are immutable; a revision is a NEW VERSION
- * under the same `id` (mirroring domain-core's discipline that goal
- * revision is a new record — there identity is the version, here the
- * version is explicit so L15 lineage can carry `(goalId, version)` pairs).
+ * A structured, versioned goal statement — the input the control plane
+ * compiles. Invariants:
+ * - non-empty horizon (startsAt < endsAt by instant);
+ * - exactly one pinned constraint-set version for the whole statement;
+ * - at least one success criterion, with unique criterion ids;
+ * - a pinned evaluation protocol (all three refs non-empty);
+ * - `objective`/`description` are human-readable interpretation and are never
+ *   executed (spec/DOMAIN-MODEL.md Goal; contracts/domain/goal.md).
  */
 export interface GoalStatement {
   readonly id: GoalRef;
-  /** Integer >= 1; monotonically increasing per id. */
+  /** Control-plane goal version (>= 1). Revision of a goal is a new version. */
   readonly version: number;
-  /** Owning tenant (L12: goals are tenant-scoped). */
-  readonly tenantId: TenantId;
-  /** Human-readable objective statement. Interpreted, never executed. */
+  readonly createdAt: Timestamp;
+  /** Human-readable objective statement. Interpretation, never execution. */
   readonly objective: string;
   readonly horizon: GoalHorizon;
-  readonly successCriteria: GoalSuccessCriteria;
-  readonly evaluation: GoalEvaluationPolicy;
-  readonly createdAt: TimestampMs;
+  /** The goal's constraint set, pinned to a specific version. */
+  readonly constraintSet: ConstraintSetRef;
+  /** Structured success criteria (non-empty; ids unique within the goal). */
+  readonly successCriteria: readonly SuccessCriterion[];
+  /** Evaluation protocol pinned at authoring (L10/L11). */
+  readonly evaluationPolicy: EvaluationPolicy;
   readonly description?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Guards (total, hand-rolled, never throw)
-// ---------------------------------------------------------------------------
-
-export function isCriterionValue(v: unknown): v is CriterionValue {
-  if (typeof v === 'boolean') return true;
-  if (typeof v === 'string') return isNonEmptyString(v);
-  return isFiniteNumber(v);
-}
-
-export function isCriterionPredicate(v: unknown): v is CriterionPredicate {
-  if (!isRecord(v)) return false;
-  switch (v.kind) {
-    case 'limit.max':
-    case 'limit.min':
-      return isFiniteNumber(v.bound);
-    case 'limit.range':
-      return isFiniteNumber(v.min) && isFiniteNumber(v.max) && v.min <= v.max;
-    case 'equals':
-    case 'notEquals':
-      return isCriterionValue(v.value);
-    case 'oneOf':
-      return (
-        Array.isArray(v.values) &&
-        v.values.length > 0 &&
-        v.values.every((x) => isNonEmptyString(x))
-      );
-    case 'flag':
-      return typeof v.expected === 'boolean';
-    default:
-      return false;
-  }
-}
-
-export function isSuccessCriterion(v: unknown): v is SuccessCriterion {
-  if (!isRecord(v)) return false;
-  if (!isNonEmptyString(v.id)) return false;
-  if (!isIdentifierPath(v.metric)) return false;
-  if (!isCriterionPredicate(v.predicate)) return false;
-  if (v.description !== undefined && !isNonEmptyString(v.description)) return false;
-  return true;
-}
-
-export function isGoalSuccessCriteria(v: unknown): v is GoalSuccessCriteria {
-  if (!isRecord(v)) return false;
-  if (!Array.isArray(v.criteria) || v.criteria.length === 0) return false;
-  if (!v.criteria.every((x) => isSuccessCriterion(x))) return false;
-  const seen = new Set<string>();
-  for (const c of v.criteria) {
-    const criterion = c as SuccessCriterion;
-    if (seen.has(criterion.id)) return false; // ids unique within the goal
-    seen.add(criterion.id);
-  }
-  if (!isUnitInterval(v.requiredSatisfaction)) return false;
-  return true;
-}
-
-export function isGoalHorizon(v: unknown): v is GoalHorizon {
-  if (!isRecord(v)) return false;
-  if (!isTimestampMs(v.startsAt) || !isTimestampMs(v.endsAt)) return false;
-  if (v.endsAt <= v.startsAt) return false; // non-empty horizon
-  if (v.label !== undefined && !isNonEmptyString(v.label)) return false;
-  return true;
-}
-
-export function isGoalEvaluationPolicy(v: unknown): v is GoalEvaluationPolicy {
-  if (!isRecord(v)) return false;
-  if (!isNonEmptyString(v.blindRef)) return false;
-  if (!isNonEmptyString(v.walkForwardRef)) return false;
-  if (!isNonEmptyString(v.regimeRef)) return false;
-  if (typeof v.adversarialRequired !== 'boolean') return false;
-  return true;
-}
-
+/** Guard: `GoalStatement`. */
 export function isGoalStatement(v: unknown): v is GoalStatement {
   if (!isRecord(v)) return false;
   if (!isGoalRef(v.id)) return false;
   if (!isPositiveInteger(v.version)) return false;
-  if (!isTenantId(v.tenantId)) return false;
+  if (!isTimestamp(v.createdAt)) return false;
   if (!isNonEmptyString(v.objective)) return false;
   if (!isGoalHorizon(v.horizon)) return false;
-  if (!isGoalSuccessCriteria(v.successCriteria)) return false;
-  if (!isGoalEvaluationPolicy(v.evaluation)) return false;
-  if (!isTimestampMs(v.createdAt)) return false;
+  if (!isConstraintSetRef(v.constraintSet)) return false;
+  if (!Array.isArray(v.successCriteria) || v.successCriteria.length === 0) return false;
+  if (!v.successCriteria.every((c) => isSuccessCriterion(c))) return false;
+  const ids = v.successCriteria.map((c) => (c as SuccessCriterion).id);
+  if (new Set(ids).size !== ids.length) return false; // criterion ids unique
+  if (!isEvaluationPolicy(v.evaluationPolicy)) return false;
   if (v.description !== undefined && !isNonEmptyString(v.description)) return false;
   return true;
 }

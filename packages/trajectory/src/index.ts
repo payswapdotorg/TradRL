@@ -1,120 +1,213 @@
 /**
- * @tradrl/trajectory — the trajectory protocol.
- *
- * The canonical record format for experience in TradRL: the complete,
- * ordered, lineage-bound stream of observations, actions, environment
- * results, rewards and tool outcomes produced during an episode.
+ * @tradrl/trajectory — the canonical experience-stream record (T011).
  *
  * Public API:
- *   - Identity: `TrajectoryId`, `StepId`, `CausalityId` + opaque lineage
- *     reference types (ids.ts).
- *   - Time: the `TimestampMs` structural mirror (timestamp.ts), per-step
- *     `ClockSample` + the L5 `FidelityMode` vocabulary (clock.ts).
- *   - Records: `TrajectoryStep` (step.ts), `TrajectoryMetadata` — the L9
- *     lineage block (metadata.ts), `Trajectory` with append-only,
- *     copy-on-write construction and deterministic replay (record.ts).
- *   - Serialization: canonical deterministic JSON — same record, same bytes
- *     (serialize.ts).
- *   - Forensics: time-engine-shaped sample conversion for the canonical
- *     `leakageCheck`, plus the mirrored `auditTrajectory` (sample.ts).
+ *   - Ids — `TrajectoryId`, `StepId`, `CausalityId` (owned), the opaque
+ *     reference spaces this package mints (`EnvironmentConfigRef`,
+ *     `RuntimeRef`, `DataRef`, `ToolOutcomeRef`, `EnvironmentResultRef`),
+ *     and the opaque cross-lane mirrors (`EpisodeId`, `ObservationId`,
+ *     `ActionId`, `RewardId`, `AgentInstanceId`, `TenantId`, `ProjectId`,
+ *     `OrganizationId`, `BodyVersionRef`, `SubstrateRef`).
+ *   - `TrajectoryMetadata` — the full L9 lineage block (tenant, project,
+ *     episode, environment config ref, runtime ref, data refs, body versions,
+ *     substrates).
+ *   - `TrajectoryStep` — the atomic record: observation refs (with
+ *     `available_time`), action records, rejections, reward signals, tool
+ *     outcome refs, environment result ref, clock sample (now/asOf mirror),
+ *     causality id.
+ *   - `Trajectory` — ordered, append-only step log + metadata;
+ *     `createTrajectory`, `appendTrajectoryStep`, `replayTrajectory`.
+ *   - Deterministic serialization — `serializeTrajectory` (canonical JSON:
+ *     same record, same bytes), `parseTrajectory`, `canonicalJson`.
+ *   - Structural adapter — `trajectoryFromEpisodeTrace` +
+ *     `deriveEnvironmentConfigRef` / `deriveTrajectoryId` +
+ *     `TrajectoryLineageInput`, over the `Env*` mirrors of T005's shapes
+ *     (env-mirror.ts).
+ *   - Leakage forensics — `checkTrajectoryLeakage` (mirrored rules) and
+ *     `toTrajectorySamples` (time-engine-shaped samples for the canonical
+ *     `leakageCheck`).
  *
- * Laws upheld (spec/ARCHITECTURE-LOCK.md): L4 (point-in-time observations
- * with availability instants + leakage forensics), L5 (recorded world
- * fidelity), L9 (full reproducible lineage as record property), L12
- * (tenant scoping), L15 (project continuity).
- *
- * Zero runtime dependencies; no cross-package imports; hand-rolled total
- * guards; no wall-clock coupling (`Date.now()` never appears — records are
- * reproducible by construction).
+ * Zero runtime dependencies; types, schemas and pure functions only. No
+ * wall-clock coupling anywhere (`Date.now()` never appears) — the trajectory
+ * is a record of a SIMULATED time axis, and byte-determinism of
+ * serialization is a construction law. `TimestampMs` and the clock sample
+ * are structural mirrors of `@tradrl/time-engine` (canonical owner); the
+ * `Env*` shapes are structural mirrors of `@tradrl/environment-protocol`
+ * (T005) — see the mirror modules for the divergence laws.
  */
 
 // Errors and results
-export type { TrajectoryErrorCode, TrajectoryError, TrajectoryResult } from './errors';
-export { fail, ok } from './errors';
+export type { TrajErrorCode, TrajError, TrajResult } from './errors';
+export { fail, failures, ok, missingField, invalidField, invalidType } from './errors';
+
+// Structural primitives (deepFreeze discipline, branding, JSON model)
+export type { Brand, Mutable, JsonValue, JsonObject } from './primitives';
+export {
+  isRecord,
+  isNonEmptyString,
+  isFiniteNumber,
+  isNonNegativeSafeInteger,
+  isPositiveSafeInteger,
+  deepFreeze,
+  isDeeplyFrozen,
+  isJsonValue,
+  isJsonObject,
+} from './primitives';
 
 // Timestamp mirror (canonical owner: @tradrl/time-engine)
 export type { TimestampMs } from './timestamp';
-export {
-  MIN_TIMESTAMP_MS,
-  MAX_TIMESTAMP_MS,
-  isTimestampMs,
-  timestampMs,
-  requireTimestampMs,
-} from './timestamp';
+export { MIN_TIMESTAMP_MS, MAX_TIMESTAMP_MS, isTimestampMs, timestampMs, requireTimestampMs } from './timestamp';
 
-// Ids and opaque cross-lane references
+// Branded ids and opaque cross-lane references
 export type {
   TrajectoryId,
   StepId,
   CausalityId,
-  ProjectRef,
-  TenantRef,
-  EpisodeRef,
-  AgentInstanceRef,
-  BodyVersionRef,
-  SubstrateRef,
   EnvironmentConfigRef,
   RuntimeRef,
   DataRef,
+  ToolOutcomeRef,
+  EnvironmentResultRef,
+  EpisodeId,
+  ObservationId,
+  ActionId,
+  RewardId,
+  EnvironmentId,
+  WorldId,
+  VenueId,
+  InstrumentId,
+  Seed,
+  LatencyPolicyId,
+  FeePolicyId,
+  AgentInstanceId,
+  TenantId,
+  ProjectId,
+  OrganizationId,
+  BodyVersionRef,
+  SubstrateRef,
 } from './ids';
 export {
   isTrajectoryId,
   isStepId,
   isCausalityId,
-  isProjectRef,
-  isTenantRef,
-  isEpisodeRef,
-  isAgentInstanceRef,
-  isBodyVersionRef,
-  isSubstrateRef,
   isEnvironmentConfigRef,
   isRuntimeRef,
   isDataRef,
+  isToolOutcomeRef,
+  isEnvironmentResultRef,
+  isEpisodeId,
+  isObservationId,
+  isActionId,
+  isRewardId,
+  isEnvironmentId,
+  isWorldId,
+  isVenueId,
+  isInstrumentId,
+  isSeed,
+  isLatencyPolicyId,
+  isFeePolicyId,
+  isAgentInstanceId,
+  isTenantId,
+  isProjectId,
+  isOrganizationId,
+  isBodyVersionRef,
+  isSubstrateRef,
 } from './ids';
 
-// Clock sample + fidelity vocabulary
-export type { FidelityMode, ClockSample } from './clock';
-export { FIDELITY_MODES, isFidelityMode, isClockSample } from './clock';
-
-// Step records
-export type { ObservationRef, ActionRecord, RewardSignal, TrajectoryStep } from './step';
-export { isObservationRef, isActionRecord, isRewardSignal, isTrajectoryStep } from './step';
-
-// Lineage metadata (the L9 block)
-export type { TrajectoryMetadata } from './metadata';
-export { isTrajectoryMetadata, LINEAGE_LIST_FIELDS, TRAJECTORY_FIDELITY_MODES } from './metadata';
-
-// The trajectory record
-export type { Trajectory, TrajectorySpec } from './record';
-export { createTrajectory, appendStep, replay, stepCount } from './record';
-
-// Deterministic serialization
-export { canonicalize, serializeTrajectory, parseTrajectory } from './serialize';
-
-// Leakage forensics + time-engine sample compatibility
+// The atomic step record (+ clock sample mirror of time-engine's SimulationClock)
 export type {
-  SampleClock,
-  SampledObservation,
-  TrajectorySampleRecord,
-  FutureObservationFinding,
-  ClockRegressionFinding,
-  TrajectoryFinding,
-  TrajectoryLeakageReport,
-} from './sample';
-export { isSampleClock, toTrajectorySamples, auditTrajectory } from './sample';
-
-// Primitives (guards, JSON discipline, deep immutability)
+  FidelityMode,
+  InformationPolicy,
+  ClockSample,
+  ObservationRef,
+  ActionRecord,
+  RejectionError,
+  RejectionRecord,
+  RewardSignalRecord,
+  TrajectoryStep,
+} from './step';
 export {
-  isRecord,
-  isNonEmptyString,
-  isFiniteNumber,
-  isArrayOf,
-  isJsonObject,
-  isJsonValue,
-  deepFreeze,
-  isDeeplyFrozen,
-} from './primitives';
-export type { JsonValue, Mutable } from './primitives';
+  FIDELITY_MODES,
+  isFidelityMode,
+  isInformationPolicy,
+  isClockSample,
+  isObservationRef,
+  isActionRecord,
+  isRejectionError,
+  isRejectionRecord,
+  isRewardSignalRecord,
+  isTrajectoryStep,
+  validateTrajectoryStep,
+} from './step';
+
+// The L9 lineage block
+export type { TrajectoryMetadata } from './metadata';
+export { isTrajectoryMetadata, validateTrajectoryMetadata } from './metadata';
+
+// The trajectory record (append-only discipline)
+export type { Trajectory } from './trajectory';
+export { isTrajectory, validateTrajectory, createTrajectory, appendTrajectoryStep, replayTrajectory } from './trajectory';
+
+// Deterministic canonical serialization
+export { canonicalJson, serializeTrajectory, parseTrajectory } from './serialize';
+
+// Structural mirrors of T005 environment-protocol shapes
+export type {
+  EnvObservationOrigin,
+  EnvObservationProvenance,
+  EnvObservation,
+  EnvAction,
+  EnvRewardSignal,
+  EnvFidelityMode,
+  EnvInformationPolicy,
+  EnvClockConfig,
+  EnvProfile,
+  EnvWorldRef,
+  EnvSpec,
+  EnvTerminationReason,
+  EnvEpisodeResult,
+  EnvErrorCode,
+  EnvErrorRecord,
+  EnvRejection,
+  EnvStepRecord,
+  EnvEpisodeTrace,
+} from './env-mirror';
+export {
+  ENV_OBSERVATION_ORIGINS,
+  isEnvObservationOrigin,
+  isEnvObservationProvenance,
+  isEnvObservation,
+  isEnvAction,
+  isEnvRewardSignal,
+  ENV_FIDELITY_MODES,
+  isEnvFidelityMode,
+  isEnvClockConfig,
+  isEnvProfile,
+  isEnvWorldRef,
+  isEnvSpec,
+  isEnvTerminationReason,
+  isEnvEpisodeResult,
+  ENV_ERROR_CODES,
+  isEnvErrorCode,
+  isEnvErrorRecord,
+  isEnvRejection,
+  isEnvStepRecord,
+  isEnvEpisodeTrace,
+  validateEnvEpisodeTrace,
+} from './env-mirror';
+
+// The structural adapter (episode trace -> trajectory)
+export type { TrajectoryLineageInput } from './adapter';
+export {
+  canonicalEnvSpecJson,
+  deriveEnvironmentConfigRef,
+  deriveTrajectoryId,
+  trajectoryFromEpisodeTrace,
+} from './adapter';
+
+// Leakage forensics (mirror of time-engine's leakage contract)
+export type { TrajectorySample, FutureObservationFinding, ClockRegressionFinding, LeakageFinding, LeakageReport } from './leakage';
+export { checkTrajectoryLeakage, toTrajectorySamples } from './leakage';
 
 /** Package identity and ownership (Work Order T011). */
 export const packageInfo = {

@@ -1,84 +1,146 @@
 /**
  * @tradrl/trajectory — deterministic canonical serialization.
  *
- * The trajectory exchange format: a canonical JSON form with the property
- * that the SAME record (by value) always serializes to IDENTICAL bytes —
- * regardless of key insertion order, construction history or append order
- * of structurally distinct records. Distinct append orders produce distinct
- * records and therefore distinct bytes.
+ * Reproducibility (L9) needs a canonical form: {@link serializeTrajectory}
+ * serializes a validated trajectory with recursively sorted object keys, so
+ * equal records always produce byte-identical canonical JSON regardless of
+ * field order at construction — "same record, same bytes". The canonical
+ * JSON rules are the mirror of T005's `canonicalJson` (spec.ts):
  *
- * Canonical form rules (mirrors of the JSON data model, tightened):
- * - Objects: keys sorted lexicographically (Unicode code-point order, the
- *   default `Array.prototype.sort` on strings — deterministic across
- *   platforms), no whitespace.
- * - Arrays: order preserved (order is MEANINGFUL — it is the step log).
- * - Primitives: standard JSON literals; numbers via `JSON.stringify`
- *   (finite only — the guards reject non-finite numbers first).
- * - Optional-absent fields: absent. A key with value `undefined` is skipped,
- *   matching `JSON.stringify` semantics.
+ *   - object keys recursively sorted (code-unit order);
+ *   - arrays in order (order is MEANING in a trajectory — steps, and the
+ *     within-step orders, are never sorted);
+ *   - strings via `JSON.stringify`, finite numbers via `String`.
  *
- * Round-trip law: `parseTrajectory(serializeTrajectory(t))` deep-equals `t`,
- * and re-serializing the parse yields byte-identical output.
+ * {@link parseTrajectory} is the inverse: parse, then full validation
+ * (metadata lineage completeness + every step + cross-step laws), returning
+ * the deeply frozen record. `serialize(parse(serialize(t))) === serialize(t)`
+ * for every valid record (round-trip property, tested).
  */
 
-import { deepFreeze, isJsonValue } from './primitives';
-import { fail, ok, type TrajectoryResult } from './errors';
-import { createTrajectory, type Trajectory, type TrajectorySpec } from './record';
+import type { JsonValue } from './primitives';
+import { fail, ok, type TrajResult } from './errors';
+import type { Trajectory } from './trajectory';
+import { validateTrajectory } from './trajectory';
+import type { TrajectoryMetadata } from './metadata';
+import type { ActionRecord, ClockSample, ObservationRef, RejectionRecord, RewardSignalRecord, TrajectoryStep } from './step';
 
-/** Render a JSON value in canonical form (sorted keys, no whitespace). */
-export function canonicalize(value: unknown): string {
-  return render(value);
-}
-
-function render(value: unknown): string {
+/**
+ * Canonical JSON serialization of any JSON value: object keys recursively
+ * sorted (code-unit order), arrays in order, strings via `JSON.stringify`,
+ * finite numbers via `String`. Equal JSON values always serialize
+ * byte-identically. Mirror of T005's canonicalJson (same rules — the
+ * canonical form is a program-wide law, not a package choice).
+ */
+export function canonicalJson(value: JsonValue): string {
   if (value === null) return 'null';
-  switch (typeof value) {
-    case 'string':
-      return JSON.stringify(value);
-    case 'number':
-    case 'boolean':
-      return String(value);
-    case 'object': {
-      if (Array.isArray(value)) {
-        return `[${value.map(render).join(',')}]`;
-      }
-      const keys = Object.keys(value)
-        .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
-        .sort();
-      const body = keys
-        .map((key) => `${JSON.stringify(key)}:${render((value as Record<string, unknown>)[key])}`)
-        .join(',');
-      return `{${body}}`;
-    }
-    default:
-      // Unreachable for guard-validated records (JSON discipline upstream).
-      throw new TypeError(`canonicalize: value is not JSON-safe (${typeof value})`);
-  }
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number') return String(value); // finite by the JSON model
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (Array.isArray(value)) return `[${value.map((element) => canonicalJson(element)).join(',')}]`;
+  const object = value as { readonly [key: string]: JsonValue };
+  const keys = Object.keys(object).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(',')}}`;
 }
 
-/** Serialize a trajectory to its canonical JSON bytes. */
+/** JSON-tree projection of a clock sample (compile-proven JSON safety). */
+function clockTree(clock: ClockSample): JsonValue {
+  return {
+    now: clock.now,
+    asOf: clock.asOf,
+    playbackSpeed: clock.playbackSpeed,
+    paused: clock.paused,
+    fidelity: clock.fidelity,
+    informationPolicy: clock.informationPolicy,
+  };
+}
+
+/** JSON-tree projection of a step (compile-proven JSON safety, no casts). */
+function stepTree(step: TrajectoryStep): JsonValue {
+  const observations: JsonValue[] = step.observations.map((observation: ObservationRef): JsonValue => ({
+    observation_id: observation.observation_id,
+    available_time: observation.available_time,
+  }));
+  const actions: JsonValue[] = step.actions.map((action: ActionRecord): JsonValue => ({
+    action_id: action.action_id,
+    actor: action.actor,
+    submitted_at: action.submitted_at,
+    client_sequence: action.client_sequence,
+    payload: action.payload,
+  }));
+  const rejections: JsonValue[] = step.rejections.map((rejection: RejectionRecord): JsonValue => ({
+    action: {
+      action_id: rejection.action.action_id,
+      actor: rejection.action.actor,
+      submitted_at: rejection.action.submitted_at,
+      client_sequence: rejection.action.client_sequence,
+      payload: rejection.action.payload,
+    },
+    errors: rejection.errors.map((error): JsonValue => ({ code: error.code, path: error.path, message: error.message })),
+  }));
+  const rewards: JsonValue[] = step.rewards.map((reward: RewardSignalRecord): JsonValue => ({
+    reward_id: reward.reward_id,
+    at: reward.at,
+    available_time: reward.available_time,
+    value: reward.value,
+    metric: reward.metric,
+    source: reward.source,
+    detail: reward.detail,
+  }));
+  return {
+    step: step.step,
+    step_id: step.step_id,
+    observations,
+    actions,
+    rejections,
+    rewards,
+    tool_outcomes: [...step.tool_outcomes],
+    environment_result: step.environment_result,
+    clock: clockTree(step.clock),
+    causality_id: step.causality_id,
+  };
+}
+
+/** JSON-tree projection of the metadata block (compile-proven JSON safety). */
+function metadataTree(metadata: TrajectoryMetadata): JsonValue {
+  return {
+    trajectory_id: metadata.trajectory_id,
+    tenant: metadata.tenant,
+    project: metadata.project,
+    episode: metadata.episode,
+    environment_config: metadata.environment_config,
+    runtime: metadata.runtime,
+    data: [...metadata.data],
+    body_versions: [...metadata.body_versions],
+    substrates: [...metadata.substrates],
+  };
+}
+
+/**
+ * Canonical JSON of a validated trajectory. Equal records produce identical
+ * bytes — the serialization anchor for L9 (T014 ships trajectories across
+ * processes; T034 persists them; both need byte-stable identity).
+ */
 export function serializeTrajectory(trajectory: Trajectory): string {
-  return render(trajectory);
+  const tree: JsonValue = {
+    metadata: metadataTree(trajectory.metadata),
+    steps: trajectory.steps.map((step) => stepTree(step)),
+  };
+  return canonicalJson(tree);
 }
 
-/** Parse and validate canonical trajectory text back into a frozen record. */
-export function parseTrajectory(text: string): TrajectoryResult<Trajectory> {
-  if (typeof text !== 'string' || text.length === 0) {
-    return fail('invalid_serialization', 'trajectory text must be a non-empty string');
-  }
+/**
+ * Parse and validate serialized trajectory JSON. Full validation runs on the
+ * parsed value (untrusted input law): a syntactically valid but
+ * lineage-incomplete or law-violating payload is rejected with typed errors.
+ */
+export function parseTrajectory(json: string): TrajResult<Trajectory> {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(json);
   } catch (error) {
-    return fail('invalid_serialization', `trajectory text is not valid JSON: ${String(error)}`);
+    const message = error instanceof Error ? error.message : 'unknown parse failure';
+    return fail('invalid_json', `input is not valid JSON: ${message}`);
   }
-  if (!isJsonValue(parsed)) {
-    return fail('invalid_serialization', 'trajectory text did not decode to a JSON value');
-  }
-  const spec = parsed as TrajectorySpec;
-  const result = createTrajectory(spec);
-  if (!result.ok) {
-    return fail('invalid_serialization', `parsed trajectory failed validation: ${result.error.message}`);
-  }
-  return ok(deepFreeze(result.value));
+  return validateTrajectory(parsed);
 }

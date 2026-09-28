@@ -1,39 +1,36 @@
 /**
- * @tradrl/trajectory — the `TimestampMs` structural mirror.
+ * @tradrl/trajectory — timestamp mirror of @tradrl/time-engine.
  *
- * `@tradrl/time-engine` (T004, merged) is the CANONICAL owner of `TimestampMs`.
- * The workspace lockfile forbids a package dependency between contract
- * packages, so this package declares a structurally identical MIRROR — same
- * brand literal, same bounds, same guard behavior — exactly as
- * `@tradrl/market-protocol` does (see its `src/timestamp.ts` and the
- * trip-wire `src/interop.test.ts`). The interop test in THIS package asserts
- * that the two declarations remain mutually assignable. Any change to the
- * canonical type MUST be mirrored here in the same change.
+ * STRUCTURAL MIRROR — DO NOT DIVERGE.
  *
- * Representation contract (identical to the canonical one):
- * - Epoch milliseconds as a JavaScript number (JSON-safe).
- * - Integer, finite, within [MIN_TIMESTAMP_MS, MAX_TIMESTAMP_MS].
- * - Sub-millisecond ordering is not representable here; per-stream sequence
- *   fields (owned by the market/environment lanes) carry it.
+ * The canonical `TimestampMs` definition lives in `@tradrl/time-engine`
+ * (packages/time-engine/src/timestamp.ts). The frozen workspace lockfile
+ * forbids a package dependency between contract packages, so this package
+ * re-declares the IDENTICAL structural type (the same discipline as
+ * `@tradrl/market-protocol`, `@tradrl/environment-protocol` and
+ * `@tradrl/agent-os`; program decision D-003/D-004). TypeScript's structural
+ * typing makes the declarations mutually assignable; the cross-package test
+ * `packages/trajectory/src/interop.test.ts` fails to compile (and fails at
+ * runtime on constant parity) if the declarations ever diverge.
+ *
+ * Any change here MUST be mirrored in time-engine (and the sibling contract
+ * packages) and vice versa.
  */
 
-import { fail, ok, type TrajectoryResult } from './errors';
-
 /**
- * A validated epoch-millisecond timestamp — structural mirror of the
- * canonical `@tradrl/time-engine` `TimestampMs`. The brand literal
- * `'TradRL.TimestampMs'` is deliberately IDENTICAL so the two types are
- * mutually assignable (verified by the interop trip-wire test).
+ * A validated epoch-millisecond timestamp (brand is compile-time only).
+ * Construct through `@tradrl/time-engine` (`timestampMs`, `fromIso`, ...) or
+ * validate untrusted values with {@link isTimestampMs}.
  */
 export type TimestampMs = number & { readonly __brand: 'TradRL.TimestampMs' };
 
-/** Mirror of the canonical lower bound: the Unix epoch (no pre-1970 data). */
+/** Lower bound of the representable range (the Unix epoch). Mirror of time-engine. */
 export const MIN_TIMESTAMP_MS = 0;
 
-/** Mirror of the canonical upper bound: the ECMAScript `Date` representable limit. */
+/** Upper bound of the representable range (last ECMAScript Date instant). Mirror of time-engine. */
 export const MAX_TIMESTAMP_MS = 8_639_999_999_999_999;
 
-/** Runtime type guard — behaviorally identical to the canonical guard. */
+/** Runtime guard — mirrors `isTimestampMs` from @tradrl/time-engine. */
 export function isTimestampMs(value: unknown): value is TimestampMs {
   return (
     typeof value === 'number' &&
@@ -44,26 +41,32 @@ export function isTimestampMs(value: unknown): value is TimestampMs {
   );
 }
 
-/** Validating constructor for untrusted numeric input. Returns a typed error. */
-export function timestampMs(value: number): TrajectoryResult<TimestampMs> {
+/**
+ * Validating constructor for untrusted numeric input (typed error, never
+ * throws). Mirrors the semantics of time-engine's `timestampMs`.
+ */
+export function timestampMs(value: number): { ok: true; value: TimestampMs } | { ok: false; message: string } {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return fail('invalid_timestamp', 'timestamp must be a finite number of epoch milliseconds');
+    return { ok: false, message: 'timestamp must be a finite number of epoch milliseconds' };
   }
   if (!Number.isInteger(value)) {
-    return fail('invalid_timestamp', `timestamp must be an integer number of epoch milliseconds, got ${value}`);
+    return { ok: false, message: `timestamp must be an integer number of epoch milliseconds, got ${value}` };
   }
   if (value < MIN_TIMESTAMP_MS || value > MAX_TIMESTAMP_MS) {
-    return fail(
-      'invalid_timestamp',
-      `timestamp ${value} is outside the representable range [${MIN_TIMESTAMP_MS}, ${MAX_TIMESTAMP_MS}] epoch ms`,
-    );
+    return {
+      ok: false,
+      message: `timestamp ${value} is outside the representable range [${MIN_TIMESTAMP_MS}, ${MAX_TIMESTAMP_MS}] epoch ms`,
+    };
   }
-  return ok(value as TimestampMs);
+  return { ok: true, value: value as TimestampMs };
 }
 
-/** Throwing constructor for trusted literals (tests, fixtures). */
+/**
+ * Throwing constructor for trusted literals (tests, fixtures, configuration).
+ * NOT for untrusted input — use {@link isTimestampMs} there.
+ */
 export function requireTimestampMs(value: number): TimestampMs {
   const result = timestampMs(value);
   if (result.ok) return result.value;
-  throw new RangeError(`requireTimestampMs: ${result.error.message}`);
+  throw new RangeError(`requireTimestampMs: ${result.message}`);
 }

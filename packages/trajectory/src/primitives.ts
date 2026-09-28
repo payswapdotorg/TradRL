@@ -1,109 +1,73 @@
-/**
- * @tradrl/trajectory — shared primitive helpers.
- *
- * Hand-rolled guard and immutability helpers used across the trajectory
- * contract package. ZERO runtime dependencies: this package never imports
- * another TradRL package (the workspace lockfile forbids contract-package
- * dependencies — see packages/market-protocol/src/interop.test.ts for the
- * structural-mirror discipline this file supports).
- *
- * Laws honored here (spec/ARCHITECTURE-LOCK.md):
- * - L20 safety outside prompts: guards are strict, total and never throw.
- * - Immutability law (T011): records are deeply-frozen value objects;
- *   `deepFreeze`/`isDeeplyFrozen` are the runtime half of that law.
- */
+// @tradrl/trajectory — shared contract primitives.
+//
+// Spec anchors: spec/ARCHITECTURE-LOCK.md L3 (immutable versioned capability),
+// L4 (point-in-time truth), L9 (reproducible lineage), L12 (tenant isolation);
+// spec/DOMAIN-MODEL.md (Trajectory).
+//
+// Laws honored here:
+// - Zero runtime dependencies; pure data and pure functions only.
+// - No `any`; every exported shape has a hand-rolled total type guard.
+// - All contract data is JSON-serializable (no Dates, Maps, Sets; symbol keys
+//   are type-level brands only) so trajectories are portable across processes
+//   (T012 evaluation workers, T013 RL trainers, T014 distributed generation,
+//   T034 firm memory) and byte-stable under canonical serialization.
+// - Cross-lane entities (T002 trading domain, T003 agent lane, T005
+//   environment lane, T006 agent-os lane) are referenced ONLY through opaque
+//   branded string ids — never imported (D-003/D-004).
+//
+// This module STRUCTURALLY MIRRORS packages/environment-protocol/src/primitives.ts
+// and packages/agent-os/src/primitives.ts (program decision D-004): contract
+// packages never import each other, but their shared vocabularies (record
+// discipline, opaque-reference discipline, deep-freeze discipline) must not
+// diverge.
 
-/** Nominal branding helper — compile-time only, erased at runtime. */
+// ---------------------------------------------------------------------------
+// Compile-time branding
+// ---------------------------------------------------------------------------
+
+/**
+ * Nominal tag for otherwise-primitive values. The brand exists only at
+ * compile time; at runtime this is the underlying primitive. Obtain branded
+ * values ONLY through the validating constructors/guards of this package.
+ */
 export type Brand<T, B extends string> = T & { readonly __brand: B };
 
-/** Structural guard: a plain, non-array, non-null object. */
+// ---------------------------------------------------------------------------
+// Structural type-check helpers (hand-rolled, `any`-free)
+// ---------------------------------------------------------------------------
+
+/** `true` when `v` is a plain object (not an array, not a class instance). */
 export function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+  const proto: unknown = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
 }
 
-/** Guard: a string with at least one character (whitespace-only is rejected). */
+/** `true` when `v` is a non-empty string after trimming. */
 export function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
-/** Guard: a finite JS number (NaN, +/-Infinity rejected). */
+/** `true` when `v` is a finite number (never NaN, never ±Infinity). */
 export function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
 }
 
-/** `true` when `v` is an array whose every element satisfies `guard`. */
-export function isArrayOf<T>(
-  v: unknown,
-  guard: (item: unknown) => item is T,
-): v is readonly T[] {
-  return Array.isArray(v) && v.every((item) => guard(item));
+/** `true` when `v` is a safe integer `>= 0` (ordinals, sequence numbers). */
+export function isNonNegativeSafeInteger(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 }
 
-/** Builds a guard for a closed string-union type. */
-export function isEnum<const V extends readonly string[]>(
-  values: V,
-): (v: unknown) => v is V[number] {
-  const allowed = new Set<string>(values);
-  return (v: unknown): v is V[number] => typeof v === 'string' && allowed.has(v);
-}
-
-/** Returns the values that occur more than once in `items` (order preserved). */
-export function duplicatesOf<T>(items: readonly T[]): readonly T[] {
-  const seen = new Set<T>();
-  const duplicated = new Set<T>();
-  for (const item of items) {
-    if (seen.has(item)) duplicated.add(item);
-    else seen.add(item);
-  }
-  return [...duplicated];
+/** `true` when `v` is a safe integer `>= 1` (counts, step ordinals). */
+export function isPositiveSafeInteger(v: unknown): v is number {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 1;
 }
 
 /** Strips `readonly` modifiers — used by tests to attempt mutations. */
 export type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 // ---------------------------------------------------------------------------
-// JSON value discipline (opaque payloads, outcome summaries, parameters)
-// ---------------------------------------------------------------------------
-
-/**
- * A recursively JSON-safe value: the only kinds of payload this package
- * accepts inside opaque fields (action payloads, evaluation parameters).
- * Finite numbers only; `undefined` is not a JSON value (absent keys, not
- * present-but-undefined, is the discipline).
- */
-export type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | readonly JsonValue[]
-  | { readonly [key: string]: JsonValue };
-
-/** Guard: a plain JSON object (record of JSON values). */
-export function isJsonObject(v: unknown): v is { readonly [key: string]: JsonValue } {
-  if (!isRecord(v)) return false;
-  return Object.values(v).every(isJsonValue);
-}
-
-/** Guard: a recursively JSON-safe value (finite numbers, no undefined). */
-export function isJsonValue(v: unknown): v is JsonValue {
-  if (v === null) return true;
-  switch (typeof v) {
-    case 'string':
-    case 'boolean':
-      return true;
-    case 'number':
-      return Number.isFinite(v);
-    case 'object':
-      if (Array.isArray(v)) return v.every(isJsonValue);
-      return isJsonObject(v);
-    default:
-      return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Deep immutability (runtime half of the T011 immutability law)
+// Deep immutability (runtime half of the append-only discipline, L9/L11)
 // ---------------------------------------------------------------------------
 
 /**
@@ -133,8 +97,9 @@ export function deepFreeze<T>(value: T): T {
 
 /**
  * `true` when every reachable plain object and array is `Object.isFrozen`.
- * A trajectory or experiment record that is not deeply frozen fails this
- * check — append-only lineage must never be mutable in place.
+ * The runtime check behind "trajectories are append-only, deeply-frozen value
+ * objects": a value this package constructed that is not deeply frozen fails
+ * this check.
  */
 export function isDeeplyFrozen(value: unknown): boolean {
   const visited = new Set<unknown>();
@@ -149,9 +114,38 @@ export function isDeeplyFrozen(value: unknown): boolean {
       for (const item of current) stack.push(item);
     } else {
       for (const key of Object.keys(current)) {
-        stack.push((current as Record<string, unknown>)[key]);
+        const child: unknown = (current as Record<string, unknown>)[key];
+        if (child !== null && typeof child === 'object') stack.push(child);
       }
     }
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// JSON value model (opaque payloads)
+// ---------------------------------------------------------------------------
+
+/** Recursive JSON value model. */
+export type JsonValue = string | number | boolean | null | readonly JsonValue[] | JsonObject;
+
+/** A JSON object (record of JSON values). */
+export type JsonObject = { readonly [key: string]: JsonValue };
+
+/** Runtime guard for a JSON value (deep). */
+export function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true;
+  if (typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every((element) => isJsonValue(element));
+  if (typeof value === 'object') {
+    return Object.values(value).every((element) => isJsonValue(element));
+  }
+  return false;
+}
+
+/** Runtime guard for a JSON object. */
+export function isJsonObject(value: unknown): value is JsonObject {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.values(value).every((element) => isJsonValue(element));
 }
