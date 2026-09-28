@@ -234,8 +234,11 @@ describe('computeSearchIntegrityReport (L11)', () => {
   });
 
   it('no candidates: the effect is undefined and REFUSED, not invented', () => {
+    // Contract law 4 (selection backed by log AND statistic) precedes law 5
+    // (no candidates): the selection carries a statistic, but NO trial
+    // SUCCEEDED, so the candidate set is empty and the effect is refused.
     const emptyLog: readonly TrialLogEntry[] = [entry({ trial_id: 'trial-x', arm: 'a', status: 'failed', failure_reason: 'boom' })];
-    const result = computeSearchIntegrityReport({ experiment_id: 'exp-1' as never, trials: emptyLog }, [{ trial_id: trialId('trial-x'), statistic: null }], { selectedTrialId: trialId('trial-x') });
+    const result = computeSearchIntegrityReport({ experiment_id: 'exp-1' as never, trials: emptyLog }, [{ trial_id: trialId('trial-x'), statistic: 0.5 }], { selectedTrialId: trialId('trial-x') });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('must fail');
     expect(result.errors[0]?.code).toBe('no_candidates');

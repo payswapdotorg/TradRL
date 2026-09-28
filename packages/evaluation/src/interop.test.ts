@@ -446,9 +446,11 @@ describe('END-TO-END: domain-core-authored constraints -> domain-core engine -> 
     if (!badVerdict.ok) throw new Error('must succeed');
     expect(badVerdict.value.attained).toBe(false);
     expect(badVerdict.value.perCriterion[0]?.status).toBe('blocking-violation');
-    // Aggregate ratio semantics mirror domain-core's own satisfiedRatio.
-    expect(badVerdict.value.perCriterion[1]?.perSplit[2]?.satisfiedRatio).toBeCloseTo(1 / 3, 12);
-    expect(bad.satisfiedRatio).toBeCloseTo(1 / 3, 12);
+    // CONTEXT_BAD violates ALL THREE constraints (exposure 2M > 1M, DOGE not
+    // allowlisted, kill switch armed) — both the mirror and domain-core's own
+    // engine report satisfiedRatio 0 (satisfied/applicable = 0/3).
+    expect(badVerdict.value.perCriterion[1]?.perSplit[2]?.satisfiedRatio).toBeCloseTo(0, 12);
+    expect(bad.satisfiedRatio).toBeCloseTo(0, 12);
   });
 
   it('the evidence this package projects satisfies the vendored T007 isAttainmentEvidence guard', () => {

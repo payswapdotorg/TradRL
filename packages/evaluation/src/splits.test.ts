@@ -215,10 +215,13 @@ describe('blindHoldoutMask', () => {
   });
 
   it('BOUNDARY: masking nothing is a degenerate_mask typed error (holdoutCount < 1 is unrepresentable via types; guarded at runtime)', () => {
+    // The runtime policy guard (isBlindHoldoutPolicy) rejects holdoutCount < 1
+    // BEFORE the mask computation, so the typed code is invalid_split_policy
+    // (the degenerate_mask < 1 branch is a defense-in-depth backstop).
     const none = blindHoldoutMask(axis(3), { ...BLIND, holdoutCount: 0 } as unknown as BlindHoldoutPolicy);
     expect(none.ok).toBe(false);
     if (none.ok) throw new Error('must fail');
-    expect(none.errors[0]?.code).toBe('degenerate_mask');
+    expect(none.errors[0]?.code).toBe('invalid_split_policy');
   });
 
   it('a single-blind-segment mask on a two-segment axis is the tightest legal boundary', () => {
@@ -279,7 +282,9 @@ describe('policySegmentRefs', () => {
   it('projects walk-forward test refs, blind refs and regime refs', () => {
     const wf = policySegmentRefs(axis(4), WALK_FORWARD);
     expect(wf.ok).toBe(true);
-    if (wf.ok) expect(wf.value).toEqual(['dataset.segment-2', 'dataset.segment-3', 'dataset.segment-4']);
+    // axis(4), minTrainSegments=2, stepSegments=1 -> test indices 2,3 (the loop
+    // bound is testIndex < segments.length; see the stepped-boundary test above).
+    if (wf.ok) expect(wf.value).toEqual(['dataset.segment-2', 'dataset.segment-3']);
 
     const blind = policySegmentRefs(axis(4), BLIND);
     expect(blind.ok).toBe(true);

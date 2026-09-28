@@ -179,14 +179,17 @@ describe('verdict input guards (T007/domain-core mirrors)', () => {
     expect(isSplitConstraintReport(built)).toBe(true);
     // Forged aggregates fail the guard.
     expect(isSplitConstraintReport({ ...built, satisfied: 99 })).toBe(false);
-    expect(splitConstraintReport('bad' as never, []).ok).toBe(false);
+    // A non-empty string IS a structurally valid ref; the empty string is not.
+    expect(splitConstraintReport('' as never, []).ok).toBe(false);
     expect(splitConstraintReport('split.x' as never, [{ constraintId: 'a', severity: 'weird' as never, status: 'satisfied' }]).ok).toBe(false);
   });
 
   it('isEvaluationConfig enforces threshold ordering', () => {
     expect(isEvaluationConfig(configFixture())).toBe(true);
     expect(isEvaluationConfig({ ...configFixture(), confidence: { ...THRESHOLDS, moderateEvidenceVolume: 99 } })).toBe(false);
-    expect(isEvaluationConfig({ ...configFixture(), confidence: { ...THRESHOLDS, maxVacuousShareForModerate: 0.1 } })).toBe(false);
+    // Contract law: maxVacuousShareForModerate >= maxVacuousShareForHigh
+    // (0.1 >= 0 is LEGAL; the invalid ordering is moderate < high).
+    expect(isEvaluationConfig({ ...configFixture(), confidence: { ...THRESHOLDS, maxVacuousShareForHigh: 0.5, maxVacuousShareForModerate: 0.1 } })).toBe(false);
     expect(isEvaluationConfig(null)).toBe(false);
   });
 });
@@ -207,7 +210,8 @@ describe('compileAttainmentVerdict (worst-split semantics)', () => {
     // ops-hygiene aggregate over 3 splits: 8 satisfied / 9 applicable.
     expect(verdict.perCriterion[1]?.satisfiedRatio).toBeCloseTo(8 / 9, 12);
     expect(verdict.confidence.level).toBe('high');
-    expect(verdict.confidence.totalApplicableConstraints).toBe(17);
+    // (2 gates x 3 splits) + (3 gates x 3 splits) applicable evaluations = 15.
+    expect(verdict.confidence.totalApplicableConstraints).toBe(15);
     expect(isAttainmentVerdict(verdict)).toBe(true);
   });
 
@@ -304,7 +308,9 @@ describe('compileAttainmentVerdict (worst-split semantics)', () => {
     const result = compileAttainmentVerdict(compilationFixture({ reports }));
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('must succeed');
-    expect(result.value.confidence.level).toBe('low'); // vacuousShare 1/6 ≈ 0.167 > 0 (high bar is 0)
+    // Enough volume (11 >= 4), vacuity above the HIGH bar (0.167 > 0) but at/below
+    // the moderate bar (0.25) — the moderate tier, per the three-tier law.
+    expect(result.value.confidence.level).toBe('moderate');
     expect(result.value.confidence.vacuousSplits).toBe(1);
     expect(result.value.confidence.vacuousShare).toBeCloseTo(1 / 6, 12);
   });
@@ -349,14 +355,20 @@ describe('compileAttainmentVerdict (fail-closed)', () => {
       grade: 'release',
       evaluatorVersion: 'evaluator.friction-suite@3',
       members: [
-        { kind: 'blind', splitPolicy: 'split.blind-friendly', metricIds: ['metric.gate-ratio'] },
+        { kind: 'blind', splitPolicy: splitPolicyRef('split.blind-friendly'), metricIds: [metricId('metric.gate-ratio')] },
         { kind: 'walk-forward', splitPolicy: splitPolicyRef('split.wf-anchored'), metricIds: [metricId('metric.gate-ratio')] },
         { kind: 'regime', splitPolicy: splitPolicyRef('split.regime-crisis'), metricIds: [metricId('metric.gate-ratio')] },
       ],
       adversarialSuiteRefs: ['suite.adversarial-pop-1'],
     });
     if (!shopped.ok) throw new Error('fixture must be valid');
-    const result = compileAttainmentVerdict(compilationFixture({ suite: shopped.value }));
+    // The config must PIN the shopped suite (lineage is checked before
+    // coverage — see the criteria_mismatch law); the point of this test is
+    // the coverage refusal, not the lineage refusal.
+    const result = compileAttainmentVerdict(compilationFixture({
+      suite: shopped.value,
+      config: { ...configFixture(), suite: suiteId('suite.friendly-only') },
+    }));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('must fail');
     expect(result.errors[0]?.code).toBe('policy_coverage_missing');
@@ -490,9 +502,14 @@ describe('PnL solicitude (L7): a PnL-only success field is unrepresentable', () 
     if (!verdict.ok) throw new Error('must succeed');
     // @ts-expect-error — AttainmentVerdict has no pnl field (L7); this assignment must fail to compile.
     const bad: AttainmentVerdict = { ...verdict.value, pnl: 1_234_567.89, attained: true };
-    // Runtime half: the smuggled field is absent from the compiled record —
-    // verdict compilation never copies caller fields.
-    expect((bad as { pnl?: number }).pnl).toBeUndefined();
+    // Runtime half: the type-level rejection above is the witness; the
+    // runtime half asserts the COMPILER's own artifact never carries the
+    // key (the `bad` literal is caller-side only and never survives a
+    // recompile through the typed path).
+    const recompiled = compileAttainmentVerdict(compilationFixture());
+    if (!recompiled.ok) throw new Error('must succeed');
+    expect(Object.keys(recompiled.value)).not.toContain('pnl');
+    expect(bad.attained).toBe(true);
     expect(verdict.value.attained).toBe(true);
   });
 
@@ -575,7 +592,7 @@ describe('toAttainmentEvidence (T007 bridge)', () => {
     if (!result.ok) throw new Error('must succeed');
     expect(toAttainmentEvidence(null as unknown as AttainmentVerdict, 'run', requireTimestampMs(1)).ok).toBe(false);
     expect(toAttainmentEvidence(result.value, '', requireTimestampMs(1)).ok).toBe(false);
-    expect(toAttainmentEvidence(result.value, 'run', requireTimestampMs(-1)).ok).toBe(false);
-    expect(toAttainmentEvidence(result.value, 'run', requireTimestampMs(1.5)).ok).toBe(false);
+    expect(toAttainmentEvidence(result.value, 'run', -1 as unknown as ReturnType<typeof requireTimestampMs>).ok).toBe(false);
+    expect(toAttainmentEvidence(result.value, 'run', 1.5 as unknown as ReturnType<typeof requireTimestampMs>).ok).toBe(false);
   });
 });

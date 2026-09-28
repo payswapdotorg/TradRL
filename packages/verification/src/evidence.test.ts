@@ -147,15 +147,20 @@ describe('verifyEvidenceChain (clean chain)', () => {
       { kind: 'unknown-kind', caseId: verificationCaseId('c') },
       { kind: 'lineage-hash', caseId: '' },
       { kind: 'quartet-monotone', caseId: verificationCaseId('c'), asOf: 'x', quartets: [] },
-      { kind: 'no-future-leakage', caseId: verificationCaseId('c'), asOf: 1, samples: [] },
+      // A NON-ARRAY samples list fails the guard's failure branch with the indexed
+      // path (an EMPTY array is structurally legal — a trivially-true claim).
+      { kind: 'no-future-leakage', caseId: verificationCaseId('c'), asOf: 1, samples: 'x' },
     ]);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('must fail');
     const paths = result.errors.map((e) => e.path);
-    expect(paths).toContain('cases[0]');
+    // Whole-entry violations use the root-path convention (path: ''); the
+    // index rides in the message — field violations carry indexed paths.
+    expect(paths).toContain('');
     expect(paths).toContain('cases[1].kind');
     expect(paths).toContain('cases[2].caseId');
     expect(paths).toContain('cases[3].asOf');
+    expect(paths).toContain('cases[3].quartets');
     expect(paths).toContain('cases[4].samples');
   });
 

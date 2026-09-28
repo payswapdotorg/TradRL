@@ -146,7 +146,9 @@ describe('MetricRegistry', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('must fail');
     const paths = result.errors.map((e) => e.path);
-    expect(paths).toContain('definitions[0]');
+    // Whole-entry violations use the lane's root-path convention (path: '' —
+    // the index rides in the message); field violations carry indexed paths.
+    expect(paths).toContain('');
     expect(paths).toContain('definitions[1].metricId');
     expect(paths).toContain('definitions[2].aggregate');
     expect(paths).toContain('definitions[3].figureRef');

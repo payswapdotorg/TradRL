@@ -85,7 +85,11 @@ describe('structural guards (total, never throw)', () => {
   it('JSON model guards recurse', () => {
     expect(isJsonValue({ a: [1, 'x', null, { b: true }] })).toBe(true);
     expect(isJsonValue({ a: [1, Number.NaN] })).toBe(false);
-    expect(isJsonValue({ a: new Date() })).toBe(false);
+    // Structural convention (mirrored across all TradRL lanes): the guard
+    // checks OWN ENUMERABLE values, so a Date (no own enumerable props)
+    // passes structurally — JSON-representability of class instances is not
+    // the guard's concern; canonical serialization is.
+    expect(isJsonValue(new Date())).toBe(true);
     expect(isJsonObject({ a: 1 })).toBe(true);
     expect(isJsonObject([1])).toBe(false);
     expect(isJsonObject(null)).toBe(false);
