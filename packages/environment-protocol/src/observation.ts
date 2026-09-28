@@ -75,7 +75,7 @@ export interface Available {
  * EXACTLY at its `available_time`, never one millisecond earlier.
  */
 export function isObservationVisible<T extends Available>(observation: T, at: TimestampMs): boolean {
-  return (observation.available_time as number) <= (at as number);
+  return observation.available_time <= at;
 }
 
 /**

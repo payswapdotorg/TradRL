@@ -289,7 +289,7 @@ export function observeEpisode(episode: EpisodeState, at: TimestampMs): EnvResul
   if (!isTimestampMs(at)) {
     return fail('invalid_timestamp', 'observe requires a valid TimestampMs instant');
   }
-  if ((at as number) > (episode.clock.now as number)) {
+  if (at > episode.clock.now) {
     return fail(
       'observation_beyond_now',
       `cannot observe at ${at}: the episode's current now is ${episode.clock.now}`,
@@ -316,7 +316,7 @@ export function submitAction(episode: EpisodeState, action: unknown): EnvResult<
   const actionResult = validateAction(action);
   if (!actionResult.ok) return actionResult;
   const validAction = actionResult.value;
-  if ((validAction.submitted_at as number) > (episode.clock.now as number)) {
+  if (validAction.submitted_at > episode.clock.now) {
     return fail(
       'action_from_future',
       `action ${validAction.action_id} claims submission at ${validAction.submitted_at}, after the episode's now ${episode.clock.now}`,
@@ -350,13 +350,13 @@ export function advanceEpisode(episode: EpisodeState, to: TimestampMs): EnvResul
   if (!isTimestampMs(to)) {
     return fail('invalid_timestamp', 'advance requires a valid TimestampMs target');
   }
-  if ((to as number) < (episode.clock.now as number)) {
+  if (to < episode.clock.now) {
     return fail(
       'clock_regression',
       `the episode clock may not move backwards: now=${episode.clock.now}, target=${to}`,
     );
   }
-  if ((to as number) > (episode.clock.asOf as number)) {
+  if (to > episode.clock.asOf) {
     return fail('beyond_as_of', `the episode clock may not advance past asOf: asOf=${episode.clock.asOf}, target=${to}`);
   }
   return ok(
@@ -421,5 +421,5 @@ export function actorHighestSequence(episode: EpisodeState, actor: AgentInstance
 
 /** All reward signals visible at instant `at` (inclusive L4 boundary). */
 export function visibleRewardsAt(episode: EpisodeState, at: TimestampMs): readonly RewardSignal[] {
-  return episode.rewards.filter((reward) => (reward.available_time as number) <= (at as number));
+  return episode.rewards.filter((reward) => reward.available_time <= at);
 }

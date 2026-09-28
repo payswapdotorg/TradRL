@@ -22,7 +22,7 @@ import type { EpisodeId, WorldId } from './ids';
 import { isWorldId } from './ids';
 import { isInformationPolicy, type InformationPolicy } from './clock';
 import { isEnvironmentProfile, validateEnvironmentProfile, type EnvironmentProfile } from './profile';
-import type { JsonValue } from './json';
+import type { JsonValue, JsonObject } from './json';
 
 /**
  * Reference to the MarketWorld an environment spec binds to. `world_id` is
@@ -55,9 +55,7 @@ export function isEnvironmentSpec(value: unknown): value is EnvironmentSpec {
   if (!isEnvironmentProfile(value.profile)) return false;
   if (!isWorldRef(value.world)) return false;
   if (!isInformationPolicy(value.information_policy)) return false;
-  const profile = value.profile as Record<string, unknown>;
-  const clock = isRecord(profile.clock) ? (profile.clock as Record<string, unknown>) : null;
-  if (!clock || clock.informationPolicy !== value.information_policy) return false;
+  if (value.profile.clock.informationPolicy !== value.information_policy) return false;
   return true;
 }
 
@@ -147,8 +145,9 @@ export function canonicalJson(value: JsonValue): string {
   if (typeof value === 'number') return String(value); // finite by the JSON model
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (Array.isArray(value)) return `[${value.map((element) => canonicalJson(element)).join(',')}]`;
-  const keys = Object.keys(value).sort();
-  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  const object = value as JsonObject;
+  const keys = Object.keys(object).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(',')}}`;
 }
 
 /**
@@ -158,11 +157,30 @@ export function canonicalJson(value: JsonValue): string {
  * it into shard keys).
  */
 export function canonicalSpecJson(spec: EnvironmentSpec): string {
-  // A validated spec is structurally a JsonValue (every field is a JSON
-  // primitive, a branded string, or a nested record/array of such), so the
-  // canonical serializer accepts it without conversion.
-  const canonical: JsonValue = spec;
-  return canonicalJson(canonical);
+  // A validated spec is entirely JSON-shaped data; the canonical tree is
+  // built field-by-field (no casts) so the compiler proves JSON-safety.
+  const tree: JsonValue = {
+    profile: {
+      environment_id: spec.profile.environment_id,
+      fidelity: spec.profile.fidelity,
+      clock: {
+        now: spec.profile.clock.now,
+        asOf: spec.profile.clock.asOf,
+        playbackSpeed: spec.profile.clock.playbackSpeed,
+        paused: spec.profile.clock.paused,
+        fidelity: spec.profile.clock.fidelity,
+        informationPolicy: spec.profile.clock.informationPolicy,
+      },
+      seed: spec.profile.seed,
+      venue_scope: [...spec.profile.venue_scope],
+      instrument_scope: [...spec.profile.instrument_scope],
+      latency_policy: spec.profile.latency_policy,
+      fee_policy: spec.profile.fee_policy,
+    },
+    world: { world_id: spec.world.world_id, kind: spec.world.kind },
+    information_policy: spec.information_policy,
+  };
+  return canonicalJson(tree);
 }
 
 /** FNV-1a 32-bit hash of a string, as zero-padded lowercase hex. */

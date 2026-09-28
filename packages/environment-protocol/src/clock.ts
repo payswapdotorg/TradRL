@@ -73,7 +73,7 @@ export function isInformationPolicy(value: unknown): value is InformationPolicy 
 export function isClockConfig(value: unknown): value is ClockConfig {
   if (!isRecord(value)) return false;
   if (!isTimestampMs(value.now) || !isTimestampMs(value.asOf)) return false;
-  if ((value.now as number) > (value.asOf as number)) return false;
+  if (value.now > value.asOf) return false;
   if (!isFiniteNumber(value.playbackSpeed) || value.playbackSpeed <= 0) return false;
   if (typeof value.paused !== 'boolean') return false;
   if (!isFidelityMode(value.fidelity)) return false;
@@ -102,7 +102,7 @@ export function createClockConfig(input: {
   if (!isTimestampMs(now)) {
     return fail('invalid_timestamp', 'ClockConfig.now must be a valid TimestampMs', 'now');
   }
-  if ((now as number) > (input.asOf as number)) {
+  if (now > input.asOf) {
     return fail('beyond_as_of', `ClockConfig.now (${now}) may not exceed asOf (${input.asOf})`, 'now');
   }
   const playbackSpeed = input.playbackSpeed ?? 1;
@@ -143,10 +143,10 @@ export function validateClockConfig(value: unknown, path = 'clock'): EnvResult<C
   if (!isTimestampMs(value.asOf)) {
     return fail('invalid_timestamp', `${path}.asOf must be a valid TimestampMs (integer epoch ms in range)`, `${path}.asOf`);
   }
-  if ((value.now as number) > (value.asOf as number)) {
+  if (value.now > value.asOf) {
     return fail('beyond_as_of', `${path}.now (${String(value.now)}) may not exceed ${path}.asOf (${String(value.asOf)})`, `${path}.now`);
   }
-  if (!isFiniteNumber(value.playbackSpeed) || (value.playbackSpeed as number) <= 0) {
+  if (!isFiniteNumber(value.playbackSpeed) || value.playbackSpeed <= 0) {
     return fail('invalid_field', `${path}.playbackSpeed must be a positive finite number`, `${path}.playbackSpeed`);
   }
   if (typeof value.paused !== 'boolean') {
