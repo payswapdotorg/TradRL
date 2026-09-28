@@ -22,6 +22,16 @@ import { isDeeplyFrozen } from './freeze';
 
 const T = (ms: number) => requireTimestampMs(ms);
 
+/** The T008 store-layer extension fields (corrections + custody). */
+const STORE_LEVEL = {
+  corrections: [],
+  custody: {
+    adapter: { id: 'kb-ingest-adapter', version: '1.0.0' },
+    batch: { batch_id: 'kb-batch-001' },
+    commit: { commit_id: 'kb-commit-00000001', commit_sequence: 1, ingestion_time: T(10_000) },
+  },
+};
+
 function raw(id: string, available: number, tenant = 'acme'): Record<string, unknown> {
   return {
     record_id: id,
@@ -33,7 +43,7 @@ function raw(id: string, available: number, tenant = 'acme'): Record<string, unk
     ingestion_time: T(available + 100),
     inputs: [],
     computation: null,
-    provenance: { origin: 'historical', adapter: { id: 'binance-adapter', version: '1.4.0' }, derived_from: [], transform: null },
+    provenance: { origin: 'historical', adapter: { id: 'binance-adapter', version: '1.4.0' }, derived_from: [], transform: null, ...STORE_LEVEL },
   };
 }
 
@@ -48,7 +58,7 @@ function derived(id: string, inputs: readonly string[], available: number, tenan
     ingestion_time: T(available + 10),
     inputs: [...inputs],
     computation: { transform_id: 'test-transform', delay: { milliseconds: 250 } },
-    provenance: { origin: 'simulated', adapter: null, derived_from: inputs.map((input) => `evt-${input}`), transform: 'test-transform' },
+    provenance: { origin: 'simulated', adapter: null, derived_from: inputs.map((input) => `evt-${input}`), transform: 'test-transform', ...STORE_LEVEL },
   };
 }
 
@@ -87,7 +97,7 @@ describe('knowledgeLeakageScan — the clean fixture', () => {
   });
 
   it('a base of primitive records is trivially clean', () => {
-    const primitives = load(raw('t1', 1), raw('t2', 2));
+    const primitives = load(raw('t1', 1_000), raw('t2', 2_000));
     const report = knowledgeLeakageScan(primitives);
     expect(report.clean).toBe(true);
     expect(report.edgesChecked).toBe(0);

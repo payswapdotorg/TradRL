@@ -43,7 +43,7 @@ function rawRecord(overrides: Record<string, unknown> = {}): Record<string, unkn
     ingestion_time: T(1_050),
     inputs: [],
     computation: null,
-    provenance: { origin: 'historical', adapter: { id: 'binance-adapter', version: '1.4.0' }, derived_from: [], transform: null },
+    provenance: { origin: 'historical', adapter: { id: 'binance-adapter', version: '1.4.0' }, derived_from: [], transform: null, ...STORE_LEVEL },
     ...overrides,
   };
 }
