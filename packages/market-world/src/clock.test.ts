@@ -59,7 +59,7 @@ describe('advanceClockStateTo (the mirrored advance law)', () => {
   it('advances forward within the anchor', () => {
     const clock = createClockState({ asOf:(T0 + 1000) as TimestampMs, now:(T0) as TimestampMs, fidelity: 'exact_replay' });
     if (!clock.ok) throw new Error('fixture');
-    const advanced = advanceClockStateTo(clock.value, T0 + 500);
+    const advanced = advanceClockStateTo(clock.value, (T0 + 500) as TimestampMs);
     expect(advanced.ok).toBe(true);
     if (advanced.ok) expect(advanced.value.now).toBe(T0 + 500);
   });
@@ -67,7 +67,7 @@ describe('advanceClockStateTo (the mirrored advance law)', () => {
   it('rejects regression (clock_regression)', () => {
     const clock = createClockState({ asOf:(T0 + 1000) as TimestampMs, now:(T0 + 500) as TimestampMs, fidelity: 'exact_replay' });
     if (!clock.ok) throw new Error('fixture');
-    const regressed = advanceClockStateTo(clock.value, T0 + 499);
+    const regressed = advanceClockStateTo(clock.value, (T0 + 499) as TimestampMs);
     expect(regressed.ok).toBe(false);
     if (regressed.ok) return;
     expect(regressed.errors[0]?.code).toBe('clock_regression');
@@ -76,7 +76,7 @@ describe('advanceClockStateTo (the mirrored advance law)', () => {
   it('rejects advancing past asOf (beyond_as_of)', () => {
     const clock = createClockState({ asOf:(T0 + 1000) as TimestampMs, now:(T0) as TimestampMs, fidelity: 'exact_replay' });
     if (!clock.ok) throw new Error('fixture');
-    const beyond = advanceClockStateTo(clock.value, T0 + 1001);
+    const beyond = advanceClockStateTo(clock.value, (T0 + 1001) as TimestampMs);
     expect(beyond.ok).toBe(false);
     if (beyond.ok) return;
     expect(beyond.errors[0]?.code).toBe('beyond_as_of');
@@ -85,8 +85,8 @@ describe('advanceClockStateTo (the mirrored advance law)', () => {
   it('treats to == now as a legal no-op and to == asOf as the final legal step', () => {
     const clock = createClockState({ asOf:(T0 + 1000) as TimestampMs, now:(T0 + 500) as TimestampMs, fidelity: 'exact_replay' });
     if (!clock.ok) throw new Error('fixture');
-    expect(advanceClockStateTo(clock.value, T0 + 500).ok).toBe(true);
-    expect(advanceClockStateTo(clock.value, T0 + 1000).ok).toBe(true);
+    expect(advanceClockStateTo(clock.value, (T0 + 500) as TimestampMs).ok).toBe(true);
+    expect(advanceClockStateTo(clock.value, (T0 + 1000) as TimestampMs).ok).toBe(true);
   });
 });
 

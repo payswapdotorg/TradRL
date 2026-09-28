@@ -119,7 +119,7 @@ function newsEvent(id: string, sequence: number, eventTime: number, availableTim
 }
 
 function freshStore(base = 10_000): EventStore {
-  return createEventStore({ clock: createDeterministicCommitClock(base, 1) });
+  return createEventStore({ clock: createDeterministicCommitClock((base) as TimestampMs, 1) });
 }
 
 function commitOk(store: EventStore, events: readonly StorableEvent[], batchId: string) {
@@ -656,7 +656,7 @@ describe('determinism and replay (acceptance 8)', () => {
   const CORRECTIONS = [{ correction_id: 'd-fix-1', corrected_event_id: 'd-1', reason: 'r', amendment: { v: 1 } }];
 
   function filledStore(): EventStore {
-    const store = createEventStore({ clock: createDeterministicCommitClock(50_000, 1) });
+    const store = createEventStore({ clock: createDeterministicCommitClock((50_000) as TimestampMs, 1) });
     commitOk(store, BATCHES[0] ?? [], 'd-batch-1');
     commitOk(store, BATCHES[1] ?? [], 'd-batch-2');
     const correction = store.appendCorrections(CORRECTIONS, { batch_id: 'd-batch-3' });
@@ -676,7 +676,7 @@ describe('determinism and replay (acceptance 8)', () => {
   it('commit-log replay (through a JSON round trip) rebuilds IDENTICAL state', () => {
     const original = filledStore();
     const log = JSON.parse(JSON.stringify(original.commitLog())) as CommitLogEntry[];
-    const replayed = replayCommitLog(log, { clock: createDeterministicCommitClock(60_000, 1) });
+    const replayed = replayCommitLog(log, { clock: createDeterministicCommitClock((60_000) as TimestampMs, 1) });
     expect(replayed.ok).toBe(true);
     if (replayed.ok) {
       expect(replayed.store.snapshot()).toEqual(original.snapshot());

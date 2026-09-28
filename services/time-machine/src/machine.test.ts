@@ -308,7 +308,7 @@ describe('as-of queries', () => {
     if (wrongDataset.ok) return;
     expect(wrongDataset.error.code).toBe('unknown_dataset');
 
-    const badAt = machine.asOf({ dataset: DATASET, at: -1 });
+    const badAt = machine.asOf({ dataset: DATASET, at: (-1) as TimestampMs });
     expect(badAt.ok).toBe(false);
     if (badAt.ok) return;
     expect(badAt.error.code).toBe('invalid_query');

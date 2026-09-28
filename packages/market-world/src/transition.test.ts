@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { initReplayWorld, isDeeplyFrozen } from './index';
+import { initReplayWorld, isDeeplyFrozen, type TimestampMs } from './index';
 import { advanceWorld, finishWorld, ingestWorld, observeWorld } from './transition';
 
 const T0 = 1_700_000_000_000;
@@ -223,42 +223,42 @@ describe('observeWorld — the inclusive L4 boundary (criterion 4)', () => {
 
   it('delivers an event with available_time == now (INCLUSIVE) and withholds == now + 1', () => {
     const state = loadedHistory();
-    const advanced = unwrap(advanceWorld(state, T0 + 200));
-    const visible = unwrap(observeWorld(advanced, T0 + 200));
+    const advanced = unwrap(advanceWorld(state, (T0 + 200) as TimestampMs));
+    const visible = unwrap(observeWorld(advanced, (T0 + 200) as TimestampMs));
     expect(visible.map((event) => event.event_id)).toEqual(['past', 'at-now', 'derived-at-now']);
   });
 
   it('reveals the withheld events exactly one millisecond later', () => {
     const state = loadedHistory();
-    const advanced = unwrap(advanceWorld(state, T0 + 201));
-    const visible = unwrap(observeWorld(advanced, T0 + 201));
+    const advanced = unwrap(advanceWorld(state, (T0 + 201) as TimestampMs));
+    const visible = unwrap(observeWorld(advanced, (T0 + 201) as TimestampMs));
     expect(visible.map((event) => event.event_id)).toEqual(['past', 'at-now', 'after-now', 'derived-at-now', 'derived-after-now']);
   });
 
   it('withholds at now - 1 what now delivers (never one millisecond early)', () => {
     const state = loadedHistory();
-    const advanced = unwrap(advanceWorld(state, T0 + 200));
-    const before = unwrap(observeWorld(advanced, T0 + 199));
+    const advanced = unwrap(advanceWorld(state, (T0 + 200) as TimestampMs));
+    const before = unwrap(observeWorld(advanced, (T0 + 199) as TimestampMs));
     expect(before.map((event) => event.event_id)).toEqual(['past']);
   });
 
   it('a DERIVED observation obeys the same law as a primitive one (identical treatment)', () => {
     const state = loadedHistory();
-    const advanced = unwrap(advanceWorld(state, T0 + 200));
-    const visible = unwrap(observeWorld(advanced, T0 + 200));
+    const advanced = unwrap(advanceWorld(state, (T0 + 200) as TimestampMs));
+    const visible = unwrap(observeWorld(advanced, (T0 + 200) as TimestampMs));
     const derivedAtNow = visible.find((event) => event.event_id === 'derived-at-now');
     expect(derivedAtNow?.provenance.derived_from).toEqual(['past', 'at-now']); // genuinely derived
-    const withheld = unwrap(observeWorld(advanced, T0 + 200)).map((event) => event.event_id);
+    const withheld = unwrap(observeWorld(advanced, (T0 + 200) as TimestampMs)).map((event) => event.event_id);
     expect(withheld).not.toContain('derived-after-now');
   });
 
   it('supports Time-Machine queries (at < now) and rejects at > now', () => {
     const state = loadedHistory();
-    const advanced = unwrap(advanceWorld(state, T0 + 201));
-    const historical = unwrap(observeWorld(advanced, T0 + 200));
+    const advanced = unwrap(advanceWorld(state, (T0 + 201) as TimestampMs));
+    const historical = unwrap(observeWorld(advanced, (T0 + 200) as TimestampMs));
     expect(historical.map((event) => event.event_id)).toEqual(['past', 'at-now', 'derived-at-now']);
 
-    const beyond = observeWorld(advanced, T0 + 202);
+    const beyond = observeWorld(advanced, (T0 + 202) as TimestampMs);
     expect(beyond.ok).toBe(false);
     if (beyond.ok) return;
     expect(beyond.errors[0]?.code).toBe('observation_beyond_now');
@@ -266,9 +266,9 @@ describe('observeWorld — the inclusive L4 boundary (criterion 4)', () => {
 
   it('rejects an invalid instant and preserves arrival order', () => {
     const state = loadedHistory();
-    expect(observeWorld(state, Number.NaN).ok).toBe(false);
-    const advanced = unwrap(advanceWorld(state, T0 + 201));
-    const visible = unwrap(observeWorld(advanced, T0 + 201));
+    expect(observeWorld(state, (Number.NaN) as TimestampMs).ok).toBe(false);
+    const advanced = unwrap(advanceWorld(state, (T0 + 201) as TimestampMs));
+    const visible = unwrap(observeWorld(advanced, (T0 + 201) as TimestampMs));
     expect(visible.map((event) => event.event_id)).toEqual(state.history.map((event) => event.event_id));
   });
 });
@@ -276,7 +276,7 @@ describe('observeWorld — the inclusive L4 boundary (criterion 4)', () => {
 describe('advanceWorld — monotonic, anchored (criterion 6)', () => {
   it('rejects advancing to an earlier instant (clock_regression)', () => {
     const world = freshWorld(); // standing at as_of
-    const result = advanceWorld(world, AS_OF - 1);
+    const result = advanceWorld(world, (AS_OF - 1) as TimestampMs);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.errors[0]?.code).toBe('clock_regression');
@@ -284,7 +284,7 @@ describe('advanceWorld — monotonic, anchored (criterion 6)', () => {
 
   it('rejects advancing past asOf (beyond_as_of)', () => {
     const world = freshWorld();
-    const result = advanceWorld(world, AS_OF + 1);
+    const result = advanceWorld(world, (AS_OF + 1) as TimestampMs);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.errors[0]?.code).toBe('beyond_as_of');
@@ -292,8 +292,8 @@ describe('advanceWorld — monotonic, anchored (criterion 6)', () => {
 
   it('accepts a no-op advance and the final step to asOf; rejects an invalid target', () => {
     const world = freshWorld();
-    expect(advanceWorld(world, AS_OF).ok).toBe(true);
-    expect(advanceWorld(world, 1.5).ok).toBe(false);
+    expect(advanceWorld(world, (AS_OF) as TimestampMs).ok).toBe(true);
+    expect(advanceWorld(world, (1.5) as TimestampMs).ok).toBe(false);
   });
 });
 
@@ -306,8 +306,8 @@ describe('finishWorld', () => {
     expect(finished.termination?.code).toBe('completed');
 
     expect(ingestWorld(finished, [eventFixture({ event_id: 't2', sequence: 2 })]).ok).toBe(false);
-    expect(advanceWorld(finished, AS_OF).ok).toBe(false);
-    const visible = observeWorld(finished, AS_OF);
+    expect(advanceWorld(finished, (AS_OF) as TimestampMs).ok).toBe(false);
+    const visible = observeWorld(finished, (AS_OF) as TimestampMs);
     expect(visible.ok).toBe(true);
   });
 });

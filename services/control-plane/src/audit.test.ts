@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ControlDomainError,
+  type GoalRef,
+  type ConstraintSetRef,
   type GoalStatement,
   type ConstraintSetStatement,
   type ProjectId,

@@ -118,3 +118,15 @@ export function requireVenueId(value: string): VenueId {
 export function requireInstrumentId(value: string): InstrumentId {
   return requireId(isInstrumentId, value, 'requireInstrumentId');
 }
+
+/** Fee policy reference (T009 lane). Identifies a declared latency/fee policy binding. */
+export type FeePolicyId = Brand<string, 'FeePolicyId'>;
+
+/** Latency policy reference (T009 lane). Identifies a declared latency policy binding. */
+export type LatencyPolicyId = Brand<string, 'LatencyPolicyId'>;
+
+/** Runtime guard for {@link FeePolicyId}. */
+export const isFeePolicyId = (v: unknown): v is FeePolicyId => isNonEmptyString(v);
+
+/** Runtime guard for {@link LatencyPolicyId}. */
+export const isLatencyPolicyId = (v: unknown): v is LatencyPolicyId => isNonEmptyString(v);

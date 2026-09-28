@@ -19,7 +19,7 @@
  */
 
 import { createExchangeService, type ExchangeEpisodeView, type ExchangeService, type SessionRecord } from './session';
-import { configHash } from '../../../../packages/exchange-sim/src/index';
+import { configHash, type TimestampMs } from '../../../../packages/exchange-sim/src/index';
 import type { ServiceResult } from './errors';
 import type { ExchangeEvent } from './event';
 import type { JsonValue } from './env-mirror';
@@ -216,7 +216,7 @@ export function runExchangeFixture(overrides: Partial<ExchangeFixtureOptions> = 
   let clockNow = T0;
   for (const step of fixtureScript()) {
     if (step.kind === 'advance') {
-      unwrap(service.advance(episodeId, step.to));
+      unwrap(service.advance(episodeId, (step.to) as TimestampMs));
       clockNow = step.to;
     } else {
       unwrap(service.submit(episodeId, step.action));
@@ -225,7 +225,7 @@ export function runExchangeFixture(overrides: Partial<ExchangeFixtureOptions> = 
   }
   // Advance to the horizon so every latency window elapses (all outcomes
   // become observable), then finish and record.
-  unwrap(service.advance(episodeId, T0 + options.horizonMs - 1_000));
+  unwrap(service.advance(episodeId, (T0 + options.horizonMs - 1_000) as TimestampMs));
   unwrap(service.finish(episodeId, { code: 'completed', detail: 'fixture scenario complete' }));
   void clockNow;
 

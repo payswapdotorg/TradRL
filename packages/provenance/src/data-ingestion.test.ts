@@ -36,7 +36,7 @@ import {
 } from '../../../services/data-ingestion/src/index';
 
 function freshStore(base: number): EventStore {
-  return createEventStore({ clock: createDeterministicCommitClock(base, 1) });
+  return createEventStore({ clock: createDeterministicCommitClock((base) as TimestampMs, 1) });
 }
 
 function unwrapReceipt(result: { receipt: unknown; events_committed: number }): number {
@@ -184,8 +184,8 @@ describe('synthetic news pipeline (L4 embargo + rejection paths)', () => {
     expect(embargoed).not.toBeNull();
     expect(embargoed?.available_time).toBe(5_000_500 + 3_600_000);
     // Point-in-time: the embargoed item is invisible strictly before its release.
-    expect(store.query({ to:(5_000_500) as TimestampMs + 3_600_000 - 1 }).map((event) => event.event_id)).not.toContain('news-n2');
-    expect(store.query({ from:(5_000_500) as TimestampMs + 3_600_000 }).map((event) => event.event_id)).toContain('news-n2');
+    expect(store.query({ to:(5_000_500 + 3_600_000 - 1) as TimestampMs }).map((event) => event.event_id)).not.toContain('news-n2');
+    expect(store.query({ from:(5_000_500 + 3_600_000) as TimestampMs }).map((event) => event.event_id)).toContain('news-n2');
   });
 
   it('a null source_time survives the whole plane', () => {

@@ -80,10 +80,10 @@ describe('transition table', () => {
   });
 
   it('canTransitionProjectLifecycle is total over garbage input', () => {
-    expect(canTransitionProjectLifecycle('zombie', 'activate')).toBe(false);
-    expect(canTransitionProjectLifecycle('draft', 'resurrect')).toBe(false);
-    expect(canTransitionProjectLifecycle(null, 'pause')).toBe(false);
-    expect(canTransitionProjectLifecycle('draft', 1)).toBe(false);
+    expect(canTransitionProjectLifecycle('zombie' as never, 'activate')).toBe(false);
+    expect(canTransitionProjectLifecycle('draft', 'resurrect' as never)).toBe(false);
+    expect(canTransitionProjectLifecycle(null as never, 'pause')).toBe(false);
+    expect(canTransitionProjectLifecycle('draft', 1 as never)).toBe(false);
   });
 });
 

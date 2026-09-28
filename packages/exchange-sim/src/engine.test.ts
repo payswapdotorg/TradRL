@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { advanceEngine, cancelOrder, createEngine, submitOrder, type EngineState, type SubmitOutcome } from './engine';
-import { isAvailabilityQuartet, isFill, isOrderAck, isOrderCancelRecord, isOrderRecord, isOrderReject, type Fill } from './records';
+import { isAvailabilityQuartet, isFill, isOrderAck, isOrderCancelRecord, isOrderRecord, isOrderReject, type Fill, type OrderAck, type OrderReject } from './records';
 import { isDeeplyFrozen } from './primitives';
 import { canonicalJson, type ExchangeConfig } from './config';
 import type { JsonValue } from './json';
@@ -92,7 +92,7 @@ describe('order intake against a seeded book', () => {
   it('a crossing limit buy fills at the maker level price with exact fees and an honest quartet', () => {
     const engine = newEngine();
     const outcome = submit(engine, intentFixture({ quantity: '3' }), T0 + 10);
-    expect(outcome.ack.status).toBe('filled');
+    expect((outcome.ack as OrderAck).status).toBe('filled');
     expect(outcome.fills.length).toBe(1);
     const fill = outcome.fills[0];
     if (fill === undefined) throw new Error('fill expected');
@@ -119,7 +119,7 @@ describe('order intake against a seeded book', () => {
   it('walks levels on depth: a larger buy consumes the seed level then the next, one fill per maker', () => {
     const engine = newEngine();
     const outcome = submit(engine, intentFixture({ quantity: '5' }), T0 + 10);
-    expect(outcome.ack.status).toBe('filled');
+    expect((outcome.ack as OrderAck).status).toBe('filled');
     expect(outcome.fills.length).toBe(2);
     expect(outcome.fills.map((fill) => fill.price)).toEqual(['100.5', '101']);
     expect(outcome.fills.map((fill) => fill.quantity)).toEqual(['4', '1']);
@@ -131,7 +131,7 @@ describe('order intake against a seeded book', () => {
   it('a non-crossing limit rests (joining the book as a new level) and acks open', () => {
     const engine = newEngine();
     const outcome = submit(engine, intentFixture({ side: 'sell', price: '100.51', quantity: '2' }), T0 + 10);
-    expect(outcome.ack.status).toBe('open');
+    expect((outcome.ack as OrderAck).status).toBe('open');
     expect(isOrderAck(outcome.ack)).toBe(true);
     expect(outcome.fills.length).toBe(0);
     expect(topOfBook(outcome.state.book)?.ask_price).toBe('100.5'); // seed still best
@@ -201,7 +201,7 @@ describe('partial fills and time-in-force semantics', () => {
     // a limit at 100.50 fills 4 (seed level) then the 101 level violates the
     // limit — the remainder RESTS at 100.50.
     const outcome = submit(engine, intentFixture({ quantity: '5', price: '100.50' }), T0 + 10);
-    expect(outcome.ack.status).toBe('partially_filled');
+    expect((outcome.ack as OrderAck).status).toBe('partially_filled');
     expect(outcome.fills.length).toBe(1);
     expect(outcome.fills[0]?.quantity).toBe('4');
     const record = outcome.state.orders.find((candidate) => candidate.order_id === 'xo-00000001');
@@ -217,7 +217,7 @@ describe('partial fills and time-in-force semantics', () => {
   it('IOC fills what the book offers and cancels the remainder with a typed reason', () => {
     const engine = newEngine();
     const outcome = submit(engine, intentFixture({ quantity: '5', timeInForce: 'ioc' }), T0 + 10);
-    expect(outcome.ack.status).toBe('canceled');
+    expect((outcome.ack as OrderAck).status).toBe('canceled');
     expect(outcome.fills.length).toBe(1);
     expect(outcome.fills[0]?.quantity).toBe('4');
     expect(outcome.cancels.length).toBe(1);
@@ -230,7 +230,7 @@ describe('partial fills and time-in-force semantics', () => {
   it('FOK dies whole (zero fills) when the full quantity is unavailable within the limit', () => {
     const engine = newEngine();
     const outcome = submit(engine, intentFixture({ quantity: '10', timeInForce: 'fok' }), T0 + 10);
-    expect(outcome.ack.status).toBe('canceled');
+    expect((outcome.ack as OrderAck).status).toBe('canceled');
     expect(outcome.fills.length).toBe(0);
     expect(outcome.cancels[0]?.reason).toBe('fok_unfilled');
     expect(outcome.cancels[0]?.remaining_quantity).toBe('10');
@@ -241,7 +241,7 @@ describe('partial fills and time-in-force semantics', () => {
   it('FOK executes when the full quantity IS available', () => {
     const engine = newEngine();
     const outcome = submit(engine, intentFixture({ quantity: '4', timeInForce: 'fok' }), T0 + 10);
-    expect(outcome.ack.status).toBe('filled');
+    expect((outcome.ack as OrderAck).status).toBe('filled');
     expect(outcome.fills.length).toBe(1);
   });
 
@@ -249,7 +249,7 @@ describe('partial fills and time-in-force semantics', () => {
     // Empty the book first, then send a market buy into nothing.
     const empty = newEngine({}, { bids: [], asks: [] });
     const outcome = submit(empty, intentFixture({ kind: 'market', quantity: '2' }), T0 + 10);
-    expect(outcome.ack.status).toBe('canceled');
+    expect((outcome.ack as OrderAck).status).toBe('canceled');
     expect(outcome.fills.length).toBe(0);
     expect(outcome.cancels[0]?.reason).toBe('market_order_unfilled_remainder');
   });
@@ -257,7 +257,7 @@ describe('partial fills and time-in-force semantics', () => {
   it("'day' rests exactly like 'gtc' within the episode (declared: no calendar model)", () => {
     const engine = newEngine();
     const outcome = submit(engine, intentFixture({ side: 'sell', price: '100.51', timeInForce: 'day' }), T0 + 10);
-    expect(outcome.ack.status).toBe('open');
+    expect((outcome.ack as OrderAck).status).toBe('open');
   });
 });
 
@@ -368,8 +368,8 @@ describe('order rejects (typed outcomes that ride the stream)', () => {
     expect(second.ok).toBe(true);
     if (!second.ok) return;
     expect(isOrderReject(second.value.ack)).toBe(true);
-    if (second.value.ack.kind === undefined) return;
-    expect(second.value.ack.reason).toBe('duplicate_client_order_id');
+    if ((second.value.ack as OrderReject).kind === undefined) return;
+    expect((second.value.ack as OrderReject).reason).toBe('duplicate_client_order_id');
     expect(second.value.ack.client_order_id).toBe('dup');
     // The reject is RECORDED in the order log with its audit trail.
     expect(second.value.state.orders.length).toBe(2);
@@ -396,7 +396,7 @@ describe('order rejects (typed outcomes that ride the stream)', () => {
       const outcome = submitOrder(state, intent, T0 + 10);
       expect(outcome.ok, `${reason}: ${JSON.stringify(intent)}`).toBe(true);
       if (!outcome.ok) return;
-      expect(outcome.value.ack.reason, JSON.stringify(intent)).toBe(reason);
+      expect((outcome.value.ack as OrderReject).reason, JSON.stringify(intent)).toBe(reason);
       expect(isOrderReject(outcome.value.ack)).toBe(true);
       state = outcome.value.state;
     }
@@ -404,7 +404,7 @@ describe('order rejects (typed outcomes that ride the stream)', () => {
     const shallow = newEngine({ max_book_depth: 2 });
     const beyond = submitOrder(shallow, intentFixture({ side: 'sell', price: '102', clientOrderId: 'deep' }), T0 + 10);
     expect(beyond.ok).toBe(true);
-    if (beyond.ok) expect(beyond.value.ack.reason).toBe('beyond_book_depth');
+    if (beyond.ok) expect((beyond.value.ack as OrderReject).reason).toBe('beyond_book_depth');
     // Joining an EXISTING level is always allowed even at the cap.
     const join = submitOrder(shallow, intentFixture({ side: 'sell', price: '100.5', quantity: '0.001', clientOrderId: 'join' }), T0 + 20);
     expect(join.ok).toBe(true);

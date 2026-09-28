@@ -63,7 +63,7 @@ describe('compileAcceptance — determinism', () => {
       (compiled as Mutable<AcceptanceCriteria>).version = 99;
     }).toThrow(TypeError);
     expect(() => {
-      (compiled.criteria[0] as Mutable<{ criterion: { metric: string } }>).criterion = {
+      (compiled.criteria[0] as Mutable<{ criterion: { [key: string]: unknown } }>).criterion = {
         id: 'x',
         metric: 'hacked.path',
         predicate: { kind: 'flag', expected: true },
@@ -75,8 +75,8 @@ describe('compileAcceptance — determinism', () => {
     const goal: Mutable<GoalStatement> = JSON.parse(JSON.stringify(exampleGoalStatement));
     const set: Mutable<ConstraintSetStatement> = JSON.parse(JSON.stringify(exampleConstraintSetStatement));
     const compiled = compileAcceptance(goal as GoalStatement, set as ConstraintSetStatement);
-    goal.successCriteria.criteria[0].metric = 'tampered.metric';
-    set.constraints[0].subject = 'tampered.subject';
+    (goal.successCriteria.criteria[0] as { metric: string }).metric = 'tampered.metric';
+    (set.constraints[0] as { subject: string }).subject = 'tampered.subject';
     expect(compiled.criteria[0].criterion.metric).toBe('returns.sharpe');
     expect(compiled.constraints[0].subject).toBe('risk.maxDrawdown');
   });
@@ -160,8 +160,8 @@ describe('gatesConstraint — the gating rule', () => {
   it('is total: rejects non-strings and empty paths', () => {
     expect(gatesConstraint('a.b', '')).toBe(false);
     expect(gatesConstraint('', 'a.b')).toBe(false);
-    expect(gatesConstraint(1, 'a.b')).toBe(false);
-    expect(gatesConstraint('a.b', null)).toBe(false);
+    expect(gatesConstraint(1 as unknown as string, 'a.b')).toBe(false);
+    expect(gatesConstraint('a.b', null as unknown as string)).toBe(false);
   });
 });
 
@@ -175,7 +175,7 @@ describe('compileAcceptance — typed errors', () => {
     prose.successCriteria = 'make as much money as possible, safely' as unknown as GoalStatement['successCriteria'];
     expect(() =>
       compileAcceptance(prose as unknown as GoalStatement, validSet()),
-    ).toThrow(compileError('unstructured-criteria'));
+    ).toThrow(compileError('unstructured-criteria') as unknown as RegExp);
   });
 
   it('FAILS to compile criteria entries that are not structured records', () => {
@@ -186,7 +186,7 @@ describe('compileAcceptance — typed errors', () => {
     } as unknown as GoalStatement['successCriteria'];
     expect(() =>
       compileAcceptance(partial as unknown as GoalStatement, validSet()),
-    ).toThrow(compileError('unstructured-criteria'));
+    ).toThrow(compileError('unstructured-criteria') as unknown as RegExp);
 
     const missingPredicate: Mutable<GoalStatement> = validGoal();
     missingPredicate.successCriteria = {
@@ -195,7 +195,7 @@ describe('compileAcceptance — typed errors', () => {
     } as unknown as GoalStatement['successCriteria'];
     expect(() =>
       compileAcceptance(missingPredicate as unknown as GoalStatement, validSet()),
-    ).toThrow(compileError('unstructured-criteria'));
+    ).toThrow(compileError('unstructured-criteria') as unknown as RegExp);
   });
 
   it('FAILS to compile a vacuous criteria list with `empty-success-criteria`', () => {
@@ -203,15 +203,15 @@ describe('compileAcceptance — typed errors', () => {
     empty.successCriteria = { criteria: [], requiredSatisfaction: 1 } as unknown as GoalStatement['successCriteria'];
     expect(() =>
       compileAcceptance(empty as unknown as GoalStatement, validSet()),
-    ).toThrow(compileError('empty-success-criteria'));
+    ).toThrow(compileError('empty-success-criteria') as unknown as RegExp);
   });
 
   it('FAILS with `invalid-goal` for structured goals with field-level problems', () => {
     const broken: unknown = { ...validGoal(), objective: '' };
-    expect(() => compileAcceptance(broken as GoalStatement, validSet())).toThrow(compileError('invalid-goal'));
-    expect(() => compileAcceptance(null as unknown as GoalStatement, validSet())).toThrow(compileError('invalid-goal'));
+    expect(() => compileAcceptance(broken as GoalStatement, validSet())).toThrow(compileError('invalid-goal') as unknown as RegExp);
+    expect(() => compileAcceptance(null as unknown as GoalStatement, validSet())).toThrow(compileError('invalid-goal') as unknown as RegExp);
     const inverted: unknown = { ...validGoal(), horizon: { startsAt: ts(200), endsAt: ts(100) } };
-    expect(() => compileAcceptance(inverted as GoalStatement, validSet())).toThrow(compileError('invalid-goal'));
+    expect(() => compileAcceptance(inverted as GoalStatement, validSet())).toThrow(compileError('invalid-goal') as unknown as RegExp);
   });
 
   it('FAILS with `invalid-constraint-set` for malformed constraint sets', () => {
@@ -233,7 +233,7 @@ describe('compileAcceptance — typed errors', () => {
 
   it('FAILS with `goal-set-tenant-mismatch` for cross-tenant goal/constraint-set pairs (L12)', () => {
     const foreign: ConstraintSetStatement = { ...validSet(), tenantId: tenant('tenant_other') };
-    expect(() => compileAcceptance(validGoal(), foreign)).toThrow(compileError('goal-set-tenant-mismatch'));
+    expect(() => compileAcceptance(validGoal(), foreign)).toThrow(compileError('goal-set-tenant-mismatch') as unknown as RegExp);
   });
 
   it('error details are field-prefixed diagnostics (never executed)', () => {
@@ -406,11 +406,11 @@ function acceptanceCarriesNoOutcomeField(
     keyof AcceptanceCriteria
   >,
 ): true {
-  return value === true ? true : true;
+  return true;
 }
 
 it('type-level: the artifact surface has no outcome/PnL field', () => {
   // Runtime exercise of the compile-time witness (the assertion is that
   // this line typechecks at all).
-  expect(acceptanceCarriesNoOutcomeField(true)).toBe(true);
+  expect(acceptanceCarriesNoOutcomeField('pnl')).toBe(true);
 });

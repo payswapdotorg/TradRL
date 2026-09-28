@@ -1100,7 +1100,7 @@ function createStoreCore(clock: CommitClock): StoreCore {
 
 /** Create an empty append-only event store. Default clock: deterministic (base 0, step 1). */
 export function createEventStore(config?: Partial<EventStoreConfig>): EventStore {
-  const clock: CommitClock = config?.clock ?? createDeterministicCommitClock(0, 1);
+  const clock: CommitClock = config?.clock ?? createDeterministicCommitClock((0) as TimestampMs, 1);
   const core = createStoreCore(clock);
   return {
     commit: core.commit,
@@ -1131,7 +1131,7 @@ export function createEventStore(config?: Partial<EventStoreConfig>): EventStore
  * continue past the restored ingestion stamps (monotonicity is enforced).
  */
 export function replayCommitLog(log: readonly CommitLogEntry[], config?: Partial<EventStoreConfig>): ReplayResult {
-  const clock: CommitClock = config?.clock ?? createDeterministicCommitClock(0, 1);
+  const clock: CommitClock = config?.clock ?? createDeterministicCommitClock((0) as TimestampMs, 1);
   const core = createStoreCore(clock);
 
   if (!Array.isArray(log)) {
