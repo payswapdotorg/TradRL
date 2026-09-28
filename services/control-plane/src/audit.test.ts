@@ -58,11 +58,11 @@ function runScenario() {
     constraintSet: cloneSet(),
     at: T0,
   });
-  plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_one' as ProjectId, organizationRef: 'org_one' as never, at: T0 + 1 });
-  plane.transition({ tenantId: tenantA, projectId: 'prj_one' as ProjectId, event: 'activate', at: T0 + 2 });
-  plane.transition({ tenantId: tenantA, projectId: 'prj_one' as ProjectId, event: 'pause', at: T0 + 3 });
-  plane.transition({ tenantId: tenantA, projectId: 'prj_one' as ProjectId, event: 'resume', at: T0 + 4 });
-  plane.transition({ tenantId: tenantA, projectId: 'prj_one' as ProjectId, event: 'complete', at: T0 + 5 });
+  plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_one' as ProjectId, organizationRef: 'org_one' as never, at: (T0 + 1) as TimestampMs });
+  plane.transition({ tenantId: tenantA, projectId: 'prj_one' as ProjectId, event: 'activate', at: (T0 + 2) as TimestampMs });
+  plane.transition({ tenantId: tenantA, projectId: 'prj_one' as ProjectId, event: 'pause', at: (T0 + 3) as TimestampMs });
+  plane.transition({ tenantId: tenantA, projectId: 'prj_one' as ProjectId, event: 'resume', at: (T0 + 4) as TimestampMs });
+  plane.transition({ tenantId: tenantA, projectId: 'prj_one' as ProjectId, event: 'complete', at: (T0 + 5) as TimestampMs });
 
   plane.createProject({
     id: 'prj_two' as ProjectId,
@@ -71,12 +71,12 @@ function runScenario() {
     executionMode: 'shadow',
     goal: { ...cloneGoal(), id: 'goal_beta' as never, version: 2 },
     constraintSet: { ...cloneSet(), version: 3 },
-    at: T0 + 6,
+    at: (T0 + 6) as TimestampMs,
   });
-  plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_two' as ProjectId, organizationRef: 'org_two' as never, at: T0 + 7 });
-  plane.transition({ tenantId: tenantA, projectId: 'prj_two' as ProjectId, event: 'activate', at: T0 + 8 });
-  plane.transition({ tenantId: tenantA, projectId: 'prj_two' as ProjectId, event: 'pause', at: T0 + 9 });
-  plane.archive({ tenantId: tenantA, projectId: 'prj_two' as ProjectId, at: T0 + 10 });
+  plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_two' as ProjectId, organizationRef: 'org_two' as never, at: (T0 + 7) as TimestampMs });
+  plane.transition({ tenantId: tenantA, projectId: 'prj_two' as ProjectId, event: 'activate', at: (T0 + 8) as TimestampMs });
+  plane.transition({ tenantId: tenantA, projectId: 'prj_two' as ProjectId, event: 'pause', at: (T0 + 9) as TimestampMs });
+  plane.archive({ tenantId: tenantA, projectId: 'prj_two' as ProjectId, at: (T0 + 10) as TimestampMs });
   return plane;
 }
 
@@ -137,7 +137,7 @@ describe('ProjectAuditLog', () => {
   it('entriesFor filters by tenant without leaking other tenants', () => {
     const plane = createControlPlane();
     plane.createProject({ id: 'prj_a' as ProjectId, tenantId: tenantA, name: 'A', executionMode: 'simulation', goal: cloneGoal(), constraintSet: cloneSet(), at: T0 });
-    plane.createProject({ id: 'prj_b' as ProjectId, tenantId: tenantB, name: 'B', executionMode: 'live', goal: cloneGoal(), constraintSet: cloneSet(), at: T0 + 1 });
+    plane.createProject({ id: 'prj_b' as ProjectId, tenantId: tenantB, name: 'B', executionMode: 'live', goal: cloneGoal(), constraintSet: cloneSet(), at: (T0 + 1) as TimestampMs });
     const aEntries = plane.auditLog(tenantA);
     const bEntries = plane.auditLog(tenantB);
     expect(aEntries.every((e) => e.tenantId === tenantA)).toBe(true);
@@ -236,7 +236,7 @@ describe('replayAuditLog — corruption rejection', () => {
     const illegal: ProjectAuditEntry = deepFreeze({
       ...(log[log.length - 1] as ProjectAuditEntry),
       sequence: log.length + 1,
-      at: T0 + 99,
+      at: (T0 + 99) as TimestampMs,
     });
     expectTypedError('invalid-audit-log', () => replayAuditLog([...log, illegal]));
   });

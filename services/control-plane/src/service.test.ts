@@ -122,7 +122,7 @@ describe('createProject — compiles acceptance criteria FIRST', () => {
         executionMode: 'simulation',
         goal: cloneGoal(),
         constraintSet: cloneSet(),
-        at: T0 + 1,
+        at: (T0 + 1) as TimestampMs,
       }),
     );
     expect(plane.projectsOf(tenantA)).toHaveLength(1);
@@ -156,7 +156,7 @@ describe('acceptanceCriteriaFor — the T012/T016 read path', () => {
   it('every entry of the registry is guard-valid and listed per tenant', () => {
     const plane = createControlPlane();
     plane.createProject({ id: 'prj_1' as ProjectId, tenantId: tenantA, name: 'One', executionMode: 'simulation', goal: cloneGoal(), constraintSet: cloneSet(), at: T0 });
-    plane.createProject({ id: 'prj_2' as ProjectId, tenantId: tenantB, name: 'Two', executionMode: 'shadow', goal: cloneGoal(), constraintSet: cloneSet(), at: T0 + 1 });
+    plane.createProject({ id: 'prj_2' as ProjectId, tenantId: tenantB, name: 'Two', executionMode: 'shadow', goal: cloneGoal(), constraintSet: cloneSet(), at: (T0 + 1) as TimestampMs });
     expect(plane.acceptanceCriteriaOf(tenantA)).toHaveLength(1);
     expect(plane.acceptanceCriteriaOf(tenantB)).toHaveLength(1);
   });
@@ -180,15 +180,15 @@ describe('lifecycle through the service', () => {
   it('refuses activation without a bound organization (typed, no state change)', () => {
     const { plane } = seeded();
     expectTypedError('missing-organization-binding', () =>
-      plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: T0 + 1 }),
+      plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: (T0 + 1) as TimestampMs }),
     );
     expect(plane.getProject(tenantA, 'prj_alpha' as ProjectId).lifecycle.status).toBe('draft');
   });
 
   it('binds the organization, then activates with the organization.activate effect', () => {
     const { plane } = seeded();
-    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: T0 + 1 });
-    const activated = plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: T0 + 2 });
+    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: (T0 + 1) as TimestampMs });
+    const activated = plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: (T0 + 2) as TimestampMs });
     expect(activated.record.lifecycle.status).toBe('active');
     expect(activated.record.lifecycle.organizationRef).toBe(ORG);
     expect(activated.effects).toEqual([
@@ -203,43 +203,43 @@ describe('lifecycle through the service', () => {
 
   it('runs the full happy path: bind -> activate -> pause -> resume -> complete (terminal)', () => {
     const { plane } = seeded();
-    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: T0 + 1 });
-    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: T0 + 2 });
-    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'pause', at: T0 + 3 });
-    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'resume', at: T0 + 4 });
-    const completed = plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'complete', at: T0 + 5 });
+    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: (T0 + 1) as TimestampMs });
+    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: (T0 + 2) as TimestampMs });
+    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'pause', at: (T0 + 3) as TimestampMs });
+    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'resume', at: (T0 + 4) as TimestampMs });
+    const completed = plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'complete', at: (T0 + 5) as TimestampMs });
     expect(completed.record.lifecycle.status).toBe('completed');
     expect(completed.effects.map((e) => e.kind)).toEqual(['evaluation.finalize', 'organization.suspend']);
     // Terminal: every further event is refused.
     expectTypedError('illegal-transition', () =>
-      plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'archive', at: T0 + 6 }),
+      plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'archive', at: (T0 + 6) as TimestampMs }),
     );
     expect(plane.getProject(tenantA, 'prj_alpha' as ProjectId).lifecycle.status).toBe('completed');
   });
 
   it('archives via the convenience method: bind -> activate -> pause -> archive (terminal)', () => {
     const { plane } = seeded();
-    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: T0 + 1 });
-    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: T0 + 2 });
-    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'pause', at: T0 + 3 });
-    const archived = plane.archive({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, at: T0 + 4 });
+    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: (T0 + 1) as TimestampMs });
+    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: (T0 + 2) as TimestampMs });
+    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'pause', at: (T0 + 3) as TimestampMs });
+    const archived = plane.archive({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, at: (T0 + 4) as TimestampMs });
     expect(archived.record.lifecycle.status).toBe('archived');
     expect(archived.effects).toEqual([{ kind: 'record.archive', projectId: 'prj_alpha' as ProjectId }]);
   });
 
   it('refuses binding while active with invalid-binding-state (pause first)', () => {
     const { plane } = seeded();
-    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: T0 + 1 });
-    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: T0 + 2 });
+    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: (T0 + 1) as TimestampMs });
+    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: (T0 + 2) as TimestampMs });
     expectTypedError('invalid-binding-state', () =>
-      plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: 'org_2' as OrganizationRef, at: T0 + 3 }),
+      plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: 'org_2' as OrganizationRef, at: (T0 + 3) as TimestampMs }),
     );
   });
 
   it('refuses non-monotonic operation instants (audit fields never go backwards)', () => {
     const { plane } = seeded();
     expectTypedError('invalid-project-record', () =>
-      plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: T0 - 1 }),
+      plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: (T0 - 1) as TimestampMs }),
     );
   });
 
@@ -254,14 +254,14 @@ describe('lifecycle through the service', () => {
   it('the journal grows in lockstep with successful operations only', () => {
     const { plane } = seeded();
     expect(plane.auditLog(tenantA)).toHaveLength(2);
-    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: T0 + 1 });
+    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, organizationRef: ORG, at: (T0 + 1) as TimestampMs });
     expect(plane.auditLog(tenantA)).toHaveLength(3);
     // A failed transition journals nothing.
     expectTypedError('illegal-transition', () =>
-      plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'pause', at: T0 + 2 }),
+      plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'pause', at: (T0 + 2) as TimestampMs }),
     );
     expect(plane.auditLog(tenantA)).toHaveLength(3);
-    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: T0 + 2 });
+    plane.transition({ tenantId: tenantA, projectId: 'prj_alpha' as ProjectId, event: 'activate', at: (T0 + 2) as TimestampMs });
     expect(plane.auditLog(tenantA)).toHaveLength(4);
   });
 });
@@ -278,7 +278,7 @@ describe('tenant isolation through the service (L12)', () => {
       constraintSet: cloneSet(),
       at: T0,
     });
-    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_private' as ProjectId, organizationRef: ORG, at: T0 + 1 });
+    plane.bindOrganization({ tenantId: tenantA, projectId: 'prj_private' as ProjectId, organizationRef: ORG, at: (T0 + 1) as TimestampMs });
     return plane;
   }
 
@@ -299,16 +299,16 @@ describe('tenant isolation through the service (L12)', () => {
   it('cross-tenant transition, binding and criteria reads are all rejected', () => {
     const plane = twoTenantPlane();
     expectTypedError('project-not-found', () =>
-      plane.transition({ tenantId: tenantB, projectId: 'prj_private' as ProjectId, event: 'activate', at: T0 + 2 }),
+      plane.transition({ tenantId: tenantB, projectId: 'prj_private' as ProjectId, event: 'activate', at: (T0 + 2) as TimestampMs }),
     );
     expectTypedError('project-not-found', () =>
-      plane.bindOrganization({ tenantId: tenantB, projectId: 'prj_private' as ProjectId, organizationRef: ORG, at: T0 + 2 }),
+      plane.bindOrganization({ tenantId: tenantB, projectId: 'prj_private' as ProjectId, organizationRef: ORG, at: (T0 + 2) as TimestampMs }),
     );
     expectTypedError('project-not-found', () =>
       plane.acceptanceCriteriaFor(tenantB, 'prj_private' as ProjectId),
     );
     expectTypedError('project-not-found', () =>
-      plane.archive({ tenantId: tenantB, projectId: 'prj_private' as ProjectId, at: T0 + 2 }),
+      plane.archive({ tenantId: tenantB, projectId: 'prj_private' as ProjectId, at: (T0 + 2) as TimestampMs }),
     );
   });
 
@@ -317,7 +317,7 @@ describe('tenant isolation through the service (L12)', () => {
     const before = plane.getProject(tenantA, 'prj_private' as ProjectId);
     const logBefore = plane.auditLog(tenantA).length;
     expectTypedError('project-not-found', () =>
-      plane.transition({ tenantId: tenantB, projectId: 'prj_private' as ProjectId, event: 'activate', at: T0 + 2 }),
+      plane.transition({ tenantId: tenantB, projectId: 'prj_private' as ProjectId, event: 'activate', at: (T0 + 2) as TimestampMs }),
     );
     expect(plane.getProject(tenantA, 'prj_private' as ProjectId)).toEqual(before);
     expect(plane.auditLog(tenantA)).toHaveLength(logBefore);
@@ -331,9 +331,9 @@ describe('tenant isolation through the service (L12)', () => {
       tenantId: tenantB,
       name: 'Tenant B project',
       executionMode: 'simulation',
-      goal: { ...cloneGoal(), tenantId: tenantB },
+      goal: { ...cloneGoal(), tenantId: tenantB } as ReturnType<typeof cloneGoal>,
       constraintSet: { ...cloneSet(), tenantId: tenantB },
-      at: T0 + 1,
+      at: (T0 + 1) as TimestampMs,
     });
     expect(plane.projectsOf(tenantA).map((r) => r.name)).toEqual(['Tenant A private project']);
     expect(plane.projectsOf(tenantB).map((r) => r.name)).toEqual(['Tenant B project']);

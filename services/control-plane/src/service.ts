@@ -131,7 +131,7 @@ export function createControlPlane(): ControlPlane {
   const store = new ProjectStore();
   const auditLog = new ProjectAuditLog();
   // TenantId -> (AcceptanceCriteriaId -> compiled artifact).
-  const criteriaByTenant = new Map<TenantId, Map<AcceptanceCriteriaId, AcceptanceCriteria>>();
+  const criteriaByTenant = new Map<string, Map<AcceptanceCriteriaId, AcceptanceCriteria>>();
 
   function requireProject(tenantId: TenantId, projectId: ProjectId): ProjectRecord {
     const record = store.get(tenantId, projectId);

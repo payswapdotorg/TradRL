@@ -94,7 +94,7 @@ describe('ProjectStore — tenant isolation (L12)', () => {
     const record = draftFor(tenantA, 'prj_secret');
     store.create(record);
     expect(store.get(tenantB, record.id)).toBeUndefined(); // no leak
-    expect(store.get(tenantB, 'prj_unknown')).toBeUndefined(); // identical answer
+    expect(store.get(tenantB, 'prj_unknown' as ProjectId)).toBeUndefined(); // identical answer
     expect(store.has(tenantB, record.id)).toBe(false);
   });
 
