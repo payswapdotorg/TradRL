@@ -31,7 +31,7 @@ One Work Order = one branch = one PR = one worker. Maximum active workers = 3.
 | T013 | RL interface/trainer bridge | T009,T010,T011,T012 | packages/rl-protocol/, services/learning/rl/ |
 | T014 | Distributed episode generation | T005,T011,T013 | services/learning/compute/, packages/compute/ |
 | T015 | Curriculum/self-play/adversarial populations | T011,T012,T013,T014 | services/learning/curriculum/, services/learning/populations/ |
-| T016 | Organization compiler/team search (+ substrate capability registry contracts per D-006/D-007) | T006,T007,T012 | packages/organization/, services/organization-compiler/, contracts/agent/capability-registry.md, packages/agent-body/src/capability-registry*.ts (additive) |
+| T016 | Organization compiler/team search + substrate capability registry contracts | T006,T007,T012 | packages/organization/, services/organization-compiler/, contracts/agent/capability-registry.md, packages/agent-body/src/capability-registry.ts, packages/agent-body/src/capability-registry.test.ts |
 | T017 | Skill extraction/body forge | T003,T011,T012,T015,T016 | packages/skills/, services/body-forge/ |
 
 ## Finance capabilities

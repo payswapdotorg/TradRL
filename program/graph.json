@@ -277,7 +277,7 @@
         "packages/rl-protocol/",
         "services/learning/rl/"
       ],
-      "status": "authorized",
+      "status": "in_progress",
       "branch": "work/T013-rl-bridge",
       "pr": null,
       "merged_sha": null,
@@ -324,7 +324,7 @@
     },
     {
       "id": "T016",
-      "title": "Organization compiler/team search",
+      "title": "Organization compiler/team search + substrate capability registry contracts",
       "deps": [
         "T006",
         "T007",
@@ -337,7 +337,7 @@
         "packages/agent-body/src/capability-registry.ts",
         "packages/agent-body/src/capability-registry.test.ts"
       ],
-      "status": "authorized",
+      "status": "in_progress",
       "branch": "work/T016-organization-compiler",
       "pr": null,
       "merged_sha": null,
@@ -715,7 +715,7 @@
       "write_surface": [
         "packages/provider-sdk/"
       ],
-      "status": "authorized",
+      "status": "in_progress",
       "branch": "work/T036-provider-sdk",
       "pr": null,
       "merged_sha": null,
