@@ -23,17 +23,15 @@
 // blind/walk-forward/adversarial discipline), spec/ARCHITECTURE-LOCK.md
 // L7, L10, L12, L15.
 
-import { deepCloneJson, deepFreeze, isNonEmptyString, isRecord, isUnitInterval } from './primitives';
+import { deepFreeze, isNonEmptyString, isRecord, isUnitInterval, isArrayOf } from './primitives';
 import {
   AcceptanceCriteriaId,
   ConstraintSetVersionRef,
   GoalVersionRef,
-  TenantId,
   acceptanceCriteriaId,
   isAcceptanceCriteriaId,
   isConstraintSetVersionRef,
   isGoalVersionRef,
-  isTenantId,
 } from './ids';
 import {
   ConstraintSetStatement,
@@ -128,7 +126,7 @@ export interface AcceptanceCriteria {
   readonly id: AcceptanceCriteriaId;
   readonly version: number;
   /** Owning tenant (L12). */
-  readonly tenantId: TenantId;
+  readonly tenantId: string;
   readonly lineage: AcceptanceLineage;
   /** Non-empty; criterion ids unique. */
   readonly criteria: readonly CompiledCriterion[];
@@ -171,7 +169,7 @@ export function isAcceptanceCriteria(v: unknown): v is AcceptanceCriteria {
   if (!isRecord(v)) return false;
   if (!isAcceptanceCriteriaId(v.id)) return false;
   if (typeof v.version !== 'number' || !Number.isInteger(v.version) || v.version < 1) return false;
-  if (!isTenantId(v.tenantId)) return false;
+  if (!isNonEmptyString(v.tenantId)) return false;
   if (!isAcceptanceLineage(v.lineage)) return false;
   if (!Array.isArray(v.criteria) || v.criteria.length === 0) return false;
   if (!v.criteria.every((x) => isCompiledCriterion(x))) return false;
@@ -206,9 +204,7 @@ export function isAcceptanceCriteria(v: unknown): v is AcceptanceCriteria {
 /**
  * `true` when the constraint `subject` gates the criterion `metric`: the
  * two identifier paths address the same measurement family, i.e. one is a
- * segment-wise prefix of the other. Total over untrusted input
- * (non-strings / empty paths => false) so it can double as a guard-style
- * predicate in consumers.
+ * segment-wise prefix of the other. Total (non-strings => false).
  *
  * Examples:
  * - gatesConstraint('risk', 'risk.maxDrawdown') === true (family level)
@@ -216,7 +212,7 @@ export function isAcceptanceCriteria(v: unknown): v is AcceptanceCriteria {
  * - gatesConstraint('risk.maxDrawdown.daily', 'risk.maxDrawdown') === true (extension)
  * - gatesConstraint('risk', 'returns.sharpe') === false (different family)
  */
-export function gatesConstraint(subject: unknown, metric: unknown): boolean {
+export function gatesConstraint(subject: string, metric: string): boolean {
   if (typeof subject !== 'string' || typeof metric !== 'string') return false;
   if (subject.length === 0 || metric.length === 0) return false;
   const a = subject.split('.');
@@ -268,11 +264,11 @@ function diagnoseGoal(v: unknown): Diagnosis {
     };
   }
   const problems: string[] = [];
-  if (!isNonEmptyString(v.id)) problems.push('id: invalid GoalRef (non-empty string)');
+  if (!isGoalStatement(v.id)) problems.push('id: invalid GoalRef (non-empty string)');
   if (typeof v.version !== 'number' || !Number.isInteger(v.version) || v.version < 1) {
     problems.push('version: expected an integer >= 1');
   }
-  if (!isNonEmptyString(v.tenantId)) {
+  if (!isGoalStatement(v.tenantId) && !isNonEmptyString(v.tenantId)) {
     problems.push('tenantId: invalid TenantId');
   }
   if (!isNonEmptyString(v.objective)) problems.push('objective: non-empty string required');
@@ -381,9 +377,7 @@ function diagnoseConstraintSet(v: unknown): Diagnosis {
  *
  * Determinism: the artifact id is content-addressed from the lineage; no
  * ambient clock, no randomness — compiling the same inputs twice yields
- * deeply-equal, deeply-frozen records. Purity is strict: embedded records
- * (criteria, constraints) are CLONED before freezing, so the caller's
- * input objects are neither mutated NOR aliased by the artifact.
+ * deeply-equal, deeply-frozen records.
  */
 export function compileAcceptance(
   goal: GoalStatement,
@@ -416,11 +410,8 @@ export function compileAcceptance(
     );
   }
 
-  // Clone the embedded records: the artifact must not alias (and the deep
-  // freeze below must not reach into) the caller's input objects.
-  const criteria = deepCloneJson(goal.successCriteria.criteria);
-  const constraints = deepCloneJson(constraintSet.constraints);
-  const compiledCriteria: CompiledCriterion[] = criteria.map((criterion) => ({
+  const constraints = constraintSet.constraints;
+  const criteria: CompiledCriterion[] = goal.successCriteria.criteria.map((criterion) => ({
     criterion,
     gatingConstraintIds: constraints
       .filter((constraint) => gatesConstraint(constraint.subject, criterion.metric))
@@ -437,7 +428,7 @@ export function compileAcceptance(
     version: 1,
     tenantId: goal.tenantId,
     lineage,
-    criteria: compiledCriteria,
+    criteria,
     constraints,
     policy: {
       blindRef: goal.evaluation.blindRef,
@@ -448,4 +439,11 @@ export function compileAcceptance(
     },
   };
   return deepFreeze(compiled);
+}
+
+/** Type-level helper: an array of compiled criteria (used by consumers). */
+export function isCompiledCriteriaList(
+  v: unknown,
+): v is readonly CompiledCriterion[] {
+  return isArrayOf(v, isCompiledCriterion);
 }
