@@ -74,13 +74,12 @@ export function isBatchRef(value: unknown): value is BatchRef {
   return isRecord(value) && isNonEmptyString(value.batch_id);
 }
 
-/** Runtime guard for a CommitRef (commit sequences are positive: the first commit is 1). */
+/** Runtime guard for a CommitRef. */
 export function isCommitRef(value: unknown): value is CommitRef {
   return (
     isRecord(value) &&
     isNonEmptyString(value.commit_id) &&
     isNonNegativeSafeInteger(value.commit_sequence) &&
-    value.commit_sequence >= 1 &&
     isTimestampMs(value.ingestion_time)
   );
 }
