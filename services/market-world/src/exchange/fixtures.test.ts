@@ -40,7 +40,7 @@ describe('the scripted scenario (deterministic fixtures)', () => {
     expect(second.record.digest).toBe(first.record.digest);
     expect(second.record.outcome_stream_hash).toBe(first.record.outcome_stream_hash);
     expect(second.record.world.config_hash).toBe(first.record.world.config_hash);
-    expect(second.record.world.book_seed_hash).toBe(first.record.book_seed_hash);
+    expect(second.record.world.book_seed_hash).toBe(first.record.world.book_seed_hash);
     expect(JSON.stringify(second.record.fill_log)).toBe(JSON.stringify(first.record.fill_log));
     expect(JSON.stringify(second.record.order_log)).toBe(JSON.stringify(first.record.order_log));
     // A third run, same claim.
@@ -83,8 +83,8 @@ describe('the scripted scenario (deterministic fixtures)', () => {
     expect(fixtureScript().length).toBe(fixtureScript().length);
     expect(JSON.stringify(fixtureScript())).toBe(JSON.stringify(fixtureScript()));
     const spec = fixtureSpec();
-    expect(spec.world?.kind).toBe('exchange-sim');
-    expect(spec.profile?.clock?.now).toBe(1_700_000_000_000);
+    expect((spec.world as { kind?: string } | undefined)?.kind).toBe('exchange-sim');
+    expect((spec.profile as { clock?: { now?: number } } | undefined)?.clock?.now).toBe(1_700_000_000_000);
   });
 
   it('the L4 boundary holds over the fixture stream: no outcome visible before its availability', () => {

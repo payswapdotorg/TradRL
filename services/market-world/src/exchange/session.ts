@@ -52,16 +52,13 @@ import {
   configHash,
   createEngine,
   deepFreeze,
-  fail,
   isOrderAck,
   isTimestampMs,
-  ok,
   submitOrder as engineSubmit,
   topOfBook,
   type CancelOutcome,
   type EngineState,
   type ExchangeConfig,
-  type ExchangeResult,
   type Fill,
   type OrderCancelRecord,
   type OrderReject,
@@ -87,6 +84,7 @@ import {
   type ObservationMirror,
   type TerminationReason,
 } from './env-mirror';
+import { fail, ok, liftEngineError, type ServiceResult } from './errors';
 import {
   orderAckEventOf,
   orderCancelEventOf,
@@ -111,7 +109,7 @@ export type ExchangeActionPayload =
   | { readonly type: 'cancel_client_order'; readonly client_order_id: string };
 
 /** Validate an action payload shape (the engine validates the intent itself). */
-function validateActionPayload(payload: JsonValue): ExchangeResult<ExchangeActionPayload> {
+function validateActionPayload(payload: JsonValue): ServiceResult<ExchangeActionPayload> {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
     return fail('invalid_action', 'the action payload must be an object');
   }
@@ -276,21 +274,21 @@ export interface ExchangeService {
   readonly episodes: readonly string[];
 
   /** Bind an episode spec to this exchange (validates the spec, the world binding and the fidelity coherence). */
-  start(spec: unknown): ExchangeResult<ExchangeEpisodeView>;
+  start(spec: unknown): ServiceResult<ExchangeEpisodeView>;
   /** PURE point-in-time query (L4, inclusive): observations visible at `at`. */
-  observe(episode: string, at: TimestampMs): ExchangeResult<readonly ExchangeObservation[]>;
+  observe(episode: string, at: TimestampMs): ServiceResult<readonly ExchangeObservation[]>;
   /** Submit an action (order/cancel intent) for engine processing; results come back as observations. */
-  submit(episode: string, action: unknown): ExchangeResult<ExchangeSubmission>;
+  submit(episode: string, action: unknown): ServiceResult<ExchangeSubmission>;
   /** Advance the episode clock (monotonic, `<= episode asOf`); expires gtt orders and emits their events. */
-  advance(episode: string, to: TimestampMs): ExchangeResult<ExchangeEpisodeView>;
+  advance(episode: string, to: TimestampMs): ServiceResult<ExchangeEpisodeView>;
   /** Finish the episode: terminal state plus the immutable result. */
-  finish(episode: string, reason: unknown): ExchangeResult<ExchangeEpisodeFinish>;
+  finish(episode: string, reason: unknown): ServiceResult<ExchangeEpisodeFinish>;
   /** The L9 lineage record of a FINISHED episode (identical runs -> identical records). */
-  sessionRecord(episode: string): ExchangeResult<SessionRecord>;
+  sessionRecord(episode: string): ServiceResult<SessionRecord>;
   /** The current aggregated book view (a market-protocol book_snapshot payload shape). */
-  bookSnapshot(episode: string): ExchangeResult<{ readonly bids: readonly { readonly price: string; readonly size: string }[]; readonly asks: readonly { readonly price: string; readonly size: string }[] }>;
+  bookSnapshot(episode: string): ServiceResult<{ readonly bids: readonly { readonly price: string; readonly size: string }[]; readonly asks: readonly { readonly price: string; readonly size: string }[] }>;
   /** Every emitted event so far (the full outcome stream, in emission order). */
-  events(episode: string): ExchangeResult<readonly ExchangeEvent[]>;
+  events(episode: string): ServiceResult<readonly ExchangeEvent[]>;
 }
 
 /** One episode's run line (the service's private bookkeeping). */
@@ -316,7 +314,7 @@ interface EpisodeLine {
  * once, then a FRESH engine is created per episode over the same
  * config + seed).
  */
-export function createExchangeService(config: unknown, bookSeed: unknown = null): ExchangeResult<ExchangeService> {
+export function createExchangeService(config: unknown, bookSeed: unknown = null): ServiceResult<ExchangeService> {
   const engineProbe = createEngine(config, { book_seed: bookSeed, start_at: 0 });
   if (!engineProbe.ok) return engineProbe;
   const validConfig = engineProbe.value.config;
@@ -332,7 +330,7 @@ export function createExchangeService(config: unknown, bookSeed: unknown = null)
   const registry = new Map<string, EpisodeLine>();
   const order: string[] = [];
 
-  const lookup = (episode: string): ExchangeResult<EpisodeLine> => {
+  const lookup = (episode: string): ServiceResult<EpisodeLine> => {
     const line = registry.get(episode);
     if (line === undefined) {
       return fail('unknown_episode', `episode ${episode} is not known to this exchange service`);
@@ -438,7 +436,7 @@ export function createExchangeService(config: unknown, bookSeed: unknown = null)
       return order.slice();
     },
 
-    start(spec: unknown): ExchangeResult<ExchangeEpisodeView> {
+    start(spec: unknown): ServiceResult<ExchangeEpisodeView> {
       // 1. Validate the spec (mirrored collect-all).
       const specResult = validateEnvironmentSpec(spec);
       if (!specResult.ok) {
@@ -472,7 +470,7 @@ export function createExchangeService(config: unknown, bookSeed: unknown = null)
 
       // 5. Bind: a FRESH engine over the shared config + book seed, clock from the spec.
       const engineResult = createEngine(validConfig, { book_seed: bookSeed, start_at: validSpec.profile.clock.now });
-      if (!engineResult.ok) return engineResult;
+      if (!engineResult.ok) return liftEngineError(engineResult);
       const line: EpisodeLine = {
         spec: validSpec,
         episodeId,
@@ -492,7 +490,7 @@ export function createExchangeService(config: unknown, bookSeed: unknown = null)
       return ok(viewOf(line));
     },
 
-    observe(episode: string, at: TimestampMs): ExchangeResult<readonly ExchangeObservation[]> {
+    observe(episode: string, at: TimestampMs): ServiceResult<readonly ExchangeObservation[]> {
       const found = lookup(episode);
       if (!found.ok) return found;
       const line = found.value;
@@ -506,7 +504,7 @@ export function createExchangeService(config: unknown, bookSeed: unknown = null)
       return ok(line.events.map(observationOf).filter((observation) => observation.available_time <= at));
     },
 
-    submit(episode: string, action: unknown): ExchangeResult<ExchangeSubmission> {
+    submit(episode: string, action: unknown): ServiceResult<ExchangeSubmission> {
       const found = lookup(episode);
       if (!found.ok) return found;
       const line = found.value;
@@ -558,15 +556,15 @@ export function createExchangeService(config: unknown, bookSeed: unknown = null)
       let outcome: SubmitOutcome | CancelOutcome;
       if (payload.type === 'submit_order') {
         const submitted = engineSubmit(line.engine, payload.intent, validAction.submitted_at);
-        if (!submitted.ok) return submitted;
+        if (!submitted.ok) return liftEngineError(submitted);
         outcome = submitted.value;
       } else if (payload.type === 'cancel_order') {
         const canceled = engineCancel(line.engine, { order_id: payload.order_id }, validAction.submitted_at);
-        if (!canceled.ok) return canceled;
+        if (!canceled.ok) return liftEngineError(canceled);
         outcome = canceled.value;
       } else {
         const canceled = engineCancel(line.engine, { client_order_id: payload.client_order_id }, validAction.submitted_at);
-        if (!canceled.ok) return canceled;
+        if (!canceled.ok) return liftEngineError(canceled);
         outcome = canceled.value;
       }
 
@@ -611,7 +609,7 @@ export function createExchangeService(config: unknown, bookSeed: unknown = null)
       return ok(deepFreeze({ ...viewOf(line), receipt }));
     },
 
-    advance(episode: string, to: TimestampMs): ExchangeResult<ExchangeEpisodeView> {
+    advance(episode: string, to: TimestampMs): ServiceResult<ExchangeEpisodeView> {
       const found = lookup(episode);
       if (!found.ok) return found;
       const line = found.value;
@@ -630,7 +628,7 @@ export function createExchangeService(config: unknown, bookSeed: unknown = null)
 
       // Drive the engine (gtt expirations) and emit their events.
       const advanced = advanceEngine(line.engine, to);
-      if (!advanced.ok) return advanced;
+      if (!advanced.ok) return liftEngineError(advanced);
       line.engine = advanced.value.state;
       for (const expiration of advanced.value.expirations) {
         const probe = orderExpiredEventOf(expiration, blankContext());
@@ -645,7 +643,7 @@ export function createExchangeService(config: unknown, bookSeed: unknown = null)
       return ok(viewOf(line));
     },
 
-    finish(episode: string, reason: unknown): ExchangeResult<ExchangeEpisodeFinish> {
+    finish(episode: string, reason: unknown): ServiceResult<ExchangeEpisodeFinish> {
       const found = lookup(episode);
       if (!found.ok) return found;
       const line = found.value;
@@ -671,7 +669,7 @@ export function createExchangeService(config: unknown, bookSeed: unknown = null)
       return ok(deepFreeze({ episode: view, result }));
     },
 
-    sessionRecord(episode: string): ExchangeResult<SessionRecord> {
+    sessionRecord(episode: string): ServiceResult<SessionRecord> {
       const found = lookup(episode);
       if (!found.ok) return found;
       const line = found.value;
@@ -758,7 +756,7 @@ function buildSessionRecord(
       episode_id: line.episodeId,
       environment_id: line.spec.profile.environment_id,
       spec_hash: fnv1a32Hex(canonicalSpecJson(line.spec)),
-      termination: { code: line.termination.code, detail: line.termination.detail },
+      termination: { code: line.termination!.code, detail: line.termination!.detail },
       final_now: line.clock.now,
     },
     order_log: orderLog,

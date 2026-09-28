@@ -396,6 +396,11 @@ export function isJsonValue(value: unknown): value is JsonValue {
   return false;
 }
 
+/** JSON object guard (local mirror): narrows to the object branch of {@link JsonValue}. */
+export function isJsonObject(value: unknown): value is { readonly [key: string]: JsonValue } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 // ---------------------------------------------------------------------------
 // Action envelope (mirror of T005)
 // ---------------------------------------------------------------------------

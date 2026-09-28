@@ -19,7 +19,8 @@
  */
 
 import { createExchangeService, type ExchangeEpisodeView, type ExchangeService, type SessionRecord } from './session';
-import { configHash, type ExchangeResult } from '../../../../packages/exchange-sim/src/index';
+import { configHash } from '../../../../packages/exchange-sim/src/index';
+import type { ServiceResult } from './errors';
 import type { ExchangeEvent } from './event';
 import type { JsonValue } from './env-mirror';
 import { canonicalJson } from './env-mirror';
@@ -195,7 +196,7 @@ export interface ExchangeFixtureRun {
 }
 
 /** Unwrap helper for fixture plumbing. */
-function unwrap<T>(result: ExchangeResult<T>): T {
+function unwrap<T>(result: ServiceResult<T>): T {
   if (result.ok) return result.value;
   throw new Error(`fixture step failed: ${JSON.stringify(result.errors)}`);
 }

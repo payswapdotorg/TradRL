@@ -16,9 +16,9 @@ import {
 } from './session';
 import { isExchangeEvent, sequenceKeyOf, type ExchangeEvent } from './event';
 import { isActionMirror, isEpisodeStateMirror, isObservationMirror } from './env-mirror';
-import { validateMarketEvent } from '../../../../../packages/market-protocol/src/index';
-import type { TimestampMs } from '../../../../../packages/exchange-sim/src/index';
-import { isDeeplyFrozen, topOfBook } from '../../../../../packages/exchange-sim/src/index';
+import { validateMarketEvent } from '../../../../packages/market-protocol/src/index';
+import type { TimestampMs } from '../../../../packages/exchange-sim/src/index';
+import { isDeeplyFrozen } from '../../../../packages/exchange-sim/src/index';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -326,8 +326,6 @@ describe('submit (engine processing + observation emission)', () => {
     expect(canceled.ok).toBe(true);
     if (canceled.ok) expect(canceled.value.receipt.outcome.status).toBe('canceled:cancel_requested');
     // The top of book is back to the seed ask.
-    const top = topOfBook(canceled.value ? undefined : undefined);
-    void top;
     const snapshot = service.bookSnapshot(episode);
     expect(snapshot.ok).toBe(true);
     if (snapshot.ok) expect(snapshot.value.asks[0]?.price).toBe('100.5');
@@ -402,7 +400,7 @@ describe('advance and finish', () => {
       unwrapSubmit(service.submit(episode, actionFixture('s1', 1, { type: 'submit_order', intent: intentFixture() }, T0 + 10)));
       unwrapSubmit(service.submit(episode, actionFixture('s2', 2, { type: 'submit_order', intent: intentFixture({ clientOrderId: 'cli-2', side: 'sell', price: '101.50', quantity: '2' }) }, T0 + 20)));
       unwrapView(service.advance(episode, (T0 + 50_000) as TimestampMs));
-      unwrapView(service.finish(episode, { code: 'completed', detail: 'lineage run' }));
+      service.finish(episode, { code: 'completed', detail: 'lineage run' });
       const record = service.sessionRecord(episode);
       expect(record.ok).toBe(true);
       if (!record.ok) throw new Error('record failed');

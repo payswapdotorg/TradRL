@@ -97,7 +97,7 @@ export function isEventType(value: unknown): value is EventType {
 // ---------------------------------------------------------------------------
 
 /** Where an event came from. The syntheticity discriminator. Mirror of T004. */
-export type EventOrigin = 'historical | simulated' extends string ? never : 'historical' | 'simulated' | 'generated';
+export type EventOrigin = 'historical' | 'simulated' | 'generated';
 
 /** Runtime list of event origins, for guards and diagnostics. */
 export const EVENT_ORIGINS: readonly ['historical', 'simulated', 'generated'] = ['historical', 'simulated', 'generated'];
@@ -347,7 +347,7 @@ export function tradeEventOf(fill: Fill, context: EventEnvelopeContext): Exchang
       side: fill.aggressor_side,
       trade_id: fill.trade_id,
     },
-  }) as ExchangeEvent;
+  });
 }
 
 /** Build the `quote` event of a top-of-book view (available AT the event instant — no feed latency modeled, declared). */
@@ -371,7 +371,7 @@ export function quoteEventOf(top: TopOfBook, at: TimestampMs, context: EventEnve
       ask_price: top.ask_price,
       ask_size: top.ask_size,
     },
-  }) as ExchangeEvent;
+  });
 }
 
 /** Build the `other:order_ack` event of an order ack. */
@@ -435,5 +435,5 @@ function otherOutcomeEvent(
     provider: 'exchange-sim',
     provenance: { origin: 'simulated', adapter: { ...EXCHANGE_SIM_COMPONENT }, derived_from: [], transform: null },
     payload: { kind, data },
-  }) as ExchangeEvent;
+  });
 }
