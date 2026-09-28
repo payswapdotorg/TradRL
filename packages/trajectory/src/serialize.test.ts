@@ -14,18 +14,11 @@ import { describe, expect, it } from 'vitest';
 import {
   appendStep,
   canonicalize,
-  createTrajectory,
   parseTrajectory,
   serializeTrajectory,
 } from './index';
 import type { Trajectory } from './index';
 import { validMetadata, validStep, validTrajectory } from './fixtures';
-
-/** Unwrap helper for fixtures that must succeed. */
-function unwrap<T>(result: { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: { message: string } }): T {
-  if (result.ok) return result.value;
-  throw new Error(`unexpected fixture failure: ${result.error.message}`);
-}
 
 describe('canonicalize', () => {
   it('sorts object keys and emits no whitespace', () => {
@@ -77,10 +70,11 @@ describe('serializeTrajectory determinism', () => {
   it('distinct append orders produce distinct canonical bytes', () => {
     const s1 = validStep(1_700_000_000_000, 1);
     const s2 = validStep(1_700_000_001_000, 2);
-    const empty = unwrap(createTrajectory({ id: 'traj-0192', metadata: validMetadata() }));
-    const order12 = unwrap(appendStep(unwrap(appendStep(empty, s1)), s2));
-    const order21 = unwrap(appendStep(unwrap(appendStep(empty, s2)), s1));
-    expect(serializeTrajectory(order12)).not.toBe(serializeTrajectory(order21));
+    const base = { id: 'traj-0192' as const, metadata: validMetadata() };
+    const order12 = appendStep(appendStep({ ...base, steps: [] }, s1).value as Trajectory, s2);
+    const order21 = appendStep(appendStep({ ...base, steps: [] }, s2).value as Trajectory, s1);
+    if (!order12.ok || !order21.ok) throw new Error('fixture must append');
+    expect(serializeTrajectory(order12.value)).not.toBe(serializeTrajectory(order21.value));
   });
 });
 
