@@ -106,31 +106,35 @@ export function isMessageEnvelope(v: unknown): v is MessageEnvelope {
  * derives them itself (sequence from the per-sender counter, causality from
  * the accepted op id).
  */
-export function createMessageEnvelope(draft: MessageEnvelope): MessageEnvelope {
+export function createMessageEnvelope(draft: unknown): MessageEnvelope {
   const problems: string[] = [];
-  if (!isMessageId(draft.id)) problems.push('id: invalid MessageId');
-  if (!isTopicName(draft.topic)) problems.push('topic: invalid TopicName');
-  if (!isTenantId(draft.tenantId)) problems.push('tenantId: invalid TenantId');
-  if (!isAgentInstanceId(draft.sender)) problems.push('sender: invalid AgentInstanceId');
-  if (!isMessagePayload(draft.payload)) problems.push('payload: invalid MessagePayload');
-  if (typeof draft.sequence !== 'number' || !Number.isInteger(draft.sequence) || draft.sequence < 1) {
+  if (typeof draft !== 'object' || draft === null) {
+    throw new TypeError('createMessageEnvelope: draft must be an object');
+  }
+  const input = draft as Record<string, unknown>;
+  if (!isMessageId(input.id)) problems.push('id: invalid MessageId');
+  if (!isTopicName(input.topic)) problems.push('topic: invalid TopicName');
+  if (!isTenantId(input.tenantId)) problems.push('tenantId: invalid TenantId');
+  if (!isAgentInstanceId(input.sender)) problems.push('sender: invalid AgentInstanceId');
+  if (!isMessagePayload(input.payload)) problems.push('payload: invalid MessagePayload');
+  if (typeof input.sequence !== 'number' || !Number.isInteger(input.sequence) || input.sequence < 1) {
     problems.push('sequence: must be an integer >= 1');
   }
-  if (draft.causalityId !== null && !isKernelOpId(draft.causalityId)) {
+  if (input.causalityId !== null && !isKernelOpId(input.causalityId)) {
     problems.push('causalityId: invalid KernelOpId');
   }
-  if (!isTimestampMs(draft.publishedAt)) problems.push('publishedAt: invalid TimestampMs');
+  if (!isTimestampMs(input.publishedAt)) problems.push('publishedAt: invalid TimestampMs');
   if (problems.length > 0) throw new TypeError(`createMessageEnvelope: ${problems.join('; ')}`);
   return deepFreeze({
-    id: draft.id,
-    topic: draft.topic,
-    tenantId: draft.tenantId,
-    sender: draft.sender,
-    payload: draft.payload,
-    sequence: draft.sequence,
-    causalityId: draft.causalityId,
-    publishedAt: draft.publishedAt,
-  });
+    id: input.id,
+    topic: input.topic,
+    tenantId: input.tenantId,
+    sender: input.sender,
+    payload: input.payload,
+    sequence: input.sequence,
+    causalityId: input.causalityId,
+    publishedAt: input.publishedAt,
+  }) as MessageEnvelope;
 }
 
 /**

@@ -92,7 +92,7 @@ describe('deep immutability discipline', () => {
     expect(Object.isFrozen(value.a[1])).toBe(true);
     expect(Object.isFrozen(value.d)).toBe(true);
     expect(() => {
-      (value as Mutable<typeof value>).d = { e: 1 };
+      (value as Mutable<typeof value>).d = { e: null };
     }).toThrow();
   });
 

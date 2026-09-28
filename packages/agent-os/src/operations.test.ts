@@ -30,7 +30,9 @@ import {
   isMessageEnvelope,
   isObserveOperation,
   isProposeOperation,
+  isReasonText,
   isPublishOperation,
+  isReportOperation,
   isRequestOperation,
   isSpawnOperation,
   isSubscribeOperation,
@@ -87,7 +89,7 @@ const SPAWN: SpawnOperation = createKernelOperation({
 });
 
 /** Spreads a patch over an operation for corruption tests. */
-function corrupt(op: KernelOperation, patch: Record<string, unknown>): unknown {
+function corrupt(op: KernelOperation | MessageEnvelope, patch: Record<string, unknown>): unknown {
   return { ...(op as unknown as Record<string, unknown>), ...patch };
 }
 

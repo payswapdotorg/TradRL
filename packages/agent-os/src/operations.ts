@@ -43,7 +43,6 @@ import {
   type TopicName,
   deepFreeze,
   isAgentInstanceId,
-  isArrayOfTypeGuard,
   isAuthorityTokenRef,
   isBodyVersionRef,
   isIntentRef,
@@ -83,9 +82,7 @@ const HEADLINE_MAX_LENGTH = 256;
 
 /** Guard: `ReportSummary`. */
 export function isReportSummary(v: unknown): v is ReportSummary {
-  if (typeof v !== 'object' || v === null) return false;
-  const proto: unknown = Object.getPrototypeOf(v);
-  if (proto !== Object.prototype && proto !== null) return false;
+  if (!isPlainRecord(v)) return false;
   return (
     isAgentInstanceId(v.subject) &&
     typeof v.headline === 'string' &&
@@ -483,7 +480,28 @@ export function isKernelOperation(v: unknown): v is KernelOperation {
  * re-checks at runtime, e.g. for parsed JSON). Throws `TypeError`
  * (field-prefixed) on invalid input.
  */
-export function createKernelOperation(op: KernelOperation): KernelOperation {
+type KernelOperationByAction = {
+  readonly SPAWN: SpawnOperation;
+  readonly TERMINATE: TerminateOperation;
+  readonly DELEGATE: DelegateOperation;
+  readonly REQUEST: RequestOperation;
+  readonly PUBLISH: PublishOperation;
+  readonly SUBSCRIBE: SubscribeOperation;
+  readonly CHALLENGE: ChallengeOperation;
+  readonly PROPOSE: ProposeOperation;
+  readonly APPROVE: ApproveOperation;
+  readonly EXECUTE: ExecuteOperation;
+  readonly ESCALATE: EscalateOperation;
+  readonly OBSERVE: ObserveOperation;
+  readonly LEARN: LearnOperation;
+  readonly REPORT: ReportOperation;
+};
+
+export function createKernelOperation<T extends KernelActionName>(
+  op: { readonly type: T } & Record<string, unknown>,
+): KernelOperationByAction[T];
+export function createKernelOperation(op: unknown): KernelOperation;
+export function createKernelOperation(op: unknown): KernelOperation {
   const problems: string[] = [];
   if (!isPlainRecord(op)) {
     throw new TypeError('createKernelOperation: operation must be a plain record');
@@ -500,6 +518,6 @@ export function createKernelOperation(op: KernelOperation): KernelOperation {
     throw new TypeError(`createKernelOperation: ${problems.join('; ')}`);
   }
   return deepFreeze({
-    ...(op as Record<string, unknown>),
-  }) as KernelOperation;
+    ...op,
+  }) as unknown as KernelOperation;
 }
