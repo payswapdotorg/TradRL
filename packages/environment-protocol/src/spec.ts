@@ -158,30 +158,11 @@ export function canonicalJson(value: JsonValue): string {
  * it into shard keys).
  */
 export function canonicalSpecJson(spec: EnvironmentSpec): string {
-  // A validated spec is entirely JSON-shaped data; the canonical tree is
-  // built field-by-field (no casts) so the compiler proves JSON-safety.
-  const tree: JsonValue = {
-    profile: {
-      environment_id: spec.profile.environment_id,
-      fidelity: spec.profile.fidelity,
-      clock: {
-        now: spec.profile.clock.now,
-        asOf: spec.profile.clock.asOf,
-        playbackSpeed: spec.profile.clock.playbackSpeed,
-        paused: spec.profile.clock.paused,
-        fidelity: spec.profile.clock.fidelity,
-        informationPolicy: spec.profile.clock.informationPolicy,
-      },
-      seed: spec.profile.seed,
-      venue_scope: [...spec.profile.venue_scope],
-      instrument_scope: [...spec.profile.instrument_scope],
-      latency_policy: spec.profile.latency_policy,
-      fee_policy: spec.profile.fee_policy,
-    },
-    world: { world_id: spec.world.world_id, kind: spec.world.kind },
-    information_policy: spec.information_policy,
-  };
-  return canonicalJson(tree);
+  // A validated spec is structurally a JsonValue (every field is a JSON
+  // primitive, a branded string, or a nested record/array of such), so the
+  // canonical serializer accepts it without conversion.
+  const canonical: JsonValue = spec;
+  return canonicalJson(canonical);
 }
 
 /** FNV-1a 32-bit hash of a string, as zero-padded lowercase hex. */
