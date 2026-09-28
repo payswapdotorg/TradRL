@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "program": "TradRL",
-  "updated_at": "2026-09-27T11:04:01Z",
+  "updated_at": "2026-09-28T21:30:00Z",
   "policies": {
     "max_concurrent_work_orders": 3,
     "allowed_statuses": [
@@ -34,7 +34,7 @@
       "merged_sha": "c0e4e47ae4898e341448a0aade939202ca24aa25",
       "evidence": [
         "PR #1 squash-merged at c0e4e47ae4898e341448a0aade939202ca24aa25 (dispatch base 7e4a24d, head 53ecec2)",
-        "GitHub Actions run 36301049674 (ci): success — typecheck, vitest 19/19, program:check valid, governance passed",
+        "GitHub Actions run 36301049674 (ci): success \u2014 typecheck, vitest 19/19, program:check valid, governance passed",
         "Local verification: pnpm verify green before push (tsc clean, 19/19 tests, program state valid, governance passed)"
       ]
     },
@@ -112,11 +112,14 @@
         "services/environment-runner/",
         "contracts/environment/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T005-environment-protocol",
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "pr": 5,
+      "merged_sha": "e254e3d",
+      "evidence": [
+        "merge: T005 (recovered...) commit e254e3d on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #5 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ]
     },
     {
       "id": "T006",
@@ -128,11 +131,14 @@
         "packages/agent-os/",
         "services/agent-runtime/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T006-agent-os",
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "pr": 6,
+      "merged_sha": "d9196e3",
+      "evidence": [
+        "merge: T006 (recovered...) commit d9196e3 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #6 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ]
     },
     {
       "id": "T007",
@@ -145,11 +151,14 @@
         "packages/control-domain/",
         "services/control-plane/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T007-control-plane",
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "pr": 7,
+      "merged_sha": "30551bb",
+      "evidence": [
+        "merge: T007 (recovered...) commit 30551bb on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #7 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ]
     },
     {
       "id": "T008",
@@ -162,11 +171,14 @@
         "services/event-store/",
         "packages/provenance/"
       ],
-      "status": "blocked",
-      "branch": null,
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "status": "merged",
+      "branch": "work/T008",
+      "pr": 8,
+      "merged_sha": "e1c1427",
+      "evidence": [
+        "merge: T008 (recovered...) commit e1c1427 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #8 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ]
     },
     {
       "id": "T009",
@@ -179,11 +191,14 @@
         "packages/market-world/",
         "services/market-world/replay/"
       ],
-      "status": "blocked",
-      "branch": null,
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "status": "merged",
+      "branch": "work/T009",
+      "pr": 9,
+      "merged_sha": "9f03c97",
+      "evidence": [
+        "merge: T009 (recovered...) commit 9f03c97 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #9 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ]
     },
     {
       "id": "T010",
@@ -196,11 +211,14 @@
         "packages/exchange-sim/",
         "services/market-world/exchange/"
       ],
-      "status": "blocked",
-      "branch": null,
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "status": "merged",
+      "branch": "work/T010",
+      "pr": 10,
+      "merged_sha": "b7457f4",
+      "evidence": [
+        "merge: T010 (recovered...) commit b7457f4 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #10 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ]
     },
     {
       "id": "T011",
@@ -215,11 +233,14 @@
         "packages/experiments/",
         "contracts/learning/"
       ],
-      "status": "blocked",
-      "branch": null,
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "status": "merged",
+      "branch": "work/T011",
+      "pr": 11,
+      "merged_sha": "de20b70",
+      "evidence": [
+        "merge: T011 (recovered...) commit de20b70 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #11 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ]
     },
     {
       "id": "T012",
@@ -233,11 +254,15 @@
         "packages/verification/",
         "contracts/evaluation/"
       ],
-      "status": "blocked",
-      "branch": null,
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "status": "merged",
+      "branch": "work/T012-recovered",
+      "pr": 12,
+      "merged_sha": "c3ce70a",
+      "evidence": [
+        "merge: T012 (batch-replay recovery) \u2014 work/T012-recovered replayed from batches/T012live.json (39 Write paths + Edits), integrated on recover/13-50 at merge 834f4ac, suites green at c3ce70a",
+        "Pod gates (T012's own tree): 590/590 tests, typecheck/program/governance PASS (worker report in batch store)",
+        "Local verification on recover/13-50 @ c3ce70a: pnpm typecheck clean; packages/evaluation + packages/verification 158/158 PASS after integration-seam fixes (vendored mirrors aligned to recovered sibling shapes; contract-law test alignments documented per contracts/evaluation/*.md)"
+      ]
     },
     {
       "id": "T013",
@@ -496,11 +521,14 @@
         "packages/time-engine/",
         "services/knowledge-firewall/"
       ],
-      "status": "blocked",
-      "branch": null,
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "status": "merged",
+      "branch": "work/T026",
+      "pr": 26,
+      "merged_sha": "ce0fc57",
+      "evidence": [
+        "merge: T026 (recovered...) commit ce0fc57 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #26 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ]
     },
     {
       "id": "T027",
@@ -549,11 +577,14 @@
       "write_surface": [
         "services/time-machine/"
       ],
-      "status": "blocked",
-      "branch": null,
-      "pr": null,
-      "merged_sha": null,
-      "evidence": []
+      "status": "merged",
+      "branch": "work/T029",
+      "pr": 29,
+      "merged_sha": "e106667",
+      "evidence": [
+        "merge: T029 (recovered...) commit e106667 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #29 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ]
     },
     {
       "id": "T030",
@@ -938,11 +969,8 @@
   "dispatch": {
     "wave": 3,
     "base_sha": "257aff2391",
-    "active": [
-      "T005",
-      "T006",
-      "T007"
-    ],
-    "dispatched_at": "2026-09-27T07:47:14Z"
+    "active": [],
+    "dispatched_at": "2026-09-27T07:47:14Z",
+    "note": "wave-3 recovery complete: T005-T011, T026, T029 reconstructed via batch-store replay and merged on recover/13-50 (sandbox-reset recovery); no active dispatch"
   }
 }

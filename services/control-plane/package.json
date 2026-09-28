@@ -1,0 +1,10 @@
+{
+  "name": "@tradrl/control-plane",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Placeholder stub — owning Work Order implements this package.",
+  "description": "Reference Goal/constraint/project control plane: ControlPlane service over the lifecycle reducer with tenant-scoped in-memory ProjectStore and a replayable audit log (T007).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/exchange-sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Exchange/order-book simulation contract package (Work Order T010): matching engine, fees, latency, slippage, impact policy.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

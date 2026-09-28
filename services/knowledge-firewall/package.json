@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/knowledge-firewall",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Point-in-time knowledge firewall reference service: clock-policed, tenant-scoped queries over an append-only knowledge base with replayable decision audit logs (spec/ARCHITECTURE-LOCK.md L4/L12; Work Order T026).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

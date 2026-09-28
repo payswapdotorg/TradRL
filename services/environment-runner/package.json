@@ -1,0 +1,10 @@
+{
+  "name": "@tradrl/environment-runner",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic reference EpisodeRunner: drives any EnvironmentSpec through an episode under a pluggable pure Policy, records a JSON-serializable step trace, and ships the StubEnvironment template for world implementers (spec/ARCHITECTURE.md Market World).",
+  "description": "Placeholder stub — owning Work Order implements this package.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
