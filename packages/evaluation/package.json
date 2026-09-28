@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/evaluation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Evaluation contracts: metric registry (constraint-aggregate first-class), split policies (walk-forward, blind holdout, regime), evaluation suites with the mandatory-adversarial law, attainment verdict compilation (L7), and search-integrity reporting over the full trial log (L11) (spec/EVALUATION-PROTOCOL.md).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
