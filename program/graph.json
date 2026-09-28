@@ -277,11 +277,13 @@
         "packages/rl-protocol/",
         "services/learning/rl/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "authorized",
+      "branch": "work/T013-rl-bridge",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-007 wave-8 dispatch; deps T009,T010,T011,T012 all merged at 644163a"
+      ]
     },
     {
       "id": "T014",
@@ -330,13 +332,19 @@
       ],
       "write_surface": [
         "packages/organization/",
-        "services/organization-compiler/"
+        "services/organization-compiler/",
+        "contracts/agent/capability-registry.md",
+        "packages/agent-body/src/capability-registry.ts",
+        "packages/agent-body/src/capability-registry.test.ts"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "authorized",
+      "branch": "work/T016-organization-compiler",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-007 wave-8 dispatch; deps T006,T007,T012 all merged at 644163a",
+        "absorbs substrate capability registry contracts per D-006/D-007 (R49/R50, spec/CAPABILITY-DISCOVERY.md)"
+      ]
     },
     {
       "id": "T017",
@@ -707,11 +715,13 @@
       "write_surface": [
         "packages/provider-sdk/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "authorized",
+      "branch": "work/T036-provider-sdk",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "dispatched wave-7 (chat session, assault round 4); stalled pod released + kicked 2026-09-29; generating on fresh allocation"
+      ]
     },
     {
       "id": "T037",

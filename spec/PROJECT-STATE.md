@@ -4,17 +4,18 @@
 |---|---|
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
-| Program phase | wave-3/4 recovery complete (T005-T011, T026, T029 reconstructed) |
-| Current authorized Work Order | none (awaiting wave-5 dispatch) |
-| Active workers | 0 |
-| In-flight | none |
+| Program phase | wave-8 dispatch (T013 RL bridge, T016 organization compiler; T036 in flight from wave-7) |
+| Current authorized Work Order | T013, T016 (T036 dispatched wave-7, in flight) |
+| Active workers | 3 |
+| In-flight | T036 (provider-sdk, generating), T013 (rl-bridge), T016 (organization-compiler) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
 | Default branch | main |
 
 ## Current implementation truth
-Merged (all CI-verified, Tech Lead verified in isolated worktrees, 430/430 tests on main):
+Merged at main 644163a (14/50: T001-T012, T026, T029; recovery PR #5; vitest 1560 passed / 0 failed / 1 skipped; pnpm verify green).
+Earlier waves (CI-verified at the time, superseded counts):
 - T001 c0e4e47 — repository foundation, CI, test harness, package boundaries, program state
 - T002 4b6bd25 — canonical trading domain contracts (domain-core, 133 tests)
 - T003 866a4ac — agent body/substrate/possession contracts (agent-body, 172 tests)
@@ -58,3 +59,5 @@ A Work Order becomes complete only after implementation, verification, evidence,
 | D-004 | 2026-09-27 | Cross-lane type-sharing pattern ratified: contract packages stay zero-dependency; shared shapes use structural mirrors + interop trip-wire tests. A shared kernel package may be proposed later if mirrors proliferate. |
 | D-005 | 2026-09-27 | Wave 3 = T005/T006/T007 (T008 also ready but deferred to wave 4 to hold the 3-worker limit; T005 unblocks the T008/T009/T011 chains). |
 | D-006 | 2026-09-27 | Operator governance update (main 171ad39..366bda3) ratified: spec/CAPABILITY-DISCOVERY.md adopted; L16a + R49/R50 added; WORK-ITEMS T003 title extended with 'substrate capability registry contracts' and program/graph.json title synced. T003 merged WITHOUT the registry contracts — tracked open gap on the packages/agent-body/ + contracts/agent/ surface. Absorption: the registry contracts join T016's scope and write surface when T016 is dispatched (operator traceability maps R49-R50 to T016); T016's packet will cite spec/CAPABILITY-DISCOVERY.md verbatim. No earlier work order is blocked by the gap. |
+
+| D-007 | 2026-09-29 | Wave-8 dispatch ratified: T013 (RL interface/trainer bridge; base = this commit) and T016 (organization compiler/team search; base = this commit). Per D-006, T016's write surface is EXTENDED to absorb the substrate capability registry gap: additive files only — `contracts/agent/capability-registry.md` (new doc), `packages/agent-body/src/capability-registry.ts` + `capability-registry.test.ts` (new modules; existing T003 modules untouched), plus one additive row in `contracts/agent/README.md`'s document map. T016's packet cites spec/CAPABILITY-DISCOVERY.md verbatim. T036 remains in flight on its own base (39db424 + wave-6 prelude); the Lead reconciles placeholders at merge. Registry consumption by the compiler is via structural mirrors (D-003/D-004), never imports. |
