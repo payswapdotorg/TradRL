@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/verification",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Verification contracts: evidence-chain verification (lineage hashes present and recomputable, availability quartets monotone, no future leakage) with boolean+reason verdicts, and the release gate composing an evaluation-suite result into an id-referenced release recommendation (spec/EVALUATION-PROTOCOL.md, ARCHITECTURE-LOCK L4/L9/L10).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
