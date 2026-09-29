@@ -391,12 +391,14 @@
         "packages/trading-strategy/",
         "services/strategy/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T018-portfolio-strategy",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-010 wave-11 dispatch; deps merged at ed29233 (18/50)"
+        "delivery https://tmpfiles.org/w8AmwSt7TP0k/t018-delivery.tar.gz sha 6eae740f9f74abfd6b4d6eb4007f1231951469370ad5b3dbc64222ab67724f73",
+        "worker HEAD d230c0fce952d13041f2228b83158abbf9520e9b; gate typecheck PASS | test 2338/2339 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 2435 passed/0 failed/1 skipped (+136), program valid, governance pass"
       ]
     },
     {

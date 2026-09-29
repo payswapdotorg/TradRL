@@ -48,6 +48,8 @@ importers:
 
   packages/time-engine: {}
 
+  packages/trading-strategy: {}
+
   packages/verification: {}
 
   services/agent-runtime: {}
@@ -61,6 +63,8 @@ importers:
   services/learning: {}
 
   services/organization-compiler: {}
+
+  services/strategy: {}
 
 packages:
 

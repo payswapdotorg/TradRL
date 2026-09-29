@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/strategy",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference strategy service implementing @tradrl/trading-strategy's contract: the declared equal-weight + drift-band reference strategist over a scripted crypto universe, driven by market-protocol observation mirrors, gated by a control-domain ConstraintSet mirror, emitting intents/refusals + a chain-verified portfolio-state transition log + an append-only backtest record, with a resumable run-state serialization (serialize -> parse -> resume) and the golden determinism fixtures (Work Order T018).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/trading-strategy",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Trading-strategy contracts: the StrategySpec (versioned deterministic policy declaration), the PortfolioState with its pure exact-decimal transition and chain-verified log, the StrategyIntent + typed IntentRefusal (constraint primacy; intents never authority — L8), the deterministic compileStrategyRun, and the append-only BacktestRecord trail with evaluation-lane attainment evidence bindings (spec/ARCHITECTURE.md Strategy/Portfolio/Risk; ARCHITECTURE-LOCK L4/L7/L8/L9/L11/L12).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
