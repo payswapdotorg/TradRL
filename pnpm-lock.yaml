@@ -36,6 +36,8 @@ importers:
 
   packages/provider-sdk: {}
 
+  packages/rl-protocol: {}
+
   packages/time-engine: {}
 
   packages/verification: {}
@@ -47,6 +49,8 @@ importers:
   services/environment-runner: {}
 
   services/knowledge-firewall: {}
+
+  services/learning: {}
 
 packages:
 

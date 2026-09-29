@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/rl-protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "RL interface/trainer bridge contracts: the LEARNING-LOOP method taxonomy, explicit versioned RewardModels attached post-hoc to recorded trajectories (L7 — rewards are data, never the sole criterion), the deterministic five-operation EpisodeDriver over environment-protocol step mirrors (L4/L8), the TrainingRunProtocol with the full L9 lineage block (ReplayRunRecord mirror), the append-only trial emission into the experiments TrialRecord mirror (L11), and the injected Environment/Policy ports (Work Order T013).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

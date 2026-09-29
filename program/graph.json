@@ -277,12 +277,15 @@
         "packages/rl-protocol/",
         "services/learning/rl/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T013-rl-bridge",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD-after-merge",
       "evidence": [
-        "authorized D-007 wave-8 dispatch; deps T009,T010,T011,T012 all merged at 644163a"
+        "delivery https://tmpfiles.org/wiAkwK0g8INh/t013-delivery.tar.gz sha 56672303de77bb639996b3a92840f88e5dd7000bd1f2ba3f6fb1cbb049484583",
+        "worker HEAD 466ba8fe9b596b145a7a8738d3c3ad39e5f423b0; gate typecheck PASS | test 1649/1650 | program PASS | governance PASS",
+        "integration on main-line: typecheck 0, vitest 1782 passed/0 failed/1 skipped (+89: 65 rl-protocol + 24 services/learning), program valid, governance pass",
+        "stall-recovery lineage: original turn wedged 35 min at 0 blocks; kick relay turn delivered end-to-end"
       ]
     },
     {

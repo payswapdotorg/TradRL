@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/learning",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference learning service: the deterministic T013 trainer over the episode driver (scripted policy port, post-hoc reward models, full lineage binding, append-only trial log, replayable run-state serialization with chain verification) plus the thin ReplayWorldService structural adapter that binds the replay world's run record into experiment lineage (Work Order T013).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
