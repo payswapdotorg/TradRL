@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/body-forge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference body forge implementing the learning loop's closing half: (parent BodyVersion mirror + SkillDelta set + gap records + evidence + seed) -> a deterministic ForgedCandidate (a full BodyVersion-shaped mirror with parent lineage + delta manifest), the substrate-compatibility gate, the certification path (candidate + verdict refs -> certified or rejected with structured reasons), and the append-only attempt log with retained rejections (Work Order T017; spec/LEARNING-LOOP.md \"skill extraction -> Body Version -> compatibility -> shadow\").",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

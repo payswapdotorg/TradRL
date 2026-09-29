@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/skills",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Skill-extraction contracts: the evidence-backed SkillRecord (provenance mirrors into trajectory/experiments/evaluation, L16a measured-evidence discipline), the composable SkillDelta patch vocabulary against agent-body BodyVersion mirror shapes (capability additions/refinements/removals with declared breaking changes, knowledge/tool policy and procedure amendments), the deterministic ExtractionProtocol with its declared versioned ranking function, and the append-only CertificationRecord (spec/LEARNING-LOOP.md back half: failure analysis -> skill extraction -> Body Version -> compatibility -> shadow).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

@@ -54,6 +54,8 @@ importers:
 
   packages/rl-protocol: {}
 
+  packages/skills: {}
+
   packages/time-engine: {}
 
   packages/trading-strategy: {}
@@ -61,6 +63,8 @@ importers:
   packages/verification: {}
 
   services/agent-runtime: {}
+
+  services/body-forge: {}
 
   services/control-plane: {}
 

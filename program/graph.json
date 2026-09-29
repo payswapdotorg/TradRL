@@ -373,12 +373,14 @@
         "packages/skills/",
         "services/body-forge/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T017-skills-body-forge",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-013 wave-14 dispatch; deps merged at 3decb72 (22/50)"
+        "delivery https://tmpfiles.org/wfAtwlXg29sU/t017-delivery.tar.gz sha f3318ae70022d632f2eb4e27fc8434613a72c858002f122972aa94a0be30300f",
+        "worker HEAD c746400b1419156fd807d07d39ab12b84b3244e6; gate typecheck PASS | test 3089/3090 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 3215 passed/0 failed/1 skipped (+188), program valid, governance pass"
       ]
     },
     {
