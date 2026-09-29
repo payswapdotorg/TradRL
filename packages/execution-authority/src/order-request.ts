@@ -38,7 +38,7 @@ import { deepFreeze, isRecord, isTimestampMs, type JsonValue, type TimestampMs }
 import { canonicalJson, fnv1a32Hex } from './primitives';
 import { credentialValueViolations } from './credentials';
 import type { ApproveDecisionRecord, KillSwitchStandingFact, OrderIntentRecord } from './decision-mirror';
-import { isApproveDecisionRecord, isKillSwitchStandingFact, isOrderIntentRecord } from './decision-mirror';
+import { approveDecisionIdMatchesContent, isApproveDecisionRecord, isKillSwitchStandingFact, isOrderIntentRecord } from './decision-mirror';
 import type { AdapterDescriptorRef, AuthorityScopeRef, ChannelRef, CredentialRef, GatewayOrderRequestId, VenueId } from './ids';
 import { isAdapterDescriptorRef, isAuthorityScopeRef, isChannelRef, isCredentialRef, isVenueId, mintGatewayOrderRequestId } from './ids';
 import { type ExecutionAuthorityResult, fail, ok } from './errors';
@@ -198,6 +198,16 @@ export function gatewayOrderRequest(input: GatewayOrderRequestInput): ExecutionA
     );
   }
   const decision = input.decision;
+
+  // 2b. THE FORGERY LAW — the decision's id must match its content (the
+  // T019 content-addressing law, mirrored): a FORGED id is not authority.
+  if (!approveDecisionIdMatchesContent(decision)) {
+    return fail(
+      'decision_not_approved',
+      "the order-request decision's id does not match its content (the content-addressed derivation fails) — a forged decision ref is not authority (L8)",
+      'decision.decisionId',
+    );
+  }
 
   // 3. The routed order form guard (fail-closed).
   if (!isOrderIntentRecord(input.order)) {

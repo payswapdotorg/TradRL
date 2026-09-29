@@ -11,6 +11,7 @@
 
 import { deepFreeze } from './primitives';
 import { mintAuthorityGrant, type AuthorityGrantRecord } from './grant';
+import { mintApproveDecisionId } from './decision-mirror';
 import { type ExecutionAuthorityResult } from './errors';
 
 /** The fixture clock base (explicit literals — no ambient clock). */
@@ -84,9 +85,8 @@ export function fixtureGrant(overrides: {
 
 /** A valid fixture APPROVE decision (the T019 output-record mirror), overridable per test. */
 export function fixtureApproveDecision(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  const base = {
+  const content = {
     kind: 'approve',
-    decisionId: 'xd:t040fx01',
     intentRef: 'si:t040fx0001',
     policy: { policyId: 'xpol:t040fx01', version: 1 },
     checkOrder: [
@@ -119,7 +119,11 @@ export function fixtureApproveDecision(overrides: Record<string, unknown> = {}):
     },
     asOf: T0,
   };
-  return deepFreeze({ ...base, ...overrides });
+  // The id is DERIVED from the content (the T019 content-addressing law) —
+  // an override that changes content without changing the id yields a
+  // (deliberately) forged fixture.
+  const derived = { ...content, decisionId: mintApproveDecisionId(content as never) };
+  return deepFreeze({ ...derived, ...overrides });
 }
 
 /** A valid fixture routed order form (the T019/T039 OrderIntent mirror), overridable per test. */

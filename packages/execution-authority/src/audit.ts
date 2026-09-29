@@ -111,11 +111,11 @@ export function isAuditVisibleState(v: unknown): v is AuditVisibleState {
   return true;
 }
 
-/** The risk-checks summary (the T020 evaluation's identity + the state counts). */
+/** The risk-checks summary (the T020 evaluation's identity + the state counts; the id is null when the risk stage never ran — pre-risk refusals). */
 export interface AuditRiskChecks {
-  /** The limit evaluation's identity ('rls:'-prefixed). */
-  readonly evaluationId: string;
-  /** The risk policy version that evaluated. */
+  /** The limit evaluation's identity ('rls:'-prefixed), or null when the risk stage never ran. */
+  readonly evaluationId: string | null;
+  /** The risk policy version that evaluated (or would have). */
   readonly riskPolicy: { readonly policyId: string; readonly version: number };
   readonly within: number;
   readonly breaching: number;
@@ -125,7 +125,7 @@ export interface AuditRiskChecks {
 /** Guard: `AuditRiskChecks`. */
 export function isAuditRiskChecks(v: unknown): v is AuditRiskChecks {
   if (!isRecord(v)) return false;
-  if (!isNonEmptyString(v.evaluationId)) return false;
+  if (v.evaluationId !== null && !isNonEmptyString(v.evaluationId)) return false;
   const riskPolicy = v.riskPolicy;
   if (!isRecord(riskPolicy) || !isNonEmptyString(riskPolicy.policyId) || !isPositiveSafeInteger(riskPolicy.version)) return false;
   for (const count of [v.within, v.breaching, v.blocked]) {

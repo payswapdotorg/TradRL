@@ -11,6 +11,7 @@ import {
   gatewayOrderRequest,
   isGatewayOrderRequest,
   isKillSwitchStandingFact,
+  mintApproveDecisionId,
   type GatewayOrderRequest,
   type GatewayOrderRequestInput,
 } from './index';
@@ -62,6 +63,18 @@ describe('the translation contract (GatewayOrderRequest)', () => {
     const result = gatewayOrderRequest({ ...wellFormedInput(), decision: refusalDecision });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors[0]?.code).toBe('decision_not_approved');
+  });
+
+  it('THE FORGERY LAW: a valid-shaped but content-mismatched decision id is decision_not_approved (a forged ref is not authority)', () => {
+    const forged = { ...fixtureApproveDecision(), decisionId: 'xd:forged000' };
+    const result = gatewayOrderRequest({ ...wellFormedInput(), decision: forged });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors[0]?.code).toBe('decision_not_approved');
+    // And a decision whose content was edited WITHOUT re-deriving the id:
+    const edited = { ...fixtureApproveDecision(), asOf: T0 + 999 };
+    const editedResult = gatewayOrderRequest({ ...wellFormedInput(), decision: edited });
+    expect(editedResult.ok).toBe(false);
+    if (!editedResult.ok) expect(editedResult.errors[0]?.code).toBe('decision_not_approved');
   });
 
   it('THE EXISTENTIAL LAW: garbage / malformed / absent decisions are decision_not_approved', () => {
@@ -123,11 +136,14 @@ describe('the translation contract (GatewayOrderRequest)', () => {
     if (!result.ok) expect(result.errors[0]?.code).toBe('request_incoherent');
   });
 
-  it('the COHERENCE laws: the decision\'s lineage must name the routed venue', () => {
-    const mismatchedDecision = {
-      ...fixtureApproveDecision(),
+  it('the COHERENCE laws: the decision\'s lineage must name the routed venue (with a re-derived id — content stays addressed)', () => {
+    const mismatchedContent = {
+      ...(fixtureApproveDecision() as Record<string, unknown>),
       lineage: { ...(fixtureApproveDecision().lineage as Record<string, unknown>), venues: ['OMS-EMS'] },
     };
+    const { decisionId, ...rest } = mismatchedContent as unknown as { decisionId: string } & Record<string, unknown>;
+    void decisionId;
+    const mismatchedDecision = { ...rest, decisionId: mintApproveDecisionId(rest as never) };
     const result = gatewayOrderRequest({ ...wellFormedInput(), decision: mismatchedDecision });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors[0]?.code).toBe('request_incoherent');

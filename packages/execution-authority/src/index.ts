@@ -183,6 +183,8 @@ export {
   isPreTradeCheckKind,
   isCheckResultRecord,
   isApproveDecisionRecord,
+  approveDecisionIdMatchesContent,
+  mintApproveDecisionId,
   isRefusalDecisionRecord,
   isExecutionDecisionRecord,
   KILL_SWITCH_STANDING_STATES,

@@ -31,7 +31,7 @@
 // typed refusal at the gateway level (see services/execution-gateway);
 // this module owns the vocabulary and the extraction helper.
 
-import { isMemberOf, isNonEmptyString, isPositiveSafeInteger, isRecord } from './primitives';
+import { canonicalJson, fnv1a32Hex, isMemberOf, isNonEmptyString, isPositiveSafeInteger, isRecord } from './primitives';
 import { isDecisionId, isExecutionPolicyId, isPolicyVersionRefMirror } from './ids';
 
 // ---------------------------------------------------------------------------
@@ -359,6 +359,52 @@ export function isRefusalDecisionRecord(value: unknown): value is RefusalDecisio
 /** Guard: `ExecutionDecisionRecord`. */
 export function isExecutionDecisionRecord(value: unknown): value is ExecutionDecisionRecord {
   return isApproveDecisionRecord(value) || isRefusalDecisionRecord(value);
+}
+
+// ---------------------------------------------------------------------------
+// The decision-id content-addressing verifier (the T019 minting law, mirrored)
+// ---------------------------------------------------------------------------
+
+/**
+ * Verify an APPROVE decision's content-addressed id: re-derive
+ * `xd:` + fnv1a32Hex(canonical(content)) from the record's own fields
+ * and compare. A FORGED id (a valid-shaped 'xd:' string that does not
+ * match the content) fails — the translation contract's
+ * defense-in-depth against forged decision refs (the REAL gate mints
+ * ids; anything else is not authority). The derivation mirrors T019's
+ * `decisionContentTree` exactly (canonical JSON sorts keys, so only
+ * the tree's SHAPE matters); src/interop.test.ts proves REAL gate
+ * decisions verify — drift breaks loudly.
+ */
+/** Derive the content-addressed id of an approve decision's content (the T019 minting law, mirrored — the fixture/tests' minter). */
+export function mintApproveDecisionId(content: Omit<ApproveDecisionRecord, 'decisionId'>): string {
+  const tree = {
+    kind: 'approve' as const,
+    intentRef: content.intentRef,
+    policy: { policyId: content.policy.policyId, version: content.policy.version },
+    checkOrder: [...content.checkOrder],
+    checks: content.checks.map((check) => ({ dimension: check.dimension, ordinal: check.ordinal, outcome: check.outcome })),
+    failure: null,
+    lineage: {
+      intentRef: content.lineage.intentRef,
+      strategy: { specId: content.lineage.strategy.specId, version: content.lineage.strategy.version },
+      goal: { goalId: content.lineage.goal.goalId, version: content.lineage.goal.version },
+      policy: { policyId: content.lineage.policy.policyId, version: content.lineage.policy.version },
+      venues: [...content.lineage.venues],
+      seed: content.lineage.seed,
+      tenant: content.lineage.tenant,
+      project: content.lineage.project,
+    },
+    asOf: content.asOf,
+  };
+  return `xd:${fnv1a32Hex(canonicalJson(tree as never))}`;
+}
+
+/** Verify an APPROVE decision's content-addressed id (see the module header). */
+export function approveDecisionIdMatchesContent(decision: ApproveDecisionRecord): boolean {
+  const { decisionId, ...content } = decision;
+  void decisionId;
+  return mintApproveDecisionId(content) === decision.decisionId;
 }
 
 // ---------------------------------------------------------------------------
