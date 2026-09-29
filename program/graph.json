@@ -604,12 +604,14 @@
         "services/market-world/generative/",
         "research/market-generation/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T028-generative-population",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-015 wave-16 dispatch; deps merged at 27df91d (25/50 \u2014 halfway)"
+        "delivery https://tmpfiles.org/wTA1wwjsrfNe/t028-delivery.tar.gz sha 4f497e36f1921976403f520b841e23174c0591569a0187acd757b705934d586c",
+        "worker HEAD 5bdd22f6f9b983d7feba30fff38180c21ea976b6; gate typecheck PASS | test 3396/3397 | program PASS | governance PASS",
+        "integration on post-T021 main: typecheck 0, vitest 3567/0/1 (+106), program valid, governance pass; index.ts 85 additive re-export lines verified"
       ]
     },
     {

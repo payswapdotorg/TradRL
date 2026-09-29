@@ -28,6 +28,12 @@
  * lives at src/reactive/ and is re-exported below — the second Market World
  * mode (L5), where the recorded stream flows in as exogenous events while
  * declared participants trade against a real matching engine.
+ *
+ * ADDITIVE (T028): the counterfactual/generative world lives at
+ * src/generative/ and is re-exported below — the THIRD Market World mode
+ * (L5), where there is no recorded stream at all: entire market
+ * populations are generated from declared seeded stochastic processes
+ * (stress/exploration instruments, never historical truth).
  */
 
 // The pure event-source contract
@@ -144,6 +150,85 @@ export {
   fixtureDriverScript as reactiveFixtureDriverScript,
   reactivePackageInfo,
 } from './reactive/index';
+
+// ---------------------------------------------------------------------------
+// The counterfactual/generative world (T028) — additive re-exports of
+// src/generative/. The historical replay lane (src/replay/, T009), the
+// exchange lane (src/exchange/, T010) and the reactive lane (src/reactive/,
+// T027) above are UNTOUCHED; this block only ADDS the generative lane's
+// public surface.
+// ---------------------------------------------------------------------------
+
+export type {
+  GenerativeErrorCode,
+  GenerativeError,
+  GenerativeResult,
+  InterleavingPolicy as GenerativeInterleavingPolicy,
+  PhysicsRefs as GenerativePhysicsRefs,
+  GenerativeWorldConfig,
+  PhysicsLineage as GenerativePhysicsLineage,
+  SyntheticProvenance,
+  GeneratedEventRecord,
+  GenerativeFillRecord,
+  GenerativeObservation,
+  ActionReceipt as GenerativeActionReceipt,
+  GenerativeRunRecord,
+  GenerativeRunState,
+  GenerativeWorldInputs,
+  GenerativeEpisodeView,
+  GenerativeSubmission,
+  GenerativeEpisodeFinish,
+  GenerativeWorldService,
+  EngineDriver as GenerativeEngineDriver,
+  ProcessKind,
+  ProcessDeclaration,
+  ProcessRuntimeState,
+  ProcessLineage,
+  ProcessEmission,
+  PopulationSpec,
+  CohortDeclaration,
+  CandidateDeclaration,
+  InitialBook,
+  TrainerEnvironmentPort as GenerativeTrainerEnvironmentPort,
+} from './generative/index';
+export {
+  validateGenerativeWorldConfig,
+  canonicalConfigJson as generativeCanonicalConfigJson,
+  configHash as generativeConfigHash,
+  policyRequiresSettled as generativePolicyRequiresSettled,
+  isEngineDriver as isGenerativeEngineDriver,
+  physicsHash as generativePhysicsHash,
+  validateExchangePhysics as validateGenerativeExchangePhysics,
+  engineStateHash as generativeEngineStateHash,
+  validateProcessDeclaration,
+  processHash,
+  armProcess,
+  processStateHash,
+  validatePopulationSpec,
+  cohortInstances,
+  SYNTHETIC_PROVENANCE_DECLARATION,
+  requireGeneratedEvent,
+  requireGenerativeFill,
+  admitObservation as admitGenerativeObservation,
+  admitObservations as admitGenerativeObservations,
+  requireGenerativeRunRecord,
+  serializeGenerativeRunState,
+  deserializeGenerativeRunState,
+  createGenerativeWorldService,
+  resumeGenerativeWorldService,
+  asTrainerEnvironment as asGenerativeTrainerEnvironment,
+  isTrainerEnvironmentPort as isGenerativeTrainerEnvironmentPort,
+  runGenerativeFixture,
+  resumeGenerativeFixture,
+  fixtureWorldConfig as generativeFixtureWorldConfig,
+  fixtureSpec as generativeFixtureSpec,
+  fixturePhysics as generativeFixturePhysics,
+  fixtureProcesses,
+  fixturePopulation,
+  fixtureDriverScript as generativeFixtureDriverScript,
+  GENERATIVE_FIDELITY_DECLARATION,
+  generativePackageInfo,
+} from './generative/index';
 
 /** Package identity and ownership (Work Order T009). */
 export const packageInfo = {
