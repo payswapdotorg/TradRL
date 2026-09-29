@@ -323,11 +323,13 @@
         "services/learning/curriculum/",
         "services/learning/populations/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T015-curriculum-populations",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-011 wave-12 dispatch; deps T011,T012,T013,T014 all merged (T014 at 97c5ad7)"
+      ]
     },
     {
       "id": "T016",
