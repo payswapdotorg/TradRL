@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/execution-authority",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Execution-authority contracts (Work Order T040): the versioned content-addressed AuthorityGrantRecord (who may do what — principal, order kinds, venues, rate budgets, opaque credential bindings, explicit validity window, revocation log), the Default-Deny EntitlementRegistry with typed EntitlementRefusal predicates (unknown venue, unknown grant, missing entitlement — nothing routes by default), the credential-opacity trip-wire run over EVERY emitted record (a credential VALUE anywhere is the typed credential_value_present error — SECURITY.md's boundary enforced in code), the RoutingTable (venue/instrument -> opaque adapter/channel refs over the T039 descriptors), the GatewayOrderRequest translation contract (an order request without a valid APPROVED decision is INEXPRESSIBLE at the guard level), and the chain-verified GatewayAuditRecord trail carrying SECURITY.md's audit contents (who/what, BodyVersion, substrate, policy, visible state, risk checks, order, execution, outcome).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
