@@ -4,10 +4,10 @@
 |---|---|
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
-| Program phase | wave-8 dispatch (T013 RL bridge, T016 organization compiler; T036 in flight from wave-7) |
-| Current authorized Work Order | T024, T030, T040 |
+| Program phase | wave-22/23 execution (T024 merged 32/50; T025/T030/T040 in flight) |
+| Current authorized Work Order | T025, T030, T040 |
 | Active workers | 3 |
-| In-flight | T024 (Trading Director), T030 (shadow trading, gate running), T040 (execution gateway, generating) |
+| In-flight | T025 (execution body), T030 (shadow trading), T040 (execution gateway) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
@@ -74,3 +74,4 @@ A Work Order becomes complete only after implementation, verification, evidence,
 | D-018 | 2026-09-29 | Wave-19 dispatch ratified: T023 (fundamental/cross-market research bodies — TWO body packages this one WO) from base = this commit; the serial constraint behind T022 is satisfied (both edit services/research/src/index.ts additively — T022's lines merged first). Session: 14 -> 29 (fifteen merges; suite 3939/3940). |
 | D-019 | 2026-09-29 | Wave-20 dispatch ratified: T040 (execution gateway/policy enforcement — the L8 last mile completion; deps T019+T020+T039 all merged) from base = this commit. Session: 14 -> 30 (sixteen merges; suite 4188/4189). T025 (execution body) + T031 queued. |
 | D-020 | 2026-09-29 | Wave-21 dispatch ratified: T024 (Trading Director body — the decision hub consuming all four research bodies; deps T003+T016+T017+T018+T021+T022+T023 ALL merged) from base = this commit. Session: 14 -> 31 (seventeen merges; suite 4584/4585). T025/T031 queued. |
+| D-021 | 2026-09-29 | Wave-22 T024 merged (32/50): trading-director body; base 8c378f1, worker head e38784a, squash 0d9c3f4 via PR #6 (CI green; Lead worktree verify green). graph.json depends-field defect fixed (49 null-dep items backfilled from WORK-ITEMS). RATIFICATION FLAG (worker): sibling bodies compareDecimal zero-branch inversion (0 vs 0.02 → +1) — T024 mirror corrected locally; sibling packages untouched (Lead decision pending). Wave-23: T025 dispatched @ 41a6242 (bodies/execution). Incident record: stall_recovery DEAD-TURN heuristic false-killed two live tabs (19:18 UTC); turns survived server-side (T024 completed + T030 kept checkpointing); outage-hold set — no automated tab kills while workers run; kicks remain poison (wedged T024 chat), zombie-workspace purge is the queue-blockage cure. |
