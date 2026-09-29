@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/observability_service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The observability collector (Work Order T043): createObservabilityCollector over INJECTED instant sources (the scriptedInstants pattern — no ambient clock) and INJECTED consumer ports (TelemetrySink — no network/real I/O); the TelemetryLog — append-only, created per tenant/project scope (the startGatewayAuditTrail law), chain-verified with contiguous sequences, FNV-1a chainHead folds from the identity-skeleton seed and content-addressed 'tel:' ids (T040's audit.ts discipline, mirrored law-for-law; tamper/truncate/reorder/duplicate fail with the typed audit_rewrite; no removal or update API); replayTelemetryLog (the determinism proof — the re-append fold reproduces the log byte-identically); and queryTelemetry — the L4 asOf discipline (recordedAt <= asOf, INCLUSIVE at the exact boundary; cross-scope queries are typed tenant errors, both directions). The contract package @tradrl/observability is consumed via relative source imports (the services/execution-gateway precedent — no lockfile-touching workspace edge).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
