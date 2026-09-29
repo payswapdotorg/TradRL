@@ -54,6 +54,8 @@ importers:
 
   packages/provider-sdk: {}
 
+  packages/risk: {}
+
   packages/rl-protocol: {}
 
   packages/skills: {}
@@ -81,6 +83,8 @@ importers:
   services/organization-compiler: {}
 
   services/research: {}
+
+  services/risk: {}
 
   services/strategy: {}
 

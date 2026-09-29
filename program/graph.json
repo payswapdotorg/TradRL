@@ -440,12 +440,15 @@
         "packages/risk/",
         "services/risk/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T020-risk-engine",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-014 wave-15 dispatch; deps T007,T019 all merged (T019 at 653043b)"
+        "delivery https://tmpfiles.org/w1AYwmaoXYsp/t020-delivery.tar.gz sha 88521d0c9851be38f98e6051897fad0f2064089f1ed88955252450e233cb2aa0",
+        "worker HEAD 1afb69211dbbfbc2ea7204af755aefe29079e00e; gate pnpm verify EXIT 0 \u2014 3191 passed/1 skipped (+164)",
+        "integration: typecheck 0, vitest 3731 passed/0 failed/1 skipped (+164), program valid, governance pass",
+        "recovery note: the 413-block turn wedged at a platform Bash-tool freeze (worker's echo probes documented it); kick #3 turn finished services/risk + repaired 13 pre-existing library test errors; golden numbers verified against engine output (digest ee066390)"
       ]
     },
     {

@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/risk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Risk contracts: the versioned RiskPolicy declaration (position/notional/order-size caps per instrument class, concentration, drawdown and leverage limits — exact-decimal bounds, structured breach semantics, L7 opacity), compiled FROM control-domain ConstraintSet mirrors (constraint -> limit records), the ExposureComputation (per-instrument and aggregate exposure, gross/net, concentration, leverage, drawdown — exact decimals, lineage-carrying), the total LimitEvaluation (every declared limit kind -> within | breaching | blocked with structured reasons, kill-switch honored), the L7-compliant RiskMeasureRecord (risk-adjusted figures as opaque refs), the append-only chain-verified RiskAuditTrail and the L11 policy-evolution trail (superseded versions retained) (ARCHITECTURE-LOCK L7/L8/L9/L11/L12).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

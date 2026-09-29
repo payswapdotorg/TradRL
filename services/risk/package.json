@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/risk-engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference risk engine implementing @tradrl/risk's contract: compiles a RiskPolicy from a constraint-set mirror, drives ExposureComputation over scripted portfolio + market states + fill sequences (exchange-sim fill mirrors), evaluates every limit kind with structured breach reasons, honors the kill-switch mirror (thrown = all blocked), emits the chain-verified audit trail, retains superseded policy versions (L11) and resumes from serialized run state (chain-verified). Fixtures trip every limit kind's breach path, the kill-switch interop and policy evolution (Work Order T020).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
