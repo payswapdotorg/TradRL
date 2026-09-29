@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/compute",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Distributed episode generation contracts: the injected ComputePort (submit/collect/cancel — the substrate is a port, never a process), the EpisodeJob unit of work with the full L9/L12 lineage block, the declared deterministic SeedPartitioning ((job, worker count, slot) -> subrange; total coverage, zero overlap), typed JobResult/JobFailure outcome records with digest deduplication (same key, different digest = divergence), the canonical-order AggregateProtocol folding results into the experiments trial-log mirror plus the L11 failure manifest, and the deterministic serializable SchedulerContract (Work Order T014).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

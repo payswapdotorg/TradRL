@@ -300,12 +300,14 @@
         "services/learning/compute/",
         "packages/compute/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T014-episode-compute",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-009 wave-10 dispatch; deps T005,T011,T013 all merged (T013 at 844cd37)"
+        "delivery https://tmpfiles.org/wlAQw7ykQoky/t014-delivery.tar.gz sha bb4a1a20b23aed4a53014afad882d9769397b6e7adf9212df5ff3dfb8050b7e0 (backup URL wPAGwFyMRHYu, same sha \u2014 original turn + kick relay both posted)",
+        "worker HEAD d3119124a4e750486db8341ecbc941c5654b33fa; gate typecheck PASS | test 1879/1880 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 2299 passed/0 failed/1 skipped (+97), program valid, governance pass; services/learning/src/index.ts edit verified purely additive"
       ]
     },
     {

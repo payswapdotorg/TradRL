@@ -26,6 +26,8 @@ importers:
 
   packages/agent-os: {}
 
+  packages/compute: {}
+
   packages/control-domain: {}
 
   packages/domain-core: {}

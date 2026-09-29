@@ -66,6 +66,43 @@ export {
   replayServiceAsEnvironmentPort,
 } from './rl/replay-adapter';
 
+// --- T014 (distributed episode generation) — additive re-exports ------------
+// The reference compute layer beside src/rl: the fake episode generator
+// (drives the REAL T013 trainer per episode — distributed generation
+// DRIVES the T013 contracts, it does not replace them), the scripted fake
+// ComputePort (deterministic duplication/failure/reordering injection),
+// the resumable reference runner (start/pump/complete/serialize/resume/
+// aggregate with chain verification), and the golden fixtures.
+export type { EpisodeGenerator } from './compute/generator';
+export {
+  createDriverEpisodeGenerator,
+  scriptComputeSpec,
+  scriptEpisodeDigest,
+  SCRIPT_COMPUTE_BASE_TIME,
+  SCRIPT_COMPUTE_POLICY_REF,
+  SCRIPT_COMPUTE_TICKS,
+} from './compute/generator';
+
+export type { ScriptedComputePortOptions, ScriptedFailurePlan, ScriptedPortReply } from './compute/port';
+export { createScriptedComputePort } from './compute/port';
+
+export type { ComputeRunState, ComputeRunStatus, CompletionOptions } from './compute/runner';
+export {
+  aggregateComputeRun,
+  COMPUTE_RUN_STATE_SCHEMA,
+  computeRunComplete,
+  isComputeRunState,
+  pendingSubmissions,
+  pumpComputeCollect,
+  resumeComputeRunState,
+  runComputeToCompletion,
+  serializeComputeRunState,
+  startComputeRun,
+  verifyComputeRunChain,
+} from './compute/runner';
+
+export { GOLDEN_EXPERIMENT, GOLDEN_PROJECT, GOLDEN_TENANT, goldenAggregate, goldenComputeRunId, goldenJobLiterals, goldenJobSet, goldenRun, goldenSchedule, goldenWorkers } from './compute/fixtures';
+
 /** Package identity and ownership (Work Order T013). */
 export const packageInfo = {
   name: '@tradrl/learning',
