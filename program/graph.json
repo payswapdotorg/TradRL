@@ -461,11 +461,13 @@
         "bodies/sentiment-researcher/",
         "services/research/sentiment/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T021-sentiment-body",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-015 wave-16 dispatch; deps merged at 27df91d (25/50 \u2014 halfway)"
+      ]
     },
     {
       "id": "T022",
@@ -600,11 +602,13 @@
         "services/market-world/generative/",
         "research/market-generation/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T028-generative-population",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-015 wave-16 dispatch; deps merged at 27df91d (25/50 \u2014 halfway)"
+      ]
     },
     {
       "id": "T029",

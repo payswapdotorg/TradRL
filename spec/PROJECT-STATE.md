@@ -5,9 +5,9 @@
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
 | Program phase | wave-8 dispatch (T013 RL bridge, T016 organization compiler; T036 in flight from wave-7) |
-| Current authorized Work Order | T020 |
+| Current authorized Work Order | T020, T021, T028 |
 | Active workers | 3 |
-| In-flight | T020 (risk engine, attaching) |
+| In-flight | T020 (risk engine), T021 (sentiment research body), T028 (generative population) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
@@ -68,3 +68,4 @@ A Work Order becomes complete only after implementation, verification, evidence,
 | D-012 | 2026-09-29 | Wave-13 dispatch ratified: T019 (execution policy/simulation) from base = this commit; deps T010+T013+T018 merged (T018 at 0d4735e — six merges this session: T036, T013, T016, T037, T014, T018 = 20/50). T018 lane retired (batch 1.31MB archived, chat deleted). T019 consumes T018's StrategyIntent as its input record (mirrors per D-004). |
 | D-013 | 2026-09-29 | Wave-14 dispatch ratified: T017 (skill extraction/body forge; deps T003+T011+T012+T015+T016) + T027 (reactive market simulation; deps T009+T010+T013+T015+T026) from base = this commit. T028 (generative population) DEFERRED to wave-15: T027 and T028 share the services/market-world package (src/index.ts additive re-exports) — shared-file lanes run SERIALLY per the Tech Lead's write-face discipline. Session merge tally at authorization: 14 -> 22 (T036, T013, T016, T037, T014, T018, T015, T038); suite 2901/2902. |
 | D-014 | 2026-09-29 | Wave-15 dispatch ratified: T020 (risk policy engine; deps T007+T019 merged at 653043b — ninth merge this session, 23/50) from base = this commit. T020 refines the risk dimension T019's ExecutionPolicy exposes as limit-check records. T039 (brokers/OMS adapters) queued next (deps T037+T038 merged; waits for a lane). T028 remains serially deferred behind T027. |
+| D-015 | 2026-09-29 | Wave-16 dispatch ratified at the HALFWAY mark (25/50, session 14 -> 25, eleven merges): T028 (generative/counterfactual population — serial constraint satisfied, T027 merged) + T021 (sentiment/event research body — research-body chain opener; deps T003+T008+T012+T017 merged). T022/T023 queue behind T021 (research bodies share bodies/ + services/research/ parent dirs but disjoint subdirs — pairwise disjoint, may parallel next wave). T039 waits for a lane. |
