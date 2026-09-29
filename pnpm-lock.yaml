@@ -44,6 +44,8 @@ importers:
 
   packages/exchange-sim: {}
 
+  packages/execution-policy: {}
+
   packages/market-protocol: {}
 
   packages/organization: {}
@@ -63,6 +65,8 @@ importers:
   services/control-plane: {}
 
   services/environment-runner: {}
+
+  services/execution-sim: {}
 
   services/knowledge-firewall: {}
 

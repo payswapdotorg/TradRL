@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/execution-policy",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Execution-policy contracts: the versioned ExecutionPolicy hard-gate declaration with machine-enumerable check totality (identity, authorization, limits, venue permissions, rate limits, kill switch, opaque credential refs, audit — ARCHITECTURE.md Execution: \"Consequential actions require hard controls outside prompts\"), the pure first-failure-wins CheckMachine over StrategyIntent mirrors, the append-only chain-verified KillSwitch, the AuditRecord trail, and the honest ExecutionSimulationSpec with simulated-fill fidelity lineage (ARCHITECTURE-LOCK L5/L6/L8/L9/L12).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

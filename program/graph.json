@@ -417,12 +417,14 @@
         "packages/execution-policy/",
         "services/execution-sim/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T019-execution-policy",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-012 wave-13 dispatch; deps T010,T013,T018 all merged (T018 at 0d4735e)"
+        "delivery https://tmpfiles.org/wAAwwkXT7Ty6/t019-delivery.tar.gz sha bcb32787b86fb76691621496392702e11d3f2da7be77046b8427e48c4ad83f02",
+        "worker HEAD 4806a69602f76d784fd28a5b0c8ddefe927512c2; gate typecheck PASS | test 2561/2562 (+126) | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 3027 passed/0 failed/1 skipped (+126), program valid, governance pass"
       ]
     },
     {
