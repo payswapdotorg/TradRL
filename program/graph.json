@@ -438,11 +438,13 @@
         "packages/risk/",
         "services/risk/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T020-risk-engine",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-014 wave-15 dispatch; deps T007,T019 all merged (T019 at 653043b)"
+      ]
     },
     {
       "id": "T021",
