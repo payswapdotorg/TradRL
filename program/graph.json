@@ -387,11 +387,13 @@
         "packages/trading-strategy/",
         "services/strategy/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T018-portfolio-strategy",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-010 wave-11 dispatch; deps merged at ed29233 (18/50)"
+      ]
     },
     {
       "id": "T019",
@@ -764,11 +766,13 @@
         "adapters/news/",
         "adapters/alternative-data/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T038-data-adapters",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-010 wave-11 dispatch; deps merged at ed29233 (18/50)"
+      ]
     },
     {
       "id": "T039",
