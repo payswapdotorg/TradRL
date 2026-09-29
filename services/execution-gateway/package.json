@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/execution_gateway",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The execution gateway — the single chokepoint where decisions become orders (Work Order T040, the L8 last-mile completion): submitDecision runs the declared pipeline (credential-opacity scan -> intent validation -> shadow-mode separation -> the REAL T019 gate (runExecutionGate) -> decision-replay guard -> the REAL T020 risk engine (evaluateLimits + executionLimitRefusals) -> authority grant (valid, unrevoked, inside [issuedAt, expiresAt)) -> entitlement (venue permitted, credential bound) -> rate budget (the off-by-one-exact window threading) -> the standing kill switch -> ONLY THEN the translation to the routed order form over the injected adapter session ports -> the chain-verified audit record). ANY refusal at ANY stage is a typed GatewayRefusal record + an audit record + ZERO adapter calls. The adapters arrive as injected session ports (structural mirrors of the T039 session/routing shapes — the interop tests drive the REAL brokers and OMS/EMS sessions through the gateway). The contract packages @tradrl/execution-policy and @tradrl/risk are consumed via relative source imports (the services/execution-sim precedent — no lockfile-touching workspace edge).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
