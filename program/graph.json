@@ -640,9 +640,14 @@
       ],
       "status": "merged",
       "branch": "work/T024-trading-director",
-      "pr": null,
+      "pr": "PR #6 (CI green; Lead worktree gates)",
       "merged_sha": "0d9c3f4512ebaad62ddc2b848b6a44b3583b12a9",
-      "evidence": "CI-verified via PR #6 squash-merge; Lead worktree gates green (4803+1 skipped, 324 files, +219 tests); delivery chat c7c1fcda (report harvested; one ratification flag: sibling compareDecimal zero-branch divergence \u2014 noted for D-022)",
+      "evidence": [
+        "worker HEAD e38784a0950adf7551a5f7ce013c82d4324dc8af (2 checkpoints: 675ae87, e38784a); delivery chat c7c1fcda report harvested",
+        "Lead worktree gates: typecheck PASS | vitest 4803 passed + 1 skipped (324 files, +219) | program PASS | governance PASS; surface compliant (bodies/trading-director only, 14 files ~10.2K lines)",
+        "CI run ci@e38784a success; PR #6 squash-merged as 0d9c3f4",
+        "ratification flag: sibling bodies compareDecimal zero-branch inversion (0 vs 0.02 returns 1) \u2014 T024 mirror fixed locally; sibling fix queued for Lead decision"
+      ],
       "depends": [
         "T003",
         "T016",
