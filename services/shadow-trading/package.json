@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/shadow_trading",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shadow-trading service (Work Order T030): paper-executes a decision stream against the reactive world with the FULL control stack (T019 execution gate, then T020 risk evaluation) enforced BEFORE any submission, records shadow outcomes (T033's input) with physics lineage preserved, consumes the rolling Time Machine through one cursor per shadow consumer per its README contract, and maintains an exact-decimal shadow book with append-only chain-verified logs and a resumable run state.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
