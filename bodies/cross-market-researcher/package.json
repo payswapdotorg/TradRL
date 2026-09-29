@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/body-cross-market-researcher",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-market researcher body contracts (Work Order T023): CROSS_MARKET_RESEARCHER_BODY — the read-only cross-market/cross-venue research body spec (agent-body BodyVersion structural mirror + research declaration: mission, capabilities, knowledge/tool policy, procedures, delegation, L8 authority scope, evaluation requirements, opaque substrate compatibility); the DECLARED-METHOD discipline (versioned relationship-analysis/confidence/report-composition method records — cross-venue/cross-asset-class relationship measures carry declared-method + window records, never naked statistics; the relation taxonomy is a CLOSED union); the observation intake contracts (T038 emitter shape mirrors — quotes, trades and reported fundamentals with availability quartets and T008 provenance blocks, the L4 as-of gate, multi-source intake); and the evidence-complete outputs — CrossMarketRelationship (co-movement, lead-lag, spread-divergence records over instrument/venue/asset-class pairs) and CrossMarketResearchReport — every one carrying observation citations from BOTH legs, method version, body version ref, tenant/project (L9/L12), with derived digest identities and byte-deterministic canonical serialization.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

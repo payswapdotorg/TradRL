@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/body-fundamental-researcher",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fundamental researcher body contracts (Work Order T023): FUNDAMENTAL_RESEARCHER_BODY — the read-only fundamental research body spec (agent-body BodyVersion structural mirror + research declaration: mission, capabilities, knowledge/tool policy, procedures, delegation, L8 authority scope, evaluation requirements, opaque substrate compatibility); the DECLARED-METHOD discipline (versioned assessment/corporate-action-digestion/confidence/report-composition method records — a fundamental assessment without a declared method is a typed error; assessment kinds, corporate-action kinds and implication stances are CLOSED unions declared in the method records, never free text); the observation intake contracts (T038 equities/alternative-data emitter shape mirrors — reported fundamental data, economic-series macro releases, corporate-action escape-hatch records — with availability quartets and T008 provenance blocks, the L4 as-of gate); and the evidence-complete outputs — FundamentalAssessment, CorporateActionDigest, FundamentalResearchReport — every one carrying observation citations, method version, body version ref, tenant/project (L9/L12), with derived digest identities and byte-deterministic canonical serialization.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

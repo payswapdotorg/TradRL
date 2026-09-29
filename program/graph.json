@@ -510,12 +510,14 @@
         "bodies/fundamental-researcher/",
         "bodies/cross-market-researcher/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T023-fundamental-crossmarket",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-018 wave-19 dispatch; deps T003,T008,T012,T017 all merged; serial sibling T022 merged at 551583b (29/50 \u2014 fifteenth merge this session)"
+        "delivery https://tmpfiles.org/wLA8wBYa2aSt/t023-delivery.tar.gz sha 39fdec793c7eb6b662a71e4596726af90349437b0e61bea24a0c4b1019c43324",
+        "worker HEAD df8ebce3dc0407b8a2ebcb8ede4b5216626b29fb; gate typecheck PASS | test 4335/4336 (+396) | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 4584/0/1 (+396), program valid, governance pass"
       ]
     },
     {

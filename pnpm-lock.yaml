@@ -32,6 +32,10 @@ importers:
 
   adapters/oms-ems: {}
 
+  bodies/cross-market-researcher: {}
+
+  bodies/fundamental-researcher: {}
+
   bodies/regime-researcher: {}
 
   bodies/sentiment-researcher: {}
