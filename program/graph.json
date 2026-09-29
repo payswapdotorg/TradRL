@@ -670,11 +670,16 @@
       "write_surface": [
         "bodies/execution/"
       ],
-      "status": "blocked",
-      "branch": null,
-      "pr": null,
-      "merged_sha": null,
-      "evidence": [],
+      "status": "merged",
+      "branch": "work/T025-execution-body",
+      "pr": "PR #8 (CI green; Lead merge-result gates)",
+      "merged_sha": "916d65fff6323dd24db0911a78891494761973d8",
+      "evidence": [
+        "worker HEAD 7a87fbc (2 checkpoints: fe5525f package+tests, 7a87fbc evidence-placement laws); delivery chat 9b8e83e2 (marker server-confirmed; 1.49MB batches; 55-min run)",
+        "Lead merge-result gates (branch+main): typecheck PASS | vitest 5177 passed + 1 skipped (+140) | program PASS | governance PASS; surface compliant (bodies/execution only)",
+        "CI ci@7a87fbc success; PR #8 squash-merged as 916d65f",
+        "verify-as-merge-result lesson: branch base 41a6242 was mid-update (graph-before-state); merge-result verification is the correct Lead gate"
+      ],
       "depends": [
         "T003",
         "T017",
