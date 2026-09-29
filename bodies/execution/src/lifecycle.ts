@@ -1149,6 +1149,18 @@ export function appendOrderLifecycleEvent(
     };
   }
 
+  // THE EVIDENCE-PLACEMENT LAWS (evidence rides ONLY on its own event family).
+  if (!isFillEvent(event as OrderLifecycleEvent) && fills.length > 0) {
+    errors.push(invalidField('fills', `the event ${JSON.stringify(event)} is not a fill event — fill evidence rides only on fill events`));
+  }
+  if (!isCancelEvent(event as OrderLifecycleEvent) && draft.cancelConfirmationRef !== undefined && draft.cancelConfirmationRef !== null) {
+    errors.push(invalidField('cancelConfirmationRef', `the event ${JSON.stringify(event)} is not a cancel event — confirmation refs ride only on cancel events`));
+  }
+  if (!isStuckEvent(event as OrderLifecycleEvent) && draft.escalationRef !== undefined && draft.escalationRef !== null) {
+    errors.push(invalidField('escalationRef', `the event ${JSON.stringify(event)} is not a stuck-entering event — escalation refs ride only on stuck entries`));
+  }
+  if (errors.length > 0) return { ok: false, errors };
+
   // THE CLOCK LAWS — monotone within the log, distinct from the strategic instant.
   const last = validLog.records[validLog.records.length - 1] as OrderLifecycleRecord;
   const orderClock = draft.orderClock as TimestampMs;
