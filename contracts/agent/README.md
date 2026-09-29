@@ -43,6 +43,7 @@ Agent Instance = Agent Body Version
 | [compatibility.md](compatibility.md) | `SubstrateCompatibilityManifest`, `CompatibilityVerdict`, tested-substrate records, substitution testing |
 | [possession.md](possession.md) | `Possession`, the possession law, the possession state machine |
 | [agent-instance.md](agent-instance.md) | `AgentInstance`, authority scopes, management chains, lifecycle |
+| [capability-registry.md](capability-registry.md) | `CapabilityRecord`, `RegistrySnapshot`, the measured-evidence law (L16a — labels never establish suitability), query-by-capability |
 
 ## Cross-lane boundary rules (frozen)
 

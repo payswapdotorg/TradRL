@@ -37,6 +37,13 @@ export * from './instance';
 export * from './lineage';
 export * from './examples';
 
+// T016 absorption (program decisions D-006/D-007): the substrate capability
+// registry — an ADDITIVE, SELF-CONTAINED module (it imports nothing, not
+// even from sibling modules of this package; the additivity trip-wire is a
+// source scan in capability-registry.test.ts). Only this re-export line was
+// added to this file — no other line changed.
+export * from './capability-registry';
+
 /** Package identity and ownership (governance surface). */
 export const packageInfo = {
   name: '@tradrl/agent-body',

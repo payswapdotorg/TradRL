@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/organization",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Organization contracts: the seven-axis OrganizationBlueprint, the deterministic organization search (compileOrganization — goal/constraint mirrors in, append-only candidate log out, L11), the explicit multi-objective model with declared aggregation, capability-gap and discovery-loop records, and the search-integrity bridge onto the evaluation lane's input shape (spec/ARCHITECTURE.md Organization compiler; spec/LEARNING-LOOP.md Organization learning).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

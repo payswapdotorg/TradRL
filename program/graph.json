@@ -342,13 +342,15 @@
         "packages/agent-body/src/capability-registry.ts",
         "packages/agent-body/src/capability-registry.test.ts"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T016-organization-compiler",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-007 wave-8 dispatch; deps T006,T007,T012 all merged at 644163a",
-        "absorbs substrate capability registry contracts per D-006/D-007 (R49/R50, spec/CAPABILITY-DISCOVERY.md)"
+        "delivery https://tmpfiles.org/w9A4wFyMLc6v/t016-delivery.tar.gz sha b95f8d3da335c4d79bf43dec5e21b0215c141eaeb89ef92f91192b12858e9fd1",
+        "worker HEAD f8046691738c39c915505aba4d595b57bb2de54a; gate typecheck PASS | test 1768/1769 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 1990 passed/0 failed/1 skipped (+207), program valid, governance pass",
+        "registry absorption verified: capability-registry.ts self-contained (no sibling imports), README+index.ts edits purely additive"
       ]
     },
     {

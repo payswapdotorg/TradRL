@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/organization-compiler",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference organization compiler implementing @tradrl/organization's CompilerContract: seeded deterministic enumeration over the substrate capability registry snapshot, declared measurement derivations, weighted-sum-v1 objective aggregation, retain-top-k-with-full-history, the reproducibility serializer and the golden determinism fixtures (spec/ARCHITECTURE.md Organization compiler).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
