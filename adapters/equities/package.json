@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/adapter-equities",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Licensed equities/index market-data adapter: declared source descriptor, documented public record schemas (index levels, constituent weights, corporate actions), mapping tables with the declared source-time policy (index dissemination time, trading-calendar semantics), licensed-data entitlement at full strictness, declarative rate quotas and the normalized session over an injected transport port (spec/ADAPTERS.md, Work Order T038). Zero runtime dependencies; provider semantics live here and nowhere else (L2/L13).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

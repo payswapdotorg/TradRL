@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/adapter-alternative-data",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Alternative-data adapter: declared source descriptor, documented public observation schemas (sentiment scores, on-chain metrics, economic and satellite series), mapping tables with the declared window->release availability policy (an observation covering window W becomes available at its declared release instant, never mid-window), vendor-licensed entitlement tiers, declarative rate quotas and the normalized session over an injected transport port (spec/ADAPTERS.md, Work Order T038). Zero runtime dependencies; provider semantics live here and nowhere else (L2/L13).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

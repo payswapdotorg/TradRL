@@ -776,12 +776,14 @@
         "adapters/news/",
         "adapters/alternative-data/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T038-data-adapters",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-010 wave-11 dispatch; deps merged at ed29233 (18/50)"
+        "delivery https://tmpfiles.org/wGALw2tTQn68/t038-delivery.tar.gz sha 5ab43afbd15bbfb2f17da6ce65be3fc3224ac2b05318ae5cc6212a7942ee68cb",
+        "worker HEAD 6c543056843b6ee658d0b7b58d900bea389b9347; gate typecheck PASS | test 2531/2532 | program PASS | governance PASS",
+        "integration on main-line (base ff2a9d2 with T015): typecheck 0, vitest 2901 passed/0 failed/1 skipped (+329), program valid, governance pass"
       ]
     },
     {
