@@ -162,10 +162,10 @@ export function unrealizedPnlOf(book: ShadowBook, marks: readonly BookMark[]): s
   for (const position of book.positions) {
     const mark = table.get(`${position.venue}|${position.instrument}`);
     const notional = mark === undefined ? '0' : decMultiply(mark, position.quantity);
-    const pnl = decSubtract(notional, position.costBasis);
-    total = signedAdd(total, pnl);
+    const pnl = signedSubtract(notional, position.costBasis);
+    total = signedAddLocal(total, pnl);
   }
-  return decNormalize(total);
+  return signedNormalize(total);
 }
 
 /** The gross notional at the given marks (Σ mark x quantity — the exposure's gross). */
@@ -292,7 +292,7 @@ export function applyWorldFill(book: ShadowBook, fill: unknown, role: AccountRol
     const remaining = decSubtract(heldQuantity, quantity);
     const releasedBasis = decIsZero(heldQuantity) ? '0' : decDivide(decMultiply(held.costBasis, quantity), heldQuantity, SHADOW_BASIS_PRECISION);
     const basisAfter = decSubtract(held.costBasis, releasedBasis);
-    realizedDelta = decSubtract(decSubtract(notional, releasedBasis), fee);
+    realizedDelta = signedSubtract(signedSubtract(notional, releasedBasis), fee);
     positions = book.positions
       .map((position) =>
         `${position.venue}|${position.instrument}` === key
@@ -305,7 +305,7 @@ export function applyWorldFill(book: ShadowBook, fill: unknown, role: AccountRol
   const nextBook: ShadowBook = deepFreeze({
     positions,
     cash,
-    realizedPnl: signedAdd(book.realizedPnl, realizedDelta),
+    realizedPnl: signedAddLocal(book.realizedPnl, realizedDelta),
     asOf: engineFill.quartet.available_time,
   });
   return ok({ book: nextBook, realizedDelta });
@@ -369,7 +369,7 @@ function canonicalBookJson(value: unknown): string {
 // ---------------------------------------------------------------------------
 
 /** Exact signed addition over the optional-leading-minus grammar. */
-function signedAdd(a: string, b: string): string {
+function signedAddLocal(a: string, b: string): string {
   const aNeg = a.startsWith('-');
   const bNeg = b.startsWith('-');
   const aAbs = aNeg ? a.slice(1) : a;
@@ -379,6 +379,18 @@ function signedAdd(a: string, b: string): string {
   if (order === 0) return '0';
   if (order > 0) return (aNeg ? '-' : '') + decSubtract(aAbs, bAbs);
   return (bNeg ? '-' : '') + decSubtract(bAbs, aAbs);
+}
+
+/** Exact signed subtraction (a - b over the signed grammar). */
+function signedSubtract(a: string, b: string): string {
+  return signedAddLocal(a, b.startsWith('-') ? b.slice(1) : `-${b}`);
+}
+
+/** Normalize a SIGNED decimal (the contract's normalize is unsigned-only). */
+function signedNormalize(v: string): string {
+  if (v === '0' || v === '') return '0';
+  if (v.startsWith('-')) return `-${decNormalize(v.slice(1))}`;
+  return decNormalize(v);
 }
 
 /** `true` iff the canonical decimal is exactly zero. */

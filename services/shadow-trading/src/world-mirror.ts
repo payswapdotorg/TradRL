@@ -23,8 +23,12 @@
  * defense-in-depth trip wire.
  */
 
-import { isNonEmptyString, isRecord, isTimestampMs, type JsonValue, type TimestampMs } from './primitives';
+import { isNonEmptyString, isRecord, isTimestampMs, type TimestampMs } from './primitives';
 import { type ShadowResult, fail, ok } from './errors';
+
+// (The JsonValue type is no longer needed at the port surface — the finish
+// product is opaque to this lane; kept for the module's exported vocabulary.)
+export type { JsonValue } from './primitives';
 
 // ---------------------------------------------------------------------------
 // The port result shapes (structural seams the REAL services satisfy)
@@ -328,10 +332,10 @@ export interface ReactiveWorldPort {
   submit(episode: string, action: unknown): WorldPortResult<ReactiveWorldSubmissionMirror>;
   /** The full fill log (each record with its physics lineage). */
   fills(episode: string): WorldPortResult<readonly ReactiveFillMirror[]>;
-  /** Finish the episode (terminal state). */
-  finish(episode: string, reason: unknown): WorldPortResult<JsonValue>;
+  /** Finish the episode (terminal state; the finish product is opaque to this lane). */
+  finish(episode: string, reason: unknown): WorldPortResult<unknown>;
   /** The L9 run record of a finished episode (digest + lineage). */
-  runRecord(episode: string): WorldPortResult<{ readonly digest: string; readonly [key: string]: JsonValue }>;
+  runRecord(episode: string): WorldPortResult<{ readonly digest: string }>;
 }
 
 /**

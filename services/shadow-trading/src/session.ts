@@ -792,7 +792,7 @@ export function processShadowDecision(session: unknown, intent: unknown): Shadow
   if (!worldFills.ok) {
     return fail('world_error', `the world failed to report its fill log: ${worldFills.errors.map((error) => `${error.code}: ${error.message}`).join('; ')}`);
   }
-  const knownFillIds = new Set(state.fills.map((fill) => fill.fillId));
+  const knownFillIds = new Set(state.fills.map((fill) => fill.worldFill.fill_id));
   const engineOrders = new Map<string, ShadowSubmissionRecord>();
   for (const prior of state.submissions) engineOrders.set(prior.engineOrderId, prior);
   engineOrders.set(submission.engineOrderId, submission);
