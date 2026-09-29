@@ -650,11 +650,13 @@
       "write_surface": [
         "services/shadow-trading/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T030-shadow-trading",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-017 wave-18 dispatch; deps T019,T020,T027,T029 all merged (T020 at 0f87e28 \u2014 fourteenth merge this session)"
+      ]
     },
     {
       "id": "T031",
