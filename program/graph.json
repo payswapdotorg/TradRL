@@ -323,12 +323,14 @@
         "services/learning/curriculum/",
         "services/learning/populations/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T015-curriculum-populations",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-011 wave-12 dispatch; deps T011,T012,T013,T014 all merged (T014 at 97c5ad7)"
+        "delivery https://tmpfiles.org/wjAMwItl2PFs/t015-delivery.tar.gz sha 185ab7ae90e037cb034a29e3a910d92e9b72857cb004e6162c2540fc946fbeea",
+        "worker HEAD a1e20aa3872c505fc005b4395882cbdd957ac89e; gate typecheck PASS | test 2436/2437 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 2572 passed/0 failed/1 skipped (+137), program valid, governance pass"
       ]
     },
     {
