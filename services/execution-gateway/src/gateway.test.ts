@@ -203,20 +203,21 @@ describe('the Default-Deny law (nothing routes by default)', () => {
     expect(brokerPort.calls().length).toBe(0);
   });
 
-  it('MISSING RATE BUDGET: a grant variant with no budget for the venue is the typed fail-closed refusal', () => {
+  it('MISSING RATE BUDGET: a grant with NO budget for the venue is the typed fail-closed refusal (no budget = no permission to submit at any rate)', () => {
     const registry = referenceRegistry(
       [
-        { scopeRef: 'grant:gateway-execute-limit@1', orderKinds: ['limit'], rateBudgets: [{ venue: VENUE_BROKER, windowMs: 60_000, maxOrders: 0 }] },
+        { scopeRef: 'grant:gateway-execute-limit@1', orderKinds: ['limit'], rateBudgets: [] },
         { scopeRef: 'grant:gateway-execute-market@1', orderKinds: ['market'], rateBudgets: [] },
       ],
     );
     const { gateway, brokerPort } = referenceGateway({ registry });
     const outcome = submissionOf(gateway.submitDecision(compliantIntent()));
-    // maxOrders 0: the FIRST submission already exceeds (projected 1 > 0).
     expect(outcome.kind).toBe('refused');
     if (outcome.kind === 'refused') {
       expect(outcome.refusal.stage).toBe('rate_budget');
-      expect((outcome.refusal as { budget: number }).budget).toBe(0);
+      const refusal = outcome.refusal as { budget: number; windowMs: number | null };
+      expect(refusal.budget).toBe(0);
+      expect(refusal.windowMs).toBeNull();
     }
     expect(brokerPort.calls().length).toBe(0);
   });
