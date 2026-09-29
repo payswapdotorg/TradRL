@@ -743,12 +743,14 @@
         "adapters/binance/",
         "adapters/coinbase/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T037-exchange-adapters",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-008 wave-9 dispatch; dep T036 merged at 367bcad"
+        "delivery https://tmpfiles.org/wYAtwE7r8ArF/t037-delivery.tar.gz sha fc7b06b4581903ca6d8a1ec1582cb8a3377b8ee15ceb96c9ae980825c347a57f",
+        "worker HEAD 3252771d3323f0367d9fb6d3c2a6d92c6f40f977; gate typecheck PASS | test 1905/1906 | program PASS | governance PASS (per-package configs on its branch)",
+        "integration: Lead root-glob reconciliation (tsconfig+vitest now cover adapters/*), typecheck 0, vitest 2202 passed/0 failed/1 skipped (+212), program valid, governance pass"
       ]
     },
     {

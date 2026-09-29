@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/adapter-coinbase",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Coinbase Exchange spot market-data adapter: declared source descriptor, documented raw payload schemas (level2_batch snapshots, ticker, matches), mapping tables with source-time policy over Coinbase's ISO timestamps, public-data entitlement, declarative rate quotas and the normalized session over an injected transport port (spec/ADAPTERS.md, Work Order T037). Zero runtime dependencies; provider semantics live here and nowhere else (L2/L13).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

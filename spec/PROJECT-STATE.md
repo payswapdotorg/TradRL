@@ -5,16 +5,16 @@
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
 | Program phase | wave-8 dispatch (T013 RL bridge, T016 organization compiler; T036 in flight from wave-7) |
-| Current authorized Work Order | T014, T037 |
+| Current authorized Work Order | T014 |
 | Active workers | 3 |
-| In-flight | T014 (episode compute, attaching), T037 (exchange adapters, delivered pending merge) |
+| In-flight | T014 (episode compute, attaching) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
 | Default branch | main |
 
 ## Current implementation truth
-Merged at main (17/50: T001-T012, T026, T029, T036, T013, T016; T016 = organization + organization-compiler + capability-registry absorption, +207 tests, 1990/1991 green at merge).
+Merged at main (18/50: T001-T012, T026, T029, T036, T013, T016, T037; T037 = binance+coinbase adapters, +212 tests, 2202/2203 green at merge; root globs now cover adapters/*).
 Earlier waves (CI-verified at the time, superseded counts):
 - T001 c0e4e47 — repository foundation, CI, test harness, package boundaries, program state
 - T002 4b6bd25 — canonical trading domain contracts (domain-core, 133 tests)

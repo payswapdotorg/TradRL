@@ -18,6 +18,10 @@ importers:
         specifier: ^3.0.5
         version: 3.2.7(@types/node@22.20.4)
 
+  adapters/binance: {}
+
+  adapters/coinbase: {}
+
   packages/agent-body: {}
 
   packages/agent-os: {}
