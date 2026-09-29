@@ -1416,7 +1416,7 @@ export function crossMarketInputRefOf(report: CrossMarketReportMirror): Research
     methodId: report.methodId,
     methodVersion: report.methodVersion,
     instruments: crossMarketInstrumentsOf(report),
-    observationCitationCount: citationCountOf([report.relationships.map((relationship) => relationship.evidence)]),
+    observationCitationCount: citationCountOf(report.relationships.map((relationship) => relationship.evidence)),
     inheritedConfidence: crossMarketInheritedConfidenceOf(report),
   });
 }

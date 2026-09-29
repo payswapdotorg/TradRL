@@ -581,6 +581,18 @@ function validateCoverageAndInputs(
     errors.push(invalidType(`${path}coverage`, 'an array of lane coverage entries'));
     return;
   }
+  // THE TYPED ABSENCE-RECORD LAW (checked on every entry, guard-valid or
+  // not — collect-all): a lane accounted absent MUST carry its typed
+  // absence record. Never silence.
+  for (const entry of coverage) {
+    if (isRecord(entry) && entry.status === 'absent' && entry.absence === null) {
+      errors.push({
+        code: 'lane_absence_record_missing',
+        path: `${path}coverage.${isResearchLane(entry.lane) ? entry.lane : 'unknown'}`,
+        message: 'a missing lane produces a typed absence record — never silence',
+      });
+    }
+  }
   const validEntries = coverage.filter(isLaneCoverage);
   const accountedLanes = validEntries.map((entry) => entry.lane);
   for (const lane of RESEARCH_LANES) {

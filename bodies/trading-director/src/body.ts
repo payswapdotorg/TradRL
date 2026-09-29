@@ -826,11 +826,13 @@ export function validateTradingDirectorBody(v: unknown): readonly DirectorError[
   if (!isMethodRegistry(director.methodRegistry)) {
     errors.push(...validateMethodRegistry(director.methodRegistry).map((e) => ({ ...e, path: `director.methodRegistry.${e.path}` })));
   }
-  if (!Array.isArray(director.consumedLanes) || (director.consumedLanes as readonly unknown[]).length !== RESEARCH_LANES.length) {
+  const consumedLanes = Array.isArray(director.consumedLanes) ? (director.consumedLanes as readonly unknown[]) : null;
+  if (consumedLanes === null || consumedLanes.length !== RESEARCH_LANES.length) {
     errors.push(invalidField('director.consumedLanes', 'the decision hub consumes all four research lanes (D-020 — fixed by law)'));
-  } else {
+  }
+  if (consumedLanes !== null) {
     for (const lane of RESEARCH_LANES) {
-      if (!(director.consumedLanes as readonly unknown[]).includes(lane)) {
+      if (!consumedLanes.includes(lane)) {
         errors.push(invalidField('director.consumedLanes', `lane ${JSON.stringify(lane)} must be consumed (D-020)`));
       }
     }
