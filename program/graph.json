@@ -484,11 +484,13 @@
         "bodies/regime-researcher/",
         "services/research/regime/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T022-regime-body",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-016 wave-17 dispatch; deps merged at 2658093 (27/50)"
+      ]
     },
     {
       "id": "T023",
@@ -817,11 +819,13 @@
         "adapters/brokers/",
         "adapters/oms-ems/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T039-broker-adapters",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-016 wave-17 dispatch; deps merged at 2658093 (27/50)"
+      ]
     },
     {
       "id": "T040",
