@@ -1045,12 +1045,15 @@
         "services/execution-gateway/",
         "packages/execution-authority/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T040-execution-gateway",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "PR #7 (CI green; Lead worktree gates)",
+      "merged_sha": "7502cbdd467ea78af5d57b812ed4bdd5bcd975aa",
       "evidence": [
-        "authorized D-019 wave-20 dispatch; deps T019,T020,T039 all merged (T039 at 8326772 \u2014 sixteenth merge this session, 30/50 = 60%)"
+        "worker HEAD 40cf4b18 (3 checkpoints: c77bb02, 5ec5986, 40cf4b1); delivery chat 18e20f26 (marker server-confirmed; 1.39MB batches)",
+        "Lead worktree gates: typecheck PASS | vitest 4737 passed + 1 skipped (+153) | program PASS | governance PASS; surface compliant (services/execution-gateway + packages/execution-authority)",
+        "CI run ci@40cf4b18 success; PR #7 squash-merged as 7502cbd",
+        "L8 last-mile: 13-stage gateway pipeline (gate\u2192risk\u2192authority\u2192entitlement\u2192rate\u2192kill-switch\u2192translate\u2192audit) with REAL T019/T020/T039 integration; execution authority stays outside the model (invariant 6)"
       ],
       "depends": [
         "T019",
