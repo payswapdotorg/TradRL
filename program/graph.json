@@ -300,11 +300,13 @@
         "services/learning/compute/",
         "packages/compute/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T014-episode-compute",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-009 wave-10 dispatch; deps T005,T011,T013 all merged (T013 at 844cd37)"
+      ]
     },
     {
       "id": "T015",
