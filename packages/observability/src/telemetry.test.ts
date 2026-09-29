@@ -35,6 +35,8 @@ import type { ObservedSeamRef } from './index';
 // ---------------------------------------------------------------------------
 
 const T0 = 1_717_459_200_000 as TimestampMs;
+const T1 = (T0 + 1_000) as TimestampMs;
+const T2 = (T0 + 2_000) as TimestampMs;
 const TENANT = 'tenant-telemetry' as TenantId;
 const PROJECT = 'project-telemetry' as ProjectId;
 const ACTOR: TelemetryActor = { kind: 'service', ref: 'execution-gateway' };
@@ -57,7 +59,7 @@ function metricRecord(overrides: Record<string, unknown> = {}): MetricTelemetryR
     unit: 'orders',
     attributes: { stage: 'routing' },
     ...overrides,
-  }) as MetricTelemetryRecord;
+  }) as unknown as MetricTelemetryRecord;
 }
 
 /** A valid trace-span record (overridable per test). */
@@ -70,14 +72,14 @@ function spanRecord(overrides: Record<string, unknown> = {}): TraceSpanTelemetry
     project: PROJECT,
     actor: ACTOR,
     seam: { kind: 'kernel-operation', opId: 'kop-0001', type: 'SPAWN', tenant: TENANT },
-    recordedAt: T0 + 1_000,
+    recordedAt: T1,
     chainHead: '1b2c3d4e',
     name: 'kernel.applyOperation',
     durationMs: 12,
     status: 'ok',
     attributes: {},
     ...overrides,
-  }) as TraceSpanTelemetryRecord;
+  }) as unknown as TraceSpanTelemetryRecord;
 }
 
 /** A valid log record (overridable per test). */
@@ -90,13 +92,13 @@ function logRecord(overrides: Record<string, unknown> = {}): LogTelemetryRecord 
     project: PROJECT,
     actor: { kind: 'agent-instance', ref: 'inst-trading-director' },
     seam: { kind: 'agent-envelope', messageId: 'msg-0001', topic: 'org.research.signals', tenant: TENANT },
-    recordedAt: T0 + 2_000,
+    recordedAt: T2,
     chainHead: '2c3d4e5f',
     level: 'info',
     message: 'regime researcher published a signal',
     attributes: { envelopeSequence: 1 },
     ...overrides,
-  }) as LogTelemetryRecord;
+  }) as unknown as LogTelemetryRecord;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +171,26 @@ describe('telemetry record guards', () => {
   it('rejects non-JSON attributes (NaN, Infinity, undefined functions)', () => {
     expect(isTelemetryRecord(metricRecord({ attributes: { bad: Number.NaN } }))).toBe(false);
     expect(isTelemetryRecord(metricRecord({ attributes: { bad: Number.POSITIVE_INFINITY } }))).toBe(false);
+  });
+
+  it('rejects a cross-scope seam reference (the L12 default-deny: a record may only observe its OWN scope\u2019s seam records)', () => {
+    // A gateway-audit seam of ANOTHER project, observed by this scope's record.
+    const crossProject = metricRecord({ seam: { kind: 'gateway-audit', auditId: 'xga:0f1e2d3c', tenant: TENANT, project: 'project-OTHER' } });
+    expect(isTelemetryRecord(crossProject)).toBe(false);
+    const validation = validateTelemetryRecord(crossProject);
+    expect(validation.ok).toBe(false);
+    if (!validation.ok) {
+      expect(validation.errors[0]?.code).toBe('invalid_field');
+      expect(validation.errors[0]?.path).toBe('telemetryRecord.seam');
+      expect(validation.errors[0]?.message).toContain('cross-scope observation is inexpressible');
+    }
+    // A kernel-operation seam of ANOTHER tenant — same law.
+    const crossTenant = spanRecord({ seam: { kind: 'kernel-operation', opId: 'kop-1', type: 'SPAWN', tenant: 'tenant-OTHER' } });
+    expect(isTelemetryRecord(crossTenant)).toBe(false);
+    // A scope-CONSISTENT seam of another kind is fine.
+    expect(isTelemetryRecord(spanRecord({ seam: { kind: 'kernel-operation', opId: 'kop-1', type: 'SPAWN', tenant: TENANT } }))).toBe(true);
+    // The event-store seam carries no scope fields (venue-scoped identity) — not scope-checked here.
+    expect(isTelemetryRecord(logRecord({ seam: { kind: 'event-store', eventId: 'evt-1', venue: 'BINANCE' } }))).toBe(true);
   });
 });
 
@@ -338,7 +360,7 @@ describe('determinism goldens', () => {
       project: PROJECT,
       actor: ACTOR,
       seam: { kind: 'kernel-operation', opId: 'kop-0001', type: 'SPAWN', tenant: TENANT },
-      recordedAt: T0 + 1_000,
+      recordedAt: T1,
       name: 'kernel.applyOperation',
       durationMs: 12,
       status: 'ok',
@@ -349,7 +371,7 @@ describe('determinism goldens', () => {
       status: 'ok',
       durationMs: 12,
       name: 'kernel.applyOperation',
-      recordedAt: T0 + 1_000,
+      recordedAt: T1,
       seam: { tenant: TENANT, type: 'SPAWN', opId: 'kop-0001', kind: 'kernel-operation' },
       actor: ACTOR,
       project: PROJECT,
@@ -369,7 +391,7 @@ describe('determinism goldens', () => {
       project: PROJECT,
       actor: { kind: 'agent-instance', ref: 'inst-trading-director' },
       seam: { kind: 'agent-envelope', messageId: 'msg-0001', topic: 'org.research.signals', tenant: TENANT },
-      recordedAt: T0 + 2_000,
+      recordedAt: T2,
       level: 'warn',
       message: 'escalation raised: limit utilization at 92%',
       attributes: { chainDepth: 3 },
@@ -378,7 +400,7 @@ describe('determinism goldens', () => {
       attributes: { chainDepth: 3 },
       message: 'escalation raised: limit utilization at 92%',
       level: 'warn',
-      recordedAt: T0 + 2_000,
+      recordedAt: T2,
       seam: { tenant: TENANT, topic: 'org.research.signals', messageId: 'msg-0001', kind: 'agent-envelope' },
       actor: { ref: 'inst-trading-director', kind: 'agent-instance' },
       project: PROJECT,

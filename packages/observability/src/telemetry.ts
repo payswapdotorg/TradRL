@@ -365,6 +365,22 @@ export function validateTelemetryRecord(value: unknown, path = 'telemetryRecord'
     else if (!isJsonObject(value.attributes)) errors.push(invalidField(`${path}.attributes`, 'must be a JSON object'));
   }
 
+  // The seam-scope default-deny law (L12): a telemetry record may only
+  // observe seam records of its OWN scope. The seam kinds that carry
+  // scope fields (agent-envelope/kernel-operation: tenant;
+  // gateway-audit/control-plane-audit: tenant + project) are checked
+  // against the record's scope — observing another scope's record is
+  // inexpressible.
+  if (isObservedSeamRef(value.seam) && isTenantId(value.tenant) && isProjectId(value.project)) {
+    const seam = value.seam;
+    if ((seam.kind === 'agent-envelope' || seam.kind === 'kernel-operation') && seam.tenant !== value.tenant) {
+      errors.push(invalidField(`${path}.seam`, `the observed ${seam.kind} belongs to tenant "${seam.tenant}" but the record's scope is "${value.tenant}" — cross-scope observation is inexpressible (L12)`));
+    }
+    if ((seam.kind === 'gateway-audit' || seam.kind === 'control-plane-audit') && (seam.tenant !== value.tenant || seam.project !== value.project)) {
+      errors.push(invalidField(`${path}.seam`, `the observed ${seam.kind} belongs to scope "${seam.tenant}/${seam.project}" but the record's scope is "${value.tenant}/${value.project}" — cross-scope observation is inexpressible (L12)`));
+    }
+  }
+
   // The opacity trip wire (one typed error per violation path — SECURITY.md's boundary).
   for (const violation of credentialValueViolations(value)) {
     errors.push({

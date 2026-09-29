@@ -194,13 +194,17 @@ describe('appendTelemetryRecord (the only growth path)', () => {
 
   it('rejects a cross-scope append in BOTH directions with the typed tenant_missing error (L12)', () => {
     const ownLog = grownLog();
-    // Direction 1: an other-tenant record into this log.
+    // Direction 1: an other-tenant record into this log. The foreign
+    // record is a COHERENT record of its own scope (its seam reference
+    // observes a gateway-audit of the foreign scope — the seam-scope
+    // default-deny law makes cross-scope seams inexpressible, so the
+    // foreign record must reference its own scope's seam).
     const foreign = unwrap(telemetryRecordAt(unwrap(startTelemetryLog(OTHER_TENANT, PROJECT)), {
       kind: 'metric',
       tenant: OTHER_TENANT,
       project: PROJECT,
       actor: { kind: 'service', ref: 'execution-gateway' },
-      seam: GATEWAY_SEAM,
+      seam: { kind: 'gateway-audit', auditId: 'xga:0f1e2d3c', tenant: OTHER_TENANT, project: PROJECT },
       recordedAt: T0,
       name: 'gateway.submissions',
       value: 1,
