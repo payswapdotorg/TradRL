@@ -5,9 +5,9 @@
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
 | Program phase | wave-8 dispatch (T013 RL bridge, T016 organization compiler; T036 in flight from wave-7) |
-| Current authorized Work Order | T023, T030 |
+| Current authorized Work Order | T023, T030, T040 |
 | Active workers | 3 |
-| In-flight | T023 (fundamental/cross-market research, attaching), T030 (shadow trading, generating) |
+| In-flight | T023 (fundamental/cross-market research), T030 (shadow trading), T040 (execution gateway) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
@@ -72,3 +72,4 @@ A Work Order becomes complete only after implementation, verification, evidence,
 | D-016 | 2026-09-29 | Wave-17 dispatch ratified: T022 (market-regime research body; deps T003+T009+T012+T017) + T039 (brokers/OMS adapters; deps T037+T038) from base = this commit. T023 (fundamental/cross-market) DEFERRED behind T022 — both edit services/research/src/index.ts additively (shared-file serial law). T031 (search-integrity audit) queued. Session tally: 14 -> 27 (thirteen merges; suite 3567/3568; root globs cover bodies/* since T021's merge). |
 | D-017 | 2026-09-29 | Wave-18 dispatch ratified: T030 (shadow trading; deps T019+T020+T027+T029 all merged) from base = this commit. Session tally: 14 -> 28 (fourteen merges; suite 3731/3732). T025 (execution body) + T031 (search integrity) queued behind the next free lane. |
 | D-018 | 2026-09-29 | Wave-19 dispatch ratified: T023 (fundamental/cross-market research bodies — TWO body packages this one WO) from base = this commit; the serial constraint behind T022 is satisfied (both edit services/research/src/index.ts additively — T022's lines merged first). Session: 14 -> 29 (fifteen merges; suite 3939/3940). |
+| D-019 | 2026-09-29 | Wave-20 dispatch ratified: T040 (execution gateway/policy enforcement — the L8 last mile completion; deps T019+T020+T039 all merged) from base = this commit. Session: 14 -> 30 (sixteen merges; suite 4188/4189). T025 (execution body) + T031 queued. |

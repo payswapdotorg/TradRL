@@ -850,11 +850,13 @@
         "services/execution-gateway/",
         "packages/execution-authority/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T040-execution-gateway",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-019 wave-20 dispatch; deps T019,T020,T039 all merged (T039 at 8326772 \u2014 sixteenth merge this session, 30/50 = 60%)"
+      ]
     },
     {
       "id": "T041",
