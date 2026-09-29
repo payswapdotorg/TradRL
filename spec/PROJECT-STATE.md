@@ -5,16 +5,16 @@
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
 | Program phase | wave-8 dispatch (T013 RL bridge, T016 organization compiler; T036 in flight from wave-7) |
-| Current authorized Work Order | T022, T030, T039 |
+| Current authorized Work Order | T030, T039 |
 | Active workers | 3 |
-| In-flight | T022 (regime research body), T030 (shadow trading), T039 (broker/OMS adapters) |
+| In-flight | T030 (shadow trading, generating), T039 (broker/OMS adapters, generating) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
 | Default branch | main |
 
 ## Current implementation truth
-Merged at main (28/50: ...T028, T020; T020 = risk + risk-engine, +164 tests, 3731/3732 green at merge).
+Merged at main (29/50: ...T020, T022; T022 = regime-researcher body + research/regime, +208 tests, 3939/3940 green at merge).
 Earlier waves (CI-verified at the time, superseded counts):
 - T001 c0e4e47 — repository foundation, CI, test harness, package boundaries, program state
 - T002 4b6bd25 — canonical trading domain contracts (domain-core, 133 tests)

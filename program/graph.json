@@ -487,12 +487,14 @@
         "bodies/regime-researcher/",
         "services/research/regime/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T022-regime-body",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-016 wave-17 dispatch; deps merged at 2658093 (27/50)"
+        "delivery https://tmpfiles.org/wRA3wXvyIrW0/t022-delivery.tar.gz sha 772c8c8fd7565c0f622c2e08768243acbead702afcb96c3d4abf9f65a3f92fb2",
+        "worker HEAD 9b6f6b2531947687975b0eb35c41672841917c41; gate typecheck PASS | test 3775/3776 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 3939/0/1 (+208), program valid, governance pass"
       ]
     },
     {

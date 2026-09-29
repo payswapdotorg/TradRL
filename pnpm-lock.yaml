@@ -28,6 +28,8 @@ importers:
 
   adapters/news: {}
 
+  bodies/regime-researcher: {}
+
   bodies/sentiment-researcher: {}
 
   packages/agent-body: {}

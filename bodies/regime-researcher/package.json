@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/body-regime-researcher",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Market-regime researcher body contracts (Work Order T022): REGIME_RESEARCHER_BODY — the read-only market-data research body spec (agent-body BodyVersion structural mirror + research declaration: mission, capabilities, knowledge/tool policy, procedures, delegation, L8 authority scope, evaluation requirements, opaque substrate compatibility); the DECLARED-METHOD discipline (versioned regime-classification/change-detection/confidence/report-composition method records — a regime label without a declared method is a typed error; regime taxonomies are CLOSED discriminated unions declared in the method record, never free text); the observation intake contracts (market-protocol quote/trade/book_snapshot event shape mirrors with availability quartets and T008 provenance blocks, the L4 as-of gate); and the evidence-complete outputs — RegimeClassification, RegimeChange, RegimeResearchReport — every one carrying observation citations, method version, body version ref, tenant/project (L9/L12), with derived digest identities and byte-deterministic canonical serialization.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
