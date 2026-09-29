@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/body-trading-director",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Trading Director body contracts (Work Order T024, the D-020 decision hub): TRADING_DIRECTOR_BODY — the strategic decision-body spec (agent-body BodyVersion structural mirror + director declaration: mission, capabilities, knowledge/tool policy, procedures, delegation, L8 authority scope with L16 strategic/execution separation, evaluation requirements, opaque substrate compatibility); the DECLARED-METHOD synthesis discipline (versioned synthesis method records carrying the declared quorum, stance map, lane weights, tilt/threshold parameters and conflict policy — a decision produced without a declared synthesis-method version is a typed error); the research intake contracts (field-for-field structural mirrors of the four research bodies' report shapes — sentiment ResearchReport, RegimeResearchReport, FundamentalResearchReport, CrossMarketResearchReport — never imported, with the L4 research_from_the_future gate at the inclusive as-of boundary); and the decision records — DirectorDecision and EscalationRecord — with four-input report refs, synthesis-method citation, goal/constraint-set refs (trading-strategy mirrors), tenant/project (L12), seed, coverage accounting over the four lanes (consumed | conflicted | absent — a missing lane is a typed absence record, never silence), typed conflict records with per-body positions, inherited per-input confidence (R45 — never fabricated), a structured portfolio-level directive the strategy lane can bind (target-allocation adjustments or a typed no-change verdict) or a kernel ESCALATE record (quorum unmet / irreconcilable conflict — a record, never an exception), all with derived digest identities and byte-deterministic canonical serialization.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
