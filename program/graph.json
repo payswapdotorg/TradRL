@@ -535,11 +535,13 @@
       "write_surface": [
         "bodies/trading-director/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T024-trading-director",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-020 wave-21 dispatch; deps T003,T016,T017,T018,T021,T022,T023 all merged (T023 at 451072c \u2014 seventeenth merge this session)"
+      ]
     },
     {
       "id": "T025",
