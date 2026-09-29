@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/adapter-oms-ems",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OMS/EMS gateway adapter: declared execution-source descriptor, documented order-state/routing-instruction field-name schemas, L8-approved-decision routing translation, broker execution-report reconciliation with exact decimal arithmetic, order-state mapping with source-time policy, restricted entitlement, declarative rate quotas and the normalized session over an injected transport port (spec/ADAPTERS.md Execution, Work Order T039). Zero runtime dependencies; provider semantics live here and nowhere else (L2/L13).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

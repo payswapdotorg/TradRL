@@ -22,11 +22,15 @@ importers:
 
   adapters/binance: {}
 
+  adapters/brokers: {}
+
   adapters/coinbase: {}
 
   adapters/equities: {}
 
   adapters/news: {}
+
+  adapters/oms-ems: {}
 
   bodies/regime-researcher: {}
 

@@ -828,12 +828,14 @@
         "adapters/brokers/",
         "adapters/oms-ems/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T039-broker-adapters",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-016 wave-17 dispatch; deps merged at 2658093 (27/50)"
+        "delivery https://tmpfiles.org/wCARwWvLEwaq/t039-delivery.tar.gz sha ee3e0cc5eef4b363927e7895db10c788af03901950589d99a8678b8451d610e5",
+        "worker HEAD 8f61a2c225991db90a54f18bedf491bbb86f08c5; gate typecheck PASS | test 3816/3817 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 4188/0/1 (+249), program valid, governance pass; L8 approval-gating proven against the REAL T019 gate fixtures"
       ]
     },
     {
