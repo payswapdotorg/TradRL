@@ -373,11 +373,13 @@
         "packages/skills/",
         "services/body-forge/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T017-skills-body-forge",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-013 wave-14 dispatch; deps merged at 3decb72 (22/50)"
+      ]
     },
     {
       "id": "T018",
@@ -570,11 +572,13 @@
       "write_surface": [
         "services/market-world/reactive/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T027-reactive-market",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-013 wave-14 dispatch; deps merged at 3decb72 (22/50)"
+      ]
     },
     {
       "id": "T028",
