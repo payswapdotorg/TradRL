@@ -578,12 +578,14 @@
       "write_surface": [
         "services/market-world/reactive/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T027-reactive-market",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-013 wave-14 dispatch; deps merged at 3decb72 (22/50)"
+        "delivery https://tmpfiles.org/wgA3wrX3k9S2/t027-delivery.tar.gz sha a292e269677d421e5fd3bbcb25e6e607d69df1da84b784d52415fa2c293880e9",
+        "worker HEAD e4f368da153b6cd559da02ecabfe654545974066; gate typecheck PASS | test 2976/2977 | program PASS | governance PASS",
+        "integration on post-T017 main: typecheck 0, vitest 3290 passed/0 failed/1 skipped (+75), program valid, governance pass"
       ]
     },
     {

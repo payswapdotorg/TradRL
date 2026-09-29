@@ -23,6 +23,11 @@
  *
  * See README.md for how T010 (exchange sim), T026 (knowledge firewall) and
  * T013 (RL bridge) consume this world.
+ *
+ * ADDITIVE (T027): the reactive replay world with endogenous participants
+ * lives at src/reactive/ and is re-exported below — the second Market World
+ * mode (L5), where the recorded stream flows in as exogenous events while
+ * declared participants trade against a real matching engine.
  */
 
 // The pure event-source contract
@@ -69,6 +74,76 @@ export {
 // The service itself
 export type { LoadOutcome, LoadSummary, ReplayWorldService } from './replay/service';
 export { createReplayWorldService, resumeReplayWorldService } from './replay/service';
+
+// ---------------------------------------------------------------------------
+// The reactive replay world (T027) — additive re-exports of src/reactive/.
+// The historical replay lane (src/replay/, T009) and the exchange lane
+// (src/exchange/, T010) above are UNTOUCHED; this block only ADDS the
+// reactive lane's public surface.
+// ---------------------------------------------------------------------------
+
+export type {
+  ReactiveErrorCode,
+  ReactiveError,
+  ReactiveResult,
+  InterleavingPolicy,
+  ParticipantRole,
+  ParticipantDeclaration,
+  StreamSelection,
+  PhysicsRefs,
+  ReactiveWorldConfig,
+  PhysicsLineage,
+  ReactiveFillRecord,
+  ReactiveObservation,
+  ActionReceipt,
+  ReactiveRunRecord,
+  ReactiveRunState,
+  ReactiveWorldInputs,
+  ReactiveEpisodeView,
+  ReactiveSubmission,
+  ReactiveEpisodeFinish,
+  ReactiveWorldService,
+  EngineDriver,
+  RecordedEvent,
+  RecordedEventSource,
+  ScriptedAction,
+  ParticipantActionFeed,
+  TrainerEnvironmentPort,
+} from './reactive/index';
+export {
+  validateReactiveWorldConfig,
+  canonicalConfigJson,
+  configHash as reactiveConfigHash,
+  policyRequiresSettled,
+  isEngineDriver,
+  physicsHash,
+  validateExchangePhysics,
+  engineStateHash,
+  validateRecordedEvent,
+  isRecordedEventSource,
+  batchDigest as reactiveBatchDigest,
+  chainDigest as reactiveChainDigest,
+  createScriptedActionFeed,
+  requireReactiveFill,
+  admitObservation,
+  admitObservations,
+  requireReactiveRunRecord,
+  serializeReactiveRunState,
+  deserializeReactiveRunState,
+  createReactiveWorldService,
+  resumeReactiveWorldService,
+  asTrainerEnvironment,
+  isTrainerEnvironmentPort,
+  runReactiveFixture,
+  resumeReactiveFixture,
+  fixtureWorldConfig as reactiveFixtureWorldConfig,
+  fixtureSpec as reactiveFixtureSpec,
+  fixturePhysics as reactiveFixturePhysics,
+  createFixtureEventSource as createReactiveFixtureEventSource,
+  createFixtureFeeds as createReactiveFixtureFeeds,
+  fixtureDriverScript as reactiveFixtureDriverScript,
+  reactivePackageInfo,
+} from './reactive/index';
 
 /** Package identity and ownership (Work Order T009). */
 export const packageInfo = {
