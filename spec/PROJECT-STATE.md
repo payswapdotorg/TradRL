@@ -5,9 +5,9 @@
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
 | Program phase | wave-8 dispatch (T013 RL bridge, T016 organization compiler; T036 in flight from wave-7) |
-| Current authorized Work Order | T030, T039 |
+| Current authorized Work Order | T023, T030, T039 |
 | Active workers | 3 |
-| In-flight | T030 (shadow trading, generating), T039 (broker/OMS adapters, generating) |
+| In-flight | T023 (fundamental/cross-market research), T030 (shadow trading, generating), T039 (broker/OMS adapters, generating) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
@@ -71,3 +71,4 @@ A Work Order becomes complete only after implementation, verification, evidence,
 | D-015 | 2026-09-29 | Wave-16 dispatch ratified at the HALFWAY mark (25/50, session 14 -> 25, eleven merges): T028 (generative/counterfactual population — serial constraint satisfied, T027 merged) + T021 (sentiment/event research body — research-body chain opener; deps T003+T008+T012+T017 merged). T022/T023 queue behind T021 (research bodies share bodies/ + services/research/ parent dirs but disjoint subdirs — pairwise disjoint, may parallel next wave). T039 waits for a lane. |
 | D-016 | 2026-09-29 | Wave-17 dispatch ratified: T022 (market-regime research body; deps T003+T009+T012+T017) + T039 (brokers/OMS adapters; deps T037+T038) from base = this commit. T023 (fundamental/cross-market) DEFERRED behind T022 — both edit services/research/src/index.ts additively (shared-file serial law). T031 (search-integrity audit) queued. Session tally: 14 -> 27 (thirteen merges; suite 3567/3568; root globs cover bodies/* since T021's merge). |
 | D-017 | 2026-09-29 | Wave-18 dispatch ratified: T030 (shadow trading; deps T019+T020+T027+T029 all merged) from base = this commit. Session tally: 14 -> 28 (fourteen merges; suite 3731/3732). T025 (execution body) + T031 (search integrity) queued behind the next free lane. |
+| D-018 | 2026-09-29 | Wave-19 dispatch ratified: T023 (fundamental/cross-market research bodies — TWO body packages this one WO) from base = this commit; the serial constraint behind T022 is satisfied (both edit services/research/src/index.ts additively — T022's lines merged first). Session: 14 -> 29 (fifteen merges; suite 3939/3940). |
