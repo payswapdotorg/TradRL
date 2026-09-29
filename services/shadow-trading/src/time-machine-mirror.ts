@@ -39,7 +39,7 @@
  * `l4_boundary_violation`, never a silent filter).
  */
 
-import { isNonEmptyString, isRecord, isTimestampMs, type JsonValue, type TimestampMs } from './primitives';
+import { isNonEmptyString, isRecord, isTimestampMs, type TimestampMs } from './primitives';
 import { type ShadowResult, fail, ok } from './errors';
 
 // ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ export type MachinePortResult<T> =
 // The record + audit mirrors (T029's shapes, mirrored)
 // ---------------------------------------------------------------------------
 
-/** One machine record (the knowledge-firewall record + the arrival axis — mirrored). */
+/** One machine record (the knowledge-firewall record + the arrival axis — mirrored; computation/provenance stay OPAQUE). */
 export interface MachineRecordMirror {
   readonly record_id: string;
   readonly tenant: string;
@@ -70,8 +70,10 @@ export interface MachineRecordMirror {
   readonly available_time: TimestampMs;
   readonly ingestion_time: TimestampMs;
   readonly inputs: readonly string[];
-  readonly computation: JsonValue | null;
-  readonly provenance: JsonValue;
+  /** The computation policy — opaque to this lane (never interpreted). */
+  readonly computation: unknown;
+  /** The stored provenance — opaque to this lane (carried, never interpreted). */
+  readonly provenance: unknown;
   readonly arrival_sequence: number;
 }
 
@@ -190,11 +192,9 @@ export function isMachineAsOfViewMirror(v: unknown): v is MachineAsOfViewMirror 
   return true;
 }
 
-/** The cursor-opening options (mirrored: `from: 'start'` replays, `'tip'` goes live). */
+/** The cursor-opening options (mirrored: `from: 'start'` replays, `'tip'` goes live; the selector stays the machine's own concern). */
 export interface MachineCursorOptions {
   readonly from?: 'start' | 'tip';
-  /** The consumer's bound projection selector (firewall filter mirror). */
-  readonly selector?: JsonValue;
 }
 
 // ---------------------------------------------------------------------------
@@ -240,8 +240,8 @@ export interface TimeMachinePort {
   forkCursor(cursorId: string): MachinePortResult<MachineCursorMirror>;
   /** One cursor's live position. */
   getCursor(cursorId: string): MachinePortResult<MachineCursorMirror>;
-  /** The point-in-time query (book warm-up). */
-  asOf(query: { readonly dataset: string; readonly at: TimestampMs; readonly selector?: JsonValue }): MachinePortResult<MachineAsOfViewMirror>;
+  /** The point-in-time query (book warm-up; the dataset + the instant — the firewall's selector stays the machine's own concern). */
+  asOf(query: { readonly dataset: string; readonly at: TimestampMs }): MachinePortResult<MachineAsOfViewMirror>;
 }
 
 /** Guard: a time-machine port (the structural seam). */
