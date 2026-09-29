@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/research",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference research service (Work Order T021): the sentiment/event research pipeline over the @tradrl/body-sentiment-researcher contracts — inject an observation port (news/alternative-data emitter shape mirrors — a scripted fake in tests), run the declared procedures (intake -> L4 gate -> aggregate by declared method -> detect events -> compose readings/digests/reports), publish through the agent-os envelope mirror port, with resumable, chain-verified run state (serialize -> parse -> resume). Deterministic: same (observation set, as-of, body version, seed) -> byte-identical research outputs.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

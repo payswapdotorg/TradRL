@@ -28,6 +28,8 @@ importers:
 
   adapters/news: {}
 
+  bodies/sentiment-researcher: {}
+
   packages/agent-body: {}
 
   packages/agent-os: {}
@@ -77,6 +79,8 @@ importers:
   services/learning: {}
 
   services/organization-compiler: {}
+
+  services/research: {}
 
   services/strategy: {}
 

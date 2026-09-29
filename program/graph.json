@@ -461,12 +461,14 @@
         "bodies/sentiment-researcher/",
         "services/research/sentiment/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T021-sentiment-body",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
       "evidence": [
-        "authorized D-015 wave-16 dispatch; deps merged at 27df91d (25/50 \u2014 halfway)"
+        "delivery https://tmpfiles.org/wFADwSaWM6Yr/t021-delivery.tar.gz sha e982e7c111afc65ca2a8c2ee1e2458cf3cd8c5d8244a80bd014a368504728da4",
+        "worker HEAD 0be2b63b57fd025d2d753d2c26a90e8ec4bb4f4d; gate typecheck PASS | test 3327/3328 | program PASS | governance PASS (per-package bodies gate 134/134 \u2014 bodies/* outside root globs on its base)",
+        "integration: Lead root reconciliation (pnpm-workspace + tsconfig + vitest now cover bodies/*), typecheck 0, vitest 3461/0/1 (+171), program valid, governance pass"
       ]
     },
     {

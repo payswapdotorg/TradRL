@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/body-sentiment-researcher",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sentiment/event researcher body contracts (Work Order T021): SENTIMENT_RESEARCHER_BODY — the read-only research body spec (agent-body BodyVersion structural mirror + research declaration: mission, capabilities, knowledge/tool policy, procedures, delegation, L8 authority scope, evaluation requirements, opaque substrate compatibility); the DECLARED-METHOD discipline (versioned aggregation/event-detection/confidence/report-composition method records — a sentiment number without a declared method is a typed error); the observation intake contracts (T038 news/social-signal emitter shape mirrors with availability quartets and T008 provenance blocks, the L4 as-of gate); and the evidence-complete outputs — SentimentReading, EventDigest, ResearchReport — every one carrying observation citations, method version, body version ref, tenant/project (L9/L12), with derived digest identities and byte-deterministic canonical serialization.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
