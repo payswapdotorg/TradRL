@@ -413,11 +413,13 @@
         "packages/execution-policy/",
         "services/execution-sim/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T019-execution-policy",
       "pr": null,
       "merged_sha": null,
-      "evidence": []
+      "evidence": [
+        "authorized D-012 wave-13 dispatch; deps T010,T013,T018 all merged (T018 at 0d4735e)"
+      ]
     },
     {
       "id": "T020",

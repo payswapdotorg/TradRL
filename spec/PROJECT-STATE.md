@@ -5,9 +5,9 @@
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
 | Program phase | wave-8 dispatch (T013 RL bridge, T016 organization compiler; T036 in flight from wave-7) |
-| Current authorized Work Order | T015, T038 |
+| Current authorized Work Order | T015, T019, T038 |
 | Active workers | 3 |
-| In-flight | T015 (curriculum/populations, generating), T038 (data adapters, generating) |
+| In-flight | T015 (curriculum/populations), T019 (execution policy/sim), T038 (data adapters) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
@@ -65,3 +65,4 @@ A Work Order becomes complete only after implementation, verification, evidence,
 | D-009 | 2026-09-29 | Wave-10 dispatch ratified: T014 (distributed episode generation) from base = this commit; deps T005+T011+T013 merged (T013 merged 844cd37 this session). Surface note: services/learning/src/index.ts (created by T013) may gain ONLY additive re-export lines for ./compute; packages/compute is a new package. T013's chat retired post-harvest (delivery + 1.56MB batch archived) to free the worker slot — the retire-after-merge loop is now standard. |
 | D-010 | 2026-09-29 | Wave-11 dispatch ratified: T038 (equities/index/news/alternative-data adapters; dep T036) + T018 (portfolio strategy domain; deps T007+T010+T012+T013+T016 — T016 merged 71c41e5 this session) from base = this commit. Root tsconfig/vitest globs now cover adapters/* (T037 merge reconciliation) — T038's packages join the root gate directly. T016/T037 lanes retired after merge (batches archived 1.46MB/1.51MB, chats deleted) — retire-after-merge is the standing loop. |
 | D-011 | 2026-09-29 | Wave-12 dispatch ratified: T015 (curriculum/self-play/adversarial populations) from base = this commit; deps T011+T012+T013+T014 merged (T014 at 97c5ad7 — five merges this session: T036, T013, T016, T037, T014 = 19/50). Surface: services/learning/src/curriculum + src/populations (same additive-index pattern as T014). T014 lane retired after merge (batch archived, chat deleted). |
+| D-012 | 2026-09-29 | Wave-13 dispatch ratified: T019 (execution policy/simulation) from base = this commit; deps T010+T013+T018 merged (T018 at 0d4735e — six merges this session: T036, T013, T016, T037, T014, T018 = 20/50). T018 lane retired (batch 1.31MB archived, chat deleted). T019 consumes T018's StrategyIntent as its input record (mirrors per D-004). |
