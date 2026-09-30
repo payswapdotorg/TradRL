@@ -829,8 +829,8 @@
         "T028"
       ],
       "write_surface": [
-        "packages/search-lineage/",
-        "services/research/src/evaluation-integrity/"
+        "research/evaluation-integrity/",
+        "packages/search-lineage/"
       ],
       "status": "in_progress",
       "branch": "work/T031-search-integrity",
@@ -838,7 +838,7 @@
       "merged_sha": null,
       "evidence": [
         "D-022 authorization (wave-24) never admitted — vehicle died in wipe #12 before session spawn",
-        "D-024 wave-26 fresh dispatch from main b604e49; Lead surface ruling: no top-level research/ tree — services/research/src/evaluation-integrity/ module (additive index.ts re-export lines only) + new packages/search-lineage/; exactly three additive root-file exceptions granted (pnpm-workspace, tsconfig, vitest include lines)"
+        "D-025: wave-26 packet (the binding contract, dispatched 2026-09-30 13:54 UTC) carries the original D-022 surface: research/evaluation-integrity/ top-level tree (mirror bodies/* layout) + packages/search-lineage/ + exactly three additive root-glob lines (pnpm-workspace, tsconfig, vitest include) per the T037/T021 root-reconciliation precedent (D-010/D-016). The D-024 draft surface ruling (services/research/src/evaluation-integrity/) was never in the dispatched packet and is withdrawn — program state must equal the contract the worker received."
       ],
       "depends": [
         "T011",
