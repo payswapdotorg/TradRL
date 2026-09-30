@@ -4,10 +4,10 @@
 |---|---|
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
-| Program phase | wave-24/25 execution (T024+T040+T025 merged 34/50; T030/T031 in flight) |
-| Current authorized Work Order | T030, T031 |
+| Program phase | wave-26 disaster-recovery execution (34/50 merged; T030/T031/T043 re-dispatched after sandbox wipes #12/#13) |
+| Current authorized Work Order | T030, T031, T043 |
 | Active workers | 3 |
-| In-flight | T030 (shadow trading), T031 (search integrity) |
+| In-flight | T030 (shadow trading, re-entry @ e5c2647), T031 (search integrity, fresh @ b604e49), T043 (observability/audit, re-entry @ 25c3625) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
@@ -77,3 +77,4 @@ A Work Order becomes complete only after implementation, verification, evidence,
 | D-021 | 2026-09-29 | Wave-22 T024 merged (32/50): trading-director body; base 8c378f1, worker head e38784a, squash 0d9c3f4 via PR #6 (CI green; Lead worktree verify green). graph.json depends-field defect fixed (49 null-dep items backfilled from WORK-ITEMS). RATIFICATION FLAG (worker): sibling bodies compareDecimal zero-branch inversion (0 vs 0.02 → +1) — T024 mirror corrected locally; sibling packages untouched (Lead decision pending). Wave-23: T025 dispatched @ 41a6242 (bodies/execution). Incident record: stall_recovery DEAD-TURN heuristic false-killed two live tabs (19:18 UTC); turns survived server-side (T024 completed + T030 kept checkpointing); outage-hold set — no automated tab kills while workers run; kicks remain poison (wedged T024 chat), zombie-workspace purge is the queue-blockage cure. |
 | D-022 | 2026-09-29 | Wave-24: T040 merged (33/50) — execution gateway (13-stage chokepoint) + execution-authority package; base 41a6242 lineage, worker head 40cf4b1, squash 7502cbd via PR #7 (CI green after main governance self-heal at d7ad50c — transient mid-update red on db4f31e/41a6242 was graph-before-state ordering, resolved by D-021 state sync; LESSON: update PROJECT-STATE authorized-row and graph.json in ONE commit). T040 lane retired post-merge. T031 dispatched (research/evaluation-integrity + packages/search-lineage). Frontier after: T043/T044 newly ready (T040 merged). |
 | D-023 | 2026-09-29 | Wave-25: T025 merged (34/50) — execution body (order-lifecycle state machine, monitoring/escalation, external-gateway-only authority); worker head 7a87fbc, squash 916d65f via PR #8. Lead gate upgraded: verify MERGE RESULT (branch+main) not branch-as-is — the branch base 41a6242 carried the transient graph-before-state inconsistency (its own CI failed at the time); merge-result verification matches what GitHub CI checks. T025 lane retired. |
+| D-024 | 2026-09-30 | DISASTER RECOVERY (wipes #12 2026-09-29 ~23:06 UTC + #13 2026-09-30 ~12:47 UTC, both reset the sandbox to a stale image): in-flight workers T030 (died @ e5c2647, 3 checkpoints) and T043 (dispatched post-D-023, died @ 25c3625, 4 checkpoints) lost their vehicles; T031 (authorized D-022) was never admitted. All branches survive on GitHub (the only durable store). Wave-26 re-dispatch: T030/T043 RE-ENTRY from surviving branches (audit-then-complete; no rewrite of pushed history), T031 FRESH from main b604e49 with the surface ruling recorded in graph.json evidence (no top-level research/ tree; three additive root-file exceptions). Packet law hardened: checkpoint pushes at every meaningful step. graph.json T031/T043 -> in_progress. |

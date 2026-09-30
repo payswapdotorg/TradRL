@@ -61,7 +61,7 @@ One Work Order = one branch = one PR = one worker. Maximum active workers = 3.
 
 | ID | Scope | Depends | Write surface |
 |---|---|---|---|
-| T031 | Backtest-overfitting/search integrity | T011,T012,T028 | research/evaluation-integrity/, packages/search-lineage/ |
+| T031 | Backtest-overfitting/search integrity | T011,T012,T028 | services/research/src/evaluation-integrity/, packages/search-lineage/ |
 | T032 | Walk-forward/regime/holdout suite | T009,T011,T012,T028,T031 | research/benchmarks/, packages/evaluation-splits/ |
 | T033 | Outcome/post-mortem learning | T011,T030 | services/outcome-learning/, packages/outcomes/ |
 | T034 | Firm Brain | T007,T011,T033 | packages/firm-memory/, services/firm-memory/ |

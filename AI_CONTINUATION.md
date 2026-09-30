@@ -2,10 +2,10 @@
 
 ## Current state
 Repository: payswapdotorg/TradRL
-State: T001-T004 merged (last WO merge 257aff2; 430/430 tests; main now 1f96e2c after operator capability-discovery governance 171ad39..366bda3 ratified as D-006 + state syncs); T005/T006/T007 dispatched (wave 3, in flight)
-Current authorized Work Order: T005, T006, T007
-Active workers: 3 (T005, T006, T007)
-In-flight: T005/T006/T007 (environment protocol, Agent OS, control plane)
+State: 34/50 merged (main b604e49 after D-023; suite 5177 passing at last merge); wave-26 in flight after sandbox wipes #12/#13 destroyed worker vehicles — T030 re-entry @ work/T030-shadow-trading e5c2647, T031 fresh @ work/T031-search-integrity from b604e49, T043 re-entry @ work/T043-observability-audit 25c3625 (all re-dispatched 2026-09-30 ~13:53 UTC)
+Current authorized Work Order: T030, T031, T043
+Active workers: 3 (T030, T031, T043)
+In-flight: T030 (shadow trading), T031 (search integrity), T043 (observability/audit)
 Blocked: none
 Maximum concurrent workers: 3
 Arena dependency in core: forbidden
@@ -23,6 +23,17 @@ After every accepted wave: reconcile exact merged SHA, update spec/PROJECT-STATE
 Native: market experience -> trajectory -> evaluation -> capability gap -> autonomous learning -> new Body Version.
 Optional: capability gap -> Arena/expert -> imported artifact -> local evaluation -> reusable capability.
 Arena is never in the critical native learning loop.
+## Recovery record (2026-09-30, wipe #12/#13)
+Two consecutive sandbox resets (2026-09-29 ~23:06 UTC and 2026-09-30 ~12:47 UTC)
+rolled /home/z back to a stale Sep-27 image, killing worker vehicles mid-run.
+GitHub is the only durable store: branches work/T030-shadow-trading (e5c2647)
+and work/T043-observability-audit (25c3625) survived with their checkpoints;
+T031 (authorized D-022) had never been admitted. Wave-26 re-dispatched all
+three lanes 2026-09-30 13:53 UTC (D-024): re-entry packets mandate
+audit-then-complete with no rewrite of pushed history, and checkpoint pushes
+at every meaningful step. Historical: the 2026-09-28 reset recovery is
+recorded below and in spec/PROJECT-STATE.md D-log.
+
 ## Recovery record (2026-09-28)
 Sandbox reset ~18:32 UTC lost the local tree including nine merged work orders
 (T005, T006, T007, T008, T009, T010, T011, T026, T029). Recovery on branch
