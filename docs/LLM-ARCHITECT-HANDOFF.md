@@ -6,10 +6,13 @@ You must implement the complete product without relying on conversation history.
 
 ## Current repository state
 - Default branch: main
-- State: T001-T004 merged (main at 257aff2, 430/430 tests); T005/T006/T007 in flight (wave 3)
-- Current authorized Work Order: T005, T006, T007
+- State: 34/50 Work Orders merged; wave-26 disaster-recovery re-dispatch in progress
+- Main latest audited commit: b21c97f7a7d11a3c5034cd75ff67f2bc5b1f81d0
+- Current authorized Work Orders: T030, T031, T043
 - Active workers: 3
-- In-flight: T005/T006/T007
+- In-flight: T030 (shadow trading), T031 (search integrity), T043 (observability/audit)
+- Completed set: T001-T029 and T036-T040
+- Blocked frontier: T032-T035 and T041-T050
 - Blocked: none
 - Maximum concurrent workers: 3
 - Arena core dependency: forbidden
@@ -63,8 +66,10 @@ The primary adoption target is main-interface usage. Users may keep Bloomberg/LS
 ## Work program
 T001-T050 in spec/WORK-ITEMS.md are authoritative. Readiness is derived from spec/DEPENDENCY-GRAPH.md and merged state.
 
-## First wave
-T001 is authorized. After T001 is merged, recompute readiness. T002/T003/T004 are the intended first independent trio if their dependencies remain satisfied.
+## Current wave
+T030, T031 and T043 are the active re-dispatch after two sandbox wipes. T030/T043 are re-entry from surviving GitHub branches; T031 is a fresh dispatch from b604e49. The dispatched packet is the contract of record.
+
+The next frontier must be recomputed only after these lanes merge or are otherwise explicitly resolved.
 
 ## Orchestration
 At most 3 workers. One Work Order per branch and PR. Freeze write surfaces. Record base SHA. Reconcile actual diffs and evidence. Merge only after acceptance. Update project state after every accepted wave.
