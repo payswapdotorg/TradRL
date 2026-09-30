@@ -349,7 +349,7 @@
       "status": "merged",
       "branch": "work/T014-episode-compute",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "844cd37ba651ad15151f72abd4df6bd5bb1777dd",
       "evidence": [
         "delivery https://tmpfiles.org/wlAQw7ykQoky/t014-delivery.tar.gz sha bb4a1a20b23aed4a53014afad882d9769397b6e7adf9212df5ff3dfb8050b7e0 (backup URL wPAGwFyMRHYu, same sha — original turn + kick relay both posted)",
         "worker HEAD d3119124a4e750486db8341ecbc941c5654b33fa; gate typecheck PASS | test 1879/1880 | program PASS | governance PASS",
@@ -377,7 +377,7 @@
       "status": "merged",
       "branch": "work/T015-curriculum-populations",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "97c5ad786db2b071404c61364cb92f7b83dca627",
       "evidence": [
         "delivery https://tmpfiles.org/wjAMwItl2PFs/t015-delivery.tar.gz sha 185ab7ae90e037cb034a29e3a910d92e9b72857cb004e6162c2540fc946fbeea",
         "worker HEAD a1e20aa3872c505fc005b4395882cbdd957ac89e; gate typecheck PASS | test 2436/2437 | program PASS | governance PASS",
@@ -408,7 +408,7 @@
       "status": "merged",
       "branch": "work/T016-organization-compiler",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "ff2a9d242f56c8a0af9468805e0f2f6d0b3e8d45",
       "evidence": [
         "delivery https://tmpfiles.org/w9A4wFyMLc6v/t016-delivery.tar.gz sha b95f8d3da335c4d79bf43dec5e21b0215c141eaeb89ef92f91192b12858e9fd1",
         "worker HEAD f8046691738c39c915505aba4d595b57bb2de54a; gate typecheck PASS | test 1768/1769 | program PASS | governance PASS",
@@ -438,7 +438,7 @@
       "status": "merged",
       "branch": "work/T017-skills-body-forge",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "71c41e502ea14da190d85572701bb3e2bb139802",
       "evidence": [
         "delivery https://tmpfiles.org/wfAtwlXg29sU/t017-delivery.tar.gz sha f3318ae70022d632f2eb4e27fc8434613a72c858002f122972aa94a0be30300f",
         "worker HEAD c746400b1419156fd807d07d39ab12b84b3244e6; gate typecheck PASS | test 3089/3090 | program PASS | governance PASS",
@@ -469,7 +469,7 @@
       "status": "merged",
       "branch": "work/T018-portfolio-strategy",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "939a6f0ea05b1036db5ed20b10e90a5cc6265deb",
       "evidence": [
         "delivery https://tmpfiles.org/w8AmwSt7TP0k/t018-delivery.tar.gz sha 6eae740f9f74abfd6b4d6eb4007f1231951469370ad5b3dbc64222ab67724f73",
         "worker HEAD d230c0fce952d13041f2228b83158abbf9520e9b; gate typecheck PASS | test 2338/2339 | program PASS | governance PASS",
@@ -498,7 +498,7 @@
       "status": "merged",
       "branch": "work/T019-execution-policy",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "0d4735e03edd3920a6b4b22b1e49f0fa094c3bfb",
       "evidence": [
         "delivery https://tmpfiles.org/wAAwwkXT7Ty6/t019-delivery.tar.gz sha bcb32787b86fb76691621496392702e11d3f2da7be77046b8427e48c4ad83f02",
         "worker HEAD 4806a69602f76d784fd28a5b0c8ddefe927512c2; gate typecheck PASS | test 2561/2562 (+126) | program PASS | governance PASS",
@@ -524,7 +524,7 @@
       "status": "merged",
       "branch": "work/T020-risk-engine",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "653043be5f645c67004fd7c603fb6e18a3c68d13",
       "evidence": [
         "delivery https://tmpfiles.org/w1AYwmaoXYsp/t020-delivery.tar.gz sha 88521d0c9851be38f98e6051897fad0f2064089f1ed88955252450e233cb2aa0",
         "worker HEAD 1afb69211dbbfbc2ea7204af755aefe29079e00e; gate pnpm verify EXIT 0 — 3191 passed/1 skipped (+164)",
@@ -552,7 +552,7 @@
       "status": "merged",
       "branch": "work/T021-sentiment-body",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "0f87e281b21fab6da550c9f00523400a5211aa66",
       "evidence": [
         "delivery https://tmpfiles.org/wFADwSaWM6Yr/t021-delivery.tar.gz sha e982e7c111afc65ca2a8c2ee1e2458cf3cd8c5d8244a80bd014a368504728da4",
         "worker HEAD 0be2b63b57fd025d2d753d2c26a90e8ec4bb4f4d; gate typecheck PASS | test 3327/3328 | program PASS | governance PASS (per-package bodies gate 134/134 — bodies/* outside root globs on its base)",
@@ -581,7 +581,7 @@
       "status": "merged",
       "branch": "work/T022-regime-body",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "c83c022863dbb2a356234eb24f8f4387ad7e4959",
       "evidence": [
         "delivery https://tmpfiles.org/wRA3wXvyIrW0/t022-delivery.tar.gz sha 772c8c8fd7565c0f622c2e08768243acbead702afcb96c3d4abf9f65a3f92fb2",
         "worker HEAD 9b6f6b2531947687975b0eb35c41672841917c41; gate typecheck PASS | test 3775/3776 | program PASS | governance PASS",
@@ -610,7 +610,7 @@
       "status": "merged",
       "branch": "work/T023-fundamental-crossmarket",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "551583bad27b5d40398938353c5dc364fb2ba14c",
       "evidence": [
         "delivery https://tmpfiles.org/wLA8wBYa2aSt/t023-delivery.tar.gz sha 39fdec793c7eb6b662a71e4596726af90349437b0e61bea24a0c4b1019c43324",
         "worker HEAD df8ebce3dc0407b8a2ebcb8ede4b5216626b29fb; gate typecheck PASS | test 4335/4336 (+396) | program PASS | governance PASS",
@@ -729,7 +729,7 @@
       "status": "merged",
       "branch": "work/T027-reactive-market",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "451072cab502a83783da6d146813708e2604c407",
       "evidence": [
         "delivery https://tmpfiles.org/wgA3wrX3k9S2/t027-delivery.tar.gz sha a292e269677d421e5fd3bbcb25e6e607d69df1da84b784d52415fa2c293880e9",
         "worker HEAD e4f368da153b6cd559da02ecabfe654545974066; gate typecheck PASS | test 2976/2977 | program PASS | governance PASS",
@@ -983,7 +983,7 @@
       "status": "merged",
       "branch": "work/T037-exchange-adapters",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "55df36b5c01a4fe0ccafd8abbfc587dd1c91ea75",
       "evidence": [
         "delivery https://tmpfiles.org/wYAtwE7r8ArF/t037-delivery.tar.gz sha fc7b06b4581903ca6d8a1ec1582cb8a3377b8ee15ceb96c9ae980825c347a57f",
         "worker HEAD 3252771d3323f0367d9fb6d3c2a6d92c6f40f977; gate typecheck PASS | test 1905/1906 | program PASS | governance PASS (per-package configs on its branch)",
@@ -1007,7 +1007,7 @@
       "status": "merged",
       "branch": "work/T038-data-adapters",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "ed29233d8c620ea91329bef3595318e49bec1bc6",
       "evidence": [
         "delivery https://tmpfiles.org/wGALw2tTQn68/t038-delivery.tar.gz sha 5ab43afbd15bbfb2f17da6ce65be3fc3224ac2b05318ae5cc6212a7942ee68cb",
         "worker HEAD 6c543056843b6ee658d0b7b58d900bea389b9347; gate typecheck PASS | test 2531/2532 | program PASS | governance PASS",
@@ -1031,7 +1031,7 @@
       "status": "merged",
       "branch": "work/T039-broker-adapters",
       "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-      "merged_sha": "TBD",
+      "merged_sha": "3decb728e8e9b8de8d38e1c36f3707de0196fccf",
       "evidence": [
         "delivery https://tmpfiles.org/wCARwWvLEwaq/t039-delivery.tar.gz sha ee3e0cc5eef4b363927e7895db10c788af03901950589d99a8678b8451d610e5",
         "worker HEAD 8f61a2c225991db90a54f18bedf491bbb86f08c5; gate typecheck PASS | test 3816/3817 | program PASS | governance PASS",
