@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "program": "TradRL",
-  "updated_at": "2026-09-30T14:00:00Z",
+  "updated_at": "2026-09-30T23:50:00Z",
   "policies": {
     "max_concurrent_work_orders": 3,
     "allowed_statuses": [
@@ -805,13 +805,15 @@
       "write_surface": [
         "services/shadow-trading/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T030-shadow-trading",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "PR #9 (CI green; Lead merge-result gates)",
+      "merged_sha": "cc364c67af7e0d6a36bf39bf5cddd397648426c8",
       "evidence": [
-        "authorized D-017 wave-18 dispatch; deps T019,T020,T027,T029 all merged (T020 at 0f87e28 — fourteenth merge this session)",
-        "D-024 re-entry: wave-18 worker died in sandbox wipe #12 (2026-09-29 ~23:06 UTC) at e5c2647 (3 checkpoints, 20 files/+6378); re-dispatched wave-26 from the surviving branch — audit-then-complete, no rewrite of pushed history"
+        "wave-18 original dispatch died in wipe #12 @ e5c2647; D-024 re-entry (wave-26) completed it",
+        "re-entry worker audited the 3 predecessor checkpoints and closed the gap: audit-close commit 4fa99f8 \"pin the laws the tests did not enforce\"",
+        "Lead merge-result gates (branch 8c378f1-base + main b21c97f): typecheck PASS | vitest 350 files / 5262 passed + 1 skipped | program PASS | governance PASS; surface compliant (services/shadow-trading only)",
+        "CI ci@4fa99f89 success; PR #9 squash-merged as cc364c6"
       ],
       "depends": [
         "T019",
@@ -1122,12 +1124,15 @@
         "services/observability/",
         "services/audit/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T043-observability-audit",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "PR #10 (CI green; Lead merge-result gates)",
+      "merged_sha": "7f75f5051ff8174075cb171cb2997d07d08ddf00",
       "evidence": [
-        "D-024 re-entry: dispatched 2026-09-29 ~22:51 UTC after D-023; worker died in sandbox wipe #12 (~23:06 UTC) at 25c3625 (4 checkpoints, 24 files/+6099); re-dispatched wave-26 from the surviving branch"
+        "post-D-023 dispatch died in wipe #12 @ 25c3625; D-024 re-entry (wave-26) completed it",
+        "re-entry worker closed all audit gaps in one final commit 5038f34: seam-scope default-deny CLOSED at the emission gate (7 collector negatives), completed query surface (8 filter tests), replayPlatformAuditTrail, frozen vocabularies with typed closed-ness errors, e2e chain proof over a REAL T040 record (+32 tests)",
+        "Lead merge-result gates (branch b604e49-base + main b21c97f): typecheck PASS | vitest 5318 passed + 1 skipped | program PASS | governance PASS; surface compliant (packages/observability + services/observability + services/audit only)",
+        "CI ci@5038f34 success; PR #10 squash-merged as 7f75f50"
       ],
       "depends": [
         "T040"
@@ -1314,11 +1319,9 @@
     "wave": 26,
     "base_sha": "b604e49",
     "active": [
-      "T030",
-      "T031",
-      "T043"
+      "T031"
     ],
     "dispatched_at": "2026-09-30T13:53:07Z",
-    "note": "34/50 merged; wave-26 disaster-recovery re-dispatch (wipes #12/#13): T030/T043 re-entry from surviving branches, T031 fresh from main"
+    "note": "36/50 merged (T030+T043 this wave); T031 still generating; T044 next from frontier"
   }
 }

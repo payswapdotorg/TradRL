@@ -2,10 +2,10 @@
 
 ## Current state
 Repository: payswapdotorg/TradRL
-State: 34/50 merged (main b604e49 after D-023; suite 5177 passing at last merge); wave-26 in flight after sandbox wipes #12/#13 destroyed worker vehicles — T030 re-entry @ work/T030-shadow-trading e5c2647, T031 fresh @ work/T031-search-integrity from b604e49, T043 re-entry @ work/T043-observability-audit 25c3625 (all re-dispatched 2026-09-30 ~13:53 UTC)
-Current authorized Work Order: T030, T031, T043
-Active workers: 3 (T030, T031, T043)
-In-flight: T030 (shadow trading), T031 (search integrity), T043 (observability/audit)
+State: 36/50 merged (T030 squash cc364c6 + T043 squash 7f75f50 on 2026-09-30, wave-26 harvest); T031 generating (branch work/T031-search-integrity, checkpoints pushing); T044 dispatching from post-merge main
+Current authorized Work Order: T031, T044
+Active workers: 2 (T031, T044)
+In-flight: T031 (search integrity), T044 (security/tenancy/secrets/isolation)
 Blocked: none
 Maximum concurrent workers: 3
 Arena dependency in core: forbidden

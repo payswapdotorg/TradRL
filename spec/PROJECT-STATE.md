@@ -4,10 +4,10 @@
 |---|---|
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
-| Program phase | wave-26 disaster-recovery execution (34/50 merged; T030/T031/T043 re-dispatched after sandbox wipes #12/#13) |
-| Current authorized Work Order | T030, T031, T043 |
-| Active workers | 3 |
-| In-flight | T030 (shadow trading, re-entry @ e5c2647), T031 (search integrity, fresh @ b604e49), T043 (observability/audit, re-entry @ 25c3625) |
+| Program phase | wave-26 harvest (T030+T043 merged 36/50; T031 generating; T044 queued next) |
+| Current authorized Work Order | T031, T044 |
+| Active workers | 2 |
+| In-flight | T031 (search integrity, generating @ 68d6e236+), T044 (security/tenancy, dispatching) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
@@ -79,3 +79,4 @@ A Work Order becomes complete only after implementation, verification, evidence,
 | D-023 | 2026-09-29 | Wave-25: T025 merged (34/50) — execution body (order-lifecycle state machine, monitoring/escalation, external-gateway-only authority); worker head 7a87fbc, squash 916d65f via PR #8. Lead gate upgraded: verify MERGE RESULT (branch+main) not branch-as-is — the branch base 41a6242 carried the transient graph-before-state inconsistency (its own CI failed at the time); merge-result verification matches what GitHub CI checks. T025 lane retired. |
 | D-024 | 2026-09-30 | DISASTER RECOVERY (wipes #12 2026-09-29 ~23:06 UTC + #13 2026-09-30 ~12:47 UTC, both reset the sandbox to a stale image): in-flight workers T030 (died @ e5c2647, 3 checkpoints) and T043 (dispatched post-D-023, died @ 25c3625, 4 checkpoints) lost their vehicles; T031 (authorized D-022) was never admitted. All branches survive on GitHub (the only durable store). Wave-26 re-dispatch: T030/T043 RE-ENTRY from surviving branches (audit-then-complete; no rewrite of pushed history), T031 FRESH from main b604e49. Packet law hardened: checkpoint pushes at every meaningful step. graph.json T031/T043 -> in_progress. |
 | D-025 | 2026-09-30 | T031 SURFACE RULING WITHDRAWN (state == contract): the D-024 state-sync draft re-ruled T031's surface to services/research/src/evaluation-integrity/, but the wave-26 packet dispatched 13:54 UTC (the binding contract the worker received, ~3 min before the D-024 push) carries the original D-022 surface — research/evaluation-integrity/ top-level tree mirroring bodies/* layout + packages/search-lineage/ + exactly three additive root-glob lines (pnpm-workspace, tsconfig, vitest include) per the T037/T021 root-reconciliation precedent (D-010/D-016). The two-state law forbids mid-queue contract changes; graph.json + spec/WORK-ITEMS.md realigned to the packet. LESSON: when codifying a surface ruling, diff it against the DISPATCHED packet first — the packet is the contract of record. |
+| D-026 | 2026-09-30 | Wave-26 harvest: T030 merged (35/50) — re-entry worker audited the wipe-#12 checkpoints (e5c2647) and closed with audit-fix 4fa99f8; squash cc364c6 via PR #9. T043 merged (36/50) — re-entry worker closed all gaps in 5038f34 (seam-scope default-deny at the emission gate, completed query surface, replay + frozen vocabularies + e2e chain proof, +32 tests); squash 7f75f50 via PR #10. Both Lead-verified as MERGE RESULTS (D-023 law) against main b21c97f: 5262/5318 passed + 1 skipped, program valid, governance passed, CI green. Capacity pattern confirmed: GLM-5.3 agent-lane admission resumed at Beijing morning (~07:14) after the overnight lull — 3 zombie-verdict assault cycles (16:59/20:06/23:13) churned fresh sessions that admitted immediately. T044 (deps T005+T040) dispatched next from base = post-merge main. |
