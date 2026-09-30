@@ -35,6 +35,7 @@ import { isReactiveWorldPort, type ReactiveWorldPort } from './world-mirror';
 import { isTimeMachinePort, type TimeMachinePort } from './time-machine-mirror';
 import { shadowOutcomeDigest } from './outcomes';
 import { serializeShadowRunState, shadowSessionDigest } from './run-state';
+import { isDigest } from './primitives';
 import { startKillSwitch, validateExecutionPolicy, DEFAULT_CHECK_ORDER, type StrategyIntentMirror } from '../../../packages/execution-policy/src/index';
 import { compileRiskPolicy } from '../../../packages/risk/src/index';
 
@@ -381,6 +382,17 @@ describe('the REAL reactive world (T027 + T010) through the port', () => {
       expect(record.lineage.configDigests.worldConfigHash).toBe(reactive.fixtureConfigHash());
     }
   });
+
+  it('the full paper session runs to exhaustion; the finished episode yields its L9 run record through the port', async () => {
+    const session = await buildInteropSession();
+    const finished = unwrapResult(await runShadowSession(session));
+    expect(finished.finished).toBe(true);
+    // The world seam's runRecord: the L9 record of a FINISHED episode (digest + lineage),
+    // delivered through the port verbatim (the 8-hex fnv digest over the canonical record).
+    const record = unwrapResult(finished.world.runRecord(finished.episodeId));
+    expect(isDigest(record.digest)).toBe(true);
+    expect(record.digest).not.toBe('00000000');
+  });
 });
 
 describe('the REAL rolling time machine (T029) through the port', () => {
@@ -427,6 +439,14 @@ describe('the REAL rolling time machine (T029) through the port', () => {
     expect(nextPrimary.records.map((record) => record.record_id)).toEqual(['si-ev-5']);
     const nextFork = unwrapResult(machine.drainCursor(fork.cursor_id, (T0 + 70_000) as never));
     expect(nextFork.records.map((record) => record.record_id)).toEqual(['si-ev-5']);
+
+    // getCursor (the resume seam): the port mirrors the machine's own live position
+    // after the drains — exactly what resumeShadowRunState re-queries.
+    const primaryCursor = unwrapResult(machine.getCursor(primary.cursor_id));
+    expect(primaryCursor.position).toBe(nextPrimary.position);
+    expect(primaryCursor.delivered).toBeGreaterThanOrEqual(nextPrimary.records.length);
+    const forkCursor = unwrapResult(machine.getCursor(fork.cursor_id));
+    expect(forkCursor.position).toBe(nextFork.position);
   });
 });
 

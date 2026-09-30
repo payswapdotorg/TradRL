@@ -448,6 +448,81 @@ describe('the golden scenario (hand-derived exact facts)', () => {
     expect(btcPosition?.quantity).toBe('0.75');
     expect(btcPosition?.notional).toBe('37500'); // 0.75 x the 50000 mark — hand-derived
   });
+
+  it("L7 in action: d5 PROCEEDS while a portfolio-kind drawdown breach is MEASURED and recorded (never blocking)", async () => {
+    const session = await runReferenceScenario();
+    const d5 = session.outcomeLog.records[4]!;
+    expect(d5.disposition).toBe('filled'); // the submission happened — the world received it
+    expect(d5.refusalRef).toBeNull(); // the control stack approved: the breach did not feed the gate
+    // The drawdown breach is RECORDED in d5's own limit evaluation, with the structured
+    // breach evidence — hand-derived: peak equity 124717.5195 (d4's 95000-mark equity),
+    // d5 equity 99967.5195, drawdown 24750 against the 10000 cap.
+    const d5Evaluation = session.evaluations[4]!;
+    const drawdown = d5Evaluation.states.find((state) => state.kind === 'drawdown');
+    expect(drawdown).toBeDefined();
+    expect(drawdown?.scope).toEqual({ kind: 'portfolio' });
+    expect(drawdown?.state).toBe('breaching');
+    const reason = drawdown?.reason as { cause: string; bound: string; observed: string; excess: string };
+    expect(reason.cause).toBe('breach');
+    expect(reason.bound).toBe('10000');
+    expect(reason.observed).toBe('24750');
+    expect(reason.excess).toBe('14750');
+    // ...and d5's submission is on the record (the drawdown did not block the world submission).
+    expect(session.submissions.length).toBe(GOLDEN_SUBMISSION_COUNT);
+    const d5Submission = session.submissions.find((submission) => submission.intentRef === d5.intentRef);
+    expect(d5Submission).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The cursor modes (the T029 README contract, clause 1 — verbatim)
+// ---------------------------------------------------------------------------
+
+describe("the cursor modes — 'start' replays the retained window; 'tip' opens at the live edge", () => {
+  it("'start' opens at position 0 and replays the retained window's visible records (INCLUSIVE)", () => {
+    const machine = createScriptedMachine();
+    const session = unwrap(createReferenceSession({ timeMachine: machine, intents: [], cursorFrom: 'start' }));
+    const cursor = unwrapMachine(machine.getCursor(session.cursorId));
+    expect(cursor.position).toBe(0); // at the window's start
+    const d1 = unwrap(processShadowDecision(session, referenceIntentStream()[0]!));
+    // The retained-window replay: mk-0001 + mk-0002 (mk-0002 available EXACTLY at the instant) — NOT mk-0003.
+    expect(d1.tick.drainedRecordIds).toEqual(['mk-0001', 'mk-0002']);
+    expect(d1.tick.cursorPosition).toBe(2);
+  });
+
+  it("'tip' opens at the live edge — NO retained-window replay, only new arrivals", () => {
+    const machine = createScriptedMachine();
+    const session = unwrap(createReferenceSession({ timeMachine: machine, intents: [], cursorFrom: 'tip' }));
+    // The cursor opened at the live edge: every retained record already passed it.
+    const cursor = unwrapMachine(machine.getCursor(session.cursorId));
+    expect(cursor.position).toBe(6);
+    expect(cursor.delivered).toBe(0);
+    const d1 = unwrap(processShadowDecision(session, referenceIntentStream()[0]!));
+    // Nothing: no new arrivals since the open (the retained window is NOT replayed).
+    expect(d1.tick.drainedRecordIds).toEqual([]);
+    expect(d1.tick.cursorPosition).toBe(6);
+    // The warm-up (asOf) is cursor-independent: identical view hash + record ids under both modes.
+    const startSession = unwrap(createReferenceSession({ timeMachine: createScriptedMachine(), intents: [], cursorFrom: 'start' }));
+    expect(session.warmUp.viewHash).toBe(startSession.warmUp.viewHash);
+    expect(session.warmUp.recordIds).toEqual(startSession.warmUp.recordIds);
+  });
+
+  it('the golden facts hold identically under BOTH cursor modes (the drain feeds the audit trail, not the accounting)', async () => {
+    const tipSession = unwrap(createReferenceSession({ cursorFrom: 'tip' }));
+    const tipRun = unwrap(await runShadowSession(tipSession));
+    // The accounting is identical — the cursor mode changes information DELIVERY, not the paper book.
+    expect(tipRun.outcomeLog.records.map((record) => record.disposition)).toEqual([...GOLDEN_DISPOSITIONS]);
+    expect(tipRun.submissions.length).toBe(GOLDEN_SUBMISSION_COUNT);
+    expect(tipRun.fills.length).toBe(GOLDEN_FILL_COUNT);
+    expect(tipRun.refusals.length).toBe(GOLDEN_REFUSAL_COUNT);
+    expect(tipRun.book.cash).toBe(GOLDEN_FINAL_BOOK.cash);
+    expect(tipRun.book.realizedPnl).toBe(GOLDEN_FINAL_BOOK.realizedPnl);
+    // ...while the evidence honestly diverges: every tip-mode record's lineage pins the live-edge cursor position.
+    expect(tipRun.outcomeLog.records[0]?.lineage.cursor.position).toBe(6);
+    const startRun = await runReferenceScenario();
+    expect(startRun.outcomeLog.records[0]?.lineage.cursor.position).toBe(2);
+    expect(tipRun.auditChainHead).not.toBe(startRun.auditChainHead); // different tick evidence
+  });
 });
 
 // ---------------------------------------------------------------------------

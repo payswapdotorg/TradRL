@@ -163,6 +163,28 @@ describe('tamper detection (the typed chain_mismatch)', () => {
     expect(!result.ok && result.errors[0]?.code).toBe('fidelity_claim_dishonest');
   });
 
+  it('a constituent NO chain covers, tampered, fails the session guard (the resume gate\'s final structural layer)', () => {
+    // The participant carries no chain: the four chains (kill switch, audit
+    // trail, outcome log, tick audit) all pass — only the TOTAL session guard
+    // catches the structurally invalid actor binding.
+    const bytes = tamperedBytes((envelope) => {
+      const session = envelope.session as Record<string, unknown>;
+      session.participant = 123; // not a string — a tampered actor binding
+    });
+    const { world, machine } = drivePrefix(3);
+    const result = resumeShadowRunState(bytes, { world, timeMachine: machine, decisionSource: decisionSourceOf([]) });
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.errors[0]?.code).toBe('invalid_state');
+    // The same totality over the paper account: a float-mediating book is inexpressible.
+    const cashBytes = tamperedBytes((envelope) => {
+      const session = envelope.session as Record<string, unknown>;
+      (session.book as Record<string, unknown>).cash = 123.45;
+    });
+    const cashResult = resumeShadowRunState(cashBytes, { world, timeMachine: machine, decisionSource: decisionSourceOf([]) });
+    expect(cashResult.ok).toBe(false);
+    expect(!cashResult.ok && cashResult.errors[0]?.code).toBe('invalid_state');
+  });
+
   it('a kill-switch log tamper is lifted as chain_mismatch', () => {
     const bytes = tamperedBytes((envelope) => {
       const session = envelope.session as Record<string, unknown>;

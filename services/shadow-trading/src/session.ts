@@ -49,7 +49,7 @@
  * envelope law — the session never reasons over a foreign decision).
  */
 
-import { canonicalJson, deepFreeze, fnv1a32Hex, isNonEmptyString, isRecord, isTimestampMs, type TimestampMs } from './primitives';
+import { canonicalJson, deepFreeze, fnv1a32Hex, isDigest, isNonEmptyString, isRecord, isTimestampMs, type TimestampMs } from './primitives';
 import { type ShadowResult, fail, ok } from './errors';
 import { isShadowSessionId, mintShadowSessionId, mintShadowTickId, type ShadowSessionId, type ShadowTickId } from './ids';
 import { validateShadowMode, type ShadowMode } from './mode';
@@ -71,6 +71,7 @@ import {
 import {
   applyWorldFill,
   bookFromPortfolio,
+  isShadowBook,
   portfolioMirrorOf,
   unrealizedPnlOf,
   type BookLineage,
@@ -82,6 +83,7 @@ import {
   isShadowOutcomeLog,
   isShadowRefusal,
   isShadowFill,
+  isShadowLineage,
   mintShadowOutcomeRecord,
   mintShadowRefusal,
   startShadowOutcomeLog,
@@ -130,6 +132,7 @@ import {
   deriveMarketState,
   evaluateLimits,
   executionLimitRefusals,
+  isExposureRecord,
   isLimitEvaluationRecord,
   isRiskPolicy,
   type ExposureRecord,
@@ -1032,12 +1035,24 @@ export async function runShadowSession(session: unknown): Promise<ShadowResult<S
 // Session guard + local helpers
 // ---------------------------------------------------------------------------
 
-/** Public structural guard: a shadow session. */
+/**
+ * Public structural guard: a shadow session — TOTAL over every
+ * constituent the serialized run state carries (the resume gate's
+ * final structural layer: "re-validate every constituent through its
+ * guard" — run-state.ts's README law). The guard covers the injected
+ * seams' bindings (participant, episode, cursor, cursor mode), the
+ * paper account (book + the threaded peak), the declared inputs
+ * (market events, quote precision), the lineage blocks (session,
+ * book) and the warm-up evidence — none of which any chain covers.
+ */
 export function isShadowSession(v: unknown): v is ShadowSession {
   if (!isRecord(v)) return false;
   if (!isShadowSessionId(v.sessionId)) return false;
   if (v.mode !== 'shadow') return false;
   if (!isNonEmptyString(v.tenant) || !isNonEmptyString(v.project) || !isNonEmptyString(v.seed)) return false;
+  if (!isNonEmptyString(v.participant)) return false;
+  if (!isNonEmptyString(v.episodeId) || !isNonEmptyString(v.cursorId)) return false;
+  if (v.cursorFrom !== 'start' && v.cursorFrom !== 'tip') return false;
   if (!isReactiveWorldPort(v.world)) return false;
   if (!isTimeMachinePort(v.timeMachine)) return false;
   if (!isRecord(v.decisionSource) || typeof (v.decisionSource as Record<string, unknown>).next !== 'function') return false;
@@ -1046,16 +1061,41 @@ export function isShadowSession(v: unknown): v is ShadowSession {
   if (!isKillSwitchLog(v.killSwitch)) return false;
   if (!isAuditLog(v.auditLog)) return false;
   if (!isExecutionVenueState(v.venueState)) return false;
+  if (!isShadowBook(v.book)) return false;
+  if (v.peakEquity !== null && (typeof v.peakEquity !== 'string' || !/^-?(0|[1-9]\d*)(\.\d+)?$/.test(v.peakEquity))) return false;
+  if (!Array.isArray(v.marketEvents) || !v.marketEvents.every((event) => isRecord(event))) return false;
+  if (typeof v.quotePrecision !== 'number' || !Number.isSafeInteger(v.quotePrecision) || v.quotePrecision < 0) return false;
+  if (!isDigest(v.auditChainHead)) return false;
   if (!isShadowOutcomeLog(v.outcomeLog)) return false;
   if (!Array.isArray(v.decisions) || !v.decisions.every((x) => isRecord(x) && (x.kind === 'approve' || x.kind === 'refuse'))) return false;
   if (!Array.isArray(v.evaluations) || !v.evaluations.every((x) => isLimitEvaluationRecord(x))) return false;
+  if (!Array.isArray(v.exposures) || !v.exposures.every((x) => isExposureRecord(x))) return false;
   if (!Array.isArray(v.fills) || !v.fills.every((x) => isShadowFill(x))) return false;
   if (!Array.isArray(v.refusals) || !v.refusals.every((x) => isShadowRefusal(x))) return false;
   if (!Array.isArray(v.submissions) || !v.submissions.every((x) => isRecord(x) && isNonEmptyString(x.actionId))) return false;
   if (!Array.isArray(v.ticks) || !v.ticks.every((x) => isRecord(x) && isNonEmptyString(x.tickId))) return false;
-  if (!Array.isArray(v.processedIntentIds)) return false;
+  if (!Array.isArray(v.processedIntentIds) || !v.processedIntentIds.every((x) => isNonEmptyString(x))) return false;
+  if (!isShadowLineage(v.lineage)) return false;
+  if (!isBookLineageShaped(v.bookLineage)) return false;
+  if (!isWarmUpShaped(v.warmUp)) return false;
   if (!isTimestampMs(v.now)) return false;
   if (typeof v.finished !== 'boolean') return false;
+  return true;
+}
+
+/** Structural check: the book lineage block (the strategy lane's L9 anchors). */
+function isBookLineageShaped(v: unknown): boolean {
+  if (!isRecord(v)) return false;
+  if (!isRecord(v.strategy) || !isRecord(v.goal) || !isRecord(v.constraintSet)) return false;
+  return isNonEmptyString(v.windowId) && isNonEmptyString(v.seed) && isNonEmptyString(v.tenant) && isNonEmptyString(v.project);
+}
+
+/** Structural check: the warm-up evidence block (the asOf view's binding). */
+function isWarmUpShaped(v: unknown): boolean {
+  if (!isRecord(v)) return false;
+  if (!isTimestampMs(v.at)) return false;
+  if (!isNonEmptyString(v.viewHash)) return false;
+  if (!Array.isArray(v.recordIds) || !v.recordIds.every((x) => isNonEmptyString(x))) return false;
   return true;
 }
 
