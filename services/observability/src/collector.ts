@@ -49,6 +49,7 @@ import {
   seamRefOfGatewayAudit,
   seamRefOfProjectAuditEntry,
   seamRefOfStorableEvent,
+  seamScopeViolation,
   type JsonObject,
   type ObservabilityResult,
   type ObservedSeamRef,
@@ -192,6 +193,15 @@ export function createObservabilityCollector(config: ObservabilityCollectorConfi
   function emit(content: TelemetryObservationDraft, problems: readonly string[]): ObservabilityResult<TelemetryRecord> {
     if (problems.length > 0) {
       return fail('invalid_field', problems.join('; '));
+    }
+    // The seam-scope default-deny law (L12) runs BEFORE the instant is
+    // consumed — a cross-scope observation is an inexpressible
+    // observation and NEVER burns the clock. The ONE law lives in the
+    // contract package (`seamScopeViolation`); the minted-record guard
+    // re-checks it after minting (defense in depth).
+    const scopeViolation = seamScopeViolation(content.seam, config.tenant, config.project);
+    if (scopeViolation !== null) {
+      return fail('invalid_field', `seam: ${scopeViolation}`, 'seam');
     }
     // The opacity trip wire runs BEFORE the instant is consumed — a
     // credential VALUE anywhere in the observation never burns the clock.

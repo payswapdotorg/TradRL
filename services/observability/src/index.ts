@@ -17,7 +17,9 @@
  *   - `replayTelemetryLog` — the determinism proof: the re-append
  *     fold reproduces the log byte-identically.
  *   - `queryTelemetry` — the historical query with the L4 asOf
- *     discipline (INCLUSIVE bound) and the L12 scope check.
+ *     discipline (INCLUSIVE bound) and the L12 scope check; the
+ *     completed filter surface: kinds, actorKinds, actors (exact
+ *     kind+ref matches) and seamKinds.
  *   - The injected ports: `InstantSource` / `ScriptedInstants` /
  *     `scriptedInstants` (the no-ambient-clock law) and
  *     `TelemetrySink` (the consumer port).
@@ -77,5 +79,6 @@ export const packageInfo = {
     'replayTelemetryLog',
     'queryTelemetry',
     'scriptedInstants',
+    'seamScopeViolation',
   ],
 } as const;

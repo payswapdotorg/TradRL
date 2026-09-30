@@ -191,6 +191,7 @@ export {
   isTelemetryName,
   isTelemetryMessage,
   isTelemetryUnit,
+  seamScopeViolation,
   telemetryRecordContentTree,
   canonicalTelemetryContentJson,
   validateTelemetryRecord,
@@ -208,6 +209,7 @@ export const packageInfo = {
     'TelemetryRecord',
     'ObservedSeamRef',
     'credentialValueViolations',
+    'seamScopeViolation',
     'seamMirrors',
   ],
 } as const;

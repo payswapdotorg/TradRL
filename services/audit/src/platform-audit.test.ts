@@ -24,8 +24,13 @@ import {
 import {
   appendPlatformAuditRecord,
   canonicalPlatformAuditTrailJson,
+  isPlatformAuditRecord,
+  PLATFORM_AUDIT_ACTOR_KINDS,
+  PLATFORM_AUDIT_ACTION_KINDS,
   platformAuditRecordAt,
+  replayPlatformAuditTrail,
   startPlatformAuditTrail,
+  validatePlatformAuditRecord,
   validatePlatformAuditTrail,
   verifyPlatformAuditChain,
   type PlatformAuditRecord,
@@ -352,5 +357,108 @@ describe('determinism goldens (asserted twice — two independent constructions)
       expect(a.auditId).toBe(b.auditId);
       expect(a.chainHead).toBe(b.chainHead);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Replay (the determinism proof's audit-lane half — replayTelemetryLog's law)
+// ---------------------------------------------------------------------------
+
+describe('replayPlatformAuditTrail (the determinism proof)', () => {
+  it('reproduces the trail byte-identically (canonical JSON parity)', () => {
+    const trail = grownTrail();
+    const replayed = unwrap(replayPlatformAuditTrail(trail));
+    expect(canonicalPlatformAuditTrailJson(replayed)).toBe(canonicalPlatformAuditTrailJson(trail));
+  });
+
+  it('deep-equals the live trail', () => {
+    const trail = grownTrail();
+    const replayed = unwrap(replayPlatformAuditTrail(trail));
+    expect(replayed).toEqual(trail);
+    expect(replayed.records).toHaveLength(trail.records.length);
+    for (let index = 0; index < trail.records.length; index++) {
+      expect(replayed.records[index]).toEqual(trail.records[index]);
+    }
+  });
+
+  it('replaying twice yields the same trail (idempotence of the fold)', () => {
+    const trail = grownTrail();
+    const once = unwrap(replayPlatformAuditTrail(trail));
+    const twice = unwrap(replayPlatformAuditTrail(once));
+    expect(canonicalPlatformAuditTrailJson(twice)).toBe(canonicalPlatformAuditTrailJson(trail));
+  });
+
+  it('a tampered trail fails to replay (the fold enforces the law)', () => {
+    const trail = grownTrail();
+    const records = mutableRecords(trail);
+    const victim = records[0] as PlatformAuditRecord;
+    records[0] = { ...victim, at: (victim.at + 7_000) as TimestampMs };
+    const replayed = replayPlatformAuditTrail(shellOver(records));
+    expect(replayed.ok).toBe(false);
+    if (!replayed.ok) expect(replayed.errors[0]?.code).toBe('audit_rewrite');
+  });
+
+  it('a truncated trail fails to replay (truncation is a rewrite)', () => {
+    const trail = grownTrail();
+    const records = mutableRecords(trail);
+    records.splice(1, 1);
+    const replayed = replayPlatformAuditTrail(shellOver(records));
+    expect(replayed.ok).toBe(false);
+    if (!replayed.ok) expect(replayed.errors[0]?.code).toBe('audit_rewrite');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The closed action vocabulary (adding a word is a typed error path)
+// ---------------------------------------------------------------------------
+
+describe('the closed action vocabulary (adding a word is a typed error path)', () => {
+  it('rejects an unknown action word through the MINTER with the typed invalid_field error at path action', () => {
+    const trail = unwrap(startPlatformAuditTrail(TENANT, PROJECT));
+    const minted = platformAuditRecordAt(trail, draft({ action: 'order.submitted' as never }));
+    expect(minted.ok).toBe(false);
+    if (!minted.ok) {
+      expect(minted.errors[0]?.code).toBe('invalid_field');
+      expect(minted.errors[0]?.path).toBe('platformAuditRecord.action');
+      expect(minted.errors[0]?.message).toContain('the vocabulary is CLOSED');
+      expect(minted.errors[0]?.message).toContain('"order.submitted"');
+    }
+  });
+
+  it('rejects an unknown action word through the UNTRUSTED-INPUT GATE identically (typed error, both entry paths one law)', () => {
+    const contaminated = {
+      auditId: 'pau:1a2b3c4d',
+      sequence: 1,
+      actor: { kind: 'operator', ref: 'ops' },
+      action: 'backdoor.opened', // NOT in the vocabulary — the typed error path
+      object: { kind: 'platform-object', objectType: 'thing', ref: 'thing-1' },
+      at: T0,
+      tenant: TENANT,
+      project: PROJECT,
+      lineage: { goal: null, project: PROJECT },
+      chainHead: '0a1b2c3d',
+    };
+    const validation = validatePlatformAuditRecord(contaminated);
+    expect(validation.ok).toBe(false);
+    const actionError = validation.errors.find((error) => error.path === 'platformAuditRecord.action');
+    expect(actionError).toBeDefined();
+    if (actionError) {
+      expect(actionError.code).toBe('invalid_field');
+      expect(actionError.message).toContain('the vocabulary is CLOSED');
+      expect(actionError.message).toContain('backdoor.opened');
+    }
+    expect(isPlatformAuditRecord(contaminated)).toBe(false);
+  });
+
+  it('the vocabulary is FROZEN, duplicate-free and length-pinned (14 kinds — the closed enumeration)', () => {
+    expect(Object.isFrozen(PLATFORM_AUDIT_ACTION_KINDS)).toBe(true);
+    expect(Object.isFrozen(PLATFORM_AUDIT_ACTOR_KINDS)).toBe(true);
+    expect(PLATFORM_AUDIT_ACTION_KINDS).toHaveLength(14);
+    expect(new Set(PLATFORM_AUDIT_ACTION_KINDS).size).toBe(14);
+    expect(new Set(PLATFORM_AUDIT_ACTOR_KINDS).size).toBe(4);
+    // Mutation attempts throw — the vocabulary is law, not configuration.
+    expect(() => {
+      (PLATFORM_AUDIT_ACTION_KINDS as unknown as string[]).push('backdoor.opened');
+    }).toThrow();
   });
 });

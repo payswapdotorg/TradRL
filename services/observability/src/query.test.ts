@@ -15,8 +15,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { ProjectId, TelemetryRecord, TimestampMs, TenantId } from '../../../packages/observability/src/index';
-import { queryTelemetry } from './query';
+import type { ObservedSeamRef, ProjectId, TelemetryActor, TelemetryRecord, TimestampMs, TenantId } from '../../../packages/observability/src/index';
+import { isTelemetryQuery, queryTelemetry } from './query';
 import { appendTelemetryRecord, startTelemetryLog, telemetryRecordAt, type TelemetryLog } from './log';
 
 // ---------------------------------------------------------------------------
@@ -63,6 +63,55 @@ function fiveRecordLog(): TelemetryLog {
       : draft.kind === 'trace-span'
         ? unwrap(telemetryRecordAt(log, { ...base, kind: 'trace-span', name: draft.name, durationMs: draft.extra.durationMs, status: draft.extra.status }))
         : unwrap(telemetryRecordAt(log, { ...base, kind: 'log', level: draft.extra.level, message: draft.extra.message }));
+    log = unwrap(appendTelemetryRecord(log, minted));
+  }
+  return log;
+}
+
+/**
+ * A five-record log with DIVERSE actors and seam kinds (sequence order
+ * preserved): 1) service/execution-gateway over gateway-audit, 2)
+ * agent-instance/inst-director over kernel-operation, 3) agent-instance/
+ * inst-researcher over agent-envelope, 4) operator/ops-oncall over
+ * control-plane-audit, 5) service/event-store over event-store.
+ */
+function diverseLog(): TelemetryLog {
+  let log = unwrap(startTelemetryLog(TENANT, PROJECT));
+  const drafts: readonly { actor: TelemetryActor; seam: ObservedSeamRef }[] = [
+    {
+      actor: { kind: 'service', ref: 'execution-gateway' },
+      seam: { kind: 'gateway-audit', auditId: 'xga:0f1e2d3c', tenant: TENANT, project: PROJECT },
+    },
+    {
+      actor: { kind: 'agent-instance', ref: 'inst-director' },
+      seam: { kind: 'kernel-operation', opId: 'kop-0001', type: 'SPAWN', tenant: TENANT },
+    },
+    {
+      actor: { kind: 'agent-instance', ref: 'inst-researcher' },
+      seam: { kind: 'agent-envelope', messageId: 'msg-0001', topic: 'org.research.signals', tenant: TENANT },
+    },
+    {
+      actor: { kind: 'operator', ref: 'ops-oncall' },
+      seam: { kind: 'control-plane-audit', sequence: 4, tenant: TENANT, project: PROJECT },
+    },
+    {
+      actor: { kind: 'service', ref: 'event-store' },
+      seam: { kind: 'event-store', eventId: 'evt-0001', venue: 'BINANCE' },
+    },
+  ];
+  for (let index = 0; index < drafts.length; index++) {
+    const draft = drafts[index] as { actor: TelemetryActor; seam: ObservedSeamRef };
+    const minted = unwrap(telemetryRecordAt(log, {
+      kind: 'log',
+      tenant: TENANT,
+      project: PROJECT,
+      actor: draft.actor,
+      seam: draft.seam,
+      recordedAt: (T0 + index) as TimestampMs,
+      level: 'info',
+      message: `observation ${index + 1}`,
+      attributes: {},
+    }));
     log = unwrap(appendTelemetryRecord(log, minted));
   }
   return log;
@@ -161,5 +210,108 @@ describe('queryTelemetry: the cross-scope rejection (L12, both directions)', () 
     const badKinds = queryTelemetry(log, { tenant: TENANT, project: PROJECT, asOf: T0, kinds: ['histogram' as never] });
     expect(badKinds.ok).toBe(false);
     if (!badKinds.ok) expect(badKinds.errors[0]?.code).toBe('invalid_field');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The WHO/WHICH filter surface (actors, actorKinds, seamKinds)
+// ---------------------------------------------------------------------------
+
+describe('queryTelemetry: the actor and seam-kind filter surface', () => {
+  it('filters by actor KIND (WHO\u2019s kind) while preserving sequence order', () => {
+    const log = diverseLog();
+    const agents = unwrap(queryTelemetry(log, { tenant: TENANT, project: PROJECT, asOf: (T0 + 10_000) as TimestampMs, actorKinds: ['agent-instance'] }));
+    expect(agents.map((record) => record.sequence)).toEqual([2, 3]);
+    expect(agents.every((record) => record.actor.kind === 'agent-instance')).toBe(true);
+
+    const humans = unwrap(queryTelemetry(log, { tenant: TENANT, project: PROJECT, asOf: (T0 + 10_000) as TimestampMs, actorKinds: ['operator'] }));
+    expect(humans.map((record) => record.sequence)).toEqual([4]);
+  });
+
+  it('filters by EXACT actor (kind AND ref) — the full WHO identity', () => {
+    const log = diverseLog();
+    const director = unwrap(queryTelemetry(log, {
+      tenant: TENANT, project: PROJECT, asOf: (T0 + 10_000) as TimestampMs,
+      actors: [{ kind: 'agent-instance', ref: 'inst-director' }],
+    }));
+    expect(director.map((record) => record.sequence)).toEqual([2]);
+
+    // Two exact actors at once — the union, sequence order preserved.
+    const pair = unwrap(queryTelemetry(log, {
+      tenant: TENANT, project: PROJECT, asOf: (T0 + 10_000) as TimestampMs,
+      actors: [{ kind: 'service', ref: 'execution-gateway' }, { kind: 'agent-instance', ref: 'inst-researcher' }],
+    }));
+    expect(pair.map((record) => record.sequence)).toEqual([1, 3]);
+
+    // The SAME ref under a DIFFERENT kind does not match (kind AND ref).
+    const wrongKind = unwrap(queryTelemetry(log, {
+      tenant: TENANT, project: PROJECT, asOf: (T0 + 10_000) as TimestampMs,
+      actors: [{ kind: 'principal', ref: 'inst-director' }],
+    }));
+    expect(wrongKind).toEqual([]);
+  });
+
+  it('filters by OBSERVED SEAM KIND (WHICH merged seam the record observes)', () => {
+    const log = diverseLog();
+    const agentPlane = unwrap(queryTelemetry(log, {
+      tenant: TENANT, project: PROJECT, asOf: (T0 + 10_000) as TimestampMs,
+      seamKinds: ['agent-envelope', 'kernel-operation'],
+    }));
+    expect(agentPlane.map((record) => record.sequence)).toEqual([2, 3]);
+
+    const executionPlane = unwrap(queryTelemetry(log, {
+      tenant: TENANT, project: PROJECT, asOf: (T0 + 10_000) as TimestampMs,
+      seamKinds: ['gateway-audit'],
+    }));
+    expect(executionPlane.map((record) => record.sequence)).toEqual([1]);
+  });
+
+  it('COMPOSES the filters with the asOf discipline (kind + actorKind + seamKind + asOf)', () => {
+    const log = diverseLog();
+    // Everything by agent-instances over the agent plane, before the envelope existed.
+    const beforeEnvelope = unwrap(queryTelemetry(log, {
+      tenant: TENANT, project: PROJECT,
+      asOf: (T0 + 1) as TimestampMs, // records 1 and 2 only (inclusive)
+      actorKinds: ['agent-instance'],
+      seamKinds: ['agent-envelope', 'kernel-operation'],
+      kinds: ['log'],
+    }));
+    expect(beforeEnvelope.map((record) => record.sequence)).toEqual([2]); // record 3 is 1ms past asOf
+  });
+
+  it('rejects malformed filter arrays with typed invalid_field errors at the filter\u2019s path', () => {
+    const log = diverseLog();
+    const badActorKind = queryTelemetry(log, { tenant: TENANT, project: PROJECT, asOf: T0, actorKinds: ['robot' as never] });
+    expect(badActorKind.ok).toBe(false);
+    if (!badActorKind.ok) {
+      expect(badActorKind.errors[0]?.code).toBe('invalid_field');
+      expect(badActorKind.errors[0]?.path).toBe('actorKinds');
+    }
+    const badActor = queryTelemetry(log, { tenant: TENANT, project: PROJECT, asOf: T0, actors: [{ kind: 'robot', ref: 'x' } as never] });
+    expect(badActor.ok).toBe(false);
+    if (!badActor.ok) {
+      expect(badActor.errors[0]?.code).toBe('invalid_field');
+      expect(badActor.errors[0]?.path).toBe('actors');
+    }
+    const badSeamKind = queryTelemetry(log, { tenant: TENANT, project: PROJECT, asOf: T0, seamKinds: ['wormhole' as never] });
+    expect(badSeamKind.ok).toBe(false);
+    if (!badSeamKind.ok) {
+      expect(badSeamKind.errors[0]?.code).toBe('invalid_field');
+      expect(badSeamKind.errors[0]?.path).toBe('seamKinds');
+    }
+  });
+
+  it('isTelemetryQuery guards the full query shape (positive and negative)', () => {
+    const base = { tenant: TENANT, project: PROJECT, asOf: T0 };
+    expect(isTelemetryQuery(base)).toBe(true);
+    expect(isTelemetryQuery({ ...base, kinds: ['metric'] })).toBe(true);
+    expect(isTelemetryQuery({ ...base, actorKinds: ['operator'] })).toBe(true);
+    expect(isTelemetryQuery({ ...base, actors: [{ kind: 'service', ref: 'x' }] })).toBe(true);
+    expect(isTelemetryQuery({ ...base, seamKinds: ['gateway-audit'] })).toBe(true);
+    expect(isTelemetryQuery({ ...base, seamKinds: ['wormhole'] })).toBe(false);
+    expect(isTelemetryQuery({ ...base, actors: [{ kind: 'service' }] })).toBe(false);
+    expect(isTelemetryQuery({ ...base, actorKinds: ['robot'] })).toBe(false);
+    expect(isTelemetryQuery({ ...base, asOf: -1 })).toBe(false);
+    expect(isTelemetryQuery(null)).toBe(false);
   });
 });

@@ -19,6 +19,12 @@ import {
   deepFreeze,
   isDeeplyFrozen,
   isTelemetryRecord,
+  OBSERVED_SEAM_KINDS,
+  seamScopeViolation,
+  TELEMETRY_ACTOR_KINDS,
+  TELEMETRY_KINDS,
+  TELEMETRY_LOG_LEVELS,
+  TELEMETRY_SPAN_STATUSES,
   validateTelemetryRecord,
   type MetricTelemetryRecord,
   type TraceSpanTelemetryRecord,
@@ -191,6 +197,55 @@ describe('telemetry record guards', () => {
     expect(isTelemetryRecord(spanRecord({ seam: { kind: 'kernel-operation', opId: 'kop-1', type: 'SPAWN', tenant: TENANT } }))).toBe(true);
     // The event-store seam carries no scope fields (venue-scoped identity) — not scope-checked here.
     expect(isTelemetryRecord(logRecord({ seam: { kind: 'event-store', eventId: 'evt-1', venue: 'BINANCE' } }))).toBe(true);
+  });
+
+  it('rejects a cross-SCOPE control-plane-audit seam and a cross-TENANT agent-envelope seam (the remaining default-deny corners)', () => {
+    const crossScopeControlPlane = metricRecord({ seam: { kind: 'control-plane-audit', sequence: 1, tenant: TENANT, project: 'project-OTHER' } });
+    expect(isTelemetryRecord(crossScopeControlPlane)).toBe(false);
+    const crossTenantEnvelope = logRecord({ seam: { kind: 'agent-envelope', messageId: 'msg-1', topic: 'org.foreign', tenant: 'tenant-OTHER' } });
+    expect(isTelemetryRecord(crossTenantEnvelope)).toBe(false);
+    // Scope-consistent variants pass.
+    expect(isTelemetryRecord(metricRecord({ seam: { kind: 'control-plane-audit', sequence: 1, tenant: TENANT, project: PROJECT } }))).toBe(true);
+    expect(isTelemetryRecord(logRecord({ seam: { kind: 'agent-envelope', messageId: 'msg-1', topic: 'org.own', tenant: TENANT } }))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The seam-scope default-deny helper (the ONE law — direct unit proof)
+// ---------------------------------------------------------------------------
+
+describe('seamScopeViolation (the ONE default-deny law, every seam kind)', () => {
+  it('returns null for every scope-CONSISTENT seam kind', () => {
+    expect(seamScopeViolation({ kind: 'agent-envelope', messageId: 'm', topic: 't', tenant: TENANT }, TENANT, PROJECT)).toBeNull();
+    expect(seamScopeViolation({ kind: 'kernel-operation', opId: 'k', type: 'SPAWN', tenant: TENANT }, TENANT, PROJECT)).toBeNull();
+    expect(seamScopeViolation({ kind: 'gateway-audit', auditId: 'xga:0f1e2d3c', tenant: TENANT, project: PROJECT }, TENANT, PROJECT)).toBeNull();
+    expect(seamScopeViolation({ kind: 'control-plane-audit', sequence: 1, tenant: TENANT, project: PROJECT }, TENANT, PROJECT)).toBeNull();
+    expect(seamScopeViolation({ kind: 'event-store', eventId: 'e', venue: 'BINANCE' }, TENANT, PROJECT)).toBeNull();
+  });
+
+  it('returns the violation for every cross-scope corner (tenant-only, project-only, both)', () => {
+    const tenantMismatch = seamScopeViolation({ kind: 'kernel-operation', opId: 'k', type: 'SPAWN', tenant: 'tenant-OTHER' }, TENANT, PROJECT);
+    expect(tenantMismatch).toContain('cross-scope observation is inexpressible (L12)');
+    expect(tenantMismatch).toContain('kernel-operation');
+    const projectMismatch = seamScopeViolation({ kind: 'gateway-audit', auditId: 'xga:0f1e2d3c', tenant: TENANT, project: 'project-OTHER' }, TENANT, PROJECT);
+    expect(projectMismatch).toContain('project-OTHER');
+    const bothMismatch = seamScopeViolation({ kind: 'control-plane-audit', sequence: 1, tenant: 'tenant-OTHER', project: 'project-OTHER' }, TENANT, PROJECT);
+    expect(bothMismatch).toContain('tenant-OTHER/project-OTHER');
+    expect(seamScopeViolation({ kind: 'agent-envelope', messageId: 'm', topic: 't', tenant: 'tenant-OTHER' }, TENANT, PROJECT)).not.toBeNull();
+  });
+
+  it('the law\u2019s own vocabularies are FROZEN and duplicate-free (law, not configuration)', () => {
+    expect(Object.isFrozen(TELEMETRY_KINDS)).toBe(true);
+    expect(Object.isFrozen(TELEMETRY_ACTOR_KINDS)).toBe(true);
+    expect(Object.isFrozen(TELEMETRY_LOG_LEVELS)).toBe(true);
+    expect(Object.isFrozen(TELEMETRY_SPAN_STATUSES)).toBe(true);
+    expect(Object.isFrozen(OBSERVED_SEAM_KINDS)).toBe(true);
+    expect(new Set(TELEMETRY_KINDS).size).toBe(3);
+    expect(new Set(TELEMETRY_ACTOR_KINDS).size).toBe(4);
+    expect(new Set(OBSERVED_SEAM_KINDS).size).toBe(5);
+    expect(() => {
+      (TELEMETRY_KINDS as unknown as string[]).push('histogram');
+    }).toThrow();
   });
 });
 

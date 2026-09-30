@@ -33,6 +33,7 @@
 // lineage blocks), spec/SECURITY.md Audit (the observed contents).
 
 import {
+  deepFreeze,
   isNonEmptyString,
   isPositiveSafeInteger,
   isNonNegativeSafeInteger,
@@ -871,14 +872,14 @@ function payloadKindOfMirror(payload: Record<string, unknown>): string | null {
 // The observed-seam reference (the telemetry record's seam pointer)
 // ---------------------------------------------------------------------------
 
-/** The closed vocabulary of observed seams (the four merged seams; the agent plane contributes two record shapes). */
-export const OBSERVED_SEAM_KINDS: readonly string[] = [
+/** The closed vocabulary of observed seams (the four merged seams; the agent plane contributes two record shapes). Frozen: the vocabulary is law, not configuration. */
+export const OBSERVED_SEAM_KINDS: readonly string[] = deepFreeze([
   'agent-envelope',
   'kernel-operation',
   'gateway-audit',
   'control-plane-audit',
   'event-store',
-] as const;
+] as const);
 
 /** An observed seam kind. */
 export type ObservedSeamKind = (typeof OBSERVED_SEAM_KINDS)[number];

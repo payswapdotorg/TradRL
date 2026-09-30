@@ -13,6 +13,9 @@
  *     sequences, chainHead folds, content-addressed ids, duplicate
  *     object ref and tamper/truncate/reorder as the typed
  *     `audit_rewrite`, no removal/update API).
+ *   - `replayPlatformAuditTrail` — the determinism proof's audit-lane
+ *     half (the re-append fold reproduces the trail byte-identically;
+ *     `replayTelemetryLog`'s law, mirrored).
  *   - The complement refs — `GatewayAuditObjectRef` (the opaque
  *     `{ kind, auditId, tenant, project }` join key onto T040's
  *     trail; payloads never copied) and `PlatformObjectRef`.
@@ -62,6 +65,7 @@ export {
   validatePlatformAuditTrail,
   platformAuditRecordTree,
   canonicalPlatformAuditTrailJson,
+  replayPlatformAuditTrail,
 } from './platform-audit';
 
 /** Service identity and ownership (governance surface). */
@@ -74,5 +78,6 @@ export const packageInfo = {
     'PlatformAuditTrail',
     'GatewayAuditObjectRef',
     'PLATFORM_AUDIT_ACTION_KINDS',
+    'replayPlatformAuditTrail',
   ],
 } as const;

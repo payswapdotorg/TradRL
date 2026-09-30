@@ -59,13 +59,13 @@ import { isGatewayAuditRecordId, isProjectId, isTenantId } from '../../../packag
 // The actor (WHO)
 // ---------------------------------------------------------------------------
 
-/** The closed vocabulary of platform actor kinds. */
-export const PLATFORM_AUDIT_ACTOR_KINDS: readonly string[] = [
+/** The closed vocabulary of platform actor kinds. Frozen: the vocabulary is law, not configuration. */
+export const PLATFORM_AUDIT_ACTOR_KINDS: readonly string[] = deepFreeze([
   'principal',
   'agent-instance',
   'service',
   'operator',
-] as const;
+] as const);
 
 /** A platform actor kind. */
 export type PlatformAuditActorKind = (typeof PLATFORM_AUDIT_ACTOR_KINDS)[number];
@@ -105,7 +105,7 @@ export function isPlatformAuditActor(v: unknown): v is PlatformAuditActor {
  * publication, credential lifecycle (refs only), incident
  * management, the kill switch, and releases.
  */
-export const PLATFORM_AUDIT_ACTION_KINDS: readonly string[] = [
+export const PLATFORM_AUDIT_ACTION_KINDS: readonly string[] = deepFreeze([
   'access.granted',
   'access.revoked',
   'actor.authenticated',
@@ -120,7 +120,7 @@ export const PLATFORM_AUDIT_ACTION_KINDS: readonly string[] = [
   'policy.published',
   'release.deployed',
   'telemetry.queried',
-] as const;
+] as const);
 
 /** A platform action kind. */
 export type PlatformAuditActionKind = (typeof PLATFORM_AUDIT_ACTION_KINDS)[number];
@@ -318,7 +318,7 @@ export function validatePlatformAuditRecord(value: unknown, path = 'platformAudi
   }
   if (value.action === undefined) errors.push({ code: 'missing_field', message: 'this field is required', path: `${path}.action` });
   else if (!isPlatformAuditActionKind(value.action)) {
-    errors.push({ code: 'invalid_field', message: `must be one of the closed platform action vocabulary (${PLATFORM_AUDIT_ACTION_KINDS.length} kinds)`, path: `${path}.action` });
+    errors.push({ code: 'invalid_field', message: `"${JSON.stringify(value.action)}" is not a platform action kind — the vocabulary is CLOSED (${PLATFORM_AUDIT_ACTION_KINDS.length} kinds: ${PLATFORM_AUDIT_ACTION_KINDS.join(' | ')}); adding a word is a typed error, not an extension`, path: `${path}.action` });
   }
   if (value.object === undefined) errors.push({ code: 'missing_field', message: 'this field is required', path: `${path}.object` });
   else if (!isPlatformAuditObjectRef(value.object)) {
@@ -593,4 +593,32 @@ export function canonicalPlatformAuditTrailJson(trail: PlatformAuditTrail): stri
     project: trail.project,
     records: trail.records.map((record) => platformAuditRecordTree(record)),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Replay (the determinism proof — replayTelemetryLog's law, mirrored)
+// ---------------------------------------------------------------------------
+
+/**
+ * Replay a platform audit trail: re-append every record, in sequence
+ * order, onto a fresh empty trail of the same scope — the full law
+ * fold (scope, contiguity, one-object-one-record, chain head, id
+ * derivation). A trail that cannot replay is corrupt by definition
+ * (typed `audit_rewrite`/`tenant_missing`/`invalid_type`). The rebuilt
+ * trail is byte-identical to the original (canonical JSON parity —
+ * the tests prove it). The determinism proof's audit-lane half,
+ * law-for-law with `replayTelemetryLog`.
+ */
+export function replayPlatformAuditTrail(trail: PlatformAuditTrail): ObservabilityResult<PlatformAuditTrail> {
+  if (!isPlatformAuditTrail(trail)) {
+    return fail('invalid_type', 'replayPlatformAuditTrail requires a structurally valid platform audit trail');
+  }
+  let replayed = startPlatformAuditTrail(trail.tenant, trail.project);
+  if (!replayed.ok) return replayed;
+  for (const record of trail.records) {
+    const appended = appendPlatformAuditRecord(replayed.value, record);
+    if (!appended.ok) return appended;
+    replayed = appended;
+  }
+  return replayed;
 }

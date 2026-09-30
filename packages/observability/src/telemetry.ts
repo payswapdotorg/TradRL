@@ -54,13 +54,13 @@ import { isObservedSeamRef, type ObservedSeamRef } from './seams';
 // The actor reference (WHO emitted the observation)
 // ---------------------------------------------------------------------------
 
-/** The closed vocabulary of actor kinds (the platform's emission sources). */
-export const TELEMETRY_ACTOR_KINDS: readonly string[] = [
+/** The closed vocabulary of actor kinds (the platform's emission sources). Frozen: the vocabulary is law, not configuration. */
+export const TELEMETRY_ACTOR_KINDS: readonly string[] = deepFreeze([
   'principal',
   'agent-instance',
   'service',
   'operator',
-] as const;
+] as const);
 
 /** An actor kind. */
 export type TelemetryActorKind = (typeof TELEMETRY_ACTOR_KINDS)[number];
@@ -92,8 +92,8 @@ export function isTelemetryActor(v: unknown): v is TelemetryActor {
 // The variant vocabularies
 // ---------------------------------------------------------------------------
 
-/** The telemetry record kinds (the Work Order's discriminated union). */
-export const TELEMETRY_KINDS: readonly string[] = ['metric', 'trace-span', 'log'] as const;
+/** The telemetry record kinds (the Work Order's discriminated union). Frozen: the vocabulary is law, not configuration. */
+export const TELEMETRY_KINDS: readonly string[] = deepFreeze(['metric', 'trace-span', 'log'] as const);
 
 /** A telemetry record kind. */
 export type TelemetryKind = (typeof TELEMETRY_KINDS)[number];
@@ -103,8 +103,8 @@ export function isTelemetryKind(v: unknown): v is TelemetryKind {
   return typeof v === 'string' && TELEMETRY_KINDS.includes(v);
 }
 
-/** The log-level vocabulary (ordered severity, RFC-ish). */
-export const TELEMETRY_LOG_LEVELS: readonly string[] = ['debug', 'info', 'warn', 'error'] as const;
+/** The log-level vocabulary (ordered severity, RFC-ish). Frozen: the vocabulary is law, not configuration. */
+export const TELEMETRY_LOG_LEVELS: readonly string[] = deepFreeze(['debug', 'info', 'warn', 'error'] as const);
 
 /** A log level. */
 export type TelemetryLogLevel = (typeof TELEMETRY_LOG_LEVELS)[number];
@@ -114,8 +114,8 @@ export function isTelemetryLogLevel(v: unknown): v is TelemetryLogLevel {
   return typeof v === 'string' && TELEMETRY_LOG_LEVELS.includes(v);
 }
 
-/** The trace-span status vocabulary. */
-export const TELEMETRY_SPAN_STATUSES: readonly string[] = ['ok', 'error'] as const;
+/** The trace-span status vocabulary. Frozen: the vocabulary is law, not configuration. */
+export const TELEMETRY_SPAN_STATUSES: readonly string[] = deepFreeze(['ok', 'error'] as const);
 
 /** A trace-span status. */
 export type TelemetrySpanStatus = (typeof TELEMETRY_SPAN_STATUSES)[number];
@@ -154,6 +154,39 @@ export function isTelemetryMessage(v: unknown): v is string {
 /** Guard: a metric unit (a non-empty string, or null when unitless). */
 export function isTelemetryUnit(v: unknown): v is string | null {
   return v === null || isNonEmptyString(v);
+}
+
+// ---------------------------------------------------------------------------
+// The seam-scope default-deny law (L12 — ONE law, every consumer)
+// ---------------------------------------------------------------------------
+
+/**
+ * The seam-scope DEFAULT-DENY law (L12, the branch's fourth checkpoint):
+ * a telemetry record may only observe seam records of its OWN scope.
+ * The seam kinds that carry scope fields (agent-envelope/kernel-
+ * operation: tenant; gateway-audit/control-plane-audit: tenant +
+ * project) are checked against the record's scope; the event-store seam
+ * carries no scope fields (venue-scoped identity — the data plane is
+ * explicitly tenant-uniform by design, mirrored from the store's own
+ * law). Pure; returns the violation message or null. This ONE helper
+ * backs BOTH the collect-all validator (post-mint, defense in depth)
+ * and the collector's pre-instant emission gate (a cross-scope
+ * observation never burns the clock).
+ */
+export function seamScopeViolation(seam: ObservedSeamRef, tenant: TenantId, project: ProjectId): string | null {
+  if (seam.kind === 'agent-envelope' || seam.kind === 'kernel-operation') {
+    if (seam.tenant !== tenant) {
+      return `the observed ${seam.kind} belongs to tenant "${seam.tenant}" but the record's scope is "${tenant}" — cross-scope observation is inexpressible (L12)`;
+    }
+    return null;
+  }
+  if (seam.kind === 'gateway-audit' || seam.kind === 'control-plane-audit') {
+    if (seam.tenant !== tenant || seam.project !== project) {
+      return `the observed ${seam.kind} belongs to scope "${seam.tenant}/${seam.project}" but the record's scope is "${tenant}/${project}" — cross-scope observation is inexpressible (L12)`;
+    }
+    return null;
+  }
+  return null; // event-store: venue-scoped identity, no scope fields to deny
 }
 
 // ---------------------------------------------------------------------------
@@ -366,18 +399,14 @@ export function validateTelemetryRecord(value: unknown, path = 'telemetryRecord'
   }
 
   // The seam-scope default-deny law (L12): a telemetry record may only
-  // observe seam records of its OWN scope. The seam kinds that carry
-  // scope fields (agent-envelope/kernel-operation: tenant;
-  // gateway-audit/control-plane-audit: tenant + project) are checked
-  // against the record's scope — observing another scope's record is
-  // inexpressible.
+  // observe seam records of its OWN scope. The ONE law lives in
+  // {@link seamScopeViolation}; the minted-record path re-derives it here
+  // (defense in depth — the collector ALSO runs it BEFORE consuming an
+  // injected instant).
   if (isObservedSeamRef(value.seam) && isTenantId(value.tenant) && isProjectId(value.project)) {
-    const seam = value.seam;
-    if ((seam.kind === 'agent-envelope' || seam.kind === 'kernel-operation') && seam.tenant !== value.tenant) {
-      errors.push(invalidField(`${path}.seam`, `the observed ${seam.kind} belongs to tenant "${seam.tenant}" but the record's scope is "${value.tenant}" — cross-scope observation is inexpressible (L12)`));
-    }
-    if ((seam.kind === 'gateway-audit' || seam.kind === 'control-plane-audit') && (seam.tenant !== value.tenant || seam.project !== value.project)) {
-      errors.push(invalidField(`${path}.seam`, `the observed ${seam.kind} belongs to scope "${seam.tenant}/${seam.project}" but the record's scope is "${value.tenant}/${value.project}" — cross-scope observation is inexpressible (L12)`));
+    const scopeViolation = seamScopeViolation(value.seam, value.tenant, value.project);
+    if (scopeViolation !== null) {
+      errors.push(invalidField(`${path}.seam`, scopeViolation));
     }
   }
 

@@ -268,4 +268,155 @@ describe('the observe path (mirror-guarded seam observation)', () => {
     if (!rejected.ok) expect(rejected.errors[0]?.code).toBe('invalid_type');
     expect(collector.observe(envelopeRecord(), { message: '' }).ok).toBe(false); // invalid options rejected first
   });
+
+  it('observes mirror-valid records of the REMAINING seam kinds and derives their identity refs (kernel-operation, control-plane-audit, event-store)', () => {
+    const { collector } = freshCollector();
+    // A kernel OBSERVE operation of THIS scope.
+    const operation = {
+      opId: 'kop-observe-0002',
+      type: 'OBSERVE',
+      timestamp: T0,
+      actor: 'inst-trading-director',
+      tenantId: 'tenant-collector',
+      queryRef: 'q:signals-latest',
+    };
+    const opRecord = unwrap(collector.observe(operation, { message: 'kernel observation observed' }));
+    expect(opRecord.seam).toEqual({ kind: 'kernel-operation', opId: 'kop-observe-0002', type: 'OBSERVE', tenant: 'tenant-collector' });
+    expect(opRecord.actor).toEqual({ kind: 'agent-instance', ref: 'inst-trading-director' });
+
+    // A control-plane journal entry of THIS scope.
+    const entry = {
+      sequence: 1,
+      at: T0,
+      tenantId: 'tenant-collector',
+      projectId: 'project-collector',
+      lineage: { projectId: 'project-collector', goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+      operation: { kind: 'project.created', draft: { title: 'the project draft' } },
+    };
+    const entryRecord = unwrap(collector.observe(entry, { message: 'project journal entry observed' }));
+    expect(entryRecord.seam).toEqual({ kind: 'control-plane-audit', sequence: 1, tenant: 'tenant-collector', project: 'project-collector' });
+    expect(entryRecord.actor).toEqual({ kind: 'service', ref: 'control-plane' });
+
+    // An event-store event (the venue-scoped seam — no scope fields, so no scope check applies).
+    const event = {
+      event_id: 'evt-observe-0001',
+      venue: 'BINANCE',
+      instrument: 'BTC-USDT',
+      asset_class: 'crypto',
+      event_type: 'trade',
+      event_time: T0,
+      source_time: null,
+      available_time: T0,
+      ingestion_time: T0,
+      sequence: 1,
+      provider: 'binance',
+      provenance: { origin: 'simulated', adapter: null, derived_from: [], transform: null },
+      payload: { price: '42000.00', size: '0.010' },
+    };
+    const eventRecord = unwrap(collector.observe(event, { message: 'trade event observed' }));
+    expect(eventRecord.seam).toEqual({ kind: 'event-store', eventId: 'evt-observe-0001', venue: 'BINANCE' });
+    expect(eventRecord.actor).toEqual({ kind: 'service', ref: 'event-store' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The seam-scope default-deny at the EMISSION GATE (L12 — the fourth
+// checkpoint, now enforced BEFORE the instant is consumed)
+// ---------------------------------------------------------------------------
+
+describe('the seam-scope default-deny at the emission gate (L12)', () => {
+  /** Assert one rejection shape: typed invalid_field, cross-scope message, path seam. */
+  function assertCrossScopeRejection(result: { ok: true } | { ok: false; errors: readonly { readonly code?: string; readonly path?: string; readonly message?: string }[] }) {
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors[0]?.code).toBe('invalid_field');
+      expect(result.errors[0]?.path).toBe('seam');
+      expect(result.errors[0]?.message).toContain('cross-scope observation is inexpressible (L12)');
+    }
+  }
+
+  it('rejects a metric observation over a CROSS-TENANT kernel-operation seam — and NEVER burns the instant', () => {
+    const { instants, collector } = freshCollector();
+    const foreignSeam = { kind: 'kernel-operation', opId: 'kop-foreign', type: 'SPAWN', tenant: 'tenant-OTHER' } as const;
+    const rejected = collector.metric({ actor: SERVICE_ACTOR, seam: foreignSeam, name: 'm', value: 1 });
+    assertCrossScopeRejection(rejected);
+    expect(instants.remaining()).toBe(5); // the clock was never consumed
+  });
+
+  it('rejects a trace-span observation over a CROSS-SCOPE gateway-audit seam (tenant AND project mismatch) — never burns the instant', () => {
+    const { instants, collector } = freshCollector();
+    const crossTenant = { kind: 'gateway-audit', auditId: 'xga:0f1e2d3c', tenant: 'tenant-OTHER', project: PROJECT } as const;
+    assertCrossScopeRejection(collector.traceSpan({ actor: SERVICE_ACTOR, seam: crossTenant, name: 's', durationMs: 1, status: 'ok' }));
+    const crossProject = { kind: 'gateway-audit', auditId: 'xga:0f1e2d3c', tenant: TENANT, project: 'project-OTHER' } as const;
+    assertCrossScopeRejection(collector.traceSpan({ actor: SERVICE_ACTOR, seam: crossProject, name: 's', durationMs: 1, status: 'ok' }));
+    expect(instants.remaining()).toBe(5);
+  });
+
+  it('rejects a log observation over a CROSS-SCOPE control-plane-audit seam — never burns the instant', () => {
+    const { instants, collector } = freshCollector();
+    const foreignSeam = { kind: 'control-plane-audit', sequence: 1, tenant: 'tenant-OTHER', project: 'project-OTHER' } as const;
+    assertCrossScopeRejection(collector.logEntry({ actor: SERVICE_ACTOR, seam: foreignSeam, level: 'info', message: 'm' }));
+    expect(instants.remaining()).toBe(5);
+  });
+
+  it('rejects observe() of a mirror-valid FOREIGN envelope (another tenant\u2019s real record) — never burns the instant', () => {
+    const { instants, collector } = freshCollector();
+    const foreignEnvelope = {
+      id: 'msg-foreign-0001',
+      topic: 'org.foreign.signals',
+      tenantId: 'tenant-OTHER', // a REAL record of ANOTHER scope
+      sender: 'inst-foreign-researcher',
+      payload: 'FOREIGN-PAYLOAD',
+      sequence: 1,
+      causalityId: null,
+      publishedAt: T0,
+    };
+    assertCrossScopeRejection(collector.observe(foreignEnvelope, { message: 'attempting to observe a foreign envelope' }));
+    expect(instants.remaining()).toBe(5);
+  });
+
+  it('rejects observe() of a mirror-valid FOREIGN-scope gateway audit record — never burns the instant', () => {
+    const { instants, collector } = freshCollector();
+    const foreignGatewayRecord = {
+      auditId: 'xga:9e8f7a6b',
+      sequence: 1,
+      who: { bodyVersion: { specId: 'spec-foreign', version: 1 }, intentRef: 'si:f1', decisionId: null, decisionKind: null, clientOrderId: 'cl-f1' },
+      substrate: 'substrate:glm',
+      policy: { policyId: 'xpol:1', version: 1 },
+      visibleState: { venue: 'BINANCE', instrument: 'BTC-USDT', instrumentClass: 'crypto', referencePrice: '42000.00', rateWindowOrderCount: 0, riskExposureRef: null },
+      riskChecks: { evaluationId: null, riskPolicy: { policyId: 'rpol:1', version: 1 }, within: 0, breaching: 0, blocked: 0 },
+      order: null,
+      execution: null,
+      outcome: 'refused',
+      refusal: { stage: 'kill-switch', code: 'thrown', detail: null },
+      lineage: { intentRef: 'si:f1', strategy: { specId: 'spec-foreign', version: 1 }, goal: { goalId: 'goal-f1', version: 1 }, policy: { policyId: 'xpol:1', version: 1 }, venues: ['BINANCE'], seed: 'seed-f', tenant: 'tenant-OTHER', project: 'project-OTHER' },
+      tenant: 'tenant-OTHER', // a REAL record of ANOTHER scope
+      project: 'project-OTHER',
+      asOf: T0,
+      chainHead: '12345678',
+    };
+    assertCrossScopeRejection(collector.observe(foreignGatewayRecord, { message: 'attempting to observe a foreign audit record' }));
+    expect(instants.remaining()).toBe(5);
+  });
+
+  it('the event-store seam carries no scope fields — the documented exception stays observable', () => {
+    const { collector } = freshCollector();
+    const event = {
+      event_id: 'evt-any-venue',
+      venue: 'COINBASE', // any venue, any tenant-uniform stream
+      instrument: 'BTC-USD',
+      asset_class: 'crypto',
+      event_type: 'quote',
+      event_time: T0,
+      source_time: null,
+      available_time: T0,
+      ingestion_time: T0,
+      sequence: 1,
+      provider: 'coinbase',
+      provenance: { origin: 'simulated', adapter: null, derived_from: [], transform: null },
+      payload: { bid: '42000.00', ask: '42001.00' },
+    };
+    const observed = collector.observe(event, { message: 'venue-scoped seam observed' });
+    expect(observed.ok).toBe(true);
+  });
 });

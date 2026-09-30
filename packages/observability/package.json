@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Observability contracts (Work Order T043): the TelemetryRecord discriminated union (metric | trace-span | log) — every variant tenant/project-scoped (L12), actor-ref'd, observed-seam-ref'd over the platform's EXISTING event seams, explicitly recordedAt'd (injected instants only) and content-addressed from the byte-stable canonical form; the structural mirrors (D-004 — never imports) of the four merged seams this layer observes (agent-os MessageEnvelope/KernelOperation, execution-authority GatewayAuditRecord, control-plane ProjectAuditEntry + PROJECT_AUDIT_OPERATION_KINDS, event-store StorableEvent) with src/interop.test.ts as the drift trip wire; and the credential-opacity trip wire run over EVERY emitted record (a credential VALUE under a credential-shaped key anywhere is the typed credential_value_present error; a 'cred:' ref is fine).",
+  "description": "Observability contracts (Work Order T043): the TelemetryRecord discriminated union (metric | trace-span | log) — every variant tenant/project-scoped (L12), actor-ref'd, observed-seam-ref'd over the platform's EXISTING event seams, explicitly recordedAt'd (injected instants only) and content-addressed from the byte-stable canonical form; the structural mirrors (D-004 — never imports) of the four merged seams this layer observes (agent-os MessageEnvelope/KernelOperation, execution-authority GatewayAuditRecord, control-plane ProjectAuditEntry + PROJECT_AUDIT_OPERATION_KINDS, event-store StorableEvent) with src/interop.test.ts as the drift trip wire; and the credential-opacity trip wire run over EVERY emitted record (a credential VALUE under a credential-shaped key anywhere is the typed credential_value_present error; a 'cred:' ref is fine). RE-ENTRY COMPLETION: seamScopeViolation — the seam-scope default-deny law as ONE exported pure helper (the collect-all validator AND the collector’s pre-instant emission gate both consume it); this lane’s own vocabularies (telemetry kinds, actor kinds, log levels, span statuses, observed seam kinds, platform audit action/actor kinds) are FROZEN at runtime — law, not configuration.",
   "main": "src/index.ts",
-  "exports": { ".": "./src/index.ts" }
+  "exports": {
+    ".": "./src/index.ts"
+  }
 }
