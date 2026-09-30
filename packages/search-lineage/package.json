@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/search-lineage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Search-lineage contracts (Work Order T031): the immutable, append-only SEARCH RECORD — every optimization trial with its content-addressed config snapshot, its parent links (the search DAG), the data-split ids it consumed, the evaluation-policy ref, the in-search vs holdout classification, and the per-entry hash CHAIN that makes hiding or rewriting a trial a typed error (ARCHITECTURE-LOCK L11/L4/L9/L12; spec/EVALUATION-PROTOCOL.md 'Selection integrity'; R20).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
