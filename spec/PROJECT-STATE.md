@@ -14,7 +14,7 @@
 | Default branch | main |
 
 ## Current implementation truth
-Merged at main (31/50: ...T039, T023; T023 = fundamental + cross-market research bodies, +396 tests, 4584/4585 green at merge).
+Merged at main: 34/50 — completed set is T001-T029 and T036-T040. Latest main governance/state reconciliation is recorded through D-025; T030/T031/T043 remain in progress.
 Earlier waves (CI-verified at the time, superseded counts):
 - T001 c0e4e47 — repository foundation, CI, test harness, package boundaries, program state
 - T002 4b6bd25 — canonical trading domain contracts (domain-core, 133 tests)
