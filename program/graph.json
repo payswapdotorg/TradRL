@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "program": "TradRL",
-  "updated_at": "2026-09-30T23:50:00Z",
+  "updated_at": "2026-10-01T00:40:00Z",
   "policies": {
     "max_concurrent_work_orders": 3,
     "allowed_statuses": [
@@ -834,13 +834,15 @@
         "research/evaluation-integrity/",
         "packages/search-lineage/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T031-search-integrity",
-      "pr": null,
-      "merged_sha": null,
+      "pr": "PR #11 (CI green; Lead merge-result gates)",
+      "merged_sha": "87e30fd276a435ed5f98708e424ddde308bde160",
       "evidence": [
-        "D-022 authorization (wave-24) never admitted — vehicle died in wipe #12 before session spawn",
-        "D-025: wave-26 packet (the binding contract, dispatched 2026-09-30 13:54 UTC) carries the original D-022 surface: research/evaluation-integrity/ top-level tree (mirror bodies/* layout) + packages/search-lineage/ + exactly three additive root-glob lines (pnpm-workspace, tsconfig, vitest include) per the T037/T021 root-reconciliation precedent (D-010/D-016). The D-024 draft surface ruling (services/research/src/evaluation-integrity/) was never in the dispatched packet and is withdrawn — program state must equal the contract the worker received."
+        "D-022 authorization; wipe #12 killed the first vehicle pre-admission; D-024 fresh dispatch (wave-26) ran 2026-09-30 23:15 -> 2026-10-01 00:28 UTC",
+        "worker head 2a00228 (2 commits: packages/search-lineage search record + research/evaluation-integrity service tree + the three granted root-glob lines)",
+        "Lead merge-result gates (branch b604e49-base + main 803cf1c): typecheck PASS | vitest 5608 passed + 1 skipped | program PASS | governance PASS; surface compliant (research/evaluation-integrity + packages/search-lineage + exactly the three D-025-recorded root files)",
+        "CI ci@2a00228 success; PR #11 squash-merged as 87e30fd"
       ],
       "depends": [
         "T011",
@@ -1316,12 +1318,13 @@
     }
   ],
   "dispatch": {
-    "wave": 26,
-    "base_sha": "b604e49",
+    "wave": 27,
+    "base_sha": "803cf1c",
     "active": [
-      "T031"
+      "T033",
+      "T044"
     ],
-    "dispatched_at": "2026-09-30T13:53:07Z",
-    "note": "36/50 merged (T030+T043 this wave); T031 still generating; T044 next from frontier"
+    "dispatched_at": "2026-09-30T23:55:00Z",
+    "note": "37/50 merged (T031 this wave); T033+T044 in flight; T048 dispatching from post-merge main"
   }
 }

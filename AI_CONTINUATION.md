@@ -2,10 +2,10 @@
 
 ## Current state
 Repository: payswapdotorg/TradRL
-State: 36/50 merged (T030 squash cc364c6 + T043 squash 7f75f50 on 2026-09-30, wave-26 harvest); T031 generating (branch work/T031-search-integrity, checkpoints pushing); T044 dispatching from post-merge main
-Current authorized Work Order: T031, T044
-Active workers: 2 (T031, T044)
-In-flight: T031 (search integrity), T044 (security/tenancy/secrets/isolation)
+State: 37/50 merged (T031 squash 87e30fd via PR #11 on 2026-10-01, wave-27); T033+T044 in flight (queued), T048 dispatching from post-merge main
+Current authorized Work Order: T033, T044, T048
+Active workers: 3 (T033, T044, T048)
+In-flight: T033 (outcome learning), T044 (security/tenancy/secrets/isolation), T048 (reference e2e trading slice)
 Blocked: none
 Maximum concurrent workers: 3
 Arena dependency in core: forbidden
