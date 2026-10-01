@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "program": "TradRL",
-  "updated_at": "2026-10-01T00:40:00Z",
+  "updated_at": "2026-10-01T00:45:00Z",
   "policies": {
     "max_concurrent_work_orders": 3,
     "allowed_statuses": [
@@ -888,11 +888,13 @@
         "services/outcome-learning/",
         "packages/outcomes/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T033-outcome-learning",
       "pr": null,
       "merged_sha": null,
-      "evidence": [],
+      "evidence": [
+        "D-027 wave-27 dispatch from main 803cf1c (base lineage); deps T011+T030 merged"
+      ],
       "depends": [
         "T011",
         "T030"
@@ -1152,11 +1154,13 @@
         "services/security/",
         "tests/security/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T044-security-tenancy",
       "pr": null,
       "merged_sha": null,
-      "evidence": [],
+      "evidence": [
+        "D-026/D-027 wave-27 dispatch from main 803cf1c; deps T005+T040 merged"
+      ],
       "depends": [
         "T005",
         "T040"
@@ -1242,11 +1246,13 @@
         "examples/end-to-end-trading/",
         "tests/end-to-end-trading/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T048-e2e-reference",
       "pr": null,
       "merged_sha": null,
-      "evidence": [],
+      "evidence": [
+        "D-027 wave-27 dispatch from main 1a34b8a; deps T018+T024+T025+T027+T030+T037+T038+T040 all merged; two root-glob lines granted (pnpm-workspace examples/*, tsconfig examples/*/src)"
+      ],
       "depends": [
         "T018",
         "T024",
@@ -1322,9 +1328,10 @@
     "base_sha": "803cf1c",
     "active": [
       "T033",
-      "T044"
+      "T044",
+      "T048"
     ],
-    "dispatched_at": "2026-09-30T23:55:00Z",
-    "note": "37/50 merged (T031 this wave); T033+T044 in flight; T048 dispatching from post-merge main"
+    "dispatched_at": "2026-10-01T00:45:00Z",
+    "note": "37/50 merged; wave-27 full: T033+T044 (from 803cf1c) + T048 (from 1a34b8a)"
   }
 }
