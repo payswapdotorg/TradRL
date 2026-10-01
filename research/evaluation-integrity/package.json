@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/evaluation-integrity",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Evaluation-integrity service tree (Work Order T031, research/): the split/holdout registry (anchored walk-forward and PURGED/EMBARGOED split construction), the quarantine of never-optimized-on (unseen) data, leakage detection across the search lineage (an evaluation whose data window overlaps the trial's optimization window without embargo is a typed error), and the selection-effect audit over the search DAG that quantifies best-of-N inflation with exact decimal arithmetic — the platform layer above T012's in-package search-integrity reporting (ARCHITECTURE-LOCK L11/L4/L9/L12; spec/EVALUATION-PROTOCOL.md lines 21-24; R20/R21).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
