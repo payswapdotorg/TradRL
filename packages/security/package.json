@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/security",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Security/tenancy/secrets/isolation contracts (Work Order T044): the TenantId/ProjectId scope primitives and scoped-record wrappers (every record carries its tenant+project scope — L12), the credential ENVELOPE types (a secret is referenced by id+version and NEVER carried in plaintext in any record, log or audit line — the opacity trip wire runs over every guard and validator), the structural mirror of T040's AuthorityGrantRecord (grant/scope types law-for-law — interop trip-wire tested), the structural mirror of T005's EnvironmentSpec (canonical form + deterministic episode ids), the untrusted-content tagging contracts (L20: market/news/retrieved text is untrusted input and can never grant tools — the typed untrusted_content_escalation error), redaction/scrubbing helpers, and the chain-verified SecurityAuditRecord trail (who/what acted, scope, action class, decision) composing with T040's audit chain via opaque mirrors.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
