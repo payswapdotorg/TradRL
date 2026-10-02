@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/security-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Security enforcement service (Work Order T044): the tenant isolation registry (data, projects, trajectories, memory, artifacts, credentials and usage are isolated per L12 — cross-tenant access is the typed cross_tenant_access error, never a filter), the secrets injection boundary (credential values enter ONLY at runtime boundaries via the SecretsVault and are unreachable from any serialized record — a committed/serialized secret is the typed credential_value_present error), the untrusted workload isolation policy (T005 episode admission requires an isolation descriptor — the typed isolation_violation otherwise), usage-accounting hooks, and the R42 tenant-scope exporter (exports exclude other-tenant data and never carry secret material).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
