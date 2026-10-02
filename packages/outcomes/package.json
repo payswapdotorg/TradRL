@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/outcomes",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Outcome/post-mortem learning contracts (Work Order T033): the OutcomeRecord (a decision linked to its realized consequences with full L9/L15 lineage refs — trajectory, experiment, shadow session, decision stream position), the PostMortemRecord (structured post-mortem: what was expected, what happened, attribution hypotheses with confidence, evidence refs), the closed outcome-class vocabulary, the four typed attribution classes, the append-only chain-verified learning logs (T030's fold law, mirrored), and the evaluation-hook shapes T035 will consume to drive autonomous improvement.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
