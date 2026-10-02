@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/outcome-learning",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Outcome-learning service (Work Order T033): ingests shadow outcomes from T030's outcome stream through structural mirrors (byte-preserving physics lineage, chain-verified — a tampered stream is never learned from), reconciles expected-vs-realized against the shadow book over exact decimals with honest NULLs, generates structured post-mortem drafts with typed attribution (decision / market_move / model_error / data_lag — each a typed record, never prose-only), applies retention/window policies over injected instants (L4 point-in-time visibility), and serves the tenant/project/decision query surface T034's Firm Brain reads. Compiles the evaluation hooks T035 will consume.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

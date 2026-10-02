@@ -94,9 +94,10 @@ export function isPostMortemSubject(v: unknown): v is PostMortemSubject {
 // The expected / happened / gap blocks
 // ---------------------------------------------------------------------------
 
-/** What was expected (the subject outcome record's expectation, carried by value). */
+/** What was expected (the subject outcome record's expectation, carried by value — honest NULLs included). */
 export interface PostMortemExpectation {
-  readonly expectedQuantity: string;
+  /** The expected execution quantity (NULL when the caller supplied no order facts — the honest unknown). */
+  readonly expectedQuantity: string | null;
   readonly expectedRealized: string | null;
   readonly tolerance: string;
 }
@@ -105,7 +106,7 @@ export interface PostMortemExpectation {
 export function isPostMortemExpectation(v: unknown): v is PostMortemExpectation {
   if (!isRecord(v)) return false;
   if (typeof v.expectedQuantity === 'number' || typeof v.tolerance === 'number') return false;
-  if (typeof v.expectedQuantity !== 'string' || !isCanonicalUnsignedDecimal(v.expectedQuantity)) return false;
+  if (v.expectedQuantity !== null && !(typeof v.expectedQuantity === 'string' && isCanonicalUnsignedDecimal(v.expectedQuantity))) return false;
   if (v.expectedRealized !== null && !(typeof v.expectedRealized === 'string' && isCanonicalSignedDecimal(v.expectedRealized))) return false;
   if (typeof v.tolerance !== 'string' || !isCanonicalUnsignedDecimal(v.tolerance)) return false;
   return true;
@@ -244,6 +245,16 @@ export function postMortemContentTree(record: Omit<PostMortemRecord, 'postMortem
   };
 }
 
+/** Locate a JS number on a money path (the exact-decimal trip wire's scanner; null when clean). */
+function numberOnMoneyPath(block: unknown, fields: readonly string[], path: string): { readonly path: string; readonly value: number } | null {
+  if (!isRecord(block)) return null;
+  for (const field of fields) {
+    const value = (block as Record<string, unknown>)[field];
+    if (typeof value === 'number') return { path: `${path}.${field}`, value };
+  }
+  return null;
+}
+
 /**
  * Mint a post-mortem record (content-addressed id; deeply frozen). The
  * coherence laws fire HERE, before any log append: the closed
@@ -252,6 +263,13 @@ export function postMortemContentTree(record: Omit<PostMortemRecord, 'postMortem
  * subject, and the structural guards of every block.
  */
 export function mintPostMortem(record: Omit<PostMortemRecord, 'postMortemId'>): OutcomesResult<PostMortemRecord> {
+  // --- The exact-decimal trip wires (a JS number on a money path) ---------------
+  const trip = numberOnMoneyPath(record.expected, ['expectedQuantity', 'expectedRealized', 'tolerance'], 'expected')
+    ?? numberOnMoneyPath(record.happened, ['filledQuantity', 'realizedOutcome', 'feeTotal', 'notionalTotal'], 'happened')
+    ?? numberOnMoneyPath(record.gap, ['quantityShortfall', 'realizedGap'], 'gap');
+  if (trip !== null) {
+    return fail('decimal_imprecision', `the ${trip.path} field carries a JS number (${String(trip.value)}) — money paths are canonical decimal STRINGs (float mediation is inexpressible)`, trip.path);
+  }
   if (!isPositiveSafeInteger(record.ordinal)) {
     return fail('invalid_field', 'the post-mortem ordinal must be a positive safe integer (the 1-based log position)', 'ordinal');
   }

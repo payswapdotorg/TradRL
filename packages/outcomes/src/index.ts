@@ -167,7 +167,6 @@ export {
 
 // The outcome record
 export type {
-  ExpectationProvenance,
   OutcomeExpectation,
   OutcomeRealization,
   OutcomeDeviation,
@@ -176,7 +175,6 @@ export type {
   OutcomeRecord,
 } from './outcome-record';
 export {
-  isExpectationProvenance,
   isOutcomeExpectation,
   isOutcomeRealization,
   isOutcomeDeviation,

@@ -153,10 +153,10 @@ export function isDigest(v: unknown): v is string {
 // ---------------------------------------------------------------------------
 
 /** The canonical unsigned decimal grammar: `0`, `12`, `3.5` — never `-0`, never leading zeros, never trailing `.`, never a bare `.`. */
-export const UNSIGNED_DECIMAL_PATTERN = /^(0|[1-9]\d*)(\.\d+)?$/;
+export const UNSIGNED_DECIMAL_PATTERN = /^(0|[1-9]\d*)(?:\.\d+)?$/;
 
 /** The canonical signed decimal grammar: an optional leading `-` over the unsigned form (never `-0`). */
-export const SIGNED_DECIMAL_PATTERN = /^-?(0|[1-9]\d*)(\.\d+)?$/;
+export const SIGNED_DECIMAL_PATTERN = /^(-?)(0|[1-9]\d*)(?:\.(\d+))?$/;
 
 /** Guard: a canonical UNSIGNED decimal string. */
 export function isCanonicalUnsignedDecimal(v: unknown): v is string {

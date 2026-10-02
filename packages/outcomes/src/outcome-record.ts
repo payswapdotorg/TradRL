@@ -73,38 +73,30 @@ import {
 // The expectation block
 // ---------------------------------------------------------------------------
 
-/** The expectation's provenance: the shadow stream's own facts, or a declared projection. */
-export type ExpectationProvenance =
-  | { readonly kind: 'shadow_facts' }
-  | { readonly kind: 'declared'; readonly declaredBy: string };
-
-/** Guard: the provenance. */
-export function isExpectationProvenance(v: unknown): v is ExpectationProvenance {
-  if (!isRecord(v)) return false;
-  if (v.kind === 'shadow_facts') return true;
-  if (v.kind === 'declared') return isNonEmptyString(v.declaredBy);
-  return false;
-}
-
-/** What was expected (see module header; every money field a canonical decimal STRING). */
+/** What was expected (see module header; every money field a canonical decimal STRING, every unknown an honest NULL — a number is never invented). */
 export interface OutcomeExpectation {
-  /** The quantity the decision expected to execute ('0' for refusals — nothing was submitted). */
-  readonly expectedQuantity: string;
+  /** The quantity the decision expected to execute ('0' for refusals — nothing was submitted; NULL when the caller supplied no order facts). */
+  readonly expectedQuantity: string | null;
   /** The realized-PnL expectation at decision time (SIGNED; NULL = unbenchmarked — never invented). */
   readonly expectedRealized: string | null;
   /** The pinned materiality band (the reconciliation policy's value at record time — L4/L9). */
   readonly tolerance: string;
-  readonly provenance: ExpectationProvenance;
+  /** The declaring model's opaque ref (NULL iff expectedRealized is NULL — the expectation's provenance). */
+  readonly declaredBy: string | null;
 }
 
 /** Guard: the expectation block. */
 export function isOutcomeExpectation(v: unknown): v is OutcomeExpectation {
   if (!isRecord(v)) return false;
   if (typeof v.expectedQuantity === 'number' || typeof v.tolerance === 'number') return false;
-  if (typeof v.expectedQuantity !== 'string' || !isCanonicalUnsignedDecimal(v.expectedQuantity)) return false;
+  if (v.expectedQuantity !== null && !(typeof v.expectedQuantity === 'string' && isCanonicalUnsignedDecimal(v.expectedQuantity))) return false;
   if (v.expectedRealized !== null && !(typeof v.expectedRealized === 'string' && isCanonicalSignedDecimal(v.expectedRealized))) return false;
   if (typeof v.tolerance !== 'string' || !isCanonicalUnsignedDecimal(v.tolerance)) return false;
-  return isExpectationProvenance(v.provenance);
+  if (v.declaredBy !== null && !isNonEmptyString(v.declaredBy)) return false;
+  // The provenance law: a declared expectation names its declarer; an unbenchmarked one names none.
+  if (v.expectedRealized === null && v.declaredBy !== null) return false;
+  if (v.expectedRealized !== null && v.declaredBy === null) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +276,16 @@ export function outcomeRecordContentTree(record: Omit<OutcomeRecord, 'outcomeId'
   };
 }
 
+/** Locate a JS number on a money path (the exact-decimal trip wire's scanner; null when clean). */
+function numberOnMoneyPath(block: unknown, fields: readonly string[], path: string): { readonly path: string; readonly value: number } | null {
+  if (!isRecord(block)) return null;
+  for (const field of fields) {
+    const value = (block as Record<string, unknown>)[field];
+    if (typeof value === 'number') return { path: `${path}.${field}`, value };
+  }
+  return null;
+}
+
 /**
  * Mint an outcome record (content-addressed id; deeply frozen). The
  * coherence laws fire HERE, before any log append:
@@ -298,6 +300,13 @@ export function outcomeRecordContentTree(record: Omit<OutcomeRecord, 'outcomeId'
  *     structural laws (via the block guards and the classifier).
  */
 export function mintOutcomeRecord(record: Omit<OutcomeRecord, 'outcomeId'>): OutcomesResult<OutcomeRecord> {
+  // --- The exact-decimal trip wires (a JS number on a money path) ---------------
+  const trip = numberOnMoneyPath(record.expectation, ['expectedQuantity', 'expectedRealized', 'tolerance'], 'expectation')
+    ?? numberOnMoneyPath(record.realization, ['filledQuantity', 'realizedOutcome', 'feeTotal', 'notionalTotal', 'unrealizedAtDecision'], 'realization')
+    ?? numberOnMoneyPath(record.deviation, ['quantityShortfall', 'realizedGap'], 'deviation');
+  if (trip !== null) {
+    return fail('decimal_imprecision', `the ${trip.path} field carries a JS number (${String(trip.value)}) — money paths are canonical decimal STRINGs (float mediation is inexpressible)`, trip.path);
+  }
   if (!isPositiveSafeInteger(record.ordinal)) {
     return fail('invalid_field', 'the outcome record ordinal must be a positive safe integer (the 1-based log position)', 'ordinal');
   }

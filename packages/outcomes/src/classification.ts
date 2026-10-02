@@ -90,8 +90,8 @@ export function requireOutcomeClass(v: unknown): OutcomesResult<OutcomeClass> {
 /** The classification inputs (the record's own numbers; see the module header for the law). */
 export interface OutcomeClassificationInput {
   readonly disposition: ShadowDispositionMirror;
-  /** The expected execution quantity, canonical unsigned decimal ('0' for refusals). */
-  readonly expectedQuantity: string;
+  /** The expected execution quantity, canonical unsigned decimal ('0' for refusals; NULL when no order facts). */
+  readonly expectedQuantity: string | null;
   /** The filled quantity, canonical unsigned decimal (null when fill facts are absent). */
   readonly filledQuantity: string | null;
   /** The declared realized-PnL expectation, canonical signed decimal (null = unbenchmarked). */
@@ -106,7 +106,13 @@ export interface OutcomeClassificationInput {
  * Derive the outcome class — the pure, deterministic function of the
  * record's own numbers. The exact-decimal trip wires fire here first:
  * a JS number in a money path is the typed `decimal_imprecision`; a
- * non-canonical decimal string is the typed `invalid_field`.
+ * non-canonical decimal string is the typed `invalid_field`. The
+ * DISPOSITION-COHERENCE laws (T030's own semantics, enforced as the
+ * learning lane's defense in depth): a refusal realizes exactly zero
+ * and fills nothing; an expiry fills nothing; a `filled` disposition
+ * with both quantities known means they are EQUAL; a `partial`
+ * disposition with both quantities known means the fill is STRICTLY
+ * LESS than the order — a forged pair is the typed `invalid_state`.
  */
 export function classifyOutcome(input: OutcomeClassificationInput): OutcomesResult<OutcomeClass> {
   const moneyFields: readonly [unknown, string][] = [
@@ -124,8 +130,8 @@ export function classifyOutcome(input: OutcomeClassificationInput): OutcomesResu
   if (!isShadowDispositionMirror(input.disposition)) {
     return fail('invalid_field', `the disposition ${JSON.stringify(input.disposition)} is not one of filled | refused | partial | expired`, 'disposition');
   }
-  if (!isCanonicalUnsignedDecimal(input.expectedQuantity)) {
-    return fail('invalid_field', 'expectedQuantity must be a canonical unsigned decimal string', 'expectedQuantity');
+  if (input.expectedQuantity !== null && !isCanonicalUnsignedDecimal(input.expectedQuantity)) {
+    return fail('invalid_field', 'expectedQuantity must be a canonical unsigned decimal string or null', 'expectedQuantity');
   }
   if (input.expectedRealized !== null && !isCanonicalSignedDecimal(input.expectedRealized)) {
     return fail('invalid_field', 'expectedRealized must be a canonical signed decimal string or null', 'expectedRealized');
@@ -139,11 +145,20 @@ export function classifyOutcome(input: OutcomeClassificationInput): OutcomesResu
   if (!isCanonicalUnsignedDecimal(input.tolerance)) {
     return fail('invalid_field', 'tolerance must be a canonical unsigned decimal string', 'tolerance');
   }
-  // Coherence: a refusal realizes exactly zero BY T030's LAW (zero
-  // submissions, zero fills); an invented nonzero would be a lie the
-  // class derivation refuses to bless.
+  // Coherence: a refusal realizes exactly zero and fills nothing BY
+  // T030's LAW (zero submissions, zero fills); an invented nonzero
+  // would be a lie the class derivation refuses to bless.
   if (input.disposition === 'refused' && !isZeroDecimal(input.realizedOutcome)) {
     return fail('invalid_state', `a refused decision realizes exactly zero (T030's law: zero submissions, zero fills) — the record claims ${input.realizedOutcome}`, 'realizedOutcome');
+  }
+  if ((input.disposition === 'refused' || input.disposition === 'expired') && input.filledQuantity !== null && !isZeroDecimal(input.filledQuantity)) {
+    return fail('invalid_state', `a ${input.disposition} decision fills nothing within its window (T030's disposition semantics) — the record claims ${input.filledQuantity} filled`, 'filledQuantity');
+  }
+  if (input.disposition === 'filled' && input.expectedQuantity !== null && input.filledQuantity !== null && signedCompare(input.filledQuantity, input.expectedQuantity) !== 0) {
+    return fail('invalid_state', `a filled decision fills its whole order (T030's disposition semantics) — the record claims ${input.filledQuantity} of ${input.expectedQuantity}`, 'filledQuantity');
+  }
+  if (input.disposition === 'partial' && input.expectedQuantity !== null && input.filledQuantity !== null && signedCompare(input.filledQuantity, input.expectedQuantity) >= 0) {
+    return fail('invalid_state', `a partial decision fills strictly less than its order (T030's disposition semantics) — the record claims ${input.filledQuantity} of ${input.expectedQuantity}`, 'filledQuantity');
   }
 
   switch (input.disposition) {
