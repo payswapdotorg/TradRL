@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "program": "TradRL",
- "updated_at": "2026-10-03T03:35:00Z",
+ "updated_at": "2026-10-03T05:45:00Z",
  "policies": {
   "max_concurrent_work_orders": 3,
   "allowed_statuses": [
@@ -1098,11 +1098,15 @@
     "packages/sdk/",
     "services/api/"
    ],
-   "status": "blocked",
-   "branch": null,
-   "pr": null,
-   "merged_sha": null,
-   "evidence": [],
+   "status": "merged",
+   "branch": "work/T041-api-sdk",
+   "pr": 16,
+   "merged_sha": "38fe7c7d3039956710aa06834756a354bf5981c6",
+   "evidence": [
+    "D-029 wave-29 dispatch (base 9d13e4c); deps T007+T034+T040 merged; surfaces services/api + packages/sdk; zero root exceptions",
+    "D-031 incident + recovery: dispatch token redacted in transport (Lead env-sourcing error) — worker completed all 45 files locally (3 checkpoints) but push 401d; continue-cure re-supplied the credential, push verified, full report delivered. No work redone",
+    "D-032 merge 38fe7c7 via PR #16 (squash): services/api 92/92 (pipeline, isolation, L8 execution, idempotency, metering/audit, contracts+golden determinism, interop trip-wires vs REAL T007/T033/T034/T040/T043/T044) + packages/sdk 59/59; Lead merge-result gates GREEN vs main (merge clean; 6301 passed + 1 skip / 433 files; program valid; governance passed; CI green after base governance fix b23b1d5)"
+   ],
    "depends": [
     "T007",
     "T034",
