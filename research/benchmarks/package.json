@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/research-benchmarks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Research benchmarks suite (Work Order T032, research/): the executable benchmark machinery that turns split definitions into reproducible evaluation evidence — walk-forward evaluation drivers over replay data (T009 mirror) and generative regime populations (T028 mirror, the LEARNING-LOOP regime ladder from simple synthetic regimes to unseen multi-regime combinations), in-search vs holdout separation enforced through the search-record mirror (T031 — a benchmark run that scores a holdout window inside a search loop is the typed error holdout_in_search), stress variations per EVALUATION-PROTOCOL (fees, slippage, latency, fill probability — exact decimals), and the benchmark MANIFEST binding each benchmark's split plan, data/regime source refs, evaluator ref and result records with exact decimal scores + full L9/L15 lineage. Simulation evidence and live evidence are never conflated (typed errors evidence_conflated / live_claim_on_simulation).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
