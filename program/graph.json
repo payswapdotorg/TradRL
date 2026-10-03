@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "program": "TradRL",
- "updated_at": "2026-10-03T03:05:00Z",
+ "updated_at": "2026-10-03T03:35:00Z",
  "policies": {
   "max_concurrent_work_orders": 3,
   "allowed_statuses": [
@@ -864,12 +864,14 @@
     "research/benchmarks/",
     "packages/evaluation-splits/"
    ],
-   "status": "in_progress",
+   "status": "merged",
    "branch": "work/T032-walkforward-suite",
-   "pr": null,
-   "merged_sha": null,
+   "pr": 15,
+   "merged_sha": "ce3d5b865d91eb0658250e94395616b13804c3fb",
    "evidence": [
-    "D-028 wave-28 dispatch (base = this commit); deps T009+T011+T012+T028+T031 merged; zero root exceptions (globs cover both trees)"
+    "D-028 wave-28 dispatch (base b29837b); deps T009+T011+T012+T028+T031 merged; surfaces packages/evaluation-splits + research/benchmarks; zero root exceptions",
+    "D-029 merge ce3d5b8 via PR #15 (squash): evaluation-splits 61/61 + research-benchmarks 89/89 own tests; Lead merge-result gates GREEN vs main 9d13e4c (merge clean; 6150 passed + 1 skip / 420 files; program valid; governance passed; CI green); frozen surfaces verified; zero-dep law; lockfile untouched",
+    "Integrity: embargo_violation, holdout_leakage, holdout_in_search, ladder_violation (unseen multi-regime holdout >=2 regimes incl >=1 unseen), evidence_conflated/live_claim_on_simulation, tenant_mismatch (L12), chain_mismatch (append-only ledgers), plan/result/manifest dedupe + binding laws; determinism double-pinned (byte-identical plans, results, logs, manifests)"
    ],
    "depends": [
     "T009",
