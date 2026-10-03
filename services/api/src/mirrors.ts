@@ -721,19 +721,12 @@ export function intentAuthorityViolations(value: unknown, prefix = ''): readonly
   return Object.freeze(found);
 }
 
-/** One opaque risk-policy ref (the T020 gate resolves them; the boundary records them, never resolves them). Mirror. */
-export interface RiskPolicyRef {
-  readonly policyId: string;
-  readonly version: number;
-}
+/** One opaque risk-policy ref (the T020 gate resolves them; the boundary records them, never resolves them). Mirror: an opaque branded string. */
+export type RiskPolicyRef = string & { readonly __brand: 'RiskPolicyRef' };
 
-/** Guard: a risk-policy ref. */
+/** Guard: a risk-policy ref (an opaque non-empty string). */
 export function isRiskPolicyRef(v: unknown): v is RiskPolicyRef {
-  return (
-    isRecord(v) &&
-    isNonEmptyString(v.policyId) &&
-    isPositiveSafeInteger(v.version)
-  );
+  return isNonEmptyString(v);
 }
 
 /**
@@ -897,6 +890,7 @@ export type GatewayRefusal =
   | { readonly stage: 'entitlement'; readonly refusal: unknown }
   | { readonly stage: 'rate_budget'; readonly venue: string; readonly budget: number; readonly observed: number; readonly windowMs: number | null }
   | { readonly stage: 'kill_switch'; readonly switchId: string; readonly thrownAt: number; readonly reason: string }
+  | { readonly stage: 'routing'; readonly venue: string; readonly instrument: string; readonly reason: 'no_route' | 'no_adapter' }
   | { readonly stage: 'translation'; readonly errors: readonly { readonly code: string; readonly message: string }[] }
   | { readonly stage: 'adapter'; readonly error: { readonly code: string; readonly message: string } };
 
@@ -935,6 +929,8 @@ export function isGatewayRefusal(v: unknown): v is GatewayRefusal {
       );
     case 'kill_switch':
       return isNonEmptyString(v.switchId) && typeof v.thrownAt === 'number' && isNonEmptyString(v.reason);
+    case 'routing':
+      return isNonEmptyString(v.venue) && isNonEmptyString(v.instrument) && (v.reason === 'no_route' || v.reason === 'no_adapter');
     case 'adapter':
       return (
         isRecord(v.error) &&

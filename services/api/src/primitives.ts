@@ -305,56 +305,60 @@ export function isRfc3339Timestamp(v: unknown): v is string {
 }
 
 // ---------------------------------------------------------------------------
-// The credential-opacity trip wire (T044/T019 mirror — SECURITY.md's boundary)
+// The credential-opacity trip wire (T019/T040/T043/T044 mirror — SECURITY.md's boundary)
 // ---------------------------------------------------------------------------
 
-/** The credential-shaped key roots whose VALUES are refused anywhere in a payload (SECURITY.md Secrets — refs fine, values never). */
-export const CREDENTIAL_VALUE_KEY_ROOTS: readonly string[] = [
-  'apikey',
-  'apisecret',
-  'apikeyid',
+/**
+ * The closed list of credential-material key shapes (normalized
+ * lowercase, no separators). STRUCTURAL MIRROR of T019/T040's list
+ * (as T043 re-mirrors it) — the SAME closed vocabulary, law-for-law;
+ * the interop test proves a REAL scan and THIS scan flag identical
+ * trees.
+ */
+export const CREDENTIAL_VALUE_KEYS: readonly string[] = [
   'secret',
-  'secretkey',
-  'password',
-  'passwd',
+  'apikey',
   'privatekey',
-  'secretvalue',
-  'accesstoken',
-  'refreshtoken',
-  'bearertoken',
-  'credentialvalue',
+  'password',
+  'passphrase',
+  'token',
+  'mnemonic',
+  'seedphrase',
+  'credential',
 ] as const;
 
-/** `true` when the key is credential-shaped (case-insensitive, separator-insensitive). */
+/** `true` when a record key is a credential-material key shape (case/separator-insensitive). */
 export function isCredentialValueKey(key: string): boolean {
-  const normalized = key.toLowerCase().replace(/[-_]/g, '');
-  return CREDENTIAL_VALUE_KEY_ROOTS.some((root) => normalized === root || normalized.endsWith(root));
+  const normalized = key.toLowerCase().replace(/[-_\s]/g, '');
+  return (CREDENTIAL_VALUE_KEYS as readonly string[]).includes(normalized);
 }
 
 /**
- * The opacity trip wire: walks a whole payload and reports every path at
- * which a credential-shaped key carries a VALUE (mirrors
- * execution-authority's `credentialValueViolations` law-for-law). A
- * contaminated payload is rejected before anything else matters — the
- * boundary never forwards, stores or audits credential material.
+ * Scan a record's JSON tree for embedded credential material: the
+ * dotted paths of every credential-shaped key found, in deterministic
+ * (depth-first, key-sorted) order. Pure; never throws; an empty result
+ * means the tree is value-free. A contaminated payload is rejected
+ * before anything else matters — the boundary never forwards, stores
+ * or audits credential material (a 'cred:'-prefixed REF is fine; a
+ * VALUE is not).
  */
 export function credentialValueViolations(value: unknown, path = ''): readonly string[] {
-  const violations: string[] = [];
+  const found: string[] = [];
+  if (value === null || typeof value !== 'object') return Object.freeze(found);
   if (Array.isArray(value)) {
     value.forEach((item, index) => {
-      violations.push(...credentialValueViolations(item, `${path}[${index}]`));
+      for (const violation of credentialValueViolations(item, `${path}[${index}]`)) found.push(violation);
     });
-    return Object.freeze(violations);
+    return Object.freeze(found);
   }
-  if (!isRecord(value)) return Object.freeze(violations);
-  for (const key of Object.keys(value)) {
-    const childPath = path === '' ? key : `${path}.${key}`;
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record).sort()) {
     if (isCredentialValueKey(key)) {
-      const child: unknown = value[key];
-      if (child !== undefined && child !== null) violations.push(childPath);
-      continue;
+      found.push(path === '' ? key : `${path}.${key}`);
     }
-    violations.push(...credentialValueViolations(value[key], childPath));
+    for (const violation of credentialValueViolations(record[key], path === '' ? key : `${path}.${key}`)) {
+      found.push(violation);
+    }
   }
-  return Object.freeze(violations);
+  return Object.freeze(found);
 }

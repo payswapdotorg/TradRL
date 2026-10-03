@@ -49,7 +49,7 @@ export {
   isCanonicalPositiveDecimal,
   isUnitIntervalDecimal,
   isRfc3339Timestamp,
-  CREDENTIAL_VALUE_KEY_ROOTS,
+  CREDENTIAL_VALUE_KEYS,
   isCredentialValueKey,
   credentialValueViolations,
 } from './primitives';
