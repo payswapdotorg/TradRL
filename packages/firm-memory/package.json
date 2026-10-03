@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/firm-memory",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Firm-memory contracts (Work Order T034): the FirmKnowledgeRecord (a promoted, deduplicated learning unit with provenance refs back to its supporting post-mortems/outcomes/experiments, confidence, validity window and content address), the closed knowledge-kind vocabulary, the two append-only chain-verified logs (the knowledge chain + the contradiction register — T030/T031's fold law, mirrored: rewriting or hiding a knowledge entry is a typed error), the promotion policy shapes (evidence count, non-contradiction, window stability), and the point-in-time query contracts (ask the brain only what was knowable at instant T — L4).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
