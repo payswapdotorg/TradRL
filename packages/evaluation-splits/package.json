@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/evaluation-splits",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Evaluation-splits split driver (Work Order T032): materializes benchmark-ready SPLIT PLANS from data-axis definitions — rolling and anchored walk-forward window ladders, regime-segmented axes (partition an axis by regime label, not just time), purged/embargoed boundaries with gap and embargo widths as EXACT DECIMALS, and unseen/holdout reservation. Same axis + same policy -> byte-identical split plan (determinism law, tested). Every plan carries L9 lineage (inputs, policy ref, content address) and the plan ledger is append-only and chain-verified (L11). Typed errors for embargo violations and for holdout windows that leak into search windows (R21; spec/EVALUATION-PROTOCOL.md 'Generalization' + 'Selection integrity').",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
