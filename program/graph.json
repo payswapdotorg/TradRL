@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "program": "TradRL",
- "updated_at": "2026-10-01T00:45:00Z",
+ "updated_at": "2026-10-03T03:05:00Z",
  "policies": {
   "max_concurrent_work_orders": 3,
   "allowed_statuses": [
@@ -34,7 +34,7 @@
    "merged_sha": "c0e4e47ae4898e341448a0aade939202ca24aa25",
    "evidence": [
     "PR #1 squash-merged at c0e4e47ae4898e341448a0aade939202ca24aa25 (dispatch base 7e4a24d, head 53ecec2)",
-    "GitHub Actions run 36301049674 (ci): success \u2014 typecheck, vitest 19/19, program:check valid, governance passed",
+    "GitHub Actions run 36301049674 (ci): success — typecheck, vitest 19/19, program:check valid, governance passed",
     "Local verification: pnpm verify green before push (tsc clean, 19/19 tests, program state valid, governance passed)"
    ]
   },
@@ -126,7 +126,7 @@
    "pr": 5,
    "merged_sha": "e254e3d",
    "evidence": [
-    "merge: T005 (recovered...) commit e254e3d on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #5 merge lost locally; work reconstructed from batch stores)",
+    "merge: T005 (recovered...) commit e254e3d on branch recover/13-50 — batch-replay recovery after sandbox reset (original PR #5 merge lost locally; work reconstructed from batch stores)",
     "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
    ],
    "depends": [
@@ -149,7 +149,7 @@
    "pr": 6,
    "merged_sha": "d9196e3",
    "evidence": [
-    "merge: T006 (recovered...) commit d9196e3 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #6 merge lost locally; work reconstructed from batch stores)",
+    "merge: T006 (recovered...) commit d9196e3 on branch recover/13-50 — batch-replay recovery after sandbox reset (original PR #6 merge lost locally; work reconstructed from batch stores)",
     "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
    ],
    "depends": [
@@ -172,7 +172,7 @@
    "pr": 7,
    "merged_sha": "30551bb",
    "evidence": [
-    "merge: T007 (recovered...) commit 30551bb on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #7 merge lost locally; work reconstructed from batch stores)",
+    "merge: T007 (recovered...) commit 30551bb on branch recover/13-50 — batch-replay recovery after sandbox reset (original PR #7 merge lost locally; work reconstructed from batch stores)",
     "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
    ],
    "depends": [
@@ -196,7 +196,7 @@
    "pr": 8,
    "merged_sha": "e1c1427",
    "evidence": [
-    "merge: T008 (recovered...) commit e1c1427 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #8 merge lost locally; work reconstructed from batch stores)",
+    "merge: T008 (recovered...) commit e1c1427 on branch recover/13-50 — batch-replay recovery after sandbox reset (original PR #8 merge lost locally; work reconstructed from batch stores)",
     "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
    ],
    "depends": [
@@ -219,7 +219,7 @@
    "pr": 9,
    "merged_sha": "9f03c97",
    "evidence": [
-    "merge: T009 (recovered...) commit 9f03c97 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #9 merge lost locally; work reconstructed from batch stores)",
+    "merge: T009 (recovered...) commit 9f03c97 on branch recover/13-50 — batch-replay recovery after sandbox reset (original PR #9 merge lost locally; work reconstructed from batch stores)",
     "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
    ],
    "depends": [
@@ -243,7 +243,7 @@
    "pr": 10,
    "merged_sha": "b7457f4",
    "evidence": [
-    "merge: T010 (recovered...) commit b7457f4 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #10 merge lost locally; work reconstructed from batch stores)",
+    "merge: T010 (recovered...) commit b7457f4 on branch recover/13-50 — batch-replay recovery after sandbox reset (original PR #10 merge lost locally; work reconstructed from batch stores)",
     "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
    ],
    "depends": [
@@ -269,7 +269,7 @@
    "pr": 11,
    "merged_sha": "de20b70",
    "evidence": [
-    "merge: T011 (recovered...) commit de20b70 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #11 merge lost locally; work reconstructed from batch stores)",
+    "merge: T011 (recovered...) commit de20b70 on branch recover/13-50 — batch-replay recovery after sandbox reset (original PR #11 merge lost locally; work reconstructed from batch stores)",
     "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
    ],
    "depends": [
@@ -295,7 +295,7 @@
    "pr": 12,
    "merged_sha": "c3ce70a",
    "evidence": [
-    "merge: T012 (batch-replay recovery) \u2014 work/T012-recovered replayed from batches/T012live.json (39 Write paths + Edits), integrated on recover/13-50 at merge 834f4ac, suites green at c3ce70a",
+    "merge: T012 (batch-replay recovery) — work/T012-recovered replayed from batches/T012live.json (39 Write paths + Edits), integrated on recover/13-50 at merge 834f4ac, suites green at c3ce70a",
     "Pod gates (T012's own tree): 590/590 tests, typecheck/program/governance PASS (worker report in batch store)",
     "Local verification on recover/13-50 @ c3ce70a: pnpm typecheck clean; packages/evaluation + packages/verification 158/158 PASS after integration-seam fixes (vendored mirrors aligned to recovered sibling shapes; contract-law test alignments documented per contracts/evaluation/*.md)"
    ],
@@ -351,7 +351,7 @@
    "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
    "merged_sha": "844cd37ba651ad15151f72abd4df6bd5bb1777dd",
    "evidence": [
-    "delivery https://tmpfiles.org/wlAQw7ykQoky/t014-delivery.tar.gz sha bb4a1a20b23aed4a53014afad882d9769397b6e7adf9212df5ff3dfb8050b7e0 (backup URL wPAGwFyMRHYu, same sha \u2014 original turn + kick relay both posted)",
+    "delivery https://tmpfiles.org/wlAQw7ykQoky/t014-delivery.tar.gz sha bb4a1a20b23aed4a53014afad882d9769397b6e7adf9212df5ff3dfb8050b7e0 (backup URL wPAGwFyMRHYu, same sha — original turn + kick relay both posted)",
     "worker HEAD d3119124a4e750486db8341ecbc941c5654b33fa; gate typecheck PASS | test 1879/1880 | program PASS | governance PASS",
     "integration: typecheck 0, vitest 2299 passed/0 failed/1 skipped (+97), program valid, governance pass; services/learning/src/index.ts edit verified purely additive"
    ],
@@ -527,7 +527,7 @@
    "merged_sha": "653043be5f645c67004fd7c603fb6e18a3c68d13",
    "evidence": [
     "delivery https://tmpfiles.org/w1AYwmaoXYsp/t020-delivery.tar.gz sha 88521d0c9851be38f98e6051897fad0f2064089f1ed88955252450e233cb2aa0",
-    "worker HEAD 1afb69211dbbfbc2ea7204af755aefe29079e00e; gate pnpm verify EXIT 0 \u2014 3191 passed/1 skipped (+164)",
+    "worker HEAD 1afb69211dbbfbc2ea7204af755aefe29079e00e; gate pnpm verify EXIT 0 — 3191 passed/1 skipped (+164)",
     "integration: typecheck 0, vitest 3731 passed/0 failed/1 skipped (+164), program valid, governance pass",
     "recovery note: the 413-block turn wedged at a platform Bash-tool freeze (worker's echo probes documented it); kick #3 turn finished services/risk + repaired 13 pre-existing library test errors; golden numbers verified against engine output (digest ee066390)"
    ],
@@ -555,7 +555,7 @@
    "merged_sha": "0f87e281b21fab6da550c9f00523400a5211aa66",
    "evidence": [
     "delivery https://tmpfiles.org/wFADwSaWM6Yr/t021-delivery.tar.gz sha e982e7c111afc65ca2a8c2ee1e2458cf3cd8c5d8244a80bd014a368504728da4",
-    "worker HEAD 0be2b63b57fd025d2d753d2c26a90e8ec4bb4f4d; gate typecheck PASS | test 3327/3328 | program PASS | governance PASS (per-package bodies gate 134/134 \u2014 bodies/* outside root globs on its base)",
+    "worker HEAD 0be2b63b57fd025d2d753d2c26a90e8ec4bb4f4d; gate typecheck PASS | test 3327/3328 | program PASS | governance PASS (per-package bodies gate 134/134 — bodies/* outside root globs on its base)",
     "integration: Lead root reconciliation (pnpm-workspace + tsconfig + vitest now cover bodies/*), typecheck 0, vitest 3461/0/1 (+171), program valid, governance pass"
    ],
    "depends": [
@@ -646,7 +646,7 @@
     "worker HEAD e38784a0950adf7551a5f7ce013c82d4324dc8af (2 checkpoints: 675ae87, e38784a); delivery chat c7c1fcda report harvested",
     "Lead worktree gates: typecheck PASS | vitest 4803 passed + 1 skipped (324 files, +219) | program PASS | governance PASS; surface compliant (bodies/trading-director only, 14 files ~10.2K lines)",
     "CI run ci@e38784a success; PR #6 squash-merged as 0d9c3f4",
-    "ratification flag: sibling bodies compareDecimal zero-branch inversion (0 vs 0.02 returns 1) \u2014 T024 mirror fixed locally; sibling fix queued for Lead decision"
+    "ratification flag: sibling bodies compareDecimal zero-branch inversion (0 vs 0.02 returns 1) — T024 mirror fixed locally; sibling fix queued for Lead decision"
    ],
    "depends": [
     "T003",
@@ -704,7 +704,7 @@
    "pr": 26,
    "merged_sha": "ce0fc57",
    "evidence": [
-    "merge: T026 (recovered...) commit ce0fc57 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #26 merge lost locally; work reconstructed from batch stores)",
+    "merge: T026 (recovered...) commit ce0fc57 on branch recover/13-50 — batch-replay recovery after sandbox reset (original PR #26 merge lost locally; work reconstructed from batch stores)",
     "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
    ],
    "depends": [
@@ -785,7 +785,7 @@
    "pr": 29,
    "merged_sha": "e106667",
    "evidence": [
-    "merge: T029 (recovered...) commit e106667 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #29 merge lost locally; work reconstructed from batch stores)",
+    "merge: T029 (recovered...) commit e106667 on branch recover/13-50 — batch-replay recovery after sandbox reset (original PR #29 merge lost locally; work reconstructed from batch stores)",
     "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
    ],
    "depends": [
@@ -896,8 +896,8 @@
    "merged_sha": "4f8312c6aa146068e192b0ba4485b2454a8db9a0",
    "evidence": [
     "D-027 wave-27 dispatch (base 803cf1c); stale-queue recovery: 15h non-admission broken 2026-10-02 03:18 UTC by fresh-send probe doctrine (Lead re-dispatch tab 33FDF020)",
-    "worker head aab82a05 \u2014 packages/outcomes (OutcomeRecord/PostMortemRecord, closed vocabularies, chain-verified append-only logs, T035 evaluation hooks) + services/outcome-learning (T030 mirror ingestion, expected-vs-realized reconcile, attribution drafts, retention, tenant/project query surface); 87/87 own tests",
-    "Lead merge-result gates GREEN (378 files, 5695 passed + 1 skip); squash 4f8312c via PR #12 (CI run 36963247199 success); completion server-confirmed in batch store \u2014 agent finished in cloud sandbox after browser tab was lost mid-run"
+    "worker head aab82a05 — packages/outcomes (OutcomeRecord/PostMortemRecord, closed vocabularies, chain-verified append-only logs, T035 evaluation hooks) + services/outcome-learning (T030 mirror ingestion, expected-vs-realized reconcile, attribution drafts, retention, tenant/project query surface); 87/87 own tests",
+    "Lead merge-result gates GREEN (378 files, 5695 passed + 1 skip); squash 4f8312c via PR #12 (CI run 36963247199 success); completion server-confirmed in batch store — agent finished in cloud sandbox after browser tab was lost mid-run"
    ],
    "depends": [
     "T011",
@@ -916,12 +916,14 @@
     "packages/firm-memory/",
     "services/firm-memory/"
    ],
-   "status": "in_progress",
+   "status": "merged",
    "branch": "work/T034-firm-brain",
-   "pr": null,
-   "merged_sha": null,
+   "pr": 14,
+   "merged_sha": "94fcdb4a06a46644e4b51b0d125709328439fad0",
    "evidence": [
-    "D-028 wave-28 dispatch (base = this commit); unblocked by T033 merge 4f8312c; deps T007+T011+T033 merged; zero root exceptions"
+    "D-028 wave-28 dispatch (base b29837b); unblocked by T033 merge 4f8312c; deps T007+T011+T033 merged; zero root exceptions",
+    "D-029 merge 94fcdb4 via PR #14 (squash): packages/firm-memory 75/75 + services/firm-memory 55/55 own tests; Lead merge-result gates GREEN (typecheck 0, vitest 6000 passed + 1 skip / 407 files, program valid, governance passed, CI green); frozen surfaces verified (zero files outside the two trees; zero-dep law; lockfile untouched)",
+    "Integrity: cross_tenant_access/tenant_mismatch (L12/R25), chain_mismatch + log rewrites (hash-chained memory), l4_boundary_violation (PIT serving), contradiction_detected (typed register, never silent), duplicate_evidence, closed vocabularies, decimal/confidence exactness, lineage_gap; determinism double-pinned (golden digests + REAL-stack double-run)"
    ],
    "depends": [
     "T007",
@@ -969,7 +971,7 @@
    ],
    "status": "merged",
    "branch": "work/T036-provider-sdk",
-   "pr": "delivery-tarball (tmpfiles protocol, no PR \u2014 lead-verified integration)",
+   "pr": "delivery-tarball (tmpfiles protocol, no PR — lead-verified integration)",
    "merged_sha": "55df36b",
    "evidence": [
     "delivery https://tmpfiles.org/wsAgwK0lgQ4q/t036-delivery.tar.gz sha e61611d30229c9f001e96cfbfcd3ca9deb9280efe5a9465981e8b48d53d7088e",
@@ -1074,7 +1076,7 @@
     "worker HEAD 40cf4b18 (3 checkpoints: c77bb02, 5ec5986, 40cf4b1); delivery chat 18e20f26 (marker server-confirmed; 1.39MB batches)",
     "Lead worktree gates: typecheck PASS | vitest 4737 passed + 1 skipped (+153) | program PASS | governance PASS; surface compliant (services/execution-gateway + packages/execution-authority)",
     "CI run ci@40cf4b18 success; PR #7 squash-merged as 7502cbd",
-    "L8 last-mile: 13-stage gateway pipeline (gate\u2192risk\u2192authority\u2192entitlement\u2192rate\u2192kill-switch\u2192translate\u2192audit) with REAL T019/T020/T039 integration; execution authority stays outside the model (invariant 6)"
+    "L8 last-mile: 13-stage gateway pipeline (gate→risk→authority→entitlement→rate→kill-switch→translate→audit) with REAL T019/T020/T039 integration; execution authority stays outside the model (invariant 6)"
    ],
    "depends": [
     "T019",
