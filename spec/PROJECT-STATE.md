@@ -5,7 +5,7 @@
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
 | Program phase | wave-28 closed + wave-29 execution (T032+T034 merged 41/50; T048 queued; T041 in flight) |
-| Current authorized Work Order | T032, T048, T041 (T035 staged, capacity-gated) |
+| Current authorized Work Order | T048, T035, T041 (wave-28/29 lanes; T035 re-dispatched with corrected credential) |
 | Active workers | 3 |
 | In-flight | T048 (e2e reference slice, capacity-queued), T041 (API/SDK, in-cloud), T035 (autonomous improvement, staged for dispatch) |
 | Blocked | none |
