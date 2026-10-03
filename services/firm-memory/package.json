@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/firm-memory-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Firm-memory service (Work Order T034): the tenant-isolated organizational memory over the @tradrl/firm-memory contracts. Ingests T033's query surface (outcome records + post-mortem drafts + attribution classes) through structural mirrors, promotes post-mortem hypotheses into firm knowledge under the promotion policy (evidence count, aggregate confidence, window stability — injected instants only), reconciles and dedupes against existing knowledge (contradictions are typed records in the chain-verified register, never silent overwrites; polarity flips require strictly dominating evidence), enforces tenant isolation at every read and write (cross-tenant access is a typed error naming both scopes), applies retention/decay windows, and serves the point-in-time knowledge surface T035 and the research bodies read (only what was knowable at instant T — L4).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
