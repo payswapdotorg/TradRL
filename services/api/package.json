@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/api-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The developer API boundary service (Work Order T041): the public/private plane separation — versioned /v1 route contracts for tenant/project/goal management, organization status/watch reads, research + learning job submission routes, firm-knowledge point-in-time reads, outcome/evidence reads and execution REQUESTS (always forwarded through the T040 gateway shapes, never executed here — L8), plus the private service-to-service plane on a separate internal auth plane. The request pipeline is code, never prompts (L20): authn -> authz -> tenant-context injection -> rate limit -> input validation -> handler -> audit emission -> response. Per-tenant per-route usage metering on every request (R41 hooks, record-only); idempotency keys on consequential routes; cross-tenant access is a typed error at the routing layer (L12).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
