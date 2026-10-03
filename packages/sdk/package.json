@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The typed developer client (Work Order T041): a zero-dependency TypeScript SDK over the API boundary — an INJECTABLE fetch-compatible transport (no implementation shipped: the caller injects it; the deterministic tests script it), the full typed resource surface mirroring the public /v1 routes (same names, same shapes — pinned by interop trip-wire tests against the REAL service), the typed ApiError hierarchy (auth/permission/tenant/rate-limit/validation/conflict/unavailable — each programmatically distinguishable), pagination/cursor helpers, rate-limit-aware retry/backoff honoring the server's retry signals through the injected transport, API-version negotiation on client init, and idempotency-key generation helpers. Request/response shapes are STRUCTURAL MIRRORS of @tradrl/api-service's contracts (D-003/D-004 law — never imports).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}

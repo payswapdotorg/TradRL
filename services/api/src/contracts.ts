@@ -38,6 +38,7 @@ import type {
   ProjectLifecycleEvent,
   ProjectRecord,
   Scope,
+  ServedKnowledge,
   StrategyIntent,
 } from './mirrors';
 import {
@@ -409,7 +410,7 @@ export function isKnowledgeQueryRequest(v: unknown): v is KnowledgeQueryRequest 
 }
 
 /** The knowledge-query response page. */
-export interface KnowledgeQueryResponse extends Page<unknown> {
+export interface KnowledgeQueryResponse extends Page<ServedKnowledge> {
   /** The query instant the serving projection ran at (echoed — L4's evidence). */
   readonly at: number;
 }
