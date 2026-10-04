@@ -83,37 +83,42 @@ https://<project>.vercel.app                       (ONE origin — no CORS anywh
   exactly what T041's composition root demands: the credential
   registry (env-sourced tokens, minted at this secure boundary), the
   instant source, and the five backing-service ports.
-- **The backing services (checkpoint status).** The five ports
-  (`ControlPlanePort`, `FirmMemoryPort`, `OutcomeLearningPort`,
-  `ExecutionGatewayPort`, `JobSubmissionPort`) are currently **typed
-  degraded stubs** (`deploy_adapter_pending`) — see §6. The durable
-  adapters (Neon/Upstash/R2/Resend/Apify) land in checkpoints
-  W-3b..W-3d under `deploy/adapters/` + `deploy/wire/`; the composition
-  seam in `runtime/compose.ts` is where they will be injected (the
-  function code does not change shape when they arrive).
-  **Checkpoint 2 (W-3b) status:** the durable STORE layer is built and
-  tested offline — `deploy/adapters/neon/` (the zero-dep SQL-over-HTTP
-  client + the firm-memory / outcome-learning / project stores,
-  table-per-port, tenant-scoped rows — every statement binds the tenant
-  as parameter 1; cross-tenant writes are the typed
-  `cross_tenant_access`, foreign reads find nothing) and
-  `deploy/adapters/upstash/` (the zero-dep REST client with Bearer
-  token auth + the TTL-scoped idempotency-key store mirroring T041's
-  fresh/replay/conflict semantics over `SET ... EX <ttl> NX` + the
-  tenant-prefixed cache). They are NOT yet wired into the Vercel
-  function — `deploy/wire/` (W-3d) composes them at the
-  `runtime/compose.ts` seam. Before first use, apply the Neon DDL
-  records (below).
-
-  **Checkpoint 3 (W-3c) status:** `deploy/adapters/r2/` (the zero-dep
-  SigV4 signing + the content-addressed, tenant-prefixed evidence/blob
-  store — PUT/GET/HEAD over the S3-compatible endpoint), 
-  `deploy/adapters/resend/` (the zero-dep REST client + the eight
-  UX.md notice types as typed template records + the tenant-scoped
-  delivery lane), and `deploy/adapters/apify/` (the zero-dep REST
-  client for actor runs + schedules as typed records + the jobs'
-  push through the T037/T038 subscription-spec shapes) are built and
-  tested offline with pinned vectors. Same as above: W-3d wires them.
+- **The backing services (the W-3f backing resolution).** Which ports
+  back the five data-route families is resolved from the environment
+  once per composition (`runtime/env.ts` → `resolveDeployBacking`):
+  - **DEMO — the default when NO durable-provider key (`NEON_*`,
+    `UPSTASH_*`) is configured** (overridable: `TRADRL_DEPLOY_BACKING=demo`).
+    The five ports are the REAL in-memory fakes from the frozen
+    service's own fixtures (`runtime/demo.ts` imports
+    `services/api/src/fixtures.ts` exactly the way the seam already
+    imports `createApiService` — wrapped, never edited), seeded with
+    the fixture demo data for the deployment's credential tenant: one
+    demo project (`prj-demo-console`, created + bound THROUGH the real
+    routes), the fixture knowledge records, one demo outcome +
+    post-mortem pair, a routed-submission gateway, and the recording
+    job port. `/v1/projects`, `/v1/jobs`, `/v1/knowledge`,
+    `/v1/outcomes`, `/v1/execution` all really serve data —
+    **per-instance in-memory state**: serverless cold starts reset it,
+    which is acceptable and honest under the SIMULATED badge
+    (UX-DESIGN §7). With the internal credential configured, the demo
+    also plays the machinery role through the REAL private plane: an
+    org-status snapshot is reported at boot (the watch surface serves
+    `org:tradrl-demo`), and a per-request tick advances non-terminal
+    jobs `submitted -> running -> complete` (~3 s / ~8 s after
+    submission) so the launch journey's async progress renders.
+  - **DURABLE — the moment any durable-provider key is configured**
+    (overridable: `TRADRL_DEPLOY_BACKING=durable`). The durable
+    adapters are built and tested in `deploy/adapters/` + `deploy/wire/`
+    (W-3b..W-3d), but T041's port methods are synchronous by design
+    while those adapters are async — the async-to-sync **hydration
+    seam is the documented W-3e/lead step** (`deploy/wire/production.md`
+    §the sync/async bridge). Until it lands, the durable backing
+    composes the typed degraded stubs (`deploy_adapter_pending` → the
+    typed 503 `unavailable`) — the honest pending state, R46.
+  - An **invalid** `TRADRL_DEPLOY_BACKING` value is a host
+    misconfiguration: the typed `deploy_not_configured` 503 naming the
+    key and its two legal values (fail-closed; never the value).
+  Before first durable use, apply the Neon DDL records (below).
 
 ### The Neon schema (apply once — the runbook's §neon paste block)
 
@@ -190,6 +195,7 @@ every key the deployment reads, with its purpose. Summary:
 | `TRADRL_API_DEVELOPER_PRINCIPAL` | the credential's principal name (audit WHO) | you choose (e.g. `public-console`) |
 | `TRADRL_API_INTERNAL_TOKEN` | the private-plane (`/internal/*`) credential token — **optional**: absent = the internal plane stays closed (R46) | `openssl rand -hex 24` |
 | `TRADRL_API_INTERNAL_PRINCIPAL` | the internal service principal (required when the internal token is set) | you choose (e.g. `job-runner`) |
+| `TRADRL_DEPLOY_BACKING` | **optional** — which backing the data routes compose over: `demo` (the in-memory fixture-backed demo; per-instance state, honest under SIMULATED) or `durable` (the deploy/wire adapters' path; typed pending 503s until the W-3e hydration seam). **UNSET = auto**: `demo` when no `NEON_*`/`UPSTASH_*` key is configured (the public free-tier default), `durable` the moment any is. An invalid value fails closed (the typed 503 naming the key) | unset (auto) |
 
 ### Console shell substitution (Vercel BUILD-time env — consumed by build-console.mjs)
 
@@ -228,11 +234,18 @@ a dependency of the repo).
    ```
 2. **Set the environment variables** (Production + Preview):
    - Runtime: `TRADRL_API_DEVELOPER_TOKEN`, `TRADRL_API_DEVELOPER_TENANT`,
-     `TRADRL_API_DEVELOPER_PRINCIPAL` (+ the optional internal pair).
+     `TRADRL_API_DEVELOPER_PRINCIPAL`, plus the optional internal pair
+     `TRADRL_API_INTERNAL_TOKEN` + `TRADRL_API_INTERNAL_PRINCIPAL`
+     (**set the internal pair for the full demo**: it enables the
+     org-status watch snapshot + the job-animation machinery — without
+     it org-status stays honestly empty and jobs stay `submitted`).
+     Leave `TRADRL_DEPLOY_BACKING` unset (auto: the demo backing while
+     no `NEON_*`/`UPSTASH_*` key is configured).
    - Build: `TRADRL_CONSOLE_TOKEN` (same value as the developer token),
      `TRADRL_CONSOLE_TENANT_ID` (same tenant), optionally
-     `TRADRL_CONSOLE_PROJECT_ID`; leave `TRADRL_CONSOLE_SIMULATED`
-     unset (`true`) until the durable adapters are wired.
+     `TRADRL_CONSOLE_PROJECT_ID=prj-demo-console` to boot straight into
+     the seeded demo view; leave `TRADRL_CONSOLE_SIMULATED` unset
+     (`true`) — the demo backing is exactly what the badge discloses.
    Via dashboard → Settings → Environment Variables, or:
    ```
    npx vercel env add TRADRL_API_DEVELOPER_TOKEN production
@@ -255,34 +268,51 @@ a dependency of the repo).
    the services/api import graph are bundled by Vercel's own
    toolchain — the repo has no runtime dependencies), and the two
    rewrites publish the same-origin `/v1` + `/internal`.
-5. **First verification (the smoke sequence).**
+5. **First verification (the smoke sequence — backing=demo expectations).**
    ```
    BASE=https://<project>.vercel.app
+   TOKEN=<the TRADRL_API_DEVELOPER_TOKEN value>
    curl -s $BASE/v1/meta                                    # → 401 envelope (pipeline: authn first)
-   curl -s -H "Authorization: Bearer $TRADRL_API_DEVELOPER_TOKEN" $BASE/v1/meta
+   curl -s -H "Authorization: Bearer $TOKEN" $BASE/v1/meta
                                                            # → 200 {"requestId":...,"data":{"apiVersion":"v1",...}}
-   curl -si -H "Authorization: Bearer $TRADRL_API_DEVELOPER_TOKEN" $BASE/v1/meta | grep -i access-control
+   curl -si -H "Authorization: Bearer $TOKEN" $BASE/v1/meta | grep -i access-control
                                                            # → NO OUTPUT (the same-origin law: no CORS headers)
-   curl -s -H "Authorization: Bearer $TRADRL_API_DEVELOPER_TOKEN" $BASE/v1/projects
-                                                           # → 503 {"error":{"code":"unavailable",...deploy_adapter_pending...}}
-                                                           #   (checkpoint 1: the typed degraded state, R46 — expected until W-3b..W-3d)
+   curl -s -H "Authorization: Bearer $TOKEN" $BASE/v1/projects
+                                                           # → 200 {"data":{"items":[{"id":"prj-demo-console",...}]}}
+                                                           #   (the demo backing: the seeded fixture data — NOT a 503)
+   curl -s -H "Authorization: Bearer $TOKEN" -X POST -H 'content-type: application/json' \
+        -d '{"project":"prj-demo-console","at":1730000000000}' $BASE/v1/knowledge/query
+                                                           # → 200 with the fixture knowledge record
    curl -s $BASE/src/loader/strip-types.ts | head -1        # → the loader source (the no-build loader's fetch works)
    ```
    Then open `$BASE/` in a browser: the console boots (theme pre-paint,
    the SIMULATED badge, the twelve sections) with the substituted
-   token/tenant; the connection block shows the API reachable.
+   token/tenant; the connection block shows the API reachable. With
+   `TRADRL_CONSOLE_PROJECT_ID=prj-demo-console` the sections land on
+   the seeded demo data (project + knowledge + outcome/post-mortem +
+   the watch snapshot when the internal pair is set); run the launch
+   flow and watch the kickoff job animate submitted → running →
+   complete (~3 s / ~8 s) when the internal pair is set.
    Troubleshooting: if `/v1/meta` returns Vercel's 404 (not the API's
    JSON envelope), the rewrite destination did not resolve the
    function mount — confirm `vercel.json` was copied to the root
    (step 3) and that the function appears in the deployment's
-   Functions tab as `deploy/vercel/api/router`.
+   Functions tab as `deploy/vercel/api/router`. If the data routes
+   answer 503 `deploy_adapter_pending`, a `NEON_*`/`UPSTASH_*` key is
+   configured (the durable backing was auto-selected) — unset those
+   keys or set `TRADRL_DEPLOY_BACKING=demo` for the demo.
 6. **The J1–J12 journey catalog (the Lead's acceptance gate).** Run
    the UX-DESIGN.md J1–J12 journeys with an agent browser against
    `$BASE/` — every journey must pass on the live deployment before
-   the PR opens (per the D-036 Lead ruling). Checkpoint 1 expectation:
-   journeys that need only the console + `/v1/meta` + graceful
-   unavailability states pass; data-backed journeys complete when the
-   durable adapters land.
+   the PR opens (per the D-036 Lead ruling). W-3f expectation under
+   the demo backing (the default): the data-backed journeys work —
+   J3's launch flow creates + submits + (with the internal pair)
+   animates to complete, J4's watch feed folds the seeded snapshot /
+   outcome / job / submission events, J5's Time Machine projects the
+   seeded records, J6's notices derive from the seeded data, J7's
+   evidence capsules render from the seeded outcome/knowledge — all
+   honestly labeled SIMULATED (per-instance state: a cold start resets
+   the demo world to its seed).
 
 ## 5. Rollback
 
@@ -307,21 +337,27 @@ Rules of engagement:
 
 ## 6. The degradation model (R46 — provider absent/down is a typed state, never a crash)
 
-| What is absent | What the API does | What the console does |
+| What is absent / which backing | What the API does | What the console does |
 | --- | --- | --- |
-| A backing-service adapter (checkpoint 1: all five; later: any one provider down) | The affected routes answer the **typed 503 `unavailable`** envelope (the port's `deploy_adapter_pending`/provider failure code is carried in the message); the pipeline, authn/authz, rate limits, metering and audit still run on every request | The affected sections render their **unavailable/degraded states** (availability model); the shell never blanks |
+| **Demo backing** (the default: no `NEON_*`/`UPSTASH_*` key; the SIMULATED badge is the disclosure) | The data routes serve the seeded fixture demo data over the REAL in-memory fake ports (`runtime/demo.ts`) — per-instance state: a serverless cold start resets the demo world to its seed (projects/jobs created in the session drop; the seed itself re-lands at the next boot) | The data-backed journeys render real (if simulated) data; the SIMULATED badge stays on (UX-DESIGN §7 — do NOT set `TRADRL_CONSOLE_SIMULATED=false` under the demo backing) |
+| Demo backing + internal pair ABSENT | The org-status store stays empty (the honest typed `not_found` — only the private plane can write it) and the job machinery never ticks (submissions stay `submitted`) | The watch section folds the job/outcome/knowledge events; no org-snapshot events; the launch progress shows `submitted` |
+| **Durable backing** (any `NEON_*`/`UPSTASH_*` key, or `TRADRL_DEPLOY_BACKING=durable`) | The data routes answer the **typed 503 `unavailable`** (`deploy_adapter_pending` — the adapters are composed in deploy/wire; the async-to-sync hydration seam is the W-3e/lead step, `deploy/wire/production.md`); the pipeline, authn/authz, rate limits, metering and audit still run on every request | The affected sections render their **unavailable/degraded states** (availability model); the shell never blanks |
+| A provider down/misconfigured (once the W-3e seam wires the durable adapters) | The affected routes answer the provider's typed degraded code (per `deploy/wire/production.md` §the degradation matrix) — never a crash | as above (the T042 graceful-degradation contract) |
+| An INVALID `TRADRL_DEPLOY_BACKING` value | Every request answers the **typed 503 `deploy_not_configured`** naming the KEY and its two legal values (never the value) | The console's connection block shows the API reachable-but-degraded |
 | `TRADRL_API_INTERNAL_TOKEN` unset | The `/internal/*` plane stays CLOSED (401/403 — the credentials registry simply has no internal registration) | — (the console never calls `/internal`) |
 | API env keys missing at function start | Every request answers the **typed 503 `deploy_not_configured`** naming the missing KEY NAMES (never values) | The console's connection block shows the API unreachable |
 | `TRADRL_CONSOLE_TOKEN`/`_TENANT_ID` unset at build | The shipped defaults stay; the console boots into its readable "no credential token / no tenant injected" message (the T042 graceful-degradation contract) | A readable message, never a blank page |
 | The API function unreachable | — | The console degrades per its availability model (retry, readable message) — the T042 contract |
-| Neon autosuspended (cold) (W-3b) | First query pays the wake latency; a timeout/5xx becomes the typed degraded state (never a crash) | as above |
+| Neon autosuspended (cold) (the durable path, post-W-3e) | First query pays the wake latency; a timeout/5xx becomes the typed degraded state (never a crash) | as above |
 
 ## 7. Testing this tree
 
 ```
-corepack pnpm vitest run deploy     # 37 tests (runtime adaptation vectors,
-                                    # composition incl. the L12 tenant-injection
-                                    # probe, config invariants, build determinism)
+corepack pnpm vitest run deploy     # 142 tests (runtime adaptation vectors,
+                                    # the backing-resolution matrix + the demo
+                                    # data routes + the machinery tick + L12
+                                    # probes, config invariants, build
+                                    # determinism, adapter + wire suites)
 corepack pnpm typecheck             # 0 errors (deploy/** is in the root tsconfig include)
 ```
 
@@ -332,12 +368,21 @@ fakes).
 
 ## 8. Status + what lands next (honest)
 
-- **Checkpoint 1 (this commit):** runbook + hosting config + the
-  function wrap + the console build — the console and the API are
-  publicly deployable NOW with the typed-degraded backing services.
-- **W-3b:** `deploy/adapters/neon/` + `deploy/adapters/upstash/`
-  (durable stores; tenant-scoped rows, L12; pinned request vectors).
-- **W-3c:** `deploy/adapters/r2/` + `resend/` + `apify/`.
-- **W-3d:** `deploy/wire/` (the production composition — the real
-  adapters injected at the `runtime/compose.ts` seam) + the port-shape
-  trip-wires + the CI smoketest.
+- **Checkpoints 1–4 (merged, T052):** runbook + hosting config + the
+  function wrap + the console build; the five zero-dep provider
+  adapters (Neon/Upstash/R2/Resend/Apify) + the composition wire +
+  the CI smoketest — all offline-tested with pinned vectors.
+- **W-3f (this follow-up, merged): the honest demo backing.** With no
+  durable-provider keys configured (the public free-tier default), the
+  deployed API serves the data routes over the frozen service's own
+  fixture ports, seeded through the real routes for the credential
+  tenant, with the internal-plane demo machinery (the org-status boot
+  report + the per-request job tick). The public console's data-backed
+  journeys (J3–J8) render real — if simulated — data; per-instance
+  in-memory state, honestly disclosed by the SIMULATED badge.
+- **W-3e (the Lead step, unchanged): the async-to-sync hydration
+  seam.** T041's port methods are synchronous by design; the durable
+  adapters are async. Until T041 widens its ports (a frozen-sibling
+  change) or a Lead-owned projection layer lands, the DURABLE backing
+  keeps the typed pending stubs (`deploy/wire/production.md` §the
+  sync/async bridge). Everything durable is built and tested offline.
