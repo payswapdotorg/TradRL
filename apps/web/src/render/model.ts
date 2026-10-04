@@ -42,7 +42,25 @@ import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsul
 import { viewAtOf, watchEventsOf, type WorkspaceState } from '../core/workspace';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
 import type { WatchEvent } from '../core/watch';
-import { activeTargetOf, defaultShellView, heroPanel, renderAppShell, settingsPanel, type ShellView } from './shell';
+import { timelineBucketsOf, formatTimeUtc, type TimelineEntry } from '../core/timeline';
+import type { ShellTarget } from '../core/nav';
+import { activeTargetOf, defaultShellView, heroPanel, renderAppShell, settingsPanel, type SheetRef, type ShellView } from './shell';
+import {
+  accordionRow,
+  detailSheet,
+  emptyState,
+  errorState,
+  listRow,
+  loadingState,
+  pillToneOfDomain,
+  richStatCard,
+  statCard,
+  statGrid,
+  timelineList,
+  type ComponentIcon,
+  type DefinitionSection,
+  type PillTone,
+} from './components';
 import { v, serializeVNode, type VNode } from './vtree';
 
 /** One fact row (closed-vocabulary label; the value verbatim). */
@@ -108,54 +126,114 @@ function submissionCard(scope: WorkspaceScope, submission: GatewaySubmissionReco
   ]);
 }
 
-/** Render one org snapshot. */
-function orgSnapshotCard(scope: WorkspaceScope, snapshot: OrgStatusSnapshot, viewAt: number): VNode {
-  assertProjectScope(scope, snapshot);
-  visibleAt(snapshot, availabilityOfOrgSnapshot(snapshot), viewAt, snapshot.organizationRef);
-  return v('div', { class: 'card' }, [
-    v('div', { class: 'card-title' }, [snapshot.organizationRef]),
-    v('span', { class: `badge badge-status-${snapshot.status}` }, [snapshot.status]),
-    factRow('observed at', formatInstantUtc(snapshot.at)),
-    factRow('instances', snapshot.instanceRefs.join(', ')),
-  ]);
+/** Render one job as an interactive list row (§4.4) — the facts live in the sheet (§4.5a). */
+function jobPillOf(job: JobRecord): { tone: PillTone; label: string } {
+  const status = job.status as 'submitted' | 'running' | 'complete' | 'failed' | 'blocked';
+  return { tone: pillToneOfDomain(status), label: job.status };
 }
 
 /** Render one job with its progress view. */
 function jobCard(scope: WorkspaceScope, job: JobRecord, viewAt: number, progress: JobProgressView | null): VNode {
   assertProjectScope(scope, job);
   visibleAt(job, availabilityOfJob(job), viewAt, job.jobId);
-  const rows: VNode[] = [
-    factRow('kind', job.kind),
-    factRow('status', job.status),
-    factRow('submitted at', formatInstantUtc(job.submittedAt)),
-  ];
-  if (job.completedAt !== undefined) rows.push(factRow('completed at', formatInstantUtc(job.completedAt)));
-  if (progress !== null) {
-    rows.push(factRow('elapsed', progress.elapsedMs === null ? 'pending' : formatDurationMs(progress.elapsedMs)));
-    rows.push(v('div', { class: 'progress' }, [
-      v('span', { class: `progress-fill progress-${job.status}`, style: `width:${job.status === 'complete' ? '100' : job.status === 'running' ? '60' : '10'}%` }, []),
-    ]));
-  }
-  return v('div', { class: 'card' }, [v('div', { class: 'card-title' }, [job.jobId]), ...rows]);
+  return listRow({
+    icon: 'flask',
+    title: job.jobId,
+    subtitle: `${job.kind} job`,
+    pill: jobPillOf(job),
+    ...(progress !== null && progress.elapsedMs !== null ? { meta: formatDurationMs(progress.elapsedMs) } : {}),
+    rowId: `job:${job.jobId}`,
+  });
 }
 
-/** Render one outcome with its deviation facts (decimals verbatim). */
+/** The job's detail sheet (§4.5a) — the same availability + scope gates as the row. */
+function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, progress: JobProgressView | null): VNode[] {
+  assertProjectScope(scope, job);
+  visibleAt(job, availabilityOfJob(job), viewAt, job.jobId);
+  const status: DefinitionSection = {
+    eyebrow: 'STATUS',
+    pairs: [
+      ['state', job.status],
+      ['submitted at', formatInstantUtc(job.submittedAt)],
+      ...(job.completedAt !== undefined ? ([['completed at', formatInstantUtc(job.completedAt)]] as const) : []),
+    ],
+  };
+  const metrics: DefinitionSection = {
+    eyebrow: 'METRICS',
+    pairs: [['elapsed', progress === null || progress.elapsedMs === null ? 'pending' : formatDurationMs(progress.elapsedMs)]],
+  };
+  const identity: DefinitionSection = {
+    eyebrow: 'IDENTITY',
+    pairs: [['job id', job.jobId], ['kind', job.kind], ['project', job.project]],
+  };
+  return detailSheet({ sheetId: `job:${job.jobId}`, title: job.jobId, subtitle: `${job.kind} job`, details: [status, metrics, identity] });
+}
+
+/** Render one org snapshot as an interactive list row. */
+function orgSnapshotCard(scope: WorkspaceScope, snapshot: OrgStatusSnapshot, viewAt: number): VNode {
+  assertProjectScope(scope, snapshot);
+  visibleAt(snapshot, availabilityOfOrgSnapshot(snapshot), viewAt, snapshot.organizationRef);
+  return listRow({
+    icon: 'layers',
+    title: snapshot.organizationRef,
+    subtitle: `${snapshot.instanceRefs.length} instance${snapshot.instanceRefs.length === 1 ? '' : 's'}`,
+    pill: { tone: snapshot.status === 'active' ? 'live' : 'idle', label: snapshot.status },
+    meta: formatTimeUtc(snapshot.at),
+    rowId: `snapshot:${snapshot.organizationRef}`,
+  });
+}
+
+/** The snapshot's detail sheet. */
+function snapshotSheet(scope: WorkspaceScope, snapshot: OrgStatusSnapshot, viewAt: number): VNode[] {
+  assertProjectScope(scope, snapshot);
+  visibleAt(snapshot, availabilityOfOrgSnapshot(snapshot), viewAt, snapshot.organizationRef);
+  return detailSheet({
+    sheetId: `snapshot:${snapshot.organizationRef}`,
+    title: snapshot.organizationRef,
+    subtitle: 'organization snapshot',
+    details: [
+      { eyebrow: 'STATUS', pairs: [['state', snapshot.status], ['observed at', formatInstantUtc(snapshot.at)]] },
+      { eyebrow: 'IDENTITY', pairs: [['organization', snapshot.organizationRef], ['project', snapshot.project], ['instances', snapshot.instanceRefs.join(', ') || 'none']] },
+    ],
+  });
+}
+
+/** Render one outcome as an accordion row (§4.5b) — decimals verbatim in the definition grid. */
 function outcomeCard(scope: WorkspaceScope, outcome: OutcomeRecord, viewAt: number): VNode {
   assertProjectScope(scope, outcome);
   visibleAt(outcome, availabilityOfOutcome(outcome), viewAt, outcome.outcomeId);
-  return v('div', { class: 'card' }, [
-    v('div', { class: 'card-title' }, [outcome.outcomeId]),
-    v('span', { class: `badge badge-disposition-${outcome.decision.disposition}` }, [outcome.decision.disposition]),
-    ...factRows([
-      ['outcome class', outcome.outcomeClass],
-      ['expected quantity', outcome.expectation.expectedQuantity ?? 'none'],
-      ['filled quantity', outcome.realization.filledQuantity ?? 'none'],
-      ['realized outcome', renderDecimal(outcome.realization.realizedOutcome)],
-      ['fee total', renderDecimal(outcome.realization.feeTotal)],
-      ['notional total', renderDecimal(outcome.realization.notionalTotal)],
-      ['within tolerance', outcome.deviation.withinTolerance === null ? 'unknown' : String(outcome.deviation.withinTolerance)],
-    ]),
-  ]);
+  return accordionRow({
+    icon: 'chart',
+    title: outcome.outcomeId,
+    subtitle: outcome.outcomeClass,
+    pill: { tone: outcome.deviation.withinTolerance === false ? 'warn' : 'live', label: outcome.decision.disposition },
+    meta: formatTimeUtc(outcome.asOf),
+    rowId: `outcome:${outcome.outcomeId}`,
+    details: [
+      { eyebrow: 'STATUS', pairs: [
+        ['disposition', outcome.decision.disposition],
+        ['within tolerance', outcome.deviation.withinTolerance === null ? 'unknown' : String(outcome.deviation.withinTolerance)],
+        ['realized gap', outcome.deviation.realizedGap ?? 'none'],
+      ] },
+      { eyebrow: 'METRICS', pairs: [
+        ['expected quantity', outcome.expectation.expectedQuantity ?? 'none'],
+        ['filled quantity', outcome.realization.filledQuantity ?? 'none'],
+        ['realized outcome', renderDecimal(outcome.realization.realizedOutcome)],
+        ['fee total', renderDecimal(outcome.realization.feeTotal)],
+        ['notional total', renderDecimal(outcome.realization.notionalTotal)],
+      ] },
+      { eyebrow: 'IDENTITY', pairs: [
+        ['outcome id', outcome.outcomeId],
+        ['outcome class', outcome.outcomeClass],
+        ['evidence', outcome.evidence.map((entry) => `${entry.kind}:${entry.ref}`).join(', ') || 'none'],
+      ] },
+      { eyebrow: 'ADVANCED', pairs: [
+        ['decision ref', outcome.decision.decisionRef],
+        ['intent ref', outcome.decision.intentRef],
+        ['as of', formatInstantUtc(outcome.asOf)],
+      ] },
+    ],
+  });
 }
 
 /** Render one post-mortem. */
@@ -194,16 +272,28 @@ function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt
   ]);
 }
 
-/** Render one evidence capsule (its own availability gate — L4). */
+/** Render one evidence capsule as an accordion row (§4.5b; refs render — capsules never recompute, L20). */
 function capsuleCard(capsule: EvidenceCapsule, viewAt: number): VNode {
   assertVisible({ datumRef: capsule.capsuleId, availableAt: capsule.availableAt }, viewAt);
-  return v('div', { class: 'card capsule' }, [
-    v('div', { class: 'card-title' }, [capsule.capsuleId]),
-    v('span', { class: `badge badge-capsule-${capsule.sourceKind}` }, [capsule.sourceKind]),
-    ...capsule.facts.map((entry) => factRow(entry.label, entry.value)),
-    factRow('source route', capsule.sourceRoute),
-    factRow('refs', capsule.refs.map((entry) => `${entry.kind}:${entry.ref}`).join(', ') || 'none'),
-  ]);
+  return accordionRow({
+    icon: 'box',
+    title: capsule.capsuleId,
+    subtitle: capsule.sourceKind,
+    pill: { tone: 'live', label: capsule.sourceKind },
+    rowId: `capsule:${capsule.capsuleId}`,
+    details: [
+      { eyebrow: 'IDENTITY', pairs: [
+        ['capsule id', capsule.capsuleId],
+        ['source kind', capsule.sourceKind],
+        ['source route', capsule.sourceRoute],
+        ['available at', formatInstantUtc(capsule.availableAt)],
+      ] },
+      { eyebrow: 'ADVANCED', pairs: [
+        ...capsule.facts.map((entry) => [entry.label, entry.value] as const),
+        ['refs', capsule.refs.map((entry) => `${entry.kind}:${entry.ref}`).join(', ') || 'none'],
+      ] },
+    ],
+  });
 }
 
 /** Render one watch event — UX.md's seven lenses (the sanitized shape; never reasoning). */
@@ -255,6 +345,120 @@ function timeMachineBar(state: WorkspaceState, viewAt: number): VNode {
   ]);
 }
 
+/** The per-section teaching empty states (§4.12): the pinned T042 titles + ONE sentence + exactly ONE action. */
+const SECTION_EMPTY_STATES: Readonly<Record<SectionId, { readonly icon: ComponentIcon; readonly title: string; readonly sentence: string; readonly action: { readonly label: string; readonly target: ShellTarget } }>> = Object.freeze({
+  'goal': { icon: 'target', title: 'No goal loaded yet.', sentence: 'Describe what this organization should achieve, then launch the primary flow.', action: { label: 'Open the overview', target: 'home' } },
+  'organization': { icon: 'layers', title: 'No organization snapshots at this view instant.', sentence: 'An organization compiles here once the launch completes.', action: { label: 'Describe a goal', target: 'goal' } },
+  'market-world': { icon: 'pulse', title: 'No launch context yet — the market world is specified at launch.', sentence: 'Markets, venues and data sources appear once a project launches.', action: { label: 'Open Goal', target: 'goal' } },
+  'time-machine': { icon: 'clock', title: 'No view yet.', sentence: 'Pick a mode above to revisit any instant.', action: { label: 'Open the overview', target: 'home' } },
+  'research': { icon: 'flask', title: 'No research jobs at this view instant.', sentence: 'Research jobs start when a project launches.', action: { label: 'Launch from Goal', target: 'goal' } },
+  'experiments': { icon: 'flask', title: 'No experiments yet.', sentence: 'Run your first evaluation from Research.', action: { label: 'Open Research', target: 'research' } },
+  'decisions': { icon: 'check', title: 'No decisions at this view instant.', sentence: 'Proposals and decisions appear once research produces candidates.', action: { label: 'Open Research', target: 'research' } },
+  'execution': { icon: 'pulse', title: 'No execution submissions at this view instant.', sentence: 'Executions follow the decisions your organization makes.', action: { label: 'Open Decisions', target: 'decisions' } },
+  'risk': { icon: 'shield', title: 'No risk records at this view instant.', sentence: 'Risk checks appear once the organization acts.', action: { label: 'Open Decisions', target: 'decisions' } },
+  'evidence': { icon: 'box', title: 'No evidence capsules at this view instant.', sentence: 'Every outcome, lesson and decision carries its evidence here.', action: { label: 'Open Outcomes', target: 'outcomes' } },
+  'outcomes': { icon: 'chart', title: 'No outcomes at this view instant.', sentence: 'Realized outcomes appear once executions settle.', action: { label: 'Open Execution', target: 'execution' } },
+  'lessons': { icon: 'spark', title: 'No lessons at this view instant.', sentence: 'The firm records what it learns from realized outcomes.', action: { label: 'Open Outcomes', target: 'outcomes' } },
+});
+
+/** The section's teaching empty state (the pinned title rides as the EmptyState title). */
+function sectionEmpty(section: SectionId): VNode {
+  const config = SECTION_EMPTY_STATES[section];
+  return emptyState({ icon: config.icon, title: config.title, sentence: config.sentence, action: config.action });
+}
+
+/** The notice-kind severity tint (§4.6 — a closed mapping, pinned by tests). */
+function noticeSeverityOf(kind: string): 'info' | 'warn' | 'error' {
+  if (kind === 'failed_evaluation' || kind === 'safety_intervention') return 'error';
+  if (kind === 'capability_gap' || kind === 'shadow_degradation') return 'warn';
+  return 'info';
+}
+
+/**
+ * THE HOME PANEL (§3: the hero IS the page) — the overview surface:
+ * the hero, the KPI tiles (§4.1), the rich stat card (§4.2) and the
+ * activity timeline (§4.6, from the notice fold — projected by
+ * availability like every other datum). Teaching states: a
+ * layout-mirroring skeleton while the first reads are in flight
+ * (§4.12), the ErrorState when the API is unreachable with nothing
+ * known, and a quiet hint when there is no activity yet.
+ */
+function homePanel(state: WorkspaceState, viewAt: number): VNode {
+  const fresh = state.project === null && state.jobs.length === 0 && state.outcomes.length === 0;
+  const hero = heroPanel();
+  if (state.connection === 'connecting' && fresh) {
+    return v('section', { class: 'panel home', 'data-section': 'home' }, [hero, loadingState('stat-grid')]);
+  }
+  if (state.connection === 'offline' && fresh) {
+    const latest = state.degraded.length === 0 ? undefined : state.degraded[state.degraded.length - 1];
+    return v('section', { class: 'panel home', 'data-section': 'home' }, [
+      hero,
+      errorState('The console could not reach the API.', {
+        technical: latest === undefined ? undefined : `${latest.route} — ${latest.message}`,
+      }),
+    ]);
+  }
+  const jobs = projectToView(state.jobs, viewAt, availabilityOfJob);
+  const outcomes = projectToView(state.outcomes, viewAt, availabilityOfOutcome);
+  const postMortems = projectToView(state.postMortems, viewAt, availabilityOfPostMortem);
+  const knowledge = projectToView(state.knowledge, viewAt, availabilityOfKnowledge);
+  const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
+  const snapshots = projectToView(state.orgSnapshots, viewAt, availabilityOfOrgSnapshot);
+  const capsuleCount = outcomes.length + postMortems.length + knowledge.length + submissions.length;
+  const unread = unreadCount(state.inbox);
+  const running = jobs.filter((job) => job.status === 'running').length;
+  const snapshot = snapshots.length > 0 ? snapshots[0] : null;
+  const tiles = statGrid([
+    statCard({ icon: 'pulse', label: 'ACTIVE JOBS', value: String(running), delta: `${jobs.length} total` }),
+    statCard({ icon: 'chart', label: 'OUTCOMES', value: String(outcomes.length) }),
+    statCard({ icon: 'box', label: 'EVIDENCE CAPSULES', value: String(capsuleCount) }),
+    statCard({ icon: 'inbox', label: 'UNREAD NOTICES', value: String(unread), ok: unread === 0 }),
+  ]);
+  const organization = richStatCard({
+    eyebrow: 'ORGANIZATION',
+    value: snapshot === null ? 'Not compiled yet' : snapshot.status,
+    ...(snapshot === null ? {} : { qualifier: `observed ${formatTimeUtc(snapshot.at)}` }),
+    sentence: 'The compiled team working your goal.',
+    details: [
+      ['Tenant', state.scope.tenantId],
+      ['Project', state.scope.projectId],
+      ['Instances', snapshot === null ? '0' : String(snapshot.instanceRefs.length)],
+    ],
+  });
+  const notices = projectToView(state.inbox.notices, viewAt, (record) => record.at);
+  const entries: TimelineEntry[] = notices.map((record) => ({
+    at: record.at,
+    title: record.title,
+    description: `${record.source.route} ${record.source.ref}`,
+    slug: record.kind,
+    severity: noticeSeverityOf(record.kind),
+  }));
+  const buckets = timelineBucketsOf(entries, viewAt);
+  const activity = buckets.length === 0
+    ? v('div', { class: 'empty' }, ['No activity yet — notices from your organization appear here.'])
+    : timelineList(buckets);
+  return v('section', { class: 'panel home', 'data-section': 'home' }, [
+    hero,
+    tiles,
+    organization,
+    v('div', { class: 'home-block' }, [v('h2', { class: 'section-heading' }, ['Recent activity']), activity]),
+  ]);
+}
+
+/** The open sheet's content (§4.5a) — resolved from the shell view against the state, gated like the rows. */
+function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView): VNode[] {
+  const sheet: SheetRef | null = view.sheet;
+  if (sheet === null) return [];
+  if (sheet.kind === 'job') {
+    const job = state.jobs.find((candidate) => candidate.jobId === sheet.id);
+    if (job === undefined) return [];
+    return jobSheet(state.scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : []));
+  }
+  const snapshot = state.orgSnapshots.find((candidate) => candidate.organizationRef === sheet.id);
+  if (snapshot === undefined) return [];
+  return snapshotSheet(state.scope, snapshot, viewAt);
+}
+
 /** The per-section panel — the selected section's projection at the view instant. */
 function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
   const scope = state.scope;
@@ -294,7 +498,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
           ...state.constraintSet.constraints.map((constraint) => factRow(`${constraint.severity} ${constraint.id}`, `${constraint.domain}.${constraint.subject} ${constraint.predicate.kind}`)),
         ]));
       }
-      if (rows.length === 0) rows.push(v('div', { class: 'empty' }, ['No goal loaded yet.']));
+      if (rows.length === 0) rows.push(sectionEmpty('goal'));
       return v('section', { class: 'panel', 'data-section': 'goal' }, rows);
     }
 
@@ -303,14 +507,14 @@ function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
       const cards = projected.map((snapshot) => orgSnapshotCard(scope, snapshot, viewAt));
       return v('section', { class: 'panel', 'data-section': 'organization' }, [
         ...cards,
-        v('div', { class: 'empty' }, [projected.length === 0 ? 'No organization snapshots at this view instant.' : '']),
+        ...(projected.length === 0 ? [sectionEmpty('organization')] : []),
       ]);
     }
 
     case 'market-world': {
       const draft = state.launch.draft;
       if (draft === null) {
-        return v('section', { class: 'panel', 'data-section': 'market-world' }, [v('div', { class: 'empty' }, ['No launch context yet — the market world is specified at launch.'])]);
+        return v('section', { class: 'panel', 'data-section': 'market-world' }, [sectionEmpty('market-world')]);
       }
       return v('section', { class: 'panel', 'data-section': 'market-world' }, [
         v('div', { class: 'card' }, [
@@ -347,7 +551,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
       const cards = projected.map((job) => jobCard(scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : [])));
       return v('section', { class: 'panel', 'data-section': 'research' }, [
         ...cards,
-        v('div', { class: 'empty' }, [projected.length === 0 ? 'No research jobs at this view instant.' : '']),
+        ...(projected.length === 0 ? [sectionEmpty('research')] : []),
       ]);
     }
 
@@ -365,6 +569,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
           ...(experiments.size === 0 ? [factRow('experiments', 'none at this view instant')] : []),
         ]),
         ...cards,
+        ...(projected.length === 0 ? [sectionEmpty('experiments')] : []),
       ]);
     }
 
@@ -374,7 +579,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
       return v('section', { class: 'panel', 'data-section': 'decisions' }, [
         v('div', { class: 'watch' }, [v('h2', {}, ['Watch']), ...watchFeed.map((event) => watchEventRow(scope, event, viewAt))]),
         ...submissions.map((submission) => submissionCard(scope, submission, viewAt)),
-        v('div', { class: 'empty' }, [submissions.length === 0 ? 'No decisions at this view instant.' : '']),
+        ...(submissions.length === 0 && watchFeed.length === 0 ? [sectionEmpty('decisions')] : []),
       ]);
     }
 
@@ -383,7 +588,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
       return v('section', { class: 'panel', 'data-section': 'execution' }, [
         v('p', { class: 'hint' }, ['The console submits execution REQUESTS through the API; the gateway alone decides (L8/L20).']),
         ...submissions.map((submission) => submissionCard(scope, submission, viewAt)),
-        v('div', { class: 'empty' }, [submissions.length === 0 ? 'No execution submissions at this view instant.' : '']),
+        ...(submissions.length === 0 ? [sectionEmpty('execution')] : []),
       ]);
     }
 
@@ -416,7 +621,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
       ];
       return v('section', { class: 'panel', 'data-section': 'evidence' }, [
         ...capsules.map((capsule) => capsuleCard(capsule, viewAt)),
-        v('div', { class: 'empty' }, [capsules.length === 0 ? 'No evidence capsules at this view instant.' : '']),
+        ...(capsules.length === 0 ? [sectionEmpty('evidence')] : []),
       ]);
     }
 
@@ -425,7 +630,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
       const cards = projected.map((outcome) => outcomeCard(scope, outcome, viewAt));
       return v('section', { class: 'panel', 'data-section': 'outcomes' }, [
         ...cards,
-        v('div', { class: 'empty' }, [projected.length === 0 ? 'No outcomes at this view instant.' : '']),
+        ...(projected.length === 0 ? [sectionEmpty('outcomes')] : []),
       ]);
     }
 
@@ -435,7 +640,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
       return v('section', { class: 'panel', 'data-section': 'lessons' }, [
         ...knowledgeProjected.map((knowledge) => knowledgeCard(scope, knowledge, viewAt)),
         ...postMortemProjected.map((postMortem) => postMortemCard(scope, postMortem, viewAt)),
-        v('div', { class: 'empty' }, [knowledgeProjected.length + postMortemProjected.length === 0 ? 'No lessons at this view instant.' : '']),
+        ...(knowledgeProjected.length + postMortemProjected.length === 0 ? [sectionEmpty('lessons')] : []),
       ]);
     }
   }
@@ -503,7 +708,7 @@ export function renderConsoleModel(state: WorkspaceState, at: number, view: Shel
     const viewAt = viewAtOf(state);
     const activeTarget = activeTargetOf(state, view);
     const main: VNode = activeTarget === 'home'
-      ? heroPanel()
+      ? homePanel(state, viewAt)
       : activeTarget === 'inbox'
         ? inboxPanel(state, viewAt)
         : activeTarget === 'settings'
@@ -514,6 +719,7 @@ export function renderConsoleModel(state: WorkspaceState, at: number, view: Shel
       timeMachine: timeMachineBar(state, viewAt),
       main,
       launch,
+      sheet: sheetContentOf(state, viewAt, view),
     });
   });
 }

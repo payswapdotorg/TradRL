@@ -37,12 +37,34 @@ export interface ShellView {
   readonly busy: boolean;
   /** True while the mobile drawer is open. */
   readonly drawerOpen: boolean;
+  /** The open detail sheet (§4.5a): a job or an organization snapshot. */
+  readonly sheet: SheetRef | null;
+}
+
+/** A reference to the record a detail sheet shows (§4.5a). */
+export interface SheetRef {
+  /** The record family: a job or an organization snapshot. */
+  readonly kind: 'job' | 'snapshot';
+  /** The record's id (jobId / organizationRef). */
+  readonly id: string;
+}
+
+/** Parse a data-row payload into a sheet reference (null when unknown). */
+export function parseSheetRef(rowId: string): SheetRef | null {
+  const separator = rowId.indexOf(':');
+  if (separator <= 0) return null;
+  const kind = rowId.slice(0, separator);
+  const id = rowId.slice(separator + 1);
+  if (id.length === 0) return null;
+  if (kind === 'job') return { kind: 'job', id };
+  if (kind === 'snapshot') return { kind: 'snapshot', id };
+  return null;
 }
 
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */
@@ -281,13 +303,13 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
   ]);
 }
 
-/** The composed shell: root wrapper, mobile header, drawer backdrop, sidebar, main content. */
+/** The composed shell: root wrapper, mobile header, drawer backdrop, sidebar, main content, the open sheet. */
 export function renderAppShell(
   state: WorkspaceState,
   at: number,
   view: ShellView,
   activeTarget: ShellTarget,
-  content: { readonly timeMachine: VNode; readonly main: VNode | null; readonly launch: VNode | null },
+  content: { readonly timeMachine: VNode; readonly main: VNode | null; readonly launch: VNode | null; readonly sheet: readonly VNode[] },
 ): VNode {
   return v('div', {
     class: 'tradrl-shell console',
@@ -297,6 +319,7 @@ export function renderAppShell(
     'data-target': activeTarget,
     'data-drawer': view.drawerOpen ? 'open' : 'closed',
     'data-simulated': view.simulated ? 'true' : 'false',
+    'data-sheet': view.sheet === null ? 'closed' : `${view.sheet.kind}:${view.sheet.id}`,
   }, [
     shellHeader(state, view),
     v('button', { class: 'drawer-backdrop', 'data-action': 'drawer-close', type: 'button', 'aria-label': 'Close navigation' }, []),
@@ -316,5 +339,6 @@ export function renderAppShell(
         ...(content.launch === null ? [] : [content.launch]),
       ]),
     ]),
+    ...content.sheet,
   ]);
 }

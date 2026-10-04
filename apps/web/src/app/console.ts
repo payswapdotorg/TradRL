@@ -38,7 +38,7 @@ import type { WorkspaceScope } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
 import { persistTheme } from '../core/theme';
 import { isShellTarget } from '../core/nav';
-import type { ShellView } from '../render/shell';
+import { parseSheetRef, type ShellView } from '../render/shell';
 import { renderConsoleModel } from '../render/model';
 import { mountVTree } from '../render/dom';
 
@@ -245,6 +245,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       simulated: options.simulated ?? false,
       busy: false,
       drawerOpen: false,
+      sheet: null,
     };
     const host = root as Element & { setAttribute(name: string, value: string): void; classList?: { add(name: string): void } };
     if (host.classList !== undefined) host.classList.add('tradrl-host');
@@ -261,6 +262,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     const focusDrawerStart = (): void => {
       if (document.querySelectorAll === undefined) return;
       for (const focusable of document.querySelectorAll('.tradrl-shell .nav-item')) {
+        focusable.focus();
+        return;
+      }
+    };
+
+    /** Focus the open sheet's close button (the sheet trap's entry point). */
+    const focusSheetStart = (): void => {
+      if (document.querySelectorAll === undefined) return;
+      for (const focusable of document.querySelectorAll('.tradrl-shell .sheet [data-action="sheet-close"]')) {
         focusable.focus();
         return;
       }
@@ -302,6 +312,19 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           return;
         }
       }
+      const row = event.target?.closest?.('[data-row]');
+      if (row !== null && row !== undefined) {
+        const rowId = row.getAttribute('data-row');
+        if (rowId !== null) {
+          const sheet = parseSheetRef(rowId);
+          if (sheet !== null) {
+            view = { ...view, sheet };
+            render();
+            focusSheetStart();
+          }
+        }
+        return;
+      }
       const action = event.target?.closest?.('[data-action]');
       if (action !== null && action !== undefined) {
         const kind = action.getAttribute('data-action');
@@ -317,6 +340,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         if (kind === 'drawer-close') {
           view = { ...view, drawerOpen: false };
+          render();
+        }
+        if (kind === 'sheet-close') {
+          view = { ...view, sheet: null };
           render();
         }
         if (kind === 'theme-light' || kind === 'theme-dark') {
@@ -337,30 +364,41 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       }
     });
 
-    // The drawer's keyboard contract: Esc closes; Tab is trapped
-    // while the drawer is open (charter §2, mobile).
+    // The keyboard contract: Esc closes the sheet, then the drawer; Tab
+    // is trapped inside whichever overlay is open (§4.5a / §2).
     document.addEventListener('keydown', (event) => {
       const key = event.key;
-      if (key === 'Escape' && view.drawerOpen) {
-        view = { ...view, drawerOpen: false };
-        render();
+      if (key === 'Escape') {
+        if (view.sheet !== null) {
+          view = { ...view, sheet: null };
+          render();
+          return;
+        }
+        if (view.drawerOpen) {
+          view = { ...view, drawerOpen: false };
+          render();
+          return;
+        }
         return;
       }
-      if (key === 'Tab' && view.drawerOpen && document.querySelectorAll !== undefined && event.preventDefault !== undefined) {
-        const focusables = [...document.querySelectorAll('.tradrl-shell .nav-item, .tradrl-shell .brand-row')];
-        if (focusables.length === 0) return;
-        const active = document.activeElement as unknown as { focus(): void } | null | undefined;
-        let index = -1;
-        for (let position = 0; position < focusables.length; position += 1) {
-          if (focusables[position] === active) { index = position; break; }
-        }
-        const steppingBack = event.shiftKey === true;
-        const next = steppingBack
-          ? (index <= 0 ? focusables.length - 1 : index - 1)
-          : (index === focusables.length - 1 ? 0 : index + 1);
-        event.preventDefault();
-        focusables[next].focus();
+      if (key !== 'Tab' || document.querySelectorAll === undefined || event.preventDefault === undefined) return;
+      const selector = view.sheet !== null
+        ? '.tradrl-shell .sheet [data-action="sheet-close"]'
+        : view.drawerOpen ? '.tradrl-shell .nav-item, .tradrl-shell .brand-row' : null;
+      if (selector === null) return;
+      const focusables = [...document.querySelectorAll(selector)];
+      if (focusables.length === 0) return;
+      const active = document.activeElement as unknown as { focus(): void } | null | undefined;
+      let index = -1;
+      for (let position = 0; position < focusables.length; position += 1) {
+        if (focusables[position] === active) { index = position; break; }
       }
+      const steppingBack = event.shiftKey === true;
+      const next = steppingBack
+        ? (index <= 0 ? focusables.length - 1 : index - 1)
+        : (index === focusables.length - 1 ? 0 : index + 1);
+      event.preventDefault();
+      focusables[next].focus();
     });
   }
 
