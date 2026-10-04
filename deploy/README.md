@@ -42,8 +42,9 @@ https://<project>.vercel.app                       (ONE origin — no CORS anywh
 │   └── src/**/*       the console's TypeScript sources, served as static
 │                      files (DATA — the no-build loader fetches them as
 │                      text and strips types IN THE BROWSER)
-├── /v1/*           rewrite → serverless function  (root api/router.ts discovery
-│                   shim → deploy/vercel/api/router.ts)
+├── /v1/*           rewrite → serverless function  (destination = the exact
+│                   function path /api/router; the platform hands the
+│                   function req.url = the ORIGINAL public path — W-3j)
 └── /internal/*     rewrite → the same function    (the private plane)
 ```
 
@@ -80,9 +81,10 @@ https://<project>.vercel.app                       (ONE origin — no CORS anywh
   Vercel Node function wrapping the T041 route table: it composes the
   service ONCE per instance (`runtime/compose.ts`, memoized — warm
   invocations reuse it), adapts each `(req, res)` into the
-  `ApiRequest`/`ApiResponse` contracts (`runtime/http.ts` — strips the
-  function mount prefix so the route table sees the original `/v1/...`
-  path), and lets `service.handle()` run the whole pipeline. **No route
+  `ApiRequest`/`ApiResponse` contracts (`runtime/http.ts` — the platform
+  hands the function `req.url` = the ORIGINAL public path under the
+  rewrites; the mount-strip is the guard for direct-mount invocations,
+  so the route table sees the original `/v1/...` path either way), and lets `service.handle()` run the whole pipeline. **No route
   is re-implemented; no pipeline stage is skipped.** The host owns
   exactly what T041's composition root demands: the credential
   registry (env-sourced tokens, minted at this secure boundary), the
@@ -176,7 +178,7 @@ All paths inside the config are repo-root-relative and verified by
 | `outputDirectory` | `deploy/vercel/dist/console` | the ONLY public static tree (gitignored `dist/`) |
 | `functions` | `api/router.ts` (the root discovery shim → `deploy/vercel/api/router.ts`) — 1024 MB, 10 s | within the Hobby free tier (≤1024 MB, ≤60 s); the platform builds functions ONLY from the repo-root `api/` directory |
 | `regions` | `iad1` (single) | Hobby = one region |
-| `rewrites` | `/v1/:path*` and `/internal/:path*` → `/api/router/v1/:path*` / `/api/router/internal/:path*` | same-origin API: the path is passed through verbatim after the function mount; the runtime strips exactly that mount |
+| `rewrites` | `/v1/:path*` and `/internal/:path*` → `/api/router` (the EXACT function path, both — W-3j) | same-origin API: Vercel functions match their EXACT path only — a subpath destination (`/api/router/v1/:path*`) can never resolve (probe-proven); the platform hands the function `req.url` = the original public path |
 
 ---
 
@@ -316,17 +318,29 @@ a dependency of the repo).
    flow and watch the kickoff job animate submitted → running →
    complete (~3 s / ~8 s) when the internal pair is set.
    Troubleshooting:
-   - If `/v1/meta` returns Vercel's 404 (not the API's JSON envelope),
-     the rewrite destination did not resolve the function mount —
-     confirm the root `vercel.json` matches `deploy/vercel/vercel.json`
-     (step 3) and that the function appears in the deployment's
-     Functions tab as `api/router`.
+   - If `/v1/*` (or `/internal/*`) returns Vercel's NOT_FOUND page (not
+     the API's JSON envelope), the rewrite destination must be the
+     EXACT function path (`/api/router`), never a subpath — Vercel
+     functions match their exact path only, and subpath destinations
+     (`/api/router/v1/:path*`) can never resolve (probe-proven, W-3j).
+     Also confirm the root `vercel.json` matches
+     `deploy/vercel/vercel.json` (step 3) and that the function appears
+     in the deployment's Functions tab as `api/router`.
+   - If the exact function path answers FUNCTION_INVOCATION_FAILED
+     (500) with ERR_MODULE_NOT_FOUND or "Cannot use import statement
+     outside a module" in the logs, the function tsconfig emitted ESM —
+     it must emit CommonJS (`api/tsconfig.json`: `module: "CommonJS"` +
+     `moduleResolution: "node"`; the repo package.json has no
+     `"type"` field, so the runtime loads CJS — W-3j). NEVER add file
+     extensions to the frozen `services/api` imports — pin the emit
+     instead.
    - If the function BUILD fails with TS2835 ("Relative import paths
      need explicit file extensions in ECMAScript imports" — the build
      typechecked under `nodenext`), the `api/tsconfig.json`
      nearest-tsconfig pin (W-3i) is missing or drifted — restore it
-     (extends `tsconfig.base.json`, `moduleResolution: "Bundler"`);
-     NEVER add extensions to the frozen `services/api` imports.
+     (extends `tsconfig.base.json`, `moduleResolution: "node"` with
+     `module: "CommonJS"` per W-3j); NEVER add extensions to the frozen
+     `services/api` imports.
    - If the data routes answer 503 `deploy_adapter_pending`, a
      `NEON_*`/`UPSTASH_*` key is configured (the durable backing was
      auto-selected) — unset those keys or set
@@ -388,12 +402,15 @@ corepack pnpm vitest run deploy     # 146 tests (runtime adaptation vectors,
                                     # data routes + the machinery tick + L12
                                     # probes, config invariants incl. the
                                     # root-shim discovery law + the root-copy
-                                    # byte-identity + the W-3i resolution pin,
-                                    # build determinism, adapter + wire
+                                    # byte-identity + the W-3i/W-3j
+                                    # resolution-and-emit pin + the W-3j
+                                    # exact-path rewrites pin, build
+                                    # determinism, adapter + wire
                                     # suites)
 corepack pnpm typecheck             # 0 errors (api/** + deploy/** are in the root tsconfig
                                     # include; the FUNCTION BUILD's own graph is pinned
-                                    # by api/tsconfig.json — W-3i)
+                                    # by api/tsconfig.json — W-3i resolution +
+                                    # W-3j CommonJS emit)
 ```
 
 No live provider calls anywhere in CI — every provider interaction is
@@ -423,7 +440,7 @@ fakes).
   `api/router.ts` discovery shim now re-exports the deploy tree's
   function (`FUNCTION_MOUNT_PATH` → `/api/router`); the root
   `vercel.json` byte-identity and the discovery law are test-pinned.
-- **W-3i (this follow-up): the @vercel/node typecheck resolution pin.**
+- **W-3i (merged): the @vercel/node typecheck resolution pin.**
   The redeploy from main @ 96ac873 (dpl_Ajr2KCQmT9axQGwDEcvpBkLFc4aV)
   served the static console but dropped the function (/v1/* →
   Vercel's NOT_FOUND): @vercel/node's build-time typecheck ran
@@ -431,12 +448,36 @@ fakes).
   is nearer the entry) and rejected the repo's extensionless imports
   (TS2835 — the TS2339/TS2322 errors were type-collapse cascades). The
   root `api/tsconfig.json` pin — the nearest tsconfig on the entry's
-  walk-up — pins the same `Bundler` resolution the whole repo proves
-  green (reproduced locally: 193 errors under nodenext — 58× TS2835 +
+  walk-up — pinned the resolution the whole repo proves green
+  (reproduced locally: 193 errors under nodenext — 58× TS2835 +
   135 type-collapse cascades; proven: 0 errors under the pin, on the
   exact entry + import-closure graph). Law
   test-pinned: never add extensions to the frozen `services/api`
   imports to satisfy a build tool.
+- **W-3j (this follow-up): the function EMIT + the exact-path
+  rewrites.** The redeploy from main @ 976b12a
+  (https://tradrl-console.vercel.app) served the static console but
+  the API plane was dead, for two root-caused reasons. (1) The
+  rewrites could never match: their destinations
+  (`/api/router/v1/:path*`, `/api/router/internal/:path*`) carried
+  subpath segments, and Vercel functions match their EXACT path only —
+  probe-proven on the platform (tradrl-router-probe): destination =
+  the mount (`/api/router`), and the function receives `req.url` =
+  the ORIGINAL public path (`/v1/meta` stays `/v1/meta`; the matched
+  segments arrive as a `path` query param). Both rewrites now target
+  `/api/router`; the runtime's mount-strip stays as the direct-mount
+  guard. (2) The exact function path itself answered
+  FUNCTION_INVOCATION_FAILED: the emitted function was ESM
+  (`module: "ESNext"` — W-3i fixed the typecheck, the emit stayed
+  ESM) with extensionless specifiers Node cannot load
+  (ERR_MODULE_NOT_FOUND / "Cannot use import statement"); the repo
+  has no `"type": "module"`, so the runtime loads CJS. The pin is now
+  `module: "CommonJS"` + `moduleResolution: "node"` (node10 —
+  extensionless imports stay legal; the frozen sources untouched;
+  "Bundler" is invalid with CommonJS, TS5095). Proven by the new
+  EMIT+EXECUTE gate: the emitted function is `require()`d and serves
+  the four smoke vectors (401 unauthenticated, 200 meta, 200
+  direct-mount meta, 200 knowledge query). Both laws test-pinned.
 - **W-3e (the Lead step, unchanged): the async-to-sync hydration
   seam.** T041's port methods are synchronous by design; the durable
   adapters are async. Until T041 widens its ports (a frozen-sibling
