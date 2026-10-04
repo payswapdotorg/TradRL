@@ -962,7 +962,7 @@ function cleanSpecifierList(state: StripState, index: number): number {
       cleanBraces(state, scan, close);
       const specifiers = countValueSpecifiers(state, scan, close);
       const beforeBraces = prevCode(state, scan);
-      const hasDefault = beforeBraces !== null && beforeBraces.kind === 'ident' && beforeBraces.text !== 'from' && isKeyword(beforeBraces.text) === false && prevCode(state, scan).start > tokens[index].start;
+      const hasDefault = beforeBraces !== null && beforeBraces.kind === 'ident' && beforeBraces.text !== 'from' && isKeyword(beforeBraces.text) === false && beforeBraces.start > tokens[index].start;
       if (specifiers === 0 && hasDefault === false) {
         return removeImportStatement(state, index);
       }

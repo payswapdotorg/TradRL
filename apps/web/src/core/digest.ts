@@ -31,7 +31,7 @@ export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map((element) => canonicalJson(element)).join(',')}]`;
   if (typeof value === 'object') {
     const keys = Object.keys(value as Record<string, unknown>).sort();
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join('')}}`;
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(',')}}`;
   }
   return 'null';
 }
