@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "program": "TradRL",
- "updated_at": "2026-10-04T17:05:00Z",
+ "updated_at": "2026-10-04T18:20:00Z",
  "policies": {
   "max_concurrent_work_orders": 3,
   "allowed_statuses": [
@@ -1122,11 +1122,16 @@
    "write_surface": [
     "apps/web/"
    ],
-   "status": "in_progress",
+   "status": "merged",
    "branch": "work/T042-web-console",
-   "pr": null,
-   "merged_sha": null,
-   "evidence": [],
+   "pr": 17,
+   "merged_sha": "ba6773ef06c40db3cf35584fad280588839d822e",
+   "evidence": [
+    "PR #17 squash-merged at ba6773ef06c40db3cf35584fad280588839d822e (base 3730361, worker head 7abc0d0, checkpoints e960347/c723374/02b9821/7abc0d0)",
+    "GitHub Actions run 37223648930 (verify): success \u2014 typecheck, 6567 passed + 1 skipped (6568), program:check valid, governance passed",
+    "Lead merge-result gates GREEN vs main fb59c03 (worktree 1c120e6): typecheck 0 errors; vitest 6567 passed + 1 skipped (452 files); program:check valid; governance passed; write surface compliant (apps/web/** + two granted root include lines; lockfile importer-sync only)",
+    "Worker completion report (W-1a..W-1d local chain, D-034): 266 own tests / 19 files incl. the typed-error laws (ChainOfThoughtExposureError, AvailabilityViolationError, CrossTenantRenderError, WallClockReadError, PolicyEnforcementError), notice-fold + workspace byte-determinism, SDK interop trip-wires driving the real fixture service, and the self-hosting no-build loader"
+   ],
    "depends": [
     "T041"
    ]
@@ -1347,7 +1352,8 @@
    "write_surface": [
     "apps/web/"
    ],
-   "status": "blocked"
+   "status": "in_progress",
+   "branch": "work/T051-ux-conformance"
   },
   {
    "id": "T052",
