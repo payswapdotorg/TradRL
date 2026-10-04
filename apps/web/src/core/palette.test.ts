@@ -1,0 +1,275 @@
+// Tests for the command palette + the onboarding wizard (core/palette.ts,
+// core/onboarding.ts — UX-DESIGN §4.13/§4.14 + §5 D4/D5, T051).
+//
+// Laws pinned here:
+//   §4.14/D4 the palette covers 100% of the fifteen navigation targets
+//            PLUS projects, jobs, notifications and evidence; the
+//            fuzzy rank is deterministic; the overlay renders grouped
+//            results with type badges + the keyboard affordances; the
+//            sidebar carries the visible "Search ⌘K" affordance.
+//   §4.13/D5 the wizard is EXACTLY three steps with the charter's
+//            verbatim copy; the machine 1→3, the skip path from every
+//            step, persistence (localStorage tradrl_onboarded), the
+//            aria "Step N of 3", the progress dots, and returning
+//            users skipping straight past it.
+
+import { describe, expect, it } from 'vitest';
+import type { EvidenceCapsule } from './evidence';
+import { capsuleFromOutcome } from './evidence';
+import { openWorkspace, reduceAll, type WorkspaceState } from './workspace';
+import {
+  advanceOnboarding,
+  initialOnboarding,
+  isOnboarded,
+  ONBOARDING_STEPS,
+  ONBOARDING_STORAGE_KEY,
+  ONBOARDING_STORED_VALUE,
+  onboardingDots,
+  onboardingPanel,
+  persistOnboarding,
+  readStoredOnboarding,
+  skipOnboarding,
+} from './onboarding';
+import {
+  fuzzyScore,
+  paletteAffordance,
+  paletteIndex,
+  paletteOverlay,
+  rankPalette,
+  type PaletteEntry,
+} from './palette';
+import { serializeVNode } from '../render/vtree';
+
+const SCOPE = { tenantId: 'tenant-a', projectId: 'proj-a' } as const;
+const T0 = 1_700_000_000_000;
+
+const render = (node: unknown): string => serializeVNode(node as import('../render/vtree').VNode);
+
+function capsule(): EvidenceCapsule {
+  const outcome = {
+    outcomeId: 'out-1', ordinal: 1, tenant: 'tenant-a', project: 'proj-a',
+    decision: { decisionRef: 'dec-1', intentRef: 'int-1', disposition: 'filled' },
+    outcomeClass: 'realized-profit',
+    expectation: { expectedQuantity: '10', expectedRealized: '1.5', tolerance: '0.25', declaredBy: 'b1' },
+    realization: { filledQuantity: '10', realizedOutcome: '1.75', feeTotal: '0.02', notionalTotal: '1000.00', unrealizedAtDecision: '0.00' },
+    deviation: { quantityShortfall: null, realizedGap: '0.25', withinTolerance: true },
+    evidence: [{ kind: 'fill', ref: 'fil-1' }],
+    lineage: { shadow: { fidelity: { mode: 'shadow' }, riskPolicy: { policyId: 'pol-1', version: 2 }, experiment: null } },
+    asOf: T0 + 30, priorChainHead: '00000000',
+  } as never;
+  return capsuleFromOutcome(SCOPE, outcome);
+}
+
+/** A populated workspace: a project, a job, two notices, evidence capsules. */
+function populatedWorkspace(): WorkspaceState {
+  const project = {
+    id: 'proj-a', tenantId: 'tenant-a', name: 'Console Test Project', executionMode: 'simulation',
+    lifecycle: { projectId: 'proj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:alpha' },
+    lineage: { projectId: 'proj-a', createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  };
+  const job = { jobId: 'job-1', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'running', submittedAt: T0 + 20 };
+  const outcome = {
+    outcomeId: 'out-1', ordinal: 1, tenant: 'tenant-a', project: 'proj-a',
+    decision: { decisionRef: 'dec-1', intentRef: 'int-1', disposition: 'filled' },
+    outcomeClass: 'realized-profit',
+    expectation: { expectedQuantity: '10', expectedRealized: '1.5', tolerance: '0.25', declaredBy: 'b1' },
+    realization: { filledQuantity: '10', realizedOutcome: '1.75', feeTotal: '0.02', notionalTotal: '1000.00', unrealizedAtDecision: '0.00' },
+    deviation: { quantityShortfall: null, realizedGap: '0.25', withinTolerance: true },
+    evidence: [{ kind: 'fill', ref: 'fil-1' }],
+    lineage: { shadow: { fidelity: { mode: 'shadow' }, riskPolicy: { policyId: 'pol-1', version: 2 }, experiment: null } },
+    asOf: T0 + 30, priorChainHead: '00000000',
+  };
+  return reduceAll(openWorkspace(SCOPE, T0), [
+    { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+    { kind: 'project-loaded', at: T0 + 2, project: project as never },
+    { kind: 'job-updated', at: T0 + 20, job: job as never },
+    { kind: 'outcomes-loaded', at: T0 + 30, records: [outcome as never] },
+  ]);
+}
+
+const capsulesOf = (): readonly EvidenceCapsule[] => [capsule()];
+
+describe('palette: D4 — 100% coverage of navigation + the other entity kinds', () => {
+  it('covers ALL FIFTEEN navigation targets (the charter\'s hard requirement)', () => {
+    const index = paletteIndex(openWorkspace(SCOPE, T0), capsulesOf);
+    const nav = index.filter((entry) => entry.kind === 'NAVIGATION');
+    expect(nav.length).toBe(15);
+    expect(nav.map((entry) => entry.ref)).toEqual([
+      'nav:home', 'nav:goal', 'nav:organization', 'nav:market-world', 'nav:time-machine',
+      'nav:research', 'nav:experiments', 'nav:decisions', 'nav:execution', 'nav:risk',
+      'nav:evidence', 'nav:outcomes', 'nav:lessons', 'nav:inbox', 'nav:settings',
+    ]);
+    for (const entry of nav) expect(entry.target).not.toBeNull();
+  });
+
+  it('covers projects, jobs, notifications and evidence', () => {
+    const state = populatedWorkspace();
+    const index = paletteIndex(state, capsulesOf);
+    expect(index.some((entry) => entry.kind === 'PROJECT' && entry.title === 'Console Test Project')).toBe(true);
+    expect(index.some((entry) => entry.kind === 'JOB' && entry.ref === 'job:job-1')).toBe(true);
+    expect(index.some((entry) => entry.kind === 'EVIDENCE' && entry.ref.startsWith('capsule:'))).toBe(true);
+    // the notice fold derives notices from the reads; the index carries whatever the inbox holds
+    const noticeCount = state.inbox.notices.length;
+    expect(index.filter((entry) => entry.kind === 'NOTIFICATION').length).toBe(noticeCount);
+  });
+});
+
+describe('palette: the fuzzy rank (deterministic, grouped)', () => {
+  it('subsequence matching: hits score, misses are -1, tight runs + prefixes score higher', () => {
+    expect(fuzzyScore('evidence outcomes lessons'.replace(' outcomes lessons', ''), 'ev')).toBeGreaterThan(0);
+    expect(fuzzyScore('market world', 'mw')).toBeGreaterThan(0);
+    expect(fuzzyScore('market world', 'xyz')).toBe(-1);
+    expect(fuzzyScore('market world', 'zzz')).toBe(-1);             // not a subsequence
+    expect(fuzzyScore('experiments', 'ex')).toBeGreaterThan(0);  // prefix-ish run scores high
+    expect(fuzzyScore('experiments', 'expe')).toBeGreaterThan(fuzzyScore('experiments', 'ees')); // a tight prefix run beats a scattered one
+  });
+
+  it('an empty query returns everything, grouped in the charter\'s kind order', () => {
+    const index = paletteIndex(populatedWorkspace(), capsulesOf);
+    const ranked = rankPalette(index, '');
+    expect(ranked.length).toBe(index.length);
+    const kinds = [...new Set(ranked.map((entry) => entry.kind))];
+    expect(kinds).toEqual(['NAVIGATION', 'PROJECT', 'JOB', 'EVIDENCE']); // the fixture's fold yields no notices
+  });
+
+  it('a query filters and keeps best-first order inside a group (DETERMINISM)', () => {
+    const index = paletteIndex(populatedWorkspace(), capsulesOf);
+    const a = rankPalette(index, 'res');
+    const b = rankPalette(index, 'res');
+    expect(a.map((entry) => entry.ref)).toEqual(b.map((entry) => entry.ref));
+    expect(a.length).toBeGreaterThan(0);
+    expect(a.every((entry) => entry.haystack.includes('r') && entry.haystack.includes('e') && entry.haystack.includes('s'))).toBe(true);
+    // the tie-break keeps the index order (stable)
+    expect(rankPalette(index, '')).toEqual(rankPalette(index, ''));
+  });
+
+  it('queries resolve their navigation targets (case-insensitive)', () => {
+    const index = paletteIndex(populatedWorkspace(), capsulesOf);
+    expect(rankPalette(index, 'time').some((entry) => entry.ref === 'nav:time-machine')).toBe(true);
+    expect(rankPalette(index, 'TIME').some((entry) => entry.ref === 'nav:time-machine')).toBe(true);
+    expect(rankPalette(index, 'settings').some((entry) => entry.ref === 'nav:settings')).toBe(true);
+    expect(rankPalette(index, 'zzzz').length).toBe(0);
+  });
+});
+
+describe('palette: the overlay + the affordance (§4.14)', () => {
+  it('renders the input, grouped results with type badges, aria-selected and the keyboard footer', () => {
+    const results: PaletteEntry[] = [
+      { kind: 'NAVIGATION', title: 'Home', subtitle: 'Overview', target: 'home', ref: 'nav:home', haystack: 'home overview' },
+      { kind: 'JOB', title: 'job-1', subtitle: 'research · running', target: 'research', ref: 'job:job-1', haystack: 'job-1' },
+      { kind: 'NOTIFICATION', title: 'Failed evaluation', subtitle: 'Failed evaluation', target: 'inbox', ref: 'notice:ntc-1', haystack: 'failed evaluation' },
+    ];
+    const bytes = render(paletteOverlay({ query: '', results, selected: 0, unread: 2 }));
+    expect(bytes).toContain('class="palette"');
+    expect(bytes).toContain('role="dialog"');
+    expect(bytes).toContain('aria-modal="true"');
+    expect(bytes).toContain('data-palette-input="true"');
+    expect(bytes).toContain('class="palette-badge palette-badge-navigation"');
+    expect(bytes).toContain('class="palette-badge palette-badge-job"');
+    expect(bytes).toContain('aria-selected="true"');
+    expect(bytes).toContain('data-target="home"');
+    expect(bytes).toContain('↑ ↓ navigate');
+    expect(bytes).toContain('Enter open');
+    expect(bytes).toContain('Esc close');
+    expect(bytes).toContain('2 unread');
+  });
+
+  it('the sidebar carries the visible "Search ⌘K" affordance', () => {
+    const bytes = render(paletteAffordance());
+    expect(bytes).toContain('data-action="palette-open"');
+    expect(bytes).toContain('Search');
+    expect(bytes).toContain('⌘K');
+  });
+});
+
+describe('onboarding: §4.13 — the three steps (charter copy, verbatim)', () => {
+  it('EXACTLY three steps with the charter\'s eyebrows, titles, sentences and CTAs', () => {
+    expect(ONBOARDING_STEPS.length).toBe(3);
+    expect(ONBOARDING_STEPS[0]).toEqual({
+      eyebrow: 'Welcome',
+      title: 'Welcome to TradRL',
+      sentence: 'Run a trading research organization: set a goal, watch it work, and audit every decision.',
+      cta: 'Continue',
+    });
+    expect(ONBOARDING_STEPS[1]).toEqual({
+      eyebrow: 'How it works',
+      title: 'How it works',
+      sentence: 'Your organization researches, proposes, and executes under hard risk gates — with evidence attached to every step.',
+      cta: 'Continue',
+    });
+    expect(ONBOARDING_STEPS[2]).toEqual({
+      eyebrow: "You're ready",
+      title: "You're ready",
+      sentence: 'Start by describing a goal; the console compiles an organization and you watch it work.',
+      cta: 'Get started',
+    });
+  });
+});
+
+describe('onboarding: the machine + persistence (D5)', () => {
+  it('advances 1 -> 2 -> 3 -> completed (never a fourth step)', () => {
+    let state = initialOnboarding();
+    expect(state).toEqual({ step: 0 });
+    state = advanceOnboarding(state);
+    expect(state).toEqual({ step: 1 });
+    state = advanceOnboarding(state);
+    expect(state).toEqual({ step: 2 });
+    state = advanceOnboarding(state);
+    expect(isOnboarded(state)).toBe(true);
+    expect(advanceOnboarding(state)).toBe(state); // terminal
+  });
+
+  it('skip completes from EVERY step; completion persists under tradrl_onboarded', () => {
+    for (const step of [0, 1, 2]) {
+      let state = initialOnboarding();
+      for (let index = 0; index < step; index += 1) state = advanceOnboarding(state);
+      expect(skipOnboarding(state)).toEqual({ completed: true });
+    }
+    expect(ONBOARDING_STORAGE_KEY).toBe('tradrl_onboarded');
+  });
+
+  it('the storage round-trip: a returning user skips straight past; a foreign value means not onboarded', () => {
+    const store = new Map<string, string>();
+    const storage = { getItem: (key: string) => (store.has(key) ? (store.get(key) as string) : null), setItem: (key: string, value: string) => { store.set(key, value); } };
+    expect(readStoredOnboarding(storage)).toEqual({ step: 0 }); // fresh: the wizard shows
+    persistOnboarding(storage);
+    expect(store.get('tradrl_onboarded')).toBe(ONBOARDING_STORED_VALUE);
+    expect(readStoredOnboarding(storage)).toEqual({ completed: true }); // returning: skip straight past
+    store.set('tradrl_onboarded', 'garbage');
+    expect(readStoredOnboarding(storage)).toEqual({ step: 0 });
+    const exploding = { getItem: (): string => { throw new Error('no storage'); }, setItem: (): void => { throw new Error('no storage'); } };
+    expect(readStoredOnboarding(exploding)).toEqual({ step: 0 });
+    expect(() => persistOnboarding(exploding)).not.toThrow();
+  });
+});
+
+describe('onboarding: the panel chrome (§4.13)', () => {
+  it('renders the glyph circle, eyebrow, H1, sentence, CTA + arrow, Skip and the aria step readout', () => {
+    const bytes = render(onboardingPanel(initialOnboarding()));
+    expect(bytes).toContain('data-onboarding="step-1"');
+    expect(bytes).toContain('onboarding-circle');
+    expect(bytes).toContain('<div class="onboarding-eyebrow">Welcome</div>');
+    expect(bytes).toContain('<h1 class="onboarding-title">Welcome to TradRL</h1>');
+    expect(bytes).toContain('audit every decision');
+    expect(bytes).toContain('data-action="onboarding-next"');
+    expect(bytes).toContain('Continue');
+    expect(bytes).toContain('data-action="onboarding-skip"');
+    expect(bytes).toContain('Skip');
+    expect(bytes).toContain('aria-label="Step 1 of 3"');
+    expect(bytes).toContain('onboarding-arrow');
+  });
+
+  it('the progress dots: active 24x6 pill, done + inactive 6px dots (aria on the container)', () => {
+    const bytes = render(onboardingDots(1));
+    expect(bytes).toContain('aria-label="Step 2 of 3"');
+    expect(bytes.match(/class="onboarding-dot"/g)?.length).toBe(1);       // inactive
+    expect(bytes.match(/class="onboarding-dot done"/g)?.length).toBe(1);  // before the active
+    expect(bytes.match(/class="onboarding-dot active"/g)?.length).toBe(1);
+  });
+
+  it('the completed state renders the hidden marker (never blocks)', () => {
+    const bytes = render(onboardingPanel(skipOnboarding(initialOnboarding())));
+    expect(bytes).toContain('data-onboarding="completed"');
+  });
+});

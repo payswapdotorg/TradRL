@@ -45,6 +45,7 @@ import type { WatchEvent } from '../core/watch';
 import { timelineBucketsOf, formatTimeUtc, type TimelineEntry } from '../core/timeline';
 import type { ShellTarget } from '../core/nav';
 import { activeTargetOf, defaultShellView, heroPanel, renderAppShell, settingsPanel, type SheetRef, type ShellView } from './shell';
+import { onboardingPanel as onboardingPanelOf, type OnboardingState } from '../core/onboarding';
 import {
   accordionRow,
   detailSheet,
@@ -708,12 +709,17 @@ function launchPanel(state: WorkspaceState, viewAt: number): VNode {
   return v('section', { class: 'panel launch', 'data-section': 'launch' }, rows);
 }
 
+/** The onboarding wizard renders in place of the main content while it shows (§4.13). */
+function onboardingPanelPlaceholder(onboarding: OnboardingState): VNode {
+  return onboardingPanelOf(onboarding);
+}
+
 /**
  * THE WHOLE-CONSOLE RENDER MODEL: one pure pass at an injected
  * instant. The wall-clock guard is armed for the entire pass; every
  * record passes its availability gate and its scope gate; every
  * verdict renders the gateway's own. Determinism: identical
- * (state, at, view) -> identical serializeVNode bytes.
+ * (state, at, view, paletteResults) -> identical serializeVNode bytes.
  *
  * The T051 shell (render/shell.ts) wraps the panels: the sidebar's
  * grouped navigation, the CONNECTION block and the per-section page
@@ -721,26 +727,30 @@ function launchPanel(state: WorkspaceState, viewAt: number): VNode {
  * section panels and every law gate inside them are T042 law,
  * unchanged. The optional shell view carries only chrome state
  * (theme, the account landing target, endpoint, simulated flag,
- * busy/drawer states); the default view reproduces the classic
- * section render.
+ * busy/drawer/sheet/palette/onboarding/toast states); the default
+ * view reproduces the classic section render. The palette results
+ * are injected data (the app layer owns the live query).
  */
-export function renderConsoleModel(state: WorkspaceState, at: number, view: ShellView = defaultShellView(state)): VNode {
+export function renderConsoleModel(state: WorkspaceState, at: number, view: ShellView = defaultShellView(state), paletteResults: readonly import('../core/palette').PaletteEntry[] = []): VNode {
   return withRenderGuard(() => {
     const viewAt = viewAtOf(state);
     const activeTarget = activeTargetOf(state, view);
-    const main: VNode = activeTarget === 'home'
-      ? homePanel(state, viewAt)
-      : activeTarget === 'inbox'
-        ? inboxPanel(state, viewAt)
-        : activeTarget === 'settings'
-          ? settingsPanel(state, view)
-          : sectionPanel(state, viewAt);
+    const main: VNode = view.onboarding !== null && !('completed' in view.onboarding)
+      ? onboardingPanelPlaceholder(view.onboarding)
+      : activeTarget === 'home'
+        ? homePanel(state, viewAt)
+        : activeTarget === 'inbox'
+          ? inboxPanel(state, viewAt)
+          : activeTarget === 'settings'
+            ? settingsPanel(state, view)
+            : sectionPanel(state, viewAt);
     const launch = activeTarget === 'inbox' || activeTarget === 'settings' ? null : launchPanel(state, viewAt);
     return renderAppShell(state, at, view, activeTarget, {
       timeMachine: timeMachineBar(state, viewAt),
       main,
       launch,
       sheet: sheetContentOf(state, viewAt, view),
+      paletteResults,
     });
   });
 }

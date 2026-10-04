@@ -33,11 +33,25 @@ import { systemNowMs } from '../core/clock';
 import type { SectionId } from '../core/sections';
 import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
-import { openWorkspace, reduceWorkspace } from '../core/workspace';
+import { openWorkspace, reduceWorkspace, serializeWorkspace } from '../core/workspace';
 import type { WorkspaceScope } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
 import { persistTheme } from '../core/theme';
 import { isShellTarget } from '../core/nav';
+import { paletteIndex, paletteOverlay, rankPalette, type PaletteEntry } from '../core/palette';
+import {
+  advanceOnboarding,
+  initialOnboarding,
+  isOnboarded,
+  onboardingReopenAffordance,
+  persistOnboarding,
+  readStoredOnboarding,
+  skipOnboarding,
+  type OnboardingState,
+} from '../core/onboarding';
+import { noticeCopyOf } from '../render/flow';
+import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
+import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission, projectToView } from '../core/availability';
 import { parseSheetRef, type ShellView } from '../render/shell';
 import { renderConsoleModel } from '../render/model';
 import { mountVTree } from '../render/dom';
@@ -66,6 +80,8 @@ export interface ConsoleBootOptions {
   readonly storage?: ThemeStorage;
   /** True when the console runs on a fake/demo adapter (the SIMULATED environment badge; §7 anti-deception). */
   readonly simulated?: boolean;
+  /** The onboarding storage seam (localStorage `tradrl_onboarded`; returning users skip the wizard — §4.13). */
+  readonly onboardingStorage?: { getItem(key: string): string | null; setItem(key: string, value: string): void };
 }
 
 /** The live console handle. */
@@ -246,7 +262,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       busy: false,
       drawerOpen: false,
       sheet: null,
+      palette: null,
+      onboarding: options.onboardingStorage === undefined ? initialOnboarding() : readStoredOnboarding(options.onboardingStorage),
+      toast: null,
     };
+    let paletteResults: readonly PaletteEntry[] = [];
     const host = root as Element & { setAttribute(name: string, value: string): void; classList?: { add(name: string): void } };
     if (host.classList !== undefined) host.classList.add('tradrl-host');
     const render = (): void => {
@@ -254,8 +274,26 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // the slide transition survives between renders (the projected
       // tree is rebuilt per state change; the host is not).
       host.setAttribute('data-drawer', view.drawerOpen ? 'open' : 'closed');
-      mountVTree(document, root, renderConsoleModel(state, instants.nowMs(), view));
+      mountVTree(document, root, renderConsoleModel(state, instants.nowMs(), view, paletteResults));
     };
+
+    /** The evidence capsules for the palette (the Evidence section's own fold — mirrors render/model.ts's capsule list, unprojected). */
+    const capsuleFromOutcomeList = (workspace: WorkspaceState): readonly ReturnType<typeof capsuleFromOutcome>[] => [
+      ...workspace.outcomes.map((outcome) => capsuleFromOutcome(workspace.scope, outcome)),
+      ...workspace.postMortems.map((postMortem) => capsuleFromPostMortem(workspace.scope, postMortem)),
+      ...workspace.knowledge.map((knowledge) => capsuleFromKnowledge(workspace.scope, knowledge)),
+      ...workspace.submissions.map((submission) => capsuleFromSubmission(workspace.scope, submission)),
+    ];
+
+    /** The evidence capsules for the palette (the Evidence section's own fold). */
+    const capsulesForPalette = capsuleFromOutcomeList;
+
+    /** The palette's live results for the current query (§4.14; D4's 100% coverage). */
+    const refreshPalette = (): void => {
+      if (view.palette === null) { paletteResults = []; return; }
+      paletteResults = rankPalette(paletteIndex(state, capsulesForPalette), view.palette.query);
+    };
+
     onState(render);
 
     /** Focus the drawer's first nav item (the trap's entry point). */
@@ -341,6 +379,42 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (kind === 'playback-step') dispatch({ kind: 'playback-tick', at: instants.nowMs() });
         if (kind === 'playback-step-back') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: state.timeMachine.tMinusMs + 500 });
         if (kind === 'refresh') void refreshWithShell();
+        // §4.14 the command palette
+        if (kind === 'palette-open') {
+          view = { ...view, palette: { query: '', selected: 0 } };
+          refreshPalette();
+          render();
+        }
+        if (kind === 'palette-close') {
+          view = { ...view, palette: null };
+          render();
+        }
+        // §4.13 the onboarding wizard (completion persists; returning users never see it)
+        if (kind === 'onboarding-next' || kind === 'onboarding-skip') {
+          const current = view.onboarding ?? initialOnboarding();
+          const next: OnboardingState = kind === 'onboarding-skip' ? skipOnboarding(current) : advanceOnboarding(current);
+          view = { ...view, onboarding: next };
+          if (isOnboarded(next) && options.onboardingStorage !== undefined) persistOnboarding(options.onboardingStorage);
+          if (isOnboarded(next)) view = { ...view, accountView: 'home', onboarding: next }; // completion lands on Home
+          render();
+        }
+        if (kind === 'onboarding-reopen') {
+          view = { ...view, onboarding: initialOnboarding() };
+          render();
+        }
+        // §5 D7 the data export (a deterministic serialized record of the workspace state)
+        if (kind === 'export-workspace') {
+          const anchor = document.createElement('a') as Element & { click?(): void };
+          const blob = `data:application/json;charset=utf-8,${encodeURIComponent(serializeWorkspace(state))}`;
+          anchor.setAttribute('href', blob);
+          anchor.setAttribute('download', `tradrl-workspace-${state.scope.projectId}.json`);
+          if (typeof anchor.click === 'function') anchor.click();
+        }
+        // §4.10 the toast dismissal (the auto-dismiss timer lives in scheduleToastDismiss)
+        if (kind === 'toast-close') {
+          view = { ...view, toast: null };
+          render();
+        }
         if (kind === 'drawer-open') {
           view = { ...view, drawerOpen: true };
           render();
@@ -372,11 +446,27 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       }
     });
 
-    // The keyboard contract: Esc closes the sheet, then the drawer; Tab
-    // is trapped inside whichever overlay is open (§4.5a / §2).
+    // The keyboard contract: Esc closes the palette, the sheet, then the drawer;
+    // Ctrl/Cmd+K opens the palette and ↑ ↓ Enter navigate it (§4.14); Tab is
+    // trapped inside whichever overlay is open (§4.5a / §2).
     document.addEventListener('keydown', (event) => {
       const key = event.key;
+      // §4.14 Ctrl/Cmd+K opens (or closes) the palette from anywhere.
+      const ctrlKey = (event as { readonly ctrlKey?: boolean }).ctrlKey === true;
+      const metaKey = (event as { readonly metaKey?: boolean }).metaKey === true;
+      if ((ctrlKey || metaKey) && typeof key === 'string' && key.toLowerCase() === 'k') {
+        if (event.preventDefault !== undefined) event.preventDefault();
+        view = { ...view, palette: view.palette === null ? { query: '', selected: 0 } : null };
+        refreshPalette();
+        render();
+        return;
+      }
       if (key === 'Escape') {
+        if (view.palette !== null) {
+          view = { ...view, palette: null };
+          render();
+          return;
+        }
         if (view.sheet !== null) {
           view = { ...view, sheet: null };
           render();
@@ -386,6 +476,39 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           view = { ...view, drawerOpen: false };
           render();
           return;
+        }
+        return;
+      }
+      if (view.palette !== null && (key === 'ArrowDown' || key === 'ArrowUp' || key === 'Enter')) {
+        if (event.preventDefault !== undefined) event.preventDefault();
+        const count = paletteResults.length;
+        if (count === 0) return;
+        const current = view.palette.selected;
+        if (key === 'ArrowDown') {
+          view = { ...view, palette: { ...view.palette, selected: (current + 1) % count } };
+          render();
+          return;
+        }
+        if (key === 'ArrowUp') {
+          view = { ...view, palette: { ...view.palette, selected: (current - 1 + count) % count } };
+          render();
+          return;
+        }
+        // Enter: open the selected result (navigate to its target; entity refs open their own surface)
+        const selected = paletteResults[current];
+        if (selected !== undefined) {
+          view = { ...view, palette: null };
+          if (selected.target !== null) {
+            if (selected.target === 'home' || selected.target === 'inbox' || selected.target === 'settings') {
+              view = { ...view, accountView: selected.target };
+            } else {
+              view = { ...view, accountView: 'section' };
+              if (selected.target !== state.selectedSection) {
+                dispatch({ kind: 'section-selected', at: instants.nowMs(), section: selected.target });
+              }
+            }
+          }
+          render();
         }
         return;
       }

@@ -22,7 +22,9 @@ import { unreadCount } from '../core/notices';
 import type { ThemeName } from '../core/theme';
 import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellTarget } from '../core/nav';
 import { formatInstantUtc } from '../core/format';
-import { notificationBell } from './flow';
+import { notificationBell, toastRecord } from './flow';
+import { paletteAffordance, paletteOverlay } from '../core/palette';
+import { onboardingPanel, onboardingReopenAffordance, type OnboardingState } from '../core/onboarding';
 import { v, type VNode } from './vtree';
 
 /** The shell's view state — everything the chrome renders that is not workspace state. */
@@ -41,6 +43,12 @@ export interface ShellView {
   readonly drawerOpen: boolean;
   /** The open detail sheet (§4.5a): a job or an organization snapshot. */
   readonly sheet: SheetRef | null;
+  /** The command palette's state (§4.14): closed, or its query + selection. */
+  readonly palette: { readonly query: string; readonly selected: number } | null;
+  /** The onboarding wizard's state (§4.13): null = not showing (returning users). */
+  readonly onboarding: OnboardingState | null;
+  /** The newest notice to toast (§4.10; the app layer owns the ~5s timer). */
+  readonly toast: { readonly kind: string; readonly title: string; readonly sentence: string } | null;
 }
 
 /** A reference to the record a detail sheet shows (§4.5a). */
@@ -66,7 +74,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */
@@ -282,26 +290,41 @@ export function heroPanel(): VNode {
   ]);
 }
 
-/** The Settings panel (§3 scaffold + the theme control; full D7 completeness lands in a later pass). */
+/** One Settings row: a title + plain-language description + the value/control (D7 — every row explains itself). */
+function settingsRow(title: string, description: string, body: readonly VNode[]): VNode {
+  return v('div', { class: 'card settings-row', 'data-settings': title.toLowerCase() }, [
+    v('div', { class: 'card-title' }, [title]),
+    v('p', { class: 'card-note' }, [description]),
+    ...body,
+  ]);
+}
+
 export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
   return v('section', { class: 'panel', 'data-section': 'settings' }, [
-    v('div', { class: 'card' }, [
-      v('div', { class: 'card-title' }, ['Appearance']),
-      v('p', { class: 'card-note' }, ['Choose light or dark; your choice is remembered for future visits.']),
+    // D7 row 1 — theme (with the persistence seam write-through)
+    settingsRow('Theme', 'Choose light or dark; your choice is remembered for future visits.', [
       v('div', { class: 'segmented' }, [
         v('button', { class: 'segment', 'data-action': 'theme-light', type: 'button', 'aria-pressed': view.theme === 'light' ? 'true' : 'false' }, ['Light']),
         v('button', { class: 'segment', 'data-action': 'theme-dark', type: 'button', 'aria-pressed': view.theme === 'dark' ? 'true' : 'false' }, ['Dark']),
       ]),
     ]),
-    v('div', { class: 'card' }, [
-      v('div', { class: 'card-title' }, ['Connection']),
+    // D7 row 2 — API endpoint (shown, plain-language)
+    settingsRow('API endpoint', 'The address the console reads your organization from — every section fetches from here.', [
       shellFactRow('endpoint', view.endpoint.length > 0 ? view.endpoint : 'not configured'),
       shellFactRow('state', CONNECTION_STATE_LABELS[connectionClassOf(state.connection)]),
     ]),
-    v('div', { class: 'card' }, [
-      v('div', { class: 'card-title' }, ['Workspace scope']),
+    // D7 row 3 — tenant context (shown, plain-language)
+    settingsRow('Tenant context', 'Your workspace is scoped to this tenant and project; every read and every record stays inside it.', [
       shellFactRow('tenant', state.scope.tenantId),
       shellFactRow('project', state.scope.projectId),
+    ]),
+    // D7 row 4 — data export (an action that works: the deterministic serialized workspace record)
+    settingsRow('Data export', 'Download everything the console currently knows about this workspace, as a JSON file.', [
+      v('button', { class: 'connection-retry', 'data-action': 'export-workspace', type: 'button' }, ['Export workspace data']),
+    ]),
+    // §4.13 the "?" affordance — re-opens the guided intro
+    settingsRow('Guided intro', 'Show the three-step introduction to how the console works.', [
+      onboardingReopenAffordance(),
     ]),
   ]);
 }
@@ -312,7 +335,7 @@ export function renderAppShell(
   at: number,
   view: ShellView,
   activeTarget: ShellTarget,
-  content: { readonly timeMachine: VNode; readonly main: VNode | null; readonly launch: VNode | null; readonly sheet: readonly VNode[] },
+  content: { readonly timeMachine: VNode; readonly main: VNode | null; readonly launch: VNode | null; readonly sheet: readonly VNode[]; readonly paletteResults: readonly import('../core/palette').PaletteEntry[] },
 ): VNode {
   return v('div', {
     class: 'tradrl-shell console',
@@ -331,6 +354,7 @@ export function renderAppShell(
         v('span', { class: 'brand-tile' }, [brandMark()]),
         v('span', { class: 'brand-word' }, ['TradRL']),
       ]),
+      paletteAffordance(),
       shellNav(activeTarget, unreadCount(state.inbox)),
       connectionZone(state, view, at),
     ]),
@@ -342,6 +366,12 @@ export function renderAppShell(
         ...(content.launch === null ? [] : [content.launch]),
       ]),
     ]),
+    // §4.14 the palette overlay (the app layer owns keys + Enter)
+    ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: unreadCount(state.inbox) })]),
+    // §4.13 the onboarding wizard (null = not showing)
+    ...(view.onboarding === null ? [] : [onboardingPanel(view.onboarding)]),
+    // §4.10 the toast (top-right, ~5s auto-dismiss owned by the app layer)
+    ...(view.toast === null ? [] : [toastRecord(view.toast.kind as 'failed_evaluation', view.toast.title, view.toast.sentence)]),
     ...content.sheet,
   ]);
 }

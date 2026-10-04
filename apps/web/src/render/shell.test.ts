@@ -273,7 +273,8 @@ describe('shell: the page scaffold (§3 — every section)', () => {
     expect(settings).toContain('data-action="theme-light"');
     expect(settings).toContain('data-action="theme-dark"');
     expect(settings).toContain('aria-pressed="true"'); // the active theme button
-    expect(settings).toContain('Workspace scope');
+    expect(settings).toContain('data-settings="tenant context"');
+    expect(settings).toContain('data-settings="data export"');
   });
 });
 
