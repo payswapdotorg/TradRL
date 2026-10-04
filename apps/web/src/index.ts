@@ -28,6 +28,7 @@ import { bootNoBuild } from './loader/strip-types';
 import type { ConsoleHandle } from './app/console';
 import type { ApiTransport } from './api/transport';
 import { createFetchTransport } from './api/transport';
+import { readStoredTheme, type ThemeStorage } from './core/theme';
 
 /** The console's configuration as the static shell carries it (window.__TRADRL_CONSOLE__). */
 export interface ShellConfig {
@@ -39,6 +40,8 @@ export interface ShellConfig {
   readonly tenantId?: string;
   /** The project id ('' = the launchpad — the primary flow starts here). */
   readonly projectId?: string;
+  /** True when this shell runs on a fake/demo adapter (the SIMULATED environment badge; the shipped static shell defaults to true — a real host overrides it). */
+  readonly simulated?: boolean;
 }
 
 /** The global the static shell sets before loading the entry (declared, never trusted). */
@@ -133,10 +136,17 @@ export async function bootFromShell(options: {
   }
 
   try {
+    // The persisted theme (charter §1: localStorage `tradrl_theme`; the
+    // static shell's pre-paint script already applied it to <html> and
+    // the app root — this is the boot-time read for the shell view).
+    const storage: ThemeStorage | undefined = typeof localStorage !== 'undefined' ? localStorage : undefined;
     const handle = boot.bootConsole({
       baseUrl: apiBaseUrl(config),
       token: config.token,
       scope: { tenantId: config.tenantId, projectId: config.projectId ?? '' },
+      theme: storage === undefined ? 'light' : readStoredTheme(storage),
+      ...(storage === undefined ? {} : { storage }),
+      simulated: config.simulated ?? false,
       ...(options.transport === undefined ? {} : { transport: options.transport }),
     });
     handle.mount(root, documentLike);

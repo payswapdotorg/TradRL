@@ -1,0 +1,477 @@
+/*
+  @tradrl/web-console — THE APP SHELL + PAGE SCAFFOLD (UX-DESIGN.md §2/§3, T051).
+
+  Hand-authored layout on the token system (src/shell/tokens.css).
+  Zero runtime dependencies: CSS custom properties + plain selectors.
+  Motion: CSS transitions/animations only, every curve the charter
+  names (300ms cubic-bezier(0.22, 1, 0.36, 1)), always disabled under
+  prefers-reduced-motion (tokens.css's global gate).
+
+  Notes on motion + the no-diff re-projection: the console re-projects
+  its whole tree per state change (T042 law — no virtual DOM). Two
+  motion carriers are therefore persistent-state driven:
+    - the mobile drawer slides via [data-drawer] on the PERSISTENT host
+      (#tradrl-console), applied by the app layer without re-projection;
+    - continuous animations (skeleton pulse, refresh spin) start at
+      element insertion and survive every re-projection.
+  The active-item pill and every hover transition carry the charter's
+  curve so any persistent-element change animates exactly as specified.
+*/
+
+/* ---------------------------------------------------------------------------
+   The shell root.
+   --------------------------------------------------------------------------- */
+.tradrl-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.tradrl-host { min-height: 100vh; min-height: 100dvh; }
+
+/* The boot message (pre-boot / degraded boot) — legibility only. */
+.console-boot-message { color: var(--destructive, #a33); font-weight: 600; padding: var(--space-4, 16px); }
+
+/* ---------------------------------------------------------------------------
+   §2 Desktop layout: fixed 256px sidebar; main content offset 256px;
+   content wrapper max-w-6xl (72rem), px-5 py-10 sm:px-8 md:py-14.
+   --------------------------------------------------------------------------- */
+.shell-sidebar {
+  position: fixed;
+  inset-block: 0;
+  left: 0;
+  width: 256px;
+  display: flex;
+  flex-direction: column;
+  background: var(--sidebar);
+  border-right: 1px solid var(--sidebar-border);
+  z-index: 20;
+  overflow-y: auto;
+}
+
+.shell-main { padding-left: 256px; min-height: 100vh; }
+.shell-content {
+  max-width: 72rem;         /* max-w-6xl */
+  margin-inline: auto;
+  padding: 40px 20px 64px;  /* py-10 px-5 */
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
+}
+@media (min-width: 640px) { .shell-content { padding-inline: 32px; } }        /* sm:px-8 */
+@media (min-width: 768px) { .shell-content { padding-block: 56px 80px; } }    /* md:py-14 */
+
+/* The mobile header is hidden on desktop; the sidebar is the shell. */
+.shell-header { display: none; }
+
+/* ---------------------------------------------------------------------------
+   §2 The brand row (sidebar top, 64px): 32px rounded-lg tile on
+   --primary with the white 16px mark + "TradRL" wordmark; links Home.
+   --------------------------------------------------------------------------- */
+.brand-row {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 64px;
+  padding: 0 24px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.brand-row:hover { opacity: 0.8; }
+.brand-row:focus-visible { opacity: 1; }
+.brand-tile {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  flex: none;
+}
+.brand-mark { width: 16px; height: 16px; }
+.brand-word { font-size: 1rem; font-weight: 600; letter-spacing: -0.011em; color: var(--foreground); }
+
+/* ---------------------------------------------------------------------------
+   §2 Navigation (aria-label="Primary", padding 12px): group labels
+   0.65rem semibold uppercase 0.14em muted; items rounded-lg px-3 py-2.5
+   text-sm font-medium, 16px icon, 12px gap; active pill
+   (--sidebar-accent, radius-lg, 300ms cubic-bezier(0.22,1,0.36,1)).
+   --------------------------------------------------------------------------- */
+.shell-nav { padding: 12px; display: grid; gap: var(--space-4); align-content: start; flex: 1 1 auto; overflow-y: auto; }
+.nav-group { display: grid; gap: 2px; }
+.nav-group-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted-foreground);
+  padding: 0 12px;
+  margin: 0 0 2px;
+}
+.nav-item {
+  all: unset;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;                 /* py-2.5 px-3 */
+  border-radius: var(--radius-lg);
+  font-size: 0.875rem;                /* text-sm */
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+/* The sliding pill behind the active item (charter §2). */
+.nav-item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+  background: var(--sidebar-accent);
+  opacity: 0;
+  transform: translateX(-6px) scale(0.96);
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: -1;
+}
+.nav-item:hover:not(.active) { background: color-mix(in oklch, var(--sidebar-accent) 60%, transparent); color: var(--foreground); }
+.nav-item.active { color: var(--sidebar-accent-foreground); }
+.nav-item.active::before { opacity: 1; transform: none; }
+.nav-item.active:focus-visible { z-index: 1; }
+.nav-icon { width: 16px; height: 16px; flex: none; stroke-width: 1.75; }
+.nav-item.active .nav-icon { stroke-width: 2.25; }
+.nav-item-label { line-height: 1.2; }
+
+/* ---------------------------------------------------------------------------
+   §2 The connection status block (sidebar bottom) + environment badge.
+   State is ALWAYS dot + text label — never color alone.
+   --------------------------------------------------------------------------- */
+.connection-zone {
+  border-top: 1px solid var(--sidebar-border);
+  padding: 12px;
+  display: grid;
+  gap: var(--space-2);
+}
+.connection-tile {
+  background: var(--muted);
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+.connection-summary { all: unset; display: grid; gap: 6px; width: 100%; cursor: pointer; }
+.connection-summary::-webkit-details-marker { display: none; }
+.connection-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted-foreground);
+}
+.conn-state { display: flex; align-items: center; gap: 8px; }
+.conn-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.conn-dot-sm { width: 6px; height: 6px; }
+.conn-live .conn-dot, .conn-live.conn-dot { background: var(--tradrl-live); }
+.conn-warn .conn-dot, .conn-warn.conn-dot { background: var(--tradrl-warn); }
+.conn-down .conn-dot, .conn-down.conn-dot { background: var(--tradrl-down); }
+.conn-idle .conn-dot, .conn-idle.conn-dot { background: var(--tradrl-idle); }
+.conn-state-label { font-size: 0.875rem; font-weight: 600; }
+.conn-live .conn-state-label { color: var(--tradrl-live-text); }
+.conn-warn .conn-state-label { color: var(--tradrl-warn-text); }
+.conn-down .conn-state-label { color: var(--tradrl-down-text); }
+.conn-idle .conn-state-label { color: var(--muted-foreground); }
+/* CONNECTING: the gentle pulse (transient states only). */
+.conn-idle .conn-dot { animation: tradrl-pulse 1.6s ease-in-out infinite; }
+@keyframes tradrl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.conn-detail { font-size: 0.8125rem; color: var(--muted-foreground); }
+.conn-detail.degraded { color: var(--tradrl-warn-text); }
+/* The loading skeleton bar (while connecting). */
+.conn-skeleton {
+  height: 10px;
+  width: 80%;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--muted-foreground) 25%, transparent);
+  animation: tradrl-skeleton 1.4s ease-in-out infinite;
+}
+@keyframes tradrl-skeleton { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+/* The details popover (endpoint, last poll, degradation, retry). */
+.connection-popover {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 8px;
+  display: grid;
+  gap: 4px;
+  background: var(--popover);
+  border-radius: var(--radius-md);
+}
+.connection-retry {
+  all: unset;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--accent-foreground);
+  background: var(--accent);
+  width: fit-content;
+  margin-top: 4px;
+}
+.connection-retry:hover { filter: brightness(0.97); }
+/* The environment badge (contractual, not decorative — §7 anti-deception). */
+.env-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: center;
+  padding: 5px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.env-simulated { color: var(--tradrl-warn-text); border-color: var(--tradrl-warn); background: var(--tradrl-warn-soft); }
+.env-live { color: var(--tradrl-live-text); border-color: var(--tradrl-live); background: var(--tradrl-live-soft); }
+
+/* ---------------------------------------------------------------------------
+   §2 Mobile (<768px): sticky 56px header (brand + connection + menu);
+   the sidebar becomes a slide-in drawer (300ms, backdrop, Esc close).
+   --------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  .shell-header {
+    all: unset;
+    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    height: 56px;
+    box-sizing: border-box;
+    width: 100%;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    background: var(--background);
+    border-bottom: 1px solid var(--border);
+  }
+  .shell-header .brand-row { height: 56px; padding: 0; gap: 10px; flex: 1 1 auto; }
+  .header-conn { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground); }
+  .header-conn-label { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em; }
+  .header-conn.conn-live .header-conn-label { color: var(--tradrl-live-text); }
+  .header-conn.conn-warn .header-conn-label { color: var(--tradrl-warn-text); }
+  .header-conn.conn-down .header-conn-label { color: var(--tradrl-down-text); }
+  .header-conn.conn-idle .header-conn-label { color: var(--muted-foreground); }
+  .menu-button {
+    all: unset;
+    display: grid;
+    place-items: center;
+    width: 44px;               /* touch target ≥ 44px (J12) */
+    height: 44px;
+    cursor: pointer;
+    color: var(--foreground);
+    border-radius: var(--radius-md);
+  }
+  .menu-button:hover { background: var(--muted); }
+  .menu-icon { width: 20px; height: 20px; }
+  /* The drawer: the sidebar slides in (300ms, the charter's curve). */
+  .shell-sidebar {
+    transform: translateX(-100%);
+    transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: none;
+    width: min(84vw, 320px);
+  }
+  .tradrl-host[data-drawer='open'] .shell-sidebar,
+  .tradrl-shell[data-drawer='open'] .shell-sidebar { transform: translateX(0); box-shadow: 0 0 40px rgb(0 0 0 / 0.18); }
+  .drawer-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 15;
+    background: rgb(23 22 19 / 0.4);
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+  .tradrl-host[data-drawer='open'] .drawer-backdrop,
+  .tradrl-shell[data-drawer='open'] .drawer-backdrop { display: block; animation: tradrl-fade 200ms ease; }
+  .shell-main { padding-left: 0; padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+  .shell-content { padding-bottom: 40px; }
+}
+@media (min-width: 768px) { .drawer-backdrop { display: none !important; } }
+
+@keyframes tradrl-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------------------------------------------------------------------------
+   §3 The page scaffold (every section): H1 2xl semibold tracking-tight,
+   one-sentence muted subtitle, status badge (LIVE teal / SIMULATED
+   amber / READ-ONLY neutral outline) + ghost icon-only Refresh.
+   --------------------------------------------------------------------------- */
+.page-scaffold {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-5);
+  flex-wrap: wrap;
+}
+.page-title { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin: 0; color: var(--foreground); }
+.page-subtitle { font-size: 0.875rem; color: var(--muted-foreground); margin: 4px 0 0; }
+.page-actions { display: flex; align-items: center; gap: var(--space-2); }
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.status-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.badge-live { color: var(--tradrl-live-text); border-color: var(--tradrl-live); background: var(--tradrl-live-soft); }
+.badge-simulated { color: var(--tradrl-warn-text); border-color: var(--tradrl-warn); background: var(--tradrl-warn-soft); }
+.badge-readonly { color: var(--muted-foreground); border-color: var(--border); background: transparent; }
+/* The ghost icon-only Refresh (spinning while busy). */
+.icon-button {
+  all: unset;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--muted-foreground);
+}
+.icon-button:hover { background: var(--muted); color: var(--foreground); }
+.icon-button .nav-icon { width: 16px; height: 16px; }
+.icon-button[data-busy='true'] .nav-icon { animation: tradrl-spin 0.8s linear infinite; }
+@keyframes tradrl-spin { to { transform: rotate(360deg); } }
+
+/* The Home hero (§3: Home has no header — the hero IS the page). */
+.hero { display: grid; gap: var(--space-3); padding-block: var(--space-5); }
+.hero-eyebrow {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--tradrl-live-text);
+  margin: 0;
+}
+.hero-title { font-size: 1.875rem; font-weight: 600; letter-spacing: -0.025em; margin: 0; color: var(--foreground); }
+.hero-lede { font-size: 0.9375rem; color: var(--muted-foreground); margin: 0; max-width: 46rem; }
+
+/* ---------------------------------------------------------------------------
+   Legacy T042 surface styles, retokened (the twelve section panels,
+   cards, facts, badges, notices, Time Machine, progress). Their
+   structure is T042 law; only the paint changes.
+   --------------------------------------------------------------------------- */
+.panel { display: grid; gap: 12px; }
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 14px 16px;
+  display: grid;
+  gap: 8px;
+  background: var(--card);
+  color: var(--card-foreground);
+}
+.card-title { font-weight: 650; font-size: 0.9375rem; }
+.card-note { font-size: 0.8125rem; color: var(--muted-foreground); margin: 0; }
+.fact { display: grid; grid-template-columns: 11rem 1fr; gap: 8px; font-size: 0.8125rem; }
+.fact-label { color: var(--muted-foreground); }
+.fact-value { font-family: var(--font-mono); font-size: 0.75rem; overflow-wrap: anywhere; }
+.badge {
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  width: fit-content;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+}
+.badge-status-active, .badge-capsule-outcome { color: var(--tradrl-live-text); border-color: var(--tradrl-live); background: var(--tradrl-live-soft); }
+.badge-knowledge-superseded, .badge-disposition-blocked { color: var(--tradrl-warn-text); border-color: var(--tradrl-warn); background: var(--tradrl-warn-soft); }
+.badge-refused { color: var(--tradrl-down-text); border-color: var(--tradrl-down); background: var(--tradrl-down-soft); }
+.empty { color: var(--muted-foreground); font-style: italic; font-size: 0.875rem; }
+.hint { color: var(--muted-foreground); font-size: 0.875rem; }
+.objective { margin: 0; font-size: 0.9375rem; }
+.progress { background: color-mix(in oklch, var(--muted-foreground) 22%, transparent); border-radius: 999px; overflow: hidden; }
+.progress-fill {
+  display: block;
+  height: 6px;
+  background: var(--chart-2);
+  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.progress-submitted, .progress-pending { background: var(--chart-3); }
+.progress-failed { background: var(--tradrl-down); }
+.error-card { border-color: var(--tradrl-down); }
+.verdict-refused { border-color: var(--tradrl-down); }
+.watch { display: grid; gap: 8px; }
+.watch-event {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+  background: var(--card);
+}
+.watch-at { font-family: var(--font-mono); font-size: 0.7rem; color: var(--muted-foreground); }
+.capsule { border-style: dashed; }
+.notice { border-left: 3px solid var(--chart-2); padding-left: 10px; display: grid; gap: 4px; }
+.notice.read { opacity: 0.55; }
+.notice.unread { border-left-color: var(--chart-1); }
+.inbox { display: grid; gap: 10px; align-content: start; }
+.inbox h2 { font-size: 1.05rem; margin: 0; }
+.inbox-read-all {
+  all: unset;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  width: fit-content;
+  color: var(--accent-foreground);
+  background: var(--accent);
+}
+.inbox-read-all:hover { filter: brightness(0.97); }
+.inbox-empty { color: var(--muted-foreground); font-style: italic; font-size: 0.8125rem; }
+.timemachine {
+  position: sticky;
+  top: 8px;
+  z-index: 10;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklch, var(--card) 92%, transparent);
+  padding: 10px 14px;
+  display: grid;
+  gap: 6px;
+  font-size: 0.8125rem;
+}
+.tm-mode { font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.7rem; color: var(--tradrl-live-text); }
+.tm-controls { display: flex; gap: 8px; margin-top: 4px; }
+.tm-button {
+  all: unset;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  background: var(--card);
+  color: var(--foreground);
+}
+.tm-button:hover { background: var(--muted); }
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.segment {
+  all: unset;
+  cursor: pointer;
+  padding: 7px 14px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.segment + .segment { border-left: 1px solid var(--border); }
+.segment[aria-pressed='true'] { background: var(--accent); color: var(--accent-foreground); }

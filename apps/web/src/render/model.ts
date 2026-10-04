@@ -36,12 +36,13 @@ import { renderDecimal } from '../core/decimals';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { PolicyEnforcementError } from '../core/errors';
 import { renderJobProgress, type JobProgressView } from '../core/launch';
-import { SECTION_TITLES, WORKSPACE_SECTIONS, type SectionId } from '../core/sections';
+import type { SectionId } from '../core/sections';
 import { unreadCount, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, type WorkspaceState } from '../core/workspace';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
 import type { WatchEvent } from '../core/watch';
+import { activeTargetOf, defaultShellView, heroPanel, renderAppShell, settingsPanel, type ShellView } from './shell';
 import { v, serializeVNode, type VNode } from './vtree';
 
 /** One fact row (closed-vocabulary label; the value verbatim). */
@@ -252,15 +253,6 @@ function timeMachineBar(state: WorkspaceState, viewAt: number): VNode {
       v('button', { class: 'tm-button', 'data-action': 'playback-start', type: 'button' }, ['Playback']),
     ]),
   ]);
-}
-
-/** The twelve-section navigation (UX.md's order, the selected section marked). */
-function sectionNav(state: WorkspaceState): VNode {
-  return v('nav', { class: 'sections' }, WORKSPACE_SECTIONS.map((section) => v('button', {
-    class: `section-link${state.selectedSection === section ? ' selected' : ''}`,
-    'data-section': section,
-    type: 'button',
-  }, [SECTION_TITLES[section]])));
 }
 
 /** The per-section panel — the selected section's projection at the view instant. */
@@ -490,43 +482,39 @@ function launchPanel(state: WorkspaceState, viewAt: number): VNode {
   return v('section', { class: 'panel launch', 'data-section': 'launch' }, rows);
 }
 
-/** The degradation banner (the graceful-degradation surface). */
-function connectionBanner(state: WorkspaceState): VNode {
-  const latest = state.degraded.length === 0 ? null : (state.degraded[state.degraded.length - 1] as { readonly route: string; readonly message: string; readonly at: number });
-  return v('div', { class: `connection connection-${state.connection}` }, [
-    v('span', { class: 'connection-dot' }, []),
-    v('span', {}, [state.connection]),
-    latest === null ? '' : ` — last failed read: ${latest.route} (${latest.message})`,
-  ]);
-}
-
 /**
  * THE WHOLE-CONSOLE RENDER MODEL: one pure pass at an injected
  * instant. The wall-clock guard is armed for the entire pass; every
  * record passes its availability gate and its scope gate; every
  * verdict renders the gateway's own. Determinism: identical
- * (state, at) -> identical serializeVNode bytes.
+ * (state, at, view) -> identical serializeVNode bytes.
+ *
+ * The T051 shell (render/shell.ts) wraps the panels: the sidebar's
+ * grouped navigation, the CONNECTION block and the per-section page
+ * scaffold (H1 + subtitle + status badge + actions) are CHROME — the
+ * section panels and every law gate inside them are T042 law,
+ * unchanged. The optional shell view carries only chrome state
+ * (theme, the account landing target, endpoint, simulated flag,
+ * busy/drawer states); the default view reproduces the classic
+ * section render.
  */
-export function renderConsoleModel(state: WorkspaceState, at: number): VNode {
+export function renderConsoleModel(state: WorkspaceState, at: number, view: ShellView = defaultShellView(state)): VNode {
   return withRenderGuard(() => {
     const viewAt = viewAtOf(state);
-    return v('div', { class: 'console', 'data-connection': state.connection, 'data-rendered-at': String(at) }, [
-      v('header', { class: 'console-header' }, [
-        v('h1', {}, ['TradRL Console']),
-        factRow('tenant', state.scope.tenantId),
-        factRow('project', state.scope.projectId),
-        connectionBanner(state),
-      ]),
-      v('div', { class: 'console-body' }, [
-        sectionNav(state),
-        v('main', { class: 'console-main' }, [
-          timeMachineBar(state, viewAt),
-          sectionPanel(state, viewAt),
-          launchPanel(state, viewAt),
-        ]),
-        inboxPanel(state, viewAt),
-      ]),
-    ]);
+    const activeTarget = activeTargetOf(state, view);
+    const main: VNode = activeTarget === 'home'
+      ? heroPanel()
+      : activeTarget === 'inbox'
+        ? inboxPanel(state, viewAt)
+        : activeTarget === 'settings'
+          ? settingsPanel(state, view)
+          : sectionPanel(state, viewAt);
+    const launch = activeTarget === 'inbox' || activeTarget === 'settings' ? null : launchPanel(state, viewAt);
+    return renderAppShell(state, at, view, activeTarget, {
+      timeMachine: timeMachineBar(state, viewAt),
+      main,
+      launch,
+    });
   });
 }
 
