@@ -49,6 +49,12 @@ export interface ShellView {
   readonly onboarding: OnboardingState | null;
   /** The newest notice to toast (§4.10; the app layer owns the ~5s timer). */
   readonly toast: { readonly kind: string; readonly title: string; readonly sentence: string } | null;
+  /** The armed two-step confirm (§4.11): 'launch' when the launch confirm is armed. */
+  readonly confirm: 'launch' | null;
+  /** The launch form's touched field names (§4.11 — inline validation renders only after blur). */
+  readonly touchedFields: readonly string[];
+  /** The inline-opened evidence capsule (§4.9): its data-capsule ref, or null. */
+  readonly openCapsule: string | null;
 }
 
 /** A reference to the record a detail sheet shows (§4.5a). */
@@ -74,7 +80,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], openCapsule: null };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */

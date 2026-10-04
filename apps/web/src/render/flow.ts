@@ -136,7 +136,7 @@ export function capsuleBadgeLabel(capsuleId: string): string {
 
 /** One inline capsule badge (§4.9): rounded-lg, hairline, mono content address; opens the payload + provenance. */
 export function capsuleBadge(kind: string, ref: string): VNode {
-  return v('button', { class: 'capsule-badge', 'data-capsule': `${kind}:${ref}`, type: 'button', 'aria-label': `Open evidence capsule ${kind}:${ref}` }, [
+  return v('button', { class: 'capsule-badge', 'data-capsule': `${kind}:${ref}`, 'data-action': 'capsule-open', 'data-capsule-open': `${kind}:${ref}`, type: 'button', 'aria-label': `Open evidence capsule ${kind}:${ref}`, 'aria-expanded': 'false' }, [
     iconOf('box', 'ci ci-14'),
     v('span', { class: 'capsule-address' }, [capsuleBadgeLabel(`${kind}:${ref}`)]),
   ]);

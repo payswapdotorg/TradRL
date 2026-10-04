@@ -32,10 +32,10 @@ import type { GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeReco
 import { withRenderGuard } from '../core/clock';
 import { assertVisible, availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfProject, availabilityOfSubmission, projectToView } from '../core/availability';
 import { assertProjectScope, type WorkspaceScope } from '../core/tenant';
-import { renderDecimal } from '../core/decimals';
+import { isNonNegativeDecimal, renderDecimal } from '../core/decimals';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { PolicyEnforcementError } from '../core/errors';
-import { renderJobProgress, type JobProgressView } from '../core/launch';
+import { renderJobProgress, LAUNCH_STEPS, type JobProgressView, type LaunchStep } from '../core/launch';
 import type { SectionId } from '../core/sections';
 import { unreadCount, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, type EvidenceCapsule } from '../core/evidence';
@@ -64,10 +64,14 @@ import {
 } from './components';
 import {
   capsuleBadge,
+  capsulePayload,
+  labeledInput,
   noticeCopyOf,
   notificationBell,
+  reviewStep,
   streamCard,
   timeMachineControls,
+  twoStepConfirm,
 } from './flow';
 import { v, serializeVNode, type VNode } from './vtree';
 
@@ -482,7 +486,7 @@ function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView):
 }
 
 /** The per-section panel — the selected section's projection at the view instant. */
-function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
+function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = defaultShellView(state)): VNode {
   const scope = state.scope;
   switch (state.selectedSection) {
     case 'goal': {
@@ -669,11 +673,78 @@ function sectionPanel(state: WorkspaceState, viewAt: number): VNode {
 }
 
 /** The launch panel (the primary flow's wizard + progress). */
-function launchPanel(state: WorkspaceState, viewAt: number): VNode {
+/** The launch wizard's next step (the primary flow's own order). */
+function nextStepOf(step: LaunchStep): LaunchStep {
+  const index = LAUNCH_STEPS.indexOf(step);
+  return LAUNCH_STEPS[Math.min(index + 1, LAUNCH_STEPS.length - 1)] as LaunchStep;
+}
+
+/** The launch panel (the primary flow: the wizard's full field set + the review step + the two-step confirm + progress). */
+function launchPanel(state: WorkspaceState, view: ShellView): VNode {
   const launch = state.launch;
   const progress = renderJobProgress(launch.progress);
   const rows: VNode[] = [];
-  if (launch.draft !== null) {
+  const draftActive = launch.draft !== null && (launch.phase === 'draft' || launch.phase === 'idle');
+  if (draftActive && launch.draft !== null) {
+    const draft = launch.draft;
+    const armed = view.confirm === 'launch';
+    const touched = view.touchedFields;
+    // The review step renders the summary + the two-step confirm; every other
+    // step renders its labeled fields (labels ABOVE, inline validation).
+    const goalFields = [
+      ...labeledInput({ label: 'Name', name: 'name', value: draft.name, required: true, placeholder: 'e.g. Momentum scout', ...(touched.includes('name') ? { validation: { message: draft.name.length === 0 ? 'Give the launch a name.' : '', touched: true } } : {}) }),
+      ...labeledInput({ label: 'Objective', name: 'objective', value: draft.objective, required: true, hint: 'One sentence — what this organization should achieve.', ...(touched.includes('objective') ? { validation: { message: draft.objective.length === 0 ? 'Describe the objective in one sentence.' : '', touched: true } } : {}) }),
+    ];
+    const budgetFields = [
+      ...labeledInput({ label: 'Capital budget', name: 'capitalBudget', value: draft.capitalBudget, type: 'number', required: true, hint: 'An exact decimal, e.g. 10000.00.', ...(touched.includes('capitalBudget') ? { validation: { message: isNonNegativeDecimal(draft.capitalBudget) ? '' : 'Enter an exact non-negative decimal.', touched: true } } : {}) }),
+      ...labeledInput({ label: 'Risk budget', name: 'riskBudget', value: draft.riskBudget, type: 'number', required: true, hint: 'An exact decimal, e.g. 250.00.', ...(touched.includes('riskBudget') ? { validation: { message: isNonNegativeDecimal(draft.riskBudget) ? '' : 'Enter an exact non-negative decimal.', touched: true } } : {}) }),
+    ];
+    const marketFields = [
+      ...labeledInput({ label: 'Markets', name: 'markets', value: draft.markets.join(', '), required: true, hint: 'Comma-separated instrument ids.', ...(touched.includes('markets') ? { validation: { message: draft.markets.length === 0 ? 'List at least one market.' : '', touched: true } } : {}) }),
+      ...labeledInput({ label: 'Venues', name: 'venues', value: draft.venues.join(', '), required: true, hint: 'Comma-separated venue ids.', ...(touched.includes('venues') ? { validation: { message: draft.venues.length === 0 ? 'List at least one venue.' : '', touched: true } } : {}) }),
+      ...labeledInput({ label: 'Data sources', name: 'dataSources', value: draft.dataSources.join(', '), required: true, hint: 'Comma-separated data source refs.', ...(touched.includes('dataSources') ? { validation: { message: draft.dataSources.length === 0 ? 'List at least one data source.' : '', touched: true } } : {}) }),
+    ];
+    const worldFields = [
+      ...labeledInput({ label: 'Horizon starts', name: 'horizonStartsAt', value: String(draft.horizon.startsAt), type: 'number', required: true, hint: 'Epoch ms.' }),
+      ...labeledInput({ label: 'Horizon ends', name: 'horizonEndsAt', value: String(draft.horizon.endsAt), type: 'number', required: true, hint: 'Epoch ms.' }),
+      ...labeledInput({ label: 'Execution mode', name: 'executionMode', value: draft.executionMode, required: true, hint: 'simulation | shadow | live.' }),
+      ...labeledInput({ label: 'Preferences', name: 'preferences', value: draft.preferences.map((preference) => `${preference.key}=${preference.value}`).join(', '), hint: 'Optional key=value pairs.' }),
+      ...labeledInput({ label: 'Constraints', name: 'constraints', value: draft.constraints.map((constraint) => `${constraint.severity}:${constraint.id}`).join(', ') || 'none', hint: 'Optional — the executable limits.' }),
+    ];
+    const fieldsByStep: Record<string, readonly VNode[]> = { goal: goalFields, budget: budgetFields, markets: marketFields, world: worldFields };
+    const stepFields = fieldsByStep[launch.step] ?? [];
+    rows.push(v('div', { class: 'card launch-wizard', 'data-launch-step': launch.step }, [
+      v('div', { class: 'card-title' }, [`Primary flow — ${launch.step}`]),
+      v('div', { class: 'segmented tm-modes' }, LAUNCH_STEPS.map((step) => v('button', {
+        class: `segment${launch.step === step ? ' active' : ''}`,
+        'data-action': `launch-step-${step}`,
+        type: 'button',
+        'aria-pressed': launch.step === step ? 'true' : 'false',
+      }, [step]))),
+      ...(launch.step === 'review'
+        ? [
+          reviewStep([
+            ['Name', draft.name],
+            ['Objective', draft.objective],
+            ['Capital budget', renderDecimal(draft.capitalBudget)],
+            ['Risk budget', renderDecimal(draft.riskBudget)],
+            ['Markets', draft.markets.join(', ')],
+            ['Venues', draft.venues.join(', ')],
+            ['Data sources', draft.dataSources.join(', ')],
+            ['Horizon', `${formatInstantUtc(draft.horizon.startsAt)} -> ${formatInstantUtc(draft.horizon.endsAt)}`],
+            ['Execution mode', draft.executionMode],
+            ['Preferences', draft.preferences.map((preference) => `${preference.key}=${preference.value}`).join(', ') || 'none'],
+            ['Constraints', draft.constraints.length === 0 ? 'none' : `${draft.constraints.length} statements`],
+          ]),
+          twoStepConfirm('launch', armed),
+        ]
+        : [...stepFields, v('div', { class: 'tm-playback' }, [
+          v('button', { class: 'tm-button', 'data-action': `launch-step-${nextStepOf(launch.step)}`, type: 'button' }, [`Next: ${nextStepOf(launch.step)}`]),
+          v('button', { class: 'tm-button', 'data-action': 'launch-step-review', type: 'button' }, ['Review']),
+        ])]),
+    ]));
+  }
+  if (launch.draft !== null && !draftActive) {
     rows.push(v('div', { class: 'card' }, [
       v('div', { class: 'card-title' }, [`Launch (${launch.phase})`]),
       ...factRows([
@@ -705,7 +776,6 @@ function launchPanel(state: WorkspaceState, viewAt: number): VNode {
   }
   if (launch.error !== null) rows.push(v('div', { class: 'card error-card' }, [v('div', { class: 'card-title' }, ['Launch failed']), factRow('error', launch.error)]));
   if (rows.length === 0) rows.push(v('div', { class: 'empty' }, ['No launch in progress. Start one from the primary flow.']));
-  void viewAt;
   return v('section', { class: 'panel launch', 'data-section': 'launch' }, rows);
 }
 
@@ -743,8 +813,8 @@ export function renderConsoleModel(state: WorkspaceState, at: number, view: Shel
           ? inboxPanel(state, viewAt)
           : activeTarget === 'settings'
             ? settingsPanel(state, view)
-            : sectionPanel(state, viewAt);
-    const launch = activeTarget === 'inbox' || activeTarget === 'settings' ? null : launchPanel(state, viewAt);
+            : sectionPanel(state, viewAt, view);
+    const launch = activeTarget === 'inbox' || activeTarget === 'settings' ? null : launchPanel(state, view);
     return renderAppShell(state, at, view, activeTarget, {
       timeMachine: timeMachineBar(state, viewAt),
       main,

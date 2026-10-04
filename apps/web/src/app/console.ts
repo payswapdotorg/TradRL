@@ -26,7 +26,7 @@ import { createFetchTransport } from '../api/transport';
 import { createConsoleClient, type ConsoleClient } from '../api/client';
 import type { ApiConsoleError } from '../api/errors';
 import type { LaunchDraft, LaunchIds } from '../core/launch';
-import { toCreateProjectInput, toLaunchJobSpec, validateLaunchDraft } from '../core/launch';
+import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, validateLaunchDraft } from '../core/launch';
 import { digestOf } from '../core/digest';
 import type { InstantSource, TickScheduler } from '../core/clock';
 import { systemNowMs } from '../core/clock';
@@ -265,6 +265,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       palette: null,
       onboarding: options.onboardingStorage === undefined ? initialOnboarding() : readStoredOnboarding(options.onboardingStorage),
       toast: null,
+      confirm: null,
+      touchedFields: [],
+      openCapsule: null,
     };
     let paletteResults: readonly PaletteEntry[] = [];
     const host = root as Element & { setAttribute(name: string, value: string): void; classList?: { add(name: string): void } };
@@ -294,7 +297,24 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       paletteResults = rankPalette(paletteIndex(state, capsulesForPalette), view.palette.query);
     };
 
-    onState(render);
+    onState((next: WorkspaceState) => {
+      render();
+      // §4.10 D6: a NEW notice surfaces as a toast within the poll cycle; the
+      // toast auto-dismisses after ~5s (the scheduler seam — never a wall-clock
+      // read in a render path; the timer only clears chrome state).
+      const latest = next.inbox.notices.length === 0 ? null : next.inbox.notices[next.inbox.notices.length - 1] as { readonly kind: string; readonly noticeId: string; readonly title: string; readonly at: number };
+      if (latest !== null && view.toast === null && next.connection !== 'connecting') {
+        const copy = noticeCopyOf(latest.kind as 'failed_evaluation');
+        view = { ...view, toast: { kind: latest.kind, title: copy.title, sentence: copy.sentence } };
+        render();
+        if (scheduler !== undefined) {
+          scheduler.schedule(5000, () => {
+            view = { ...view, toast: null };
+            render();
+          });
+        }
+      }
+    });
 
     /** Focus the drawer's first nav item (the trap's entry point). */
     const focusDrawerStart = (): void => {
@@ -410,9 +430,35 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           anchor.setAttribute('download', `tradrl-workspace-${state.scope.projectId}.json`);
           if (typeof anchor.click === 'function') anchor.click();
         }
-        // §4.10 the toast dismissal (the auto-dismiss timer lives in scheduleToastDismiss)
+        // §4.10 the toast dismissal (manual close; the ~5s timer is scheduled on toast show)
         if (kind === 'toast-close') {
           view = { ...view, toast: null };
+          render();
+        }
+        // §4.11 the primary flow: step navigation + the two-step confirm
+        if (kind !== null && kind.startsWith('launch-step-')) {
+          const step = kind.slice('launch-step-'.length);
+          if ((LAUNCH_STEPS as readonly string[]).includes(step)) {
+            dispatch({ kind: 'launch-step-changed', at: instants.nowMs(), step: step as typeof LAUNCH_STEPS[number] });
+            view = { ...view, confirm: null };
+          }
+        }
+        if (kind === 'confirm-arm-launch') {
+          view = { ...view, confirm: 'launch' };
+          render();
+        }
+        if (kind === 'confirm-cancel-launch') {
+          view = { ...view, confirm: null };
+          render();
+        }
+        if (kind === 'confirm-launch') {
+          view = { ...view, confirm: null };
+          if (state.launch.draft !== null) void submitLaunch(state.launch.draft);
+        }
+        // §4.9 capsule badges open their payload inline
+        if (kind === 'capsule-open') {
+          const capsuleId = action.getAttribute('data-capsule-open');
+          if (capsuleId !== null) view = { ...view, openCapsule: view.openCapsule === capsuleId ? null : capsuleId };
           render();
         }
         if (kind === 'drawer-open') {
