@@ -105,6 +105,16 @@ https://<project>.vercel.app                       (ONE origin — no CORS anywh
   `runtime/compose.ts` seam. Before first use, apply the Neon DDL
   records (below).
 
+  **Checkpoint 3 (W-3c) status:** `deploy/adapters/r2/` (the zero-dep
+  SigV4 signing + the content-addressed, tenant-prefixed evidence/blob
+  store — PUT/GET/HEAD over the S3-compatible endpoint), 
+  `deploy/adapters/resend/` (the zero-dep REST client + the eight
+  UX.md notice types as typed template records + the tenant-scoped
+  delivery lane), and `deploy/adapters/apify/` (the zero-dep REST
+  client for actor runs + schedules as typed records + the jobs'
+  push through the T037/T038 subscription-spec shapes) are built and
+  tested offline with pinned vectors. Same as above: W-3d wires them.
+
 ### The Neon schema (apply once — the runbook's §neon paste block)
 
 `deploy/adapters/neon/schema.ts` carries the DDL records for the five
