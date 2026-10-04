@@ -24,6 +24,10 @@ export interface ApiDeploymentEnv {
   readonly apiInternalToken: string | null;
   /** The internal credential's service principal name. */
   readonly apiInternalPrincipal: string | null;
+  /** The explicit backing override (`TRADRL_DEPLOY_BACKING`): the raw string, `null` when unset (validated at the composition seam — fail-closed). */
+  readonly deployBacking: string | null;
+  /** The durable-provider keys PRESENT in the source (NAMES only, never values) — the auto-resolution input for the backing. */
+  readonly durableProviderKeysPresent: readonly string[];
 }
 
 /** The console-build environment (consumed by deploy/vercel/build-console.mjs at build time). */
@@ -41,6 +45,7 @@ export const API_ENV_KEYS = {
   apiDeveloperPrincipal: 'TRADRL_API_DEVELOPER_PRINCIPAL',
   apiInternalToken: 'TRADRL_API_INTERNAL_TOKEN',
   apiInternalPrincipal: 'TRADRL_API_INTERNAL_PRINCIPAL',
+  deployBacking: 'TRADRL_DEPLOY_BACKING',
 } as const;
 
 export const CONSOLE_ENV_KEYS = {
@@ -49,6 +54,34 @@ export const CONSOLE_ENV_KEYS = {
   consoleProjectId: 'TRADRL_CONSOLE_PROJECT_ID',
   consoleSimulated: 'TRADRL_CONSOLE_SIMULATED',
 } as const;
+
+// ---------------------------------------------------------------------------
+// The backing resolution (W-3f — which ports back the data routes)
+// ---------------------------------------------------------------------------
+
+/** Which backing services the composed API is served over. */
+export type DeployBacking = 'demo' | 'durable';
+
+/** The legal `TRADRL_DEPLOY_BACKING` values (the fail-closed message names them). */
+export const DEPLOY_BACKING_VALUES: readonly DeployBacking[] = ['demo', 'durable'];
+
+/**
+ * The durable-provider keys whose PRESENCE (any of them) selects the
+ * durable backing when `TRADRL_DEPLOY_BACKING` is unset. The SAME key
+ * names `deploy/wire/composition.ts` reads (`readProviderEnv` — the
+ * single provider implementation); only the NAMES live here, never
+ * values. An empty set = no durable provider configured = the DEMO
+ * backing (the public free-tier default — exactly what the SIMULATED
+ * badge exists for, UX-DESIGN §7).
+ */
+export const DURABLE_PROVIDER_ENV_KEYS = [
+  'NEON_API_HOST',
+  'NEON_DATABASE',
+  'NEON_API_USER',
+  'NEON_API_KEY',
+  'UPSTASH_REDIS_REST_URL',
+  'UPSTASH_REDIS_REST_TOKEN',
+] as const;
 
 type EnvSource = Readonly<Record<string, string | undefined>>;
 
@@ -65,7 +98,23 @@ export function readApiEnv(env: EnvSource = process.env): ApiDeploymentEnv {
     apiDeveloperPrincipal: read(env, API_ENV_KEYS.apiDeveloperPrincipal),
     apiInternalToken: read(env, API_ENV_KEYS.apiInternalToken),
     apiInternalPrincipal: read(env, API_ENV_KEYS.apiInternalPrincipal),
+    deployBacking: read(env, API_ENV_KEYS.deployBacking),
+    durableProviderKeysPresent: DURABLE_PROVIDER_ENV_KEYS.filter((key) => read(env, key) !== null),
   };
+}
+
+/**
+ * Resolve the backing (pure): the explicit `TRADRL_DEPLOY_BACKING`
+ * override wins; otherwise the deployment is DURABLE the moment any
+ * durable-provider key is configured (the operator opted into the
+ * durable plane) and DEMO when none are (the default — the honest
+ * in-memory demo the SIMULATED badge discloses). An INVALID explicit
+ * value is NOT resolved here — the composition seam fails closed on
+ * it (see `composeDeployment`).
+ */
+export function resolveDeployBacking(env: ApiDeploymentEnv): DeployBacking {
+  if (env.deployBacking === 'demo' || env.deployBacking === 'durable') return env.deployBacking;
+  return env.durableProviderKeysPresent.length > 0 ? 'durable' : 'demo';
 }
 
 /** Read the console-build environment (the shell-config substitution values). */
