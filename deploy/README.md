@@ -91,6 +91,29 @@ https://<project>.vercel.app                       (ONE origin — no CORS anywh
   W-3b..W-3d under `deploy/adapters/` + `deploy/wire/`; the composition
   seam in `runtime/compose.ts` is where they will be injected (the
   function code does not change shape when they arrive).
+  **Checkpoint 2 (W-3b) status:** the durable STORE layer is built and
+  tested offline — `deploy/adapters/neon/` (the zero-dep SQL-over-HTTP
+  client + the firm-memory / outcome-learning / project stores,
+  table-per-port, tenant-scoped rows — every statement binds the tenant
+  as parameter 1; cross-tenant writes are the typed
+  `cross_tenant_access`, foreign reads find nothing) and
+  `deploy/adapters/upstash/` (the zero-dep REST client with Bearer
+  token auth + the TTL-scoped idempotency-key store mirroring T041's
+  fresh/replay/conflict semantics over `SET ... EX <ttl> NX` + the
+  tenant-prefixed cache). They are NOT yet wired into the Vercel
+  function — `deploy/wire/` (W-3d) composes them at the
+  `runtime/compose.ts` seam. Before first use, apply the Neon DDL
+  records (below).
+
+### The Neon schema (apply once — the runbook's §neon paste block)
+
+`deploy/adapters/neon/schema.ts` carries the DDL records for the five
+tenant-scoped tables (`tradrl_knowledge`, `tradrl_outcomes`,
+`tradrl_post_mortems`, `tradrl_projects`, `tradrl_project_events` —
+every PRIMARY KEY leads with `tenant`). To apply, paste
+`NEON_DDL_RECORDS`' statements into the Neon SQL editor (or psql)
+once per database — `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF
+NOT EXISTS` keep it idempotent, no migration tooling (zero-dep law).
 
 ### Why vercel.json lives in deploy/vercel/ (and the one copy step)
 
