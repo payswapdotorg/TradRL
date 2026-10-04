@@ -6,7 +6,7 @@
   "outputDirectory": "deploy/vercel/dist/console",
   "regions": ["iad1"],
   "functions": {
-    "deploy/vercel/api/router.ts": {
+    "api/router.ts": {
       "memory": 1024,
       "maxDuration": 10
     }
@@ -14,11 +14,11 @@
   "rewrites": [
     {
       "source": "/v1/:path*",
-      "destination": "/deploy/vercel/api/router/v1/:path*"
+      "destination": "/api/router/v1/:path*"
     },
     {
       "source": "/internal/:path*",
-      "destination": "/deploy/vercel/api/router/internal/:path*"
+      "destination": "/api/router/internal/:path*"
     }
   ]
 }

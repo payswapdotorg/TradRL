@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["packages/*/src/**/*.ts", "services/*/src/**/*.ts", "adapters/*/src/**/*.ts", "bodies/*/src/**/*.ts", "research/*/src/**/*.ts", "apps/*/src/**/*.ts", "tests/**/*.ts", "deploy/**/*.ts", "vitest.config.ts"]
+  "include": ["packages/*/src/**/*.ts", "services/*/src/**/*.ts", "adapters/*/src/**/*.ts", "bodies/*/src/**/*.ts", "research/*/src/**/*.ts", "apps/*/src/**/*.ts", "tests/**/*.ts", "api/**/*.ts", "deploy/**/*.ts", "vitest.config.ts"]
 }

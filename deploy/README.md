@@ -42,7 +42,8 @@ https://<project>.vercel.app                       (ONE origin — no CORS anywh
 │   └── src/**/*       the console's TypeScript sources, served as static
 │                      files (DATA — the no-build loader fetches them as
 │                      text and strips types IN THE BROWSER)
-├── /v1/*           rewrite → serverless function  (deploy/vercel/api/router.ts)
+├── /v1/*           rewrite → serverless function  (root api/router.ts discovery
+│                   shim → deploy/vercel/api/router.ts)
 └── /internal/*     rewrite → the same function    (the private plane)
 ```
 
@@ -72,7 +73,10 @@ https://<project>.vercel.app                       (ONE origin — no CORS anywh
      deterministic: identical inputs → identical bytes (pinned by a
      test; the build manifest carries file names + SHA-256 digests
      only — never the substituted values).
-- **The API (serverless).** `deploy/vercel/api/router.ts` is a single
+- **The API (serverless).** Vercel discovers the function through the
+  repo-root `api/router.ts` discovery shim (W-3h: the platform builds
+  Serverless Functions ONLY from the repo-root `api/` directory),
+  which re-exports `deploy/vercel/api/router.ts` — a single
   Vercel Node function wrapping the T041 route table: it composes the
   service ONCE per instance (`runtime/compose.ts`, memoized — warm
   invocations reuse it), adapts each `(req, res)` into the
@@ -130,19 +134,25 @@ every PRIMARY KEY leads with `tenant`). To apply, paste
 once per database — `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF
 NOT EXISTS` keep it idempotent, no migration tooling (zero-dep law).
 
-### Why vercel.json lives in deploy/vercel/ (and the one copy step)
+### Why vercel.json lives in deploy/vercel/ (and the root hosting copies)
 
-The frozen write surface allows edits ONLY under `deploy/**` (+ two
-granted root include lines). Vercel reads `vercel.json` from the
-project root, so the runbook's deploy step **copies** it host-side
-(never committed):
+The frozen write surface allows edits ONLY under `deploy/**` (+ the
+granted root include lines). Vercel, however, reads `vercel.json` from
+the project root AND builds Serverless Functions only from the
+repo-root `api/` directory — so the root carries two hosting-exception
+copies (the Lead's b4561b7 ruling, W-3h extension):
 
-```
-cp deploy/vercel/vercel.json ./vercel.json    # untracked; root is frozen in git
-```
+- **`./vercel.json`** — committed (b4561b7), byte-identical to
+  `deploy/vercel/vercel.json` (test-pinned; git-based Vercel deploys
+  read it from the root). The runbook's earlier host-side `cp` step is
+  retired — the durable copy replaced it.
+- **`./api/router.ts`** — the discovery shim (W-3h): a pure re-export
+  of the deploy tree's real function. This is part of the same hosting
+  exception — a platform DISCOVERY requirement, not a surface change
+  to the product (the deploy tree stays the source of truth).
 
-All paths inside are repo-root-relative and verified by
-`deploy/vercel/vercel.test.ts`.
+All paths inside the config are repo-root-relative and verified by
+`deploy/vercel/vercel.test.ts` (including the root-copy byte-identity).
 
 ### The hosting configuration (deploy/vercel/vercel.json)
 
@@ -152,9 +162,9 @@ All paths inside are repo-root-relative and verified by
 | `installCommand` | `echo ...` | ZERO-DEP: nothing installed, lockfile untouched |
 | `buildCommand` | `node deploy/vercel/build-console.mjs` | the console build (§ above) |
 | `outputDirectory` | `deploy/vercel/dist/console` | the ONLY public static tree (gitignored `dist/`) |
-| `functions` | `deploy/vercel/api/router.ts` — 1024 MB, 10 s | within the Hobby free tier (≤1024 MB, ≤60 s) |
+| `functions` | `api/router.ts` (the root discovery shim → `deploy/vercel/api/router.ts`) — 1024 MB, 10 s | within the Hobby free tier (≤1024 MB, ≤60 s); the platform builds functions ONLY from the repo-root `api/` directory |
 | `regions` | `iad1` (single) | Hobby = one region |
-| `rewrites` | `/v1/:path*` and `/internal/:path*` → `/deploy/vercel/api/router/v1/:path*` / `.../internal/:path*` | same-origin API: the path is passed through verbatim after the function mount; the runtime strips exactly that mount |
+| `rewrites` | `/v1/:path*` and `/internal/:path*` → `/api/router/v1/:path*` / `/api/router/internal/:path*` | same-origin API: the path is passed through verbatim after the function mount; the runtime strips exactly that mount |
 
 ---
 
@@ -251,23 +261,23 @@ a dependency of the repo).
    npx vercel env add TRADRL_API_DEVELOPER_TOKEN production
    # ... repeat per key; values are read from stdin, never logged by this repo
    ```
-3. **Copy the hosting config host-side** (the root is a frozen surface;
-   the copy stays untracked — `vercel.json` is not in `.gitignore`, so
-   do NOT commit it; delete it after deploying if you prefer):
-   ```
-   cp deploy/vercel/vercel.json ./vercel.json
-   ```
+3. **Verify the root hosting copies** (the hosting exception, b4561b7 +
+   W-3h — both are COMMITTED, nothing to copy): the root `vercel.json`
+   must be byte-identical to `deploy/vercel/vercel.json` and the root
+   `api/router.ts` discovery shim must re-export the deploy tree's
+   function (both pinned by `deploy/vercel/vercel.test.ts`).
 4. **Deploy.**
    ```
    npx vercel --prod
    ```
    What happens: the install step is a no-op (zero-dep), the console
    build copies + substitutes apps/web into
-   `deploy/vercel/dist/console`, Vercel builds
-   `deploy/vercel/api/router.ts` as a Node function (its TypeScript +
-   the services/api import graph are bundled by Vercel's own
-   toolchain — the repo has no runtime dependencies), and the two
-   rewrites publish the same-origin `/v1` + `/internal`.
+   `deploy/vercel/dist/console`, Vercel builds the root
+   `api/router.ts` discovery shim (which bundles
+   `deploy/vercel/api/router.ts` + the services/api import graph —
+   its TypeScript is bundled by Vercel's own toolchain, the repo has
+   no runtime dependencies), and the two rewrites publish the
+   same-origin `/v1` + `/internal`.
 5. **First verification (the smoke sequence — backing=demo expectations).**
    ```
    BASE=https://<project>.vercel.app
@@ -295,9 +305,9 @@ a dependency of the repo).
    complete (~3 s / ~8 s) when the internal pair is set.
    Troubleshooting: if `/v1/meta` returns Vercel's 404 (not the API's
    JSON envelope), the rewrite destination did not resolve the
-   function mount — confirm `vercel.json` was copied to the root
-   (step 3) and that the function appears in the deployment's
-   Functions tab as `deploy/vercel/api/router`. If the data routes
+   function mount — confirm the root `vercel.json` matches
+   `deploy/vercel/vercel.json` (step 3) and that the function appears
+   in the deployment's Functions tab as `api/router`. If the data routes
    answer 503 `deploy_adapter_pending`, a `NEON_*`/`UPSTASH_*` key is
    configured (the durable backing was auto-selected) — unset those
    keys or set `TRADRL_DEPLOY_BACKING=demo` for the demo.
@@ -353,12 +363,14 @@ Rules of engagement:
 ## 7. Testing this tree
 
 ```
-corepack pnpm vitest run deploy     # 142 tests (runtime adaptation vectors,
+corepack pnpm vitest run deploy     # 145 tests (runtime adaptation vectors,
                                     # the backing-resolution matrix + the demo
                                     # data routes + the machinery tick + L12
-                                    # probes, config invariants, build
-                                    # determinism, adapter + wire suites)
-corepack pnpm typecheck             # 0 errors (deploy/** is in the root tsconfig include)
+                                    # probes, config invariants incl. the
+                                    # root-shim discovery law + the root-copy
+                                    # byte-identity, build determinism,
+                                    # adapter + wire suites)
+corepack pnpm typecheck             # 0 errors (api/** + deploy/** are in the root tsconfig include)
 ```
 
 No live provider calls anywhere in CI — every provider interaction is
@@ -380,6 +392,14 @@ fakes).
   report + the per-request job tick). The public console's data-backed
   journeys (J3–J8) render real — if simulated — data; per-instance
   in-memory state, honestly disclosed by the SIMULATED badge.
+- **W-3g (merged): the build-console CLI root fix** and **W-3h (this
+  follow-up): the Vercel function-mount fix.** The platform builds
+  Serverless Functions ONLY from the repo-root `api/` directory — the
+  first production deploy attempt (dpl_EDheNMGU3zN9pfsscQuSD9JMHYfT)
+  failed on the `deploy/vercel/api/router.ts` functions key. The root
+  `api/router.ts` discovery shim now re-exports the deploy tree's
+  function (`FUNCTION_MOUNT_PATH` → `/api/router`); the root
+  `vercel.json` byte-identity and the discovery law are test-pinned.
 - **W-3e (the Lead step, unchanged): the async-to-sync hydration
   seam.** T041's port methods are synchronous by design; the durable
   adapters are async. Until T041 widens its ports (a frozen-sibling

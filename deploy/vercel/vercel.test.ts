@@ -100,13 +100,38 @@ describe('deploy/vercel — the hosting config: free-tier envelope + zero-dep la
     expect((config.regions as string[]).length).toBe(1);
   });
 
-  it('every function source under deploy/vercel/api/ is mapped in the functions config (no orphan, no gap)', () => {
-    const apiSources = walkFiles(join(VERCEL_DIR, 'api'), 'api');
-    expect(apiSources.length).toBeGreaterThan(0);
-    for (const source of apiSources) {
-      expect(config.functions[`deploy/vercel/${source}`]).toBeDefined();
+  it('the functions config maps EXACTLY the root api/ discovery shim (the platform builds functions only from the repo-root api/ directory)', () => {
+    // The W-3h fix (the deploy-triggered failure dpl_EDheNMGU3zN9pfsscQuSD9JMHYfT):
+    // Vercel REFUSES a functions config that points into the deploy tree — it
+    // builds Serverless Functions ONLY from the repo-root api/ directory. The
+    // law: the config maps the ROOT SHIM; every source under deploy/vercel/api/
+    // remains the IMPLEMENTATION, reached through the shim's re-export.
+    expect(Object.keys(config.functions as object)).toEqual(['api/router.ts']);
+    expect(config.functions['api/router.ts']).toEqual({ memory: 1024, maxDuration: 10 });
+    // No orphan functions config pointing into deploy/vercel/api/ (the platform
+    // would reject it: "doesn't match any Serverless Functions inside the `api`
+    // directory").
+    for (const key of Object.keys(config.functions as object)) {
+      expect(key.startsWith('deploy/')).toBe(false);
     }
-    expect(Object.keys(config.functions as object)).toEqual(apiSources.map((source) => `deploy/vercel/${source}`));
+    // The implementation the shim re-exports exists under deploy/vercel/api/.
+    expect(walkFiles(join(VERCEL_DIR, 'api'), 'api')).toEqual(['api/router.ts']);
+    // The shim exists at the repo root and re-exports the deploy router's
+    // default export — adding NOTHING of its own (the frozen-sibling law:
+    // comments aside, its whole code is the one re-export line).
+    const shim = readFileSync(join(REPO_ROOT, 'api', 'router.ts'), 'utf8');
+    expect(shim.includes("export { default } from '../deploy/vercel/api/router'")).toBe(true);
+    const code = shim.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n').trim();
+    expect(code).toBe("export { default } from '../deploy/vercel/api/router';");
+  });
+
+  it('the root vercel.json (the b4561b7 hosting-exception copy) is byte-identical to deploy/vercel/vercel.json', () => {
+    // Git-based Vercel deploys read the ROOT vercel.json, so any edit to the
+    // deploy tree's config must land in BOTH files — the durable-copy drift
+    // lesson, pinned byte-exact here.
+    const rootCopy = readFileSync(join(REPO_ROOT, 'vercel.json'));
+    const deployCopy = readFileSync(join(VERCEL_DIR, 'vercel.json'));
+    expect(rootCopy.equals(deployCopy)).toBe(true);
   });
 
   it('the install step installs NOTHING (the lockfile is never touched, even at deploy time)', () => {
