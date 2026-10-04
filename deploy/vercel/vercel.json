@@ -1,0 +1,24 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "echo 'zero-dep deployment tree: no install, lockfile untouched'",
+  "buildCommand": "node deploy/vercel/build-console.mjs",
+  "outputDirectory": "deploy/vercel/dist/console",
+  "regions": ["iad1"],
+  "functions": {
+    "deploy/vercel/api/router.ts": {
+      "memory": 1024,
+      "maxDuration": 10
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/v1/:path*",
+      "destination": "/deploy/vercel/api/router/v1/:path*"
+    },
+    {
+      "source": "/internal/:path*",
+      "destination": "/deploy/vercel/api/router/internal/:path*"
+    }
+  ]
+}
