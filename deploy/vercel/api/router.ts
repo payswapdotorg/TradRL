@@ -10,10 +10,14 @@
 // tenant-context injection -> rate limit -> validation -> handler ->
 // audit -> response — L20) with L12 tenant isolation intact and R41
 // metering on every request. What is host-owned here: the credential
-// registry (env-injected at the secure boundary) and the instant
-// source. What degrades (checkpoint 1, per R46): the backing-service
-// ports are typed pending stubs until W-3b..W-3d wire the durable
-// adapters — those routes return the typed 503 `unavailable`.
+// registry (env-injected at the secure boundary), the instant source,
+// and — under the DEMO backing (W-3f, the default without durable
+// provider keys) — the per-request demo machinery tick, which advances
+// non-terminal jobs through the REAL private plane so the async
+// pattern renders on the public console (honest under the SIMULATED
+// badge; see runtime/demo.ts). Under the DURABLE backing the ports
+// stay the typed pending stubs until the W-3e hydration seam
+// (deploy/wire/production.md) — those routes answer the typed 503.
 //
 // NO CORS headers are ever emitted (the same-origin law — the console
 // reaches this function through rewrites, never cross-origin).
@@ -34,16 +38,25 @@ export default async function handler(request: FunctionRequest, response: Functi
     return;
   }
 
-  // 2. Wrap the (req) into the ApiRequest contract.
+  // 2. The demo machinery tick (W-3f): under the demo backing, advance
+  //    non-terminal jobs through the real private plane BEFORE the
+  //    request is served, so the console's job polling observes the
+  //    async pattern (submitted -> running -> complete). A no-op under
+  //    every other backing / without the internal credential.
+  if (deployment.demo !== null && deployment.demo.tick !== null) {
+    deployment.demo.tick(Date.now());
+  }
+
+  // 3. Wrap the (req) into the ApiRequest contract.
   const wrapped = await toApiRequest(request);
   if (!wrapped.ok) {
     writeDegraded(response, 400, 'invalid_json', 'the request body is not valid JSON');
     return;
   }
 
-  // 3. One request through the whole T041 pipeline.
+  // 4. One request through the whole T041 pipeline.
   const apiResponse = deployment.service.handle(wrapped.request);
 
-  // 4. Write the envelope out (no CORS — same-origin only).
+  // 5. Write the envelope out (no CORS — same-origin only).
   writeApiResponse(response, apiResponse);
 }

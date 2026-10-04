@@ -49,7 +49,19 @@ export interface FunctionResponse {
 // The request adaptation
 // ---------------------------------------------------------------------------
 
-/** Recover the public API path from the rewritten URL (strip the function mount, pass the rest verbatim). */
+/**
+ * Recover the public API path from the rewritten URL (strip the
+ * function mount, pass the rest through). Each PATH SEGMENT is
+ * percent-DECODED (W-3f): the console's client encodes path parameters
+ * (`encodeURIComponent` — e.g. `job:abc` -> `job%3Aabc`), and the
+ * T041 route table expects the DECODED public path (its own tests
+ * drive raw `job:`/`org:` ids). Decoding per segment (after the split)
+ * keeps any encoded `/` inside its segment; a malformed escape never
+ * throws — the raw segment passes through and the route table's own
+ * guards answer the typed validation error (fail-closed, never a
+ * crash). The QUERY stays encoded here — `queryOf` decodes it via the
+ * URL parser.
+ */
 export function publicPathOf(rawUrl: string | undefined): string {
   if (typeof rawUrl !== 'string' || rawUrl.length === 0) return '/';
   // Work with a synthetic absolute URL so the query string is parsed safely.
@@ -58,7 +70,17 @@ export function publicPathOf(rawUrl: string | undefined): string {
   if (path === FUNCTION_MOUNT_PATH || path === `${FUNCTION_MOUNT_PATH}/`) return '/';
   if (path.startsWith(`${FUNCTION_MOUNT_PATH}/`)) path = path.slice(FUNCTION_MOUNT_PATH.length);
   if (path.length === 0) path = '/';
-  return path;
+  return path
+    .split('/')
+    .map((segment) => {
+      if (!segment.includes('%')) return segment;
+      try {
+        return decodeURIComponent(segment);
+      } catch {
+        return segment; // a malformed escape: pass through — the guards answer the typed error
+      }
+    })
+    .join('/');
 }
 
 /** Parse the query parameters into the flat record the ApiRequest contract carries (last value wins on dupes). */
