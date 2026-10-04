@@ -138,9 +138,11 @@ NOT EXISTS` keep it idempotent, no migration tooling (zero-dep law).
 
 The frozen write surface allows edits ONLY under `deploy/**` (+ the
 granted root include lines). Vercel, however, reads `vercel.json` from
-the project root AND builds Serverless Functions only from the
-repo-root `api/` directory — so the root carries two hosting-exception
-copies (the Lead's b4561b7 ruling, W-3h extension):
+the project root, builds Serverless Functions only from the repo-root
+`api/` directory, and typechecks each function with the tsconfig.json
+NEAREST its entry (walking up from the file) — so the root carries the
+hosting-exception files (the Lead's b4561b7 ruling, W-3h/W-3i
+extension):
 
 - **`./vercel.json`** — committed (b4561b7), byte-identical to
   `deploy/vercel/vercel.json` (test-pinned; git-based Vercel deploys
@@ -150,6 +152,16 @@ copies (the Lead's b4561b7 ruling, W-3h extension):
   of the deploy tree's real function. This is part of the same hosting
   exception — a platform DISCOVERY requirement, not a surface change
   to the product (the deploy tree stays the source of truth).
+- **`./api/tsconfig.json`** — the nearest-tsconfig resolution pin
+  (W-3i): @vercel/node resolves the function build's compiler options
+  from the tsconfig.json nearest `api/router.ts`, and without this pin
+  its default synthesis (`moduleResolution: nodenext`) rejects the
+  repo's extensionless relative imports (TS2835 — the frozen
+  `services/api` sources are written extensionless). The pin extends
+  `tsconfig.base.json` and pins the SAME `Bundler` resolution the
+  whole repo typechecks green under (test-pinned). NEVER add file
+  extensions to the frozen `services/api` imports to satisfy a build
+  tool — pin the resolution here instead.
 
 All paths inside the config are repo-root-relative and verified by
 `deploy/vercel/vercel.test.ts` (including the root-copy byte-identity).
@@ -303,14 +315,22 @@ a dependency of the repo).
    the watch snapshot when the internal pair is set); run the launch
    flow and watch the kickoff job animate submitted → running →
    complete (~3 s / ~8 s) when the internal pair is set.
-   Troubleshooting: if `/v1/meta` returns Vercel's 404 (not the API's
-   JSON envelope), the rewrite destination did not resolve the
-   function mount — confirm the root `vercel.json` matches
-   `deploy/vercel/vercel.json` (step 3) and that the function appears
-   in the deployment's Functions tab as `api/router`. If the data routes
-   answer 503 `deploy_adapter_pending`, a `NEON_*`/`UPSTASH_*` key is
-   configured (the durable backing was auto-selected) — unset those
-   keys or set `TRADRL_DEPLOY_BACKING=demo` for the demo.
+   Troubleshooting:
+   - If `/v1/meta` returns Vercel's 404 (not the API's JSON envelope),
+     the rewrite destination did not resolve the function mount —
+     confirm the root `vercel.json` matches `deploy/vercel/vercel.json`
+     (step 3) and that the function appears in the deployment's
+     Functions tab as `api/router`.
+   - If the function BUILD fails with TS2835 ("Relative import paths
+     need explicit file extensions in ECMAScript imports" — the build
+     typechecked under `nodenext`), the `api/tsconfig.json`
+     nearest-tsconfig pin (W-3i) is missing or drifted — restore it
+     (extends `tsconfig.base.json`, `moduleResolution: "Bundler"`);
+     NEVER add extensions to the frozen `services/api` imports.
+   - If the data routes answer 503 `deploy_adapter_pending`, a
+     `NEON_*`/`UPSTASH_*` key is configured (the durable backing was
+     auto-selected) — unset those keys or set
+     `TRADRL_DEPLOY_BACKING=demo` for the demo.
 6. **The J1–J12 journey catalog (the Lead's acceptance gate).** Run
    the UX-DESIGN.md J1–J12 journeys with an agent browser against
    `$BASE/` — every journey must pass on the live deployment before
@@ -363,14 +383,17 @@ Rules of engagement:
 ## 7. Testing this tree
 
 ```
-corepack pnpm vitest run deploy     # 145 tests (runtime adaptation vectors,
+corepack pnpm vitest run deploy     # 146 tests (runtime adaptation vectors,
                                     # the backing-resolution matrix + the demo
                                     # data routes + the machinery tick + L12
                                     # probes, config invariants incl. the
                                     # root-shim discovery law + the root-copy
-                                    # byte-identity, build determinism,
-                                    # adapter + wire suites)
-corepack pnpm typecheck             # 0 errors (api/** + deploy/** are in the root tsconfig include)
+                                    # byte-identity + the W-3i resolution pin,
+                                    # build determinism, adapter + wire
+                                    # suites)
+corepack pnpm typecheck             # 0 errors (api/** + deploy/** are in the root tsconfig
+                                    # include; the FUNCTION BUILD's own graph is pinned
+                                    # by api/tsconfig.json — W-3i)
 ```
 
 No live provider calls anywhere in CI — every provider interaction is
@@ -392,14 +415,28 @@ fakes).
   report + the per-request job tick). The public console's data-backed
   journeys (J3–J8) render real — if simulated — data; per-instance
   in-memory state, honestly disclosed by the SIMULATED badge.
-- **W-3g (merged): the build-console CLI root fix** and **W-3h (this
-  follow-up): the Vercel function-mount fix.** The platform builds
-  Serverless Functions ONLY from the repo-root `api/` directory — the
-  first production deploy attempt (dpl_EDheNMGU3zN9pfsscQuSD9JMHYfT)
+- **W-3g (merged): the build-console CLI root fix** and **W-3h (merged):
+  the Vercel function-mount fix.** The platform builds Serverless
+  Functions ONLY from the repo-root `api/` directory — the first
+  production deploy attempt (dpl_EDheNMGU3zN9pfsscQuSD9JMHYfT)
   failed on the `deploy/vercel/api/router.ts` functions key. The root
   `api/router.ts` discovery shim now re-exports the deploy tree's
   function (`FUNCTION_MOUNT_PATH` → `/api/router`); the root
   `vercel.json` byte-identity and the discovery law are test-pinned.
+- **W-3i (this follow-up): the @vercel/node typecheck resolution pin.**
+  The redeploy from main @ 96ac873 (dpl_Ajr2KCQmT9axQGwDEcvpBkLFc4aV)
+  served the static console but dropped the function (/v1/* →
+  Vercel's NOT_FOUND): @vercel/node's build-time typecheck ran
+  `moduleResolution: nodenext` (its default synthesis when no tsconfig
+  is nearer the entry) and rejected the repo's extensionless imports
+  (TS2835 — the TS2339/TS2322 errors were type-collapse cascades). The
+  root `api/tsconfig.json` pin — the nearest tsconfig on the entry's
+  walk-up — pins the same `Bundler` resolution the whole repo proves
+  green (reproduced locally: 193 errors under nodenext — 58× TS2835 +
+  135 type-collapse cascades; proven: 0 errors under the pin, on the
+  exact entry + import-closure graph). Law
+  test-pinned: never add extensions to the frozen `services/api`
+  imports to satisfy a build tool.
 - **W-3e (the Lead step, unchanged): the async-to-sync hydration
   seam.** T041's port methods are synchronous by design; the durable
   adapters are async. Until T041 widens its ports (a frozen-sibling

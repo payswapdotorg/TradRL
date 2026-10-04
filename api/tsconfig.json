@@ -1,0 +1,30 @@
+// api/tsconfig.json — the @vercel/node nearest-tsconfig resolution pin (T052 follow-up, W-3i).
+//
+// THE W-3i LESSON (deploy-triggered failure dpl_Ajr2KCQmT9axQGwDEcvpBkLFc4aV):
+// after the W-3h discovery shim made Vercel FIND this function, the build's
+// TypeScript typecheck still failed — @vercel/node resolves compiler options
+// from the tsconfig.json NEAREST the function entry (walking up from
+// api/router.ts), and with no tsconfig.json in api/ its default synthesis
+// ran moduleResolution "nodenext". Under nodenext every extensionless
+// relative import is an error (TS2835: "Relative import paths need explicit
+// file extensions in ECMAScript imports... Did you mean './identity.js'?"),
+// and the frozen services/api sources — plus this shim's own re-export —
+// are written extensionless: the style the whole repo already typechecks
+// green under (tsconfig.base.json: moduleResolution "Bundler"). The
+// TS2339/TS2322 errors in the build log were cascades — services/api's
+// types collapsed first, so every consumer of them lost its types.
+//
+// THE LAW (pinned by deploy/vercel/vercel.test.ts): NEVER add file
+// extensions to the frozen services/api imports to satisfy a build tool —
+// pin the resolution instead. This file is the nearest tsconfig on the
+// entry's walk-up path, so @vercel/node reads THESE options: the repo base
+// extended with the same Bundler resolution the root typecheck proves
+// green over this exact entry + import-closure graph.
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler"
+  },
+  "include": ["./**/*.ts", "../deploy/vercel/**/*.ts", "../services/api/**/*.ts"]
+}
