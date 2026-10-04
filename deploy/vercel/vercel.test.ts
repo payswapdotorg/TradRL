@@ -5,8 +5,9 @@
 // breaks any of them fails CI (offline; no Vercel, no network):
 //
 //   1. the same-origin /v1: the rewrites carry /v1/* and /internal/* to
-//      the function's mount, destinations never leave the origin —
-//      therefore NO CORS anywhere (config + function sources);
+//      the function's EXACT mount path (destination === mount — W-3j),
+//      destinations never leave the origin — therefore NO CORS anywhere
+//      (config + function sources);
 //   2. the free-tier function envelope: memory <= 1024MB, maxDuration
 //      <= 60s (Hobby), a single region;
 //   3. the zero-dep law: the install step installs NOTHING (the
@@ -18,9 +19,12 @@
 //      and the build is deterministic + escaping-safe;
 //   6. secrets are never hardcoded anywhere under deploy/ and every
 //      env key the code reads is documented in deploy/.env.example;
-//   7. the function BUILD typechecks under the repo's module resolution
-//      (the W-3i nearest-tsconfig pin api/tsconfig.json — @vercel/node
-//      must never typecheck the entry graph under nodenext).
+//   7. the function BUILD typechecks AND EMITS loadable code (the
+//      api/tsconfig.json nearest-tsconfig pin, W-3i/W-3j — @vercel/node
+//      must never typecheck the entry graph under nodenext (W-3i), and
+//      the emit must be CommonJS: an ESM emit is UNLOADABLE at invoke
+//      time — ERR_MODULE_NOT_FOUND on the extensionless specifiers, or
+//      "Cannot use import statement outside a module" (W-3j).
 //
 // Spec anchors: R43/R46, ARCHITECTURE-LOCK L12 (same-origin keeps the
 // browser a single trust surface), D-033 (the free-tier provider set).
@@ -69,12 +73,24 @@ function stripJsonComments(text: string): string {
 // ---------------------------------------------------------------------------
 
 describe('deploy/vercel — the hosting config: same-origin /v1, no CORS', () => {
-  it('rewrites BOTH public planes (/v1, /internal) to the function mount with the path passed through', () => {
+  it('rewrites BOTH public planes (/v1, /internal) to the function\'s EXACT mount path (destination === mount, verbatim)', () => {
+    // The W-3j lesson (probe-proven on the platform, project
+    // tradrl-router-probe): Vercel functions match their EXACT path only —
+    // a rewrite destination carrying subpath segments
+    // (`/api/router/v1/:path*`) can NEVER resolve, so the public /v1/* and
+    // /internal/* planes answered Vercel's NOT_FOUND page while the
+    // function sat idle. The correct destination is the mount itself,
+    // segments DROPPED: {"source": "/v1/:path*", "destination":
+    // "/api/router"}. The platform then hands the function req.url = the
+    // ORIGINAL public path (`/v1/meta` stays `/v1/meta`; Vercel also
+    // appends the matched segments as a `path` query param), so the
+    // runtime's mount-strip is the guard for DIRECT-mount invocations
+    // only — publicPathOf already handles both shapes.
     const rewrites = config.rewrites as { source: string; destination: string }[];
     expect(Array.isArray(rewrites)).toBe(true);
     const bySource = new Map(rewrites.map((rewrite) => [rewrite.source, rewrite.destination]));
-    expect(bySource.get('/v1/:path*')).toBe(`${FUNCTION_MOUNT_PATH}/v1/:path*`);
-    expect(bySource.get('/internal/:path*')).toBe(`${FUNCTION_MOUNT_PATH}/internal/:path*`);
+    expect(bySource.get('/v1/:path*')).toBe(FUNCTION_MOUNT_PATH);
+    expect(bySource.get('/internal/:path*')).toBe(FUNCTION_MOUNT_PATH);
   });
 
   it('every destination stays on-origin (no absolute URLs — the console never crosses origins)', () => {
@@ -139,7 +155,7 @@ describe('deploy/vercel — the hosting config: free-tier envelope + zero-dep la
     expect(code).toBe("export { default } from '../deploy/vercel/api/router';");
   });
 
-  it('the root api/tsconfig.json pins the function build\'s module resolution (the @vercel/node nearest-tsconfig law, W-3i)', () => {
+  it('the root api/tsconfig.json pins the function build\'s resolution AND its CommonJS EMIT (the @vercel/node nearest-tsconfig law, W-3i/W-3j)', () => {
     // The W-3i lesson (deploy-triggered failure dpl_Ajr2KCQmT9axQGwDEcvpBkLFc4aV):
     // the function WAS discovered through the W-3h shim, but @vercel/node's
     // build-time typecheck runs with the tsconfig.json NEAREST the entry
@@ -148,12 +164,26 @@ describe('deploy/vercel — the hosting config: free-tier envelope + zero-dep la
     // extensionless relative imports (TS2835: "Relative import paths need
     // explicit file extensions..."), collapsing services/api's types into
     // cascade errors (TS2339/TS2322) and dropping the function from the
-    // deployment. The repo typechecks 0 errors under tsconfig.base.json
-    // (moduleResolution "Bundler") — the code is sound; only the function
-    // build's resolution mode was wrong.
+    // deployment.
+    //
+    // The W-3j lesson (FUNCTION_INVOCATION_FAILED on the exact function
+    // path /api/router): W-3i fixed the TYPECHECK but the emit stayed ESM
+    // (module "ESNext") — the emitted function JS carried `export ... from
+    // '../deploy/vercel/api/router'` verbatim, which Node cannot load
+    // (ERR_MODULE_NOT_FOUND under ESM resolution — the extensionless
+    // specifier; "Cannot use import statement outside a module" under CJS
+    // loading). The repo package.json has NO "type" field (CommonJS is
+    // the default), so the function must EMIT CommonJS: `module:
+    // "CommonJS"` + `moduleResolution: "node"` (node10 — extensionless
+    // relative imports stay legal, so the frozen services/api sources are
+    // NEVER touched; "Bundler" is invalid with CommonJS — TS5095 — and
+    // "nodenext" would reject the extensionless imports — TS2835).
     //
     // THE LAW: never add file extensions to the frozen services/api imports
-    // to satisfy a build tool — pin the resolution at the nearest tsconfig.
+    // to satisfy a build tool — pin the resolution AND the emit at the
+    // nearest tsconfig. The proof gate (W-3j): compile the entry with this
+    // config and REQUIRE the emitted file — if `require()` cannot load it,
+    // the emit is wrong.
     const pinPath = join(REPO_ROOT, 'api', 'tsconfig.json');
     expect(existsSync(pinPath)).toBe(true);
     const pin = JSON.parse(stripJsonComments(readFileSync(pinPath, 'utf8'))) as {
@@ -163,10 +193,11 @@ describe('deploy/vercel — the hosting config: free-tier envelope + zero-dep la
     // Extends the repo base — the configuration the whole repo already
     // typechecks green under.
     expect(pin.extends).toBe('../tsconfig.base.json');
-    // The resolution pin (case-insensitive compare: "Bundler", never
-    // "NodeNext") and its required module mode.
-    expect(String(pin.compilerOptions?.moduleResolution).toLowerCase()).toBe('bundler');
-    expect(String(pin.compilerOptions?.module).toLowerCase()).toBe('esnext');
+    // The resolution + emit pin (case-insensitive compare: "node" and
+    // "CommonJS" — never "nodenext" (TS2835), never "ESNext" (the
+    // unloadable ESM emit)).
+    expect(String(pin.compilerOptions?.moduleResolution).toLowerCase()).toBe('node');
+    expect(String(pin.compilerOptions?.module).toLowerCase()).toBe('commonjs');
   });
 
   it('the root vercel.json (the b4561b7 hosting-exception copy) is byte-identical to deploy/vercel/vercel.json', () => {
