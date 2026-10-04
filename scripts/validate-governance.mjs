@@ -20,14 +20,14 @@ for (const file of ['README.md','AGENTS.md','spec/ARCHITECTURE-LOCK.md','docs/LL
 }
 const work = fs.readFileSync(path.join(root,'spec/WORK-ITEMS.md'),'utf8');
 const graph = fs.readFileSync(path.join(root,'spec/DEPENDENCY-GRAPH.md'),'utf8');
-for (let i=1;i<=50;i++) { const id=`T${String(i).padStart(3,'0')}`; if(!work.includes(id)||!graph.includes(id)) throw new Error(`Missing ${id}`); }
+for (let i=1;i<=52;i++) { const id=`T${String(i).padStart(3,'0')}`; if(!work.includes(id)||!graph.includes(id)) throw new Error(`Missing ${id}`); }
 
 // Machine-checkable program state must exist and cover the whole program.
 const program = JSON.parse(fs.readFileSync(path.join(root,'program/graph.json'),'utf8'));
 if (!Array.isArray(program.items)) throw new Error('program/graph.json: items must be an array');
 const ids = new Set(program.items.map((i)=>i.id));
 if (ids.size !== program.items.length) throw new Error('program/graph.json: duplicate item ids');
-for (let i=1;i<=50;i++) { const id=`T${String(i).padStart(3,'0')}`; if(!ids.has(id)) throw new Error(`program/graph.json missing ${id}`); }
+for (let i=1;i<=52;i++) { const id=`T${String(i).padStart(3,'0')}`; if(!ids.has(id)) throw new Error(`program/graph.json missing ${id}`); }
 
 // The Work Order(s) PROJECT-STATE declares authorized must exist and not be merged.
 const state = fs.readFileSync(path.join(root,'spec/PROJECT-STATE.md'),'utf8');

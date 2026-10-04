@@ -45,6 +45,9 @@ T046 -> terminal
 T047 -> T050
 T048 -> T049,T050
 T049 -> T050
+T042 -> T051
+T051 -> T052
+T052 -> T050
 
 ## Initial frontier
 T001 only.

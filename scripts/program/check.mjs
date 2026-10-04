@@ -16,7 +16,7 @@ export const WORK_ITEMS_PATH = path.join(ROOT, 'spec/WORK-ITEMS.md');
 export const DEP_GRAPH_PATH = path.join(ROOT, 'spec/DEPENDENCY-GRAPH.md');
 export const GRAPH_JSON_PATH = path.join(ROOT, 'program/graph.json');
 
-const ALL_IDS = Array.from({ length: 50 }, (_, i) => `T${String(i + 1).padStart(3, '0')}`);
+const ALL_IDS = Array.from({ length: 52 }, (_, i) => `T${String(i + 1).padStart(3, '0')}`);
 const STATUSES = ['blocked', 'ready', 'in_progress', 'in_review', 'merged'];
 const ACTIVE_STATUSES = ['in_progress', 'in_review'];
 

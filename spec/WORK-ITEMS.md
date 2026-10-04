@@ -90,7 +90,14 @@ One Work Order = one branch = one PR = one worker. Maximum active workers = 3.
 | T047 | Commercial capability marketplace | T017,T034,T041 | services/marketplace/, packages/entitlements/ |
 | T048 | Reference end-to-end trading slice | T018,T024,T025,T027,T030,T037,T038,T040 | examples/end-to-end-trading/, tests/end-to-end-trading/ |
 | T049 | Benchmark/evidence publication | T028,T032,T035,T048 | benchmarks/, research/public-evaluation/ |
-| T050 | Production reliability/performance/release | T035,T042,T043,T044,T047,T048,T049 | deploy/, ops/, docs/release/, tests/performance/ |
+| T050 | Production reliability/performance/release | T035,T042,T043,T044,T047,T048,T049,T052 | ops/, docs/release/, tests/performance/ |
+
+## Console conformance & deployment
+
+| ID | Scope | Depends | Write surface |
+|---|---|---|---|
+| T051 | Console UX conformance and discoverability overhaul | T042 | apps/web/ |
+| T052 | Public free-tier deployment | T051 | deploy/ |
 
 ## Universal acceptance
 - scope/write-surface compliance;
