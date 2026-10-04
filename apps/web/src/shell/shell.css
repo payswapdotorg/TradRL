@@ -786,3 +786,184 @@ details.list-row > summary::-webkit-details-marker { display: none; }
 /* The Home overview blocks. */
 .home-block { display: grid; gap: var(--space-3); }
 .section-heading { font-size: 0.8125rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted-foreground); margin: 8px 0 0; }
+
+/* ---------------------------------------------------------------------------
+   §4 THE COMPONENT SYSTEM part 2 (T051) — watch stream cards, the Time
+   Machine control bar, capsule badges, notifications, forms.
+   --------------------------------------------------------------------------- */
+
+/* §4.7 Watch-mode stream cards. */
+.stream-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--card);
+  color: var(--card-foreground);
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+.stream-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stream-agent { font-size: 0.875rem; font-weight: 650; overflow-wrap: anywhere; }
+.role-chip {
+  font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--accent); color: var(--accent-foreground);
+}
+.stream-capability { font-size: 0.75rem; color: var(--muted-foreground); font-family: var(--font-mono); }
+.stream-at { margin-left: auto; font-size: 0.7rem; color: var(--muted-foreground); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.stream-body { display: grid; gap: 8px; }
+.stream-label { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted-foreground); width: 6.5rem; flex: none; }
+.stream-line, .stream-evidence, .stream-checks, .stream-decision { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+.stream-value { font-size: 0.8125rem; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.stream-none { font-size: 0.8125rem; color: var(--muted-foreground); font-style: italic; }
+.stream-decision-value { font-size: 0.875rem; font-weight: 650; font-family: var(--font-mono); overflow-wrap: anywhere; }
+
+/* §4.9 Evidence capsule badges. */
+.capsule-badge {
+  all: unset;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--muted);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.capsule-badge:hover { border-color: color-mix(in oklch, var(--foreground) 30%, transparent); }
+.capsule-address { font-family: var(--font-mono); font-size: 0.7rem; color: var(--accent-foreground); }
+.capsule-payload {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  padding: 14px 16px;
+  display: grid;
+  gap: 8px;
+}
+.capsule-mono {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+.capsule-provenance { font-size: 0.75rem; color: var(--muted-foreground); }
+
+/* §4.8 The Time Machine control bar. */
+.tm-controls-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tm-modes { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.tm-mode-btn {
+  all: unset;
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+}
+.tm-mode-btn + .tm-mode-btn { border-left: 1px solid var(--border); }
+.tm-mode-btn[aria-pressed='true'] { background: var(--accent); color: var(--accent-foreground); }
+.tm-mode-btn:hover:not([aria-pressed='true']) { background: var(--muted); color: var(--foreground); }
+.tm-scrubber { flex: 1 1 12rem; accent-color: var(--sidebar-primary); min-width: 8rem; }
+.tm-readout {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+  white-space: nowrap;
+}
+.tm-notice { flex-basis: 100%; font-size: 0.75rem; color: var(--muted-foreground); }
+.tm-progress { font-size: 0.75rem; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.tm-playback { display: inline-flex; gap: 6px; }
+
+/* §4.10 Notifications: the bell badge + toasts. */
+.nav-item.bell { position: relative; }
+.bell-badge {
+  position: absolute;
+  top: 4px; right: 8px;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--chart-5); color: #fff;
+  font-size: 0.625rem; font-weight: 700;
+  display: grid; place-items: center;
+  line-height: 1;
+}
+.toast-stack { position: fixed; top: 16px; right: 16px; z-index: 60; display: grid; gap: 8px; width: min(92vw, 22rem); }
+.toast {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--popover);
+  color: var(--foreground);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
+  animation: tradrl-toast-in 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes tradrl-toast-in { from { transform: translateY(-8px); opacity: 0; } to { transform: none; opacity: 1; } }
+.toast-title { font-size: 0.8125rem; font-weight: 650; }
+.toast-sentence { font-size: 0.75rem; color: var(--muted-foreground); }
+.toast-text { display: grid; gap: 2px; }
+.toast > .ci { color: var(--tradrl-live-text); }
+.toast-failed_evaluation > .ci, .toast-safety_intervention > .ci { color: var(--tradrl-down-text); }
+.toast-capability_gap > .ci, .toast-shadow_degradation > .ci { color: var(--tradrl-warn-text); }
+
+/* §4.11 Forms. */
+.field { display: grid; gap: 6px; }
+.field-label { font-size: 0.8125rem; font-weight: 600; color: var(--foreground); }
+.field-input {
+  all: unset;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--input, var(--border));
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-family: inherit;
+}
+.field-input:focus-visible { outline: 2px solid var(--tradrl-live); outline-offset: 2px; }
+.field.field-invalid .field-input { border-color: var(--destructive); }
+.field-hint { margin: 0; font-size: 0.75rem; color: var(--muted-foreground); }
+.field-error { margin: 0; font-size: 0.8125rem; color: var(--destructive); }
+.review-step {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: color-mix(in oklch, var(--card) 70%, transparent);
+  padding: 16px 18px;
+  display: grid;
+  gap: 10px;
+}
+.review-lede { margin: 0; font-size: 0.875rem; color: var(--muted-foreground); }
+.review-grid { border-top: 1px solid var(--border); padding-top: 10px; }
+.confirm-arm {
+  all: unset;
+  cursor: pointer;
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-size: 0.875rem; font-weight: 600;
+  width: fit-content;
+}
+.confirm-arm:hover { filter: brightness(0.97); }
+.confirm-inline {
+  display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--tradrl-warn);
+  background: var(--tradrl-warn-soft);
+}
+.confirm-question { font-size: 0.875rem; font-weight: 600; color: var(--tradrl-warn-text); }
+.confirm-cancel, .confirm-go {
+  all: unset;
+  cursor: pointer;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem; font-weight: 600;
+}
+.confirm-cancel { border: 1px solid var(--border); background: var(--card); color: var(--foreground); }
+.confirm-go { background: var(--primary); color: var(--primary-foreground); }
+.confirm-go:hover, .confirm-cancel:hover { filter: brightness(0.97); }

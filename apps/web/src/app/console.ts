@@ -332,6 +332,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (kind === 'view-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
         if (kind === 'view-tminus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
         if (kind === 'playback-start') dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt: state.openedAt, stepMs: 500 });
+        // §4.8: the Time Machine mode select + playback stepping (pure dispatches —
+        // the state machine owns the transitions; the L4 projection is upstream).
+        if (kind === 'tm-mode-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
+        if (kind === 'tm-mode-t-minus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
+        if (kind === 'tm-mode-timestamp') dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: state.timeMachine.anchorAt - 60_000 });
+        if (kind === 'tm-mode-playback') dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt: state.openedAt, stepMs: 500 });
+        if (kind === 'playback-step') dispatch({ kind: 'playback-tick', at: instants.nowMs() });
+        if (kind === 'playback-step-back') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: state.timeMachine.tMinusMs + 500 });
         if (kind === 'refresh') void refreshWithShell();
         if (kind === 'drawer-open') {
           view = { ...view, drawerOpen: true };

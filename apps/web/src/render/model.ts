@@ -61,6 +61,13 @@ import {
   type DefinitionSection,
   type PillTone,
 } from './components';
+import {
+  capsuleBadge,
+  noticeCopyOf,
+  notificationBell,
+  streamCard,
+  timeMachineControls,
+} from './flow';
 import { v, serializeVNode, type VNode } from './vtree';
 
 /** One fact row (closed-vocabulary label; the value verbatim). */
@@ -296,57 +303,71 @@ function capsuleCard(capsule: EvidenceCapsule, viewAt: number): VNode {
   });
 }
 
-/** Render one watch event — UX.md's seven lenses (the sanitized shape; never reasoning). */
+/** Render one watch event as a §4.7 stream card (the sanitized seven-lens shape; the chain-of-thought firewall is upstream at ingest — unchanged). */
 function watchEventRow(scope: WorkspaceScope, event: WatchEvent, viewAt: number): VNode {
+  void scope;
   visibleAt(event, event.at, viewAt, `watch:${event.decision?.ref ?? event.agent ?? 'unknown'}`);
-  return v('div', { class: 'watch-event' }, [
-    v('div', { class: 'watch-at' }, [formatInstantUtc(event.at)]),
-    factRow('agent', event.agent ?? 'unknown'),
-    factRow('capability', event.capability ?? 'unspecified'),
-    factRow('evidence consulted', event.evidenceConsulted.map((entry) => `${entry.kind}:${entry.ref}`).join(', ') || 'none'),
-    factRow('proposal', event.proposal ?? 'none'),
-    factRow('challenge', event.challenge ?? 'none'),
-    factRow('risk checks', event.riskChecks.map((check) => `${check.dimension}=${check.outcome}`).join(', ') || 'none'),
-    factRow('decision', event.decision === null ? 'none' : `${event.decision.kind} ${event.decision.ref}`),
-  ]);
+  return streamCard({
+    agent: event.agent ?? 'unknown',
+    capability: event.capability,
+    evidenceConsulted: event.evidenceConsulted,
+    proposal: event.proposal,
+    challenge: event.challenge,
+    riskChecks: event.riskChecks,
+    decision: event.decision,
+    at: event.at,
+  });
 }
 
-/** The inbox panel (unread badge + the notices, projected by availability). */
+/** The inbox panel (§4.10): the bell + list rows with read/unread state + mark-all-read. */
 function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
   const unread = unreadCount(state.inbox);
   const projected = projectToView(state.inbox.notices, viewAt, (record) => record.at);
-  const rows = projected.map((record) => v('div', { class: `notice notice-${record.kind}${state.inbox.readNoticeIds.includes(record.noticeId) ? ' read' : ' unread'}` }, [
-    v('div', { class: 'notice-title' }, [record.title]),
-    factRow('source', `${record.source.route} ${record.source.ref}`),
-    ...record.facts.map((entry) => factRow(entry.label, entry.value)),
-    factRow('at', formatInstantUtc(record.at)),
-  ]));
+  const rows = projected.map((record) => {
+    const copy = noticeCopyOf(record.kind);
+    const isRead = state.inbox.readNoticeIds.includes(record.noticeId);
+    return accordionRow({
+      icon: copy.icon,
+      title: record.title,
+      subtitle: copy.sentence,
+      ...(isRead ? {} : { pill: { tone: 'live' as PillTone, label: 'new' } }),
+      meta: formatTimeUtc(record.at),
+      rowId: `notice:${record.noticeId}`,
+      attrs: { class: `list-row accordion-row notice notice-${record.kind}${isRead ? ' read' : ' unread'}` },
+      details: [
+        { eyebrow: 'STATUS', pairs: [['read', isRead ? 'yes' : 'no'], ['at', formatInstantUtc(record.at)]] },
+        { eyebrow: 'IDENTITY', pairs: [['notice id', record.noticeId], ['event type', record.kind]] },
+        { eyebrow: 'ADVANCED', pairs: [['source route', record.source.route], ['source ref', record.source.ref], ...record.facts.map((entry) => [entry.label, entry.value] as const)] },
+      ],
+    });
+  });
   return v('aside', { class: 'inbox', 'data-unread': String(unread) }, [
     v('h2', {}, [`Notifications${unread > 0 ? ` (${unread} unread)` : ''}`]),
     v('button', { class: 'inbox-read-all', 'data-action': 'notices-read-all', type: 'button' }, ['Mark all read']),
     ...rows,
-    v('div', { class: 'inbox-empty' }, [projected.length === 0 ? 'No notices at this view instant.' : '']),
+    ...(projected.length === 0 ? [sectionEmpty('inbox')] : []),
   ]);
 }
 
-/** The Time Machine bar (mode, anchor, view instant, playback progress, the controls). */
+/** The Time Machine bar (§4.8): the mode select, the scrubber, the playback controls, the mono readout, the projection notice. */
 function timeMachineBar(state: WorkspaceState, viewAt: number): VNode {
   const progress = playbackProgressOf(state.timeMachine);
   return v('div', { class: 'timemachine', 'data-mode': state.timeMachine.mode }, [
-    v('span', { class: 'tm-mode' }, [state.timeMachine.mode]),
-    factRow('view', formatInstantUtc(viewAt)),
-    factRow('anchor', formatInstantUtc(state.timeMachine.anchorAt)),
-    ...(progress === null ? [] : [factRow('playback', `${Math.round(progress * 100)}%`)]),
-    v('div', { class: 'tm-controls' }, [
-      v('button', { class: 'tm-button', 'data-action': 'view-live', type: 'button' }, ['Live']),
-      v('button', { class: 'tm-button', 'data-action': 'view-tminus', type: 'button' }, ['T-1m']),
-      v('button', { class: 'tm-button', 'data-action': 'playback-start', type: 'button' }, ['Playback']),
-    ]),
+    timeMachineControls({
+      mode: state.timeMachine.mode,
+      viewAt,
+      openedAt: state.openedAt,
+      anchorAt: state.timeMachine.anchorAt,
+      playing: state.timeMachine.mode === 'playback',
+      progress,
+    }),
+    v('p', { class: 'hint' }, ['Every visible datum passed the availability projection for this view instant (L4).']),
   ]);
 }
 
 /** The per-section teaching empty states (§4.12): the pinned T042 titles + ONE sentence + exactly ONE action. */
-const SECTION_EMPTY_STATES: Readonly<Record<SectionId, { readonly icon: ComponentIcon; readonly title: string; readonly sentence: string; readonly action: { readonly label: string; readonly target: ShellTarget } }>> = Object.freeze({
+const SECTION_EMPTY_STATES: Readonly<Record<SectionId | 'inbox', { readonly icon: ComponentIcon; readonly title: string; readonly sentence: string; readonly action: { readonly label: string; readonly target: ShellTarget } }>> = Object.freeze({
+  'inbox': { icon: 'inbox', title: 'No notices at this view instant.', sentence: 'Notifications from your organization appear here as they happen.', action: { label: 'Open the overview', target: 'home' } },
   'goal': { icon: 'target', title: 'No goal loaded yet.', sentence: 'Describe what this organization should achieve, then launch the primary flow.', action: { label: 'Open the overview', target: 'home' } },
   'organization': { icon: 'layers', title: 'No organization snapshots at this view instant.', sentence: 'An organization compiles here once the launch completes.', action: { label: 'Describe a goal', target: 'goal' } },
   'market-world': { icon: 'pulse', title: 'No launch context yet — the market world is specified at launch.', sentence: 'Markets, venues and data sources appear once a project launches.', action: { label: 'Open Goal', target: 'goal' } },
@@ -362,7 +383,7 @@ const SECTION_EMPTY_STATES: Readonly<Record<SectionId, { readonly icon: Componen
 });
 
 /** The section's teaching empty state (the pinned title rides as the EmptyState title). */
-function sectionEmpty(section: SectionId): VNode {
+function sectionEmpty(section: SectionId | 'inbox'): VNode {
   const config = SECTION_EMPTY_STATES[section];
   return emptyState({ icon: config.icon, title: config.title, sentence: config.sentence, action: config.action });
 }

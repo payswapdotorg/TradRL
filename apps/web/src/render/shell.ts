@@ -18,9 +18,11 @@
 //   CONNECTING neutral (gentle pulse, reduced-motion disabled).
 
 import type { ConnectionStatus, WorkspaceState } from '../core/workspace';
+import { unreadCount } from '../core/notices';
 import type { ThemeName } from '../core/theme';
 import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellTarget } from '../core/nav';
 import { formatInstantUtc } from '../core/format';
+import { notificationBell } from './flow';
 import { v, type VNode } from './vtree';
 
 /** The shell's view state — everything the chrome renders that is not workspace state. */
@@ -168,8 +170,9 @@ function refreshMark(): VNode {
   return icon([P('M20 12a8 8 0 1 1-2.34-5.66'), P('M20 4v4.25h-4.25')]);
 }
 
-/** One navigation item (a section item ALSO carries data-section for T042's interaction law). */
-function navItem(target: ShellTarget, active: boolean): VNode {
+/** One navigation item (a section item ALSO carries data-section for T042's interaction law; the Inbox item is the §4.10 bell with the unread badge — visible from every page). */
+function navItem(target: ShellTarget, active: boolean, unread: number): VNode {
+  if (target === 'inbox') return notificationBell(unread);
   const attrs: Record<string, string> = {
     class: `nav-item${active ? ' active' : ''}`,
     'data-target': target,
@@ -180,11 +183,11 @@ function navItem(target: ShellTarget, active: boolean): VNode {
   return v('button', attrs, [navGlyphOf(target), v('span', { class: 'nav-item-label' }, [SHELL_TITLES[target]])]);
 }
 
-/** The grouped navigation (aria-label="Primary", the four charter groups in order). */
-function shellNav(activeTarget: ShellTarget): VNode {
+/** The grouped navigation (aria-label="Primary", the four charter groups in order; the bell carries the unread count). */
+function shellNav(activeTarget: ShellTarget, unread: number): VNode {
   return v('nav', { class: 'shell-nav', 'aria-label': 'Primary' }, NAV_GROUPS.map((group) => v('div', { class: 'nav-group', 'data-nav-group': group.label }, [
     v('div', { class: 'nav-group-label' }, [group.label]),
-    ...group.targets.map((target) => navItem(target, target === activeTarget)),
+    ...group.targets.map((target) => navItem(target, target === activeTarget, unread)),
   ])));
 }
 
@@ -328,7 +331,7 @@ export function renderAppShell(
         v('span', { class: 'brand-tile' }, [brandMark()]),
         v('span', { class: 'brand-word' }, ['TradRL']),
       ]),
-      shellNav(activeTarget),
+      shellNav(activeTarget, unreadCount(state.inbox)),
       connectionZone(state, view, at),
     ]),
     v('div', { class: 'shell-main' }, [
