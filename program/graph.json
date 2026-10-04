@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "program": "TradRL",
- "updated_at": "2026-10-04T18:20:00Z",
+ "updated_at": "2026-10-04T19:35:00Z",
  "policies": {
   "max_concurrent_work_orders": 3,
   "allowed_statuses": [
@@ -1352,8 +1352,16 @@
    "write_surface": [
     "apps/web/"
    ],
-   "status": "in_progress",
-   "branch": "work/T051-ux-conformance"
+   "status": "merged",
+   "branch": "work/T051-ux-conformance",
+   "pr": 18,
+   "merged_sha": "730739aab0bbb3a763938d712c22ae156c34adbd",
+   "evidence": [
+    "PR #18 squash-merged at 730739aab0bbb3a763938d712c22ae156c34adbd (base dea4044, worker head dbe8e2a, checkpoints 12f4b72/5850a15/f99d371/4cbcd52/dbe8e2a)",
+    "GitHub Actions run 37228441838 (verify): success",
+    "Lead merge-result gates GREEN vs main dea4044 (worktree cc85bb0): typecheck 0 errors; vitest 6721 passed + 1 skipped (457 files); program:check valid; governance passed; write surface compliant (apps/web/** only)",
+    "Worker completion report (W-2a..W-2e local chain, D-034): 154 new tests; all seven discoverability-law clauses pinned (D1-D7); the 266-test T042 regression floor green verbatim; honest limitations recorded (FLIP slide, TM scrubber drag, Geist fonts optional)"
+   ]
   },
   {
    "id": "T052",
@@ -1364,7 +1372,8 @@
    "write_surface": [
     "deploy/"
    ],
-   "status": "blocked"
+   "status": "in_progress",
+   "branch": "work/T052-public-deployment"
   }
  ],
  "dispatch": {
