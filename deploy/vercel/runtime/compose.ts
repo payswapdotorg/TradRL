@@ -149,6 +149,10 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
   // DURABLE = the typed degraded stubs (the hydration seam is W-3e).
   const demoPorts = backing === 'demo' ? seedDemoBacking(tenant) : null;
   const ports: Required<DeploymentPortOverrides> = demoPorts ?? degradedPorts();
+  // Port overrides are the injection seam (tests + future hosts): an
+  // overridden port set owns its own world — the demo world seed and
+  // the machinery handle are suppressed under overrides.
+  const hasOverrides = Object.keys(overrides).length > 0;
   const construction: ApiServiceConstruction = createApiService({
     credentials: [
       {
@@ -184,10 +188,9 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     return { ok: false, code: 'deploy_not_configured', missing: construction.errors.map((error) => `${error.path ?? error.code}: ${error.message}`) };
   }
   // The demo world seed — ONLY for the un-overridden demo composition
-  // (port overrides are the injection seam for tests/future hosts: an
-  // overridden port set owns its own world). Every seed mutation goes
-  // THROUGH the real routes (L20 runs for real — see runtime/demo.ts).
-  if (demoPorts === null) {
+  // (see hasOverrides above). Every seed mutation goes THROUGH the real
+  // routes (L20 runs for real — see runtime/demo.ts).
+  if (demoPorts === null || hasOverrides) {
     return { ok: true, service: construction.service, backing, demo: null };
   }
   const seed = seedDemoWorld(construction.service, { tenant, developerToken: token, internalToken }, Date.now());
