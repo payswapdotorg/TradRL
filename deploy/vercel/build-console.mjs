@@ -23,7 +23,7 @@
 // The output is deterministic: identical inputs (the apps/web tree +
 // the build env) yield identical bytes (pinned by a test).
 //
-// Zero-dep law: node:fs, node:path, node:crypto ONLY (no npm deps,
+// Zero-dep law: node:fs, node:path, node:crypto, node:url ONLY (no npm deps,
 // no bundler, no lockfile touch). Run from the repo root:
 //   TRADRL_CONSOLE_TOKEN=... TRADRL_CONSOLE_TENANT_ID=... node deploy/vercel/build-console.mjs
 // Output: deploy/vercel/dist/console (the vercel.json outputDirectory).
@@ -31,6 +31,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
 // The copy spec (the single inventory — the completeness test pins it against the apps/web tree)
@@ -164,8 +165,17 @@ export function buildConsole({ webDir, outDir, values }) {
 }
 
 // CLI entry (the vercel.json buildCommand).
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
-  const repoRoot = resolve(new URL('../../../', import.meta.url).pathname);
+// fileURLToPath (node:url) is the correct API for a module URL -> platform
+// path (no URL percent-encoding drift, no platform path bugs) — the same
+// scriptPath feeds the entry guard and the root resolution below.
+const scriptPath = fileURLToPath(import.meta.url);
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(scriptPath)) {
+  // deploy/vercel/build-console.mjs -> deploy/vercel -> deploy -> the REPO ROOT.
+  // (W-3g regression fix: the old `new URL('../../../', import.meta.url)`
+  // climbed THREE levels from the FILE — vercel -> deploy -> repo -> the
+  // repo's PARENT — so the CLI looked for <parent>/apps/web and died ENOENT
+  // both locally and on the Vercel build image.)
+  const repoRoot = resolve(dirname(scriptPath), '../..');
   const webDir = join(repoRoot, 'apps/web');
   const outDir = join(repoRoot, 'deploy/vercel/dist/console');
   const values = readConsoleEnvFromProcess();
