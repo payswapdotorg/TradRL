@@ -99,6 +99,76 @@ starts here).
   `DegradationNote` (route + family + message + injected instant).
 - **No JavaScript**: the `<noscript>` message renders.
 
+## The design system + the app shell (T051 — UX-DESIGN.md)
+
+The console's ShareNet-derived design language (operator directive
+D-033) is **hand-authored CSS custom properties — zero runtime
+dependencies**:
+
+- **`src/shell/tokens.css`** — THE DESIGN TOKEN SYSTEM (UX-DESIGN
+  §1), the pure data layer: both palettes on the `.tradrl-shell` root
+  (light DEFAULT via the bare selector + `[data-theme="light"]`; dark
+  via `[data-theme="dark"]`), the connection-state tokens
+  (`--tradrl-live/warn/down/idle` + `-soft`/`-text` variants; dark
+  softs via `color-mix(in oklch, … 18%, transparent)`), the radius
+  scale (`--radius` 0.625rem + `sm` 6/`md` 8/`lg` 10/`xl` 14), the
+  4px spacing scale (`--space-1..8`), the font stacks (Geist
+  Sans/Mono with system fallbacks — a host MAY drop Geist woff2 files
+  in as static assets behind `--font-sans`/`--font-mono`; nothing
+  requires it), the chart palette, the focus-visible law (§1.5) and
+  the `prefers-reduced-motion` gate. `src/shell/tokens.test.ts`
+  parses this file and pins every value of both palettes.
+- **`src/shell/shell.css`** — the app-shell LAYOUT (§2: the fixed
+  256px sidebar, the brand row, the grouped nav with the active pill
+  on `cubic-bezier(0.22, 1, 0.36, 1)` 300ms, the CONNECTION block,
+  the mobile 56px header + slide-in drawer with backdrop and
+  safe-area) and the page scaffold (§3: H1 + subtitle + status badge
+  + the ghost icon-only Refresh), plus the retokened legacy panel
+  styles. Linked statically from `index.html` — no build, ever.
+
+**Location decision:** tokens (data) and shell (layout) are separate
+hand-authored stylesheets under `src/shell/` so the token tables stay
+byte-pinnable by tests while the layout evolves.
+
+**Theme persistence (§1):** the choice persists in `localStorage`
+under `tradrl_theme`. `index.html` carries a tiny pre-paint script in
+`<head>` (before the stylesheets and the loader) that re-applies the
+stored theme to `<html>` — `tokens.css` keys the `<html>` background
+on `data-theme` so overscroll never flashes the wrong color. The
+entry (`src/index.ts`) reads the same key at boot; Settings' theme
+control (and any future toggle) writes it through the injected
+storage seam (`core/theme.ts` — pure, headless-testable).
+
+**The shell render (T051):** `src/render/shell.ts` composes the
+`.tradrl-shell` root — mobile header, drawer backdrop, sidebar (brand
+row + the four nav groups with all fifteen targets + the CONNECTION
+block + the environment badge) and the main content wrapper
+(`max-w-6xl`). `renderConsoleModel(state, at, view?)` stays PURE:
+the optional `ShellView` carries only chrome state (theme, the
+account landing target, endpoint, simulated flag, busy/drawer); the
+default view reproduces the classic section render, and every T042
+panel + law gate inside the sections is unchanged. The app layer
+(`src/app/console.ts`) owns the view: Home lands first (the hero IS
+the page, §3), the twelve workspace sections keep their
+`data-section` interaction law, Inbox/Settings are shell targets, the
+drawer is Esc/backdrop closable with a focus trap, and the Refresh
+action renders its busy (spinning) state.
+
+**Motion under the no-diff projection:** the console re-projects its
+whole tree per state change (T042 law — no virtual DOM), so two
+motion carriers are persistent-state driven: the mobile drawer slides
+via `data-drawer` on the persistent host (`#tradrl-console`, applied
+by the app layer without re-projection), and continuous animations
+(skeleton pulse, refresh spin) start at element insertion. The
+active-item pill and hovers carry the charter's curve; a cross-item
+FLIP polish for the pill is scheduled with the component pass.
+
+**The environment badge (§7 anti-deception):** the static shell's
+default configuration is honestly labeled `simulated: true` — the
+sidebar renders **"SIMULATED · demo data"** (amber) and every section
+scaffold carries the SIMULATED status badge until a real host
+overrides the flag when it injects the credential token.
+
 ## The laws this console enforces (each a typed error, each pinned by tests)
 
 | Law | The typed error | Where |

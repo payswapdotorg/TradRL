@@ -26,15 +26,33 @@ import { createFetchTransport } from '../api/transport';
 import { createConsoleClient, type ConsoleClient } from '../api/client';
 import type { ApiConsoleError } from '../api/errors';
 import type { LaunchDraft, LaunchIds } from '../core/launch';
-import { toCreateProjectInput, toLaunchJobSpec, validateLaunchDraft } from '../core/launch';
+import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, validateLaunchDraft } from '../core/launch';
 import { digestOf } from '../core/digest';
 import type { InstantSource, TickScheduler } from '../core/clock';
 import { systemNowMs } from '../core/clock';
 import type { SectionId } from '../core/sections';
 import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
-import { openWorkspace, reduceWorkspace } from '../core/workspace';
+import { openWorkspace, reduceWorkspace, serializeWorkspace } from '../core/workspace';
 import type { WorkspaceScope } from '../core/tenant';
+import type { ThemeName, ThemeStorage } from '../core/theme';
+import { persistTheme } from '../core/theme';
+import { isShellTarget } from '../core/nav';
+import { paletteIndex, paletteOverlay, rankPalette, type PaletteEntry } from '../core/palette';
+import {
+  advanceOnboarding,
+  initialOnboarding,
+  isOnboarded,
+  onboardingReopenAffordance,
+  persistOnboarding,
+  readStoredOnboarding,
+  skipOnboarding,
+  type OnboardingState,
+} from '../core/onboarding';
+import { noticeCopyOf } from '../render/flow';
+import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
+import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission, projectToView } from '../core/availability';
+import { parseSheetRef, type ShellView } from '../render/shell';
 import { renderConsoleModel } from '../render/model';
 import { mountVTree } from '../render/dom';
 
@@ -56,6 +74,14 @@ export interface ConsoleBootOptions {
   readonly scheduler?: TickScheduler;
   /** The beat cadence in ms (job polling + playback ticks; default 1000). */
   readonly beatMs?: number;
+  /** The initial theme (charter §1: light default; the entry reads the persisted choice). */
+  readonly theme?: ThemeName;
+  /** The theme persistence seam (the browser's localStorage in production). */
+  readonly storage?: ThemeStorage;
+  /** True when the console runs on a fake/demo adapter (the SIMULATED environment badge; §7 anti-deception). */
+  readonly simulated?: boolean;
+  /** The onboarding storage seam (localStorage `tradrl_onboarded`; returning users skip the wizard — §4.13). */
+  readonly onboardingStorage?: { getItem(key: string): string | null; setItem(key: string, value: string): void };
 }
 
 /** The live console handle. */
@@ -87,11 +113,23 @@ export interface DelegatedClickEvent {
   readonly target: ClickTarget | null;
 }
 
+/** A delegated key event (the drawer's Esc close + focus trap). */
+export interface DelegatedKeyEvent {
+  readonly key: string | null;
+  readonly shiftKey?: boolean;
+  readonly target: ClickTarget | null;
+  preventDefault?(): void;
+}
+
 /** The minimal document surface the mount needs (DOM APIs only). */
 export interface MountDocument {
   createElement(tag: string): Element;
   createTextNode(text: string): Text;
-  addEventListener(type: string, listener: (event: DelegatedClickEvent) => void): void;
+  addEventListener(type: string, listener: (event: DelegatedClickEvent & Partial<DelegatedKeyEvent>) => void): void;
+  /** Optional: the focusable-element query for the drawer's focus trap (the browser binding provides it). */
+  querySelectorAll?(selector: string): Iterable<{ focus(): void }>;
+  /** Optional: the active element (the browser binding provides it). */
+  readonly activeElement?: Element | null;
 }
 
 /** The launchpad project id — the workspace's pre-launch scope placeholder. */
@@ -210,21 +248,140 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   }
 
   function mount(root: Element, document: MountDocument): void {
-    const render = (): void => {
-      mountVTree(document, root, renderConsoleModel(state, instants.nowMs()));
+    // The T051 shell view — chrome state only (theme, the account
+    // landing target, endpoint, simulated flag, busy/drawer states).
+    // The workspace state machine stays the source of truth for every
+    // section panel; the shell opens on Home (charter §3: the hero IS
+    // the page) and falls back to the selected section the moment a
+    // section is chosen.
+    let view: ShellView = {
+      theme: options.theme ?? 'light',
+      accountView: 'home',
+      endpoint: options.baseUrl,
+      simulated: options.simulated ?? false,
+      busy: false,
+      drawerOpen: false,
+      sheet: null,
+      palette: null,
+      onboarding: options.onboardingStorage === undefined ? initialOnboarding() : readStoredOnboarding(options.onboardingStorage),
+      toast: null,
+      confirm: null,
+      touchedFields: [],
+      openCapsule: null,
     };
-    onState(render);
-    // The delegated interaction layer: section nav clicks, the inbox
-    // read-all button, the Time Machine controls. Every handler is a
-    // pure dispatch — the state machine does the rest.
+    let paletteResults: readonly PaletteEntry[] = [];
+    const host = root as Element & { setAttribute(name: string, value: string): void; classList?: { add(name: string): void } };
+    if (host.classList !== undefined) host.classList.add('tradrl-host');
+    const render = (): void => {
+      // The drawer state ALSO lands on the persistent host element so
+      // the slide transition survives between renders (the projected
+      // tree is rebuilt per state change; the host is not).
+      host.setAttribute('data-drawer', view.drawerOpen ? 'open' : 'closed');
+      mountVTree(document, root, renderConsoleModel(state, instants.nowMs(), view, paletteResults));
+    };
+
+    /** The evidence capsules for the palette (the Evidence section's own fold — mirrors render/model.ts's capsule list, unprojected). */
+    const capsuleFromOutcomeList = (workspace: WorkspaceState): readonly ReturnType<typeof capsuleFromOutcome>[] => [
+      ...workspace.outcomes.map((outcome) => capsuleFromOutcome(workspace.scope, outcome)),
+      ...workspace.postMortems.map((postMortem) => capsuleFromPostMortem(workspace.scope, postMortem)),
+      ...workspace.knowledge.map((knowledge) => capsuleFromKnowledge(workspace.scope, knowledge)),
+      ...workspace.submissions.map((submission) => capsuleFromSubmission(workspace.scope, submission)),
+    ];
+
+    /** The evidence capsules for the palette (the Evidence section's own fold). */
+    const capsulesForPalette = capsuleFromOutcomeList;
+
+    /** The palette's live results for the current query (§4.14; D4's 100% coverage). */
+    const refreshPalette = (): void => {
+      if (view.palette === null) { paletteResults = []; return; }
+      paletteResults = rankPalette(paletteIndex(state, capsulesForPalette), view.palette.query);
+    };
+
+    onState((next: WorkspaceState) => {
+      render();
+      // §4.10 D6: a NEW notice surfaces as a toast within the poll cycle; the
+      // toast auto-dismisses after ~5s (the scheduler seam — never a wall-clock
+      // read in a render path; the timer only clears chrome state).
+      const latest = next.inbox.notices.length === 0 ? null : next.inbox.notices[next.inbox.notices.length - 1] as { readonly kind: string; readonly noticeId: string; readonly title: string; readonly at: number };
+      if (latest !== null && view.toast === null && next.connection !== 'connecting') {
+        const copy = noticeCopyOf(latest.kind as 'failed_evaluation');
+        view = { ...view, toast: { kind: latest.kind, title: copy.title, sentence: copy.sentence } };
+        render();
+        if (scheduler !== undefined) {
+          scheduler.schedule(5000, () => {
+            view = { ...view, toast: null };
+            render();
+          });
+        }
+      }
+    });
+
+    /** Focus the drawer's first nav item (the trap's entry point). */
+    const focusDrawerStart = (): void => {
+      if (document.querySelectorAll === undefined) return;
+      for (const focusable of document.querySelectorAll('.tradrl-shell .nav-item')) {
+        focusable.focus();
+        return;
+      }
+    };
+
+    /** Focus the open sheet's close button (the sheet trap's entry point). */
+    const focusSheetStart = (): void => {
+      if (document.querySelectorAll === undefined) return;
+      for (const focusable of document.querySelectorAll('.tradrl-shell .sheet [data-action="sheet-close"]')) {
+        focusable.focus();
+        return;
+      }
+    };
+
+    /** A refresh with the busy state rendered on the Refresh action (§3). */
+    const refreshWithShell = async (): Promise<void> => {
+      view = { ...view, busy: true };
+      render();
+      try {
+        await refresh();
+      } finally {
+        view = { ...view, busy: false };
+        render();
+      }
+    };
+
+    // The delegated interaction layer: shell navigation (the fifteen
+    // targets), the drawer, the theme controls, the refresh action,
+    // the inbox read-all button and the Time Machine controls. Every
+    // handler is a pure state/view update — the model does the rest.
     document.addEventListener('click', (event) => {
-      const section = event.target?.closest?.('[data-section]');
-      if (section !== null && section !== undefined) {
-        const id = section.getAttribute('data-section');
-        if (id !== null && isSectionId(id) && id !== state.selectedSection) {
-          dispatch({ kind: 'section-selected', at: instants.nowMs(), section: id as SectionId });
+      const target = event.target?.closest?.('[data-target]');
+      if (target !== null && target !== undefined) {
+        const id = target.getAttribute('data-target');
+        if (id !== null && isShellTarget(id)) {
+          if (id === 'home' || id === 'inbox' || id === 'settings') {
+            view = { ...view, accountView: id, drawerOpen: false };
+            render();
+            return;
+          }
+          // A workspace section: the state machine owns selection.
+          view = { ...view, accountView: 'section', drawerOpen: false };
+          if (id !== state.selectedSection) {
+            dispatch({ kind: 'section-selected', at: instants.nowMs(), section: id as SectionId }); // renders via onState
+          } else {
+            render();
+          }
           return;
         }
+      }
+      const row = event.target?.closest?.('[data-row]');
+      if (row !== null && row !== undefined) {
+        const rowId = row.getAttribute('data-row');
+        if (rowId !== null) {
+          const sheet = parseSheetRef(rowId);
+          if (sheet !== null) {
+            view = { ...view, sheet };
+            render();
+            focusSheetStart();
+          }
+        }
+        return;
       }
       const action = event.target?.closest?.('[data-action]');
       if (action !== null && action !== undefined) {
@@ -233,7 +390,192 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (kind === 'view-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
         if (kind === 'view-tminus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
         if (kind === 'playback-start') dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt: state.openedAt, stepMs: 500 });
+        // §4.8: the Time Machine mode select + playback stepping (pure dispatches —
+        // the state machine owns the transitions; the L4 projection is upstream).
+        if (kind === 'tm-mode-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
+        if (kind === 'tm-mode-t-minus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
+        if (kind === 'tm-mode-timestamp') dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: state.timeMachine.anchorAt - 60_000 });
+        if (kind === 'tm-mode-playback') dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt: state.openedAt, stepMs: 500 });
+        if (kind === 'playback-step') dispatch({ kind: 'playback-tick', at: instants.nowMs() });
+        if (kind === 'playback-step-back') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: state.timeMachine.tMinusMs + 500 });
+        if (kind === 'refresh') void refreshWithShell();
+        // §4.14 the command palette
+        if (kind === 'palette-open') {
+          view = { ...view, palette: { query: '', selected: 0 } };
+          refreshPalette();
+          render();
+        }
+        if (kind === 'palette-close') {
+          view = { ...view, palette: null };
+          render();
+        }
+        // §4.13 the onboarding wizard (completion persists; returning users never see it)
+        if (kind === 'onboarding-next' || kind === 'onboarding-skip') {
+          const current = view.onboarding ?? initialOnboarding();
+          const next: OnboardingState = kind === 'onboarding-skip' ? skipOnboarding(current) : advanceOnboarding(current);
+          view = { ...view, onboarding: next };
+          if (isOnboarded(next) && options.onboardingStorage !== undefined) persistOnboarding(options.onboardingStorage);
+          if (isOnboarded(next)) view = { ...view, accountView: 'home', onboarding: next }; // completion lands on Home
+          render();
+        }
+        if (kind === 'onboarding-reopen') {
+          view = { ...view, onboarding: initialOnboarding() };
+          render();
+        }
+        // §5 D7 the data export (a deterministic serialized record of the workspace state)
+        if (kind === 'export-workspace') {
+          const anchor = document.createElement('a') as Element & { click?(): void };
+          const blob = `data:application/json;charset=utf-8,${encodeURIComponent(serializeWorkspace(state))}`;
+          anchor.setAttribute('href', blob);
+          anchor.setAttribute('download', `tradrl-workspace-${state.scope.projectId}.json`);
+          if (typeof anchor.click === 'function') anchor.click();
+        }
+        // §4.10 the toast dismissal (manual close; the ~5s timer is scheduled on toast show)
+        if (kind === 'toast-close') {
+          view = { ...view, toast: null };
+          render();
+        }
+        // §4.11 the primary flow: step navigation + the two-step confirm
+        if (kind !== null && kind.startsWith('launch-step-')) {
+          const step = kind.slice('launch-step-'.length);
+          if ((LAUNCH_STEPS as readonly string[]).includes(step)) {
+            dispatch({ kind: 'launch-step-changed', at: instants.nowMs(), step: step as typeof LAUNCH_STEPS[number] });
+            view = { ...view, confirm: null };
+          }
+        }
+        if (kind === 'confirm-arm-launch') {
+          view = { ...view, confirm: 'launch' };
+          render();
+        }
+        if (kind === 'confirm-cancel-launch') {
+          view = { ...view, confirm: null };
+          render();
+        }
+        if (kind === 'confirm-launch') {
+          view = { ...view, confirm: null };
+          if (state.launch.draft !== null) void submitLaunch(state.launch.draft);
+        }
+        // §4.9 capsule badges open their payload inline
+        if (kind === 'capsule-open') {
+          const capsuleId = action.getAttribute('data-capsule-open');
+          if (capsuleId !== null) view = { ...view, openCapsule: view.openCapsule === capsuleId ? null : capsuleId };
+          render();
+        }
+        if (kind === 'drawer-open') {
+          view = { ...view, drawerOpen: true };
+          render();
+          focusDrawerStart();
+        }
+        if (kind === 'drawer-close') {
+          view = { ...view, drawerOpen: false };
+          render();
+        }
+        if (kind === 'sheet-close') {
+          view = { ...view, sheet: null };
+          render();
+        }
+        if (kind === 'theme-light' || kind === 'theme-dark') {
+          const theme = kind === 'theme-dark' ? 'dark' : 'light';
+          view = { ...view, theme };
+          if (options.storage !== undefined) persistTheme(options.storage, theme);
+          render();
+        }
+        return;
       }
+      const section = event.target?.closest?.('[data-section]');
+      if (section !== null && section !== undefined) {
+        const id = section.getAttribute('data-section');
+        if (id !== null && isSectionId(id) && id !== state.selectedSection) {
+          view = { ...view, accountView: 'section', drawerOpen: false };
+          dispatch({ kind: 'section-selected', at: instants.nowMs(), section: id }); // renders via onState
+        }
+      }
+    });
+
+    // The keyboard contract: Esc closes the palette, the sheet, then the drawer;
+    // Ctrl/Cmd+K opens the palette and ↑ ↓ Enter navigate it (§4.14); Tab is
+    // trapped inside whichever overlay is open (§4.5a / §2).
+    document.addEventListener('keydown', (event) => {
+      const key = event.key;
+      // §4.14 Ctrl/Cmd+K opens (or closes) the palette from anywhere.
+      const ctrlKey = (event as { readonly ctrlKey?: boolean }).ctrlKey === true;
+      const metaKey = (event as { readonly metaKey?: boolean }).metaKey === true;
+      if ((ctrlKey || metaKey) && typeof key === 'string' && key.toLowerCase() === 'k') {
+        if (event.preventDefault !== undefined) event.preventDefault();
+        view = { ...view, palette: view.palette === null ? { query: '', selected: 0 } : null };
+        refreshPalette();
+        render();
+        return;
+      }
+      if (key === 'Escape') {
+        if (view.palette !== null) {
+          view = { ...view, palette: null };
+          render();
+          return;
+        }
+        if (view.sheet !== null) {
+          view = { ...view, sheet: null };
+          render();
+          return;
+        }
+        if (view.drawerOpen) {
+          view = { ...view, drawerOpen: false };
+          render();
+          return;
+        }
+        return;
+      }
+      if (view.palette !== null && (key === 'ArrowDown' || key === 'ArrowUp' || key === 'Enter')) {
+        if (event.preventDefault !== undefined) event.preventDefault();
+        const count = paletteResults.length;
+        if (count === 0) return;
+        const current = view.palette.selected;
+        if (key === 'ArrowDown') {
+          view = { ...view, palette: { ...view.palette, selected: (current + 1) % count } };
+          render();
+          return;
+        }
+        if (key === 'ArrowUp') {
+          view = { ...view, palette: { ...view.palette, selected: (current - 1 + count) % count } };
+          render();
+          return;
+        }
+        // Enter: open the selected result (navigate to its target; entity refs open their own surface)
+        const selected = paletteResults[current];
+        if (selected !== undefined) {
+          view = { ...view, palette: null };
+          if (selected.target !== null) {
+            if (selected.target === 'home' || selected.target === 'inbox' || selected.target === 'settings') {
+              view = { ...view, accountView: selected.target };
+            } else {
+              view = { ...view, accountView: 'section' };
+              if (selected.target !== state.selectedSection) {
+                dispatch({ kind: 'section-selected', at: instants.nowMs(), section: selected.target });
+              }
+            }
+          }
+          render();
+        }
+        return;
+      }
+      if (key !== 'Tab' || document.querySelectorAll === undefined || event.preventDefault === undefined) return;
+      const selector = view.sheet !== null
+        ? '.tradrl-shell .sheet [data-action="sheet-close"]'
+        : view.drawerOpen ? '.tradrl-shell .nav-item, .tradrl-shell .brand-row' : null;
+      if (selector === null) return;
+      const focusables = [...document.querySelectorAll(selector)];
+      if (focusables.length === 0) return;
+      const active = document.activeElement as unknown as { focus(): void } | null | undefined;
+      let index = -1;
+      for (let position = 0; position < focusables.length; position += 1) {
+        if (focusables[position] === active) { index = position; break; }
+      }
+      const steppingBack = event.shiftKey === true;
+      const next = steppingBack
+        ? (index <= 0 ? focusables.length - 1 : index - 1)
+        : (index === focusables.length - 1 ? 0 : index + 1);
+      event.preventDefault();
+      focusables[next].focus();
     });
   }
 
