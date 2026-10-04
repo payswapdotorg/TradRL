@@ -70,9 +70,9 @@ describe('markdown parsing', () => {
     ]);
   });
 
-  it('parses the real WORK-ITEMS.md into exactly 50 items', () => {
+  it('parses the real WORK-ITEMS.md into exactly 52 items', () => {
     const items = parseWorkItems(fs.readFileSync(WORK_ITEMS_PATH, 'utf8'));
-    expect(items.size).toBe(50);
+    expect(items.size).toBe(52);
     expect(items.get('T001')?.deps).toEqual([]);
     expect(items.get('T004')?.deps).toEqual(['T001']);
     expect(items.get('T048')?.deps).toContain('T040');
@@ -80,7 +80,7 @@ describe('markdown parsing', () => {
 
   it('parses the real DEPENDENCY-GRAPH.md including multi-source lines', () => {
     const dg = parseDependencyGraph(fs.readFileSync(DEP_GRAPH_PATH, 'utf8'));
-    expect(dg.size).toBe(50);
+    expect(dg.size).toBe(52);
     // "T021,T022,T023 -> T024" must expand into three edges.
     expect(dg.get('T024')).toEqual(expect.arrayContaining(['T021', 'T022', 'T023']));
   });
@@ -188,6 +188,6 @@ describe('live repository program state (integration)', () => {
     const depGraph = parseDependencyGraph(fs.readFileSync(DEP_GRAPH_PATH, 'utf8'));
     const res = validate({ graph, workItems, depGraph });
     expect(res.violations).toEqual([]);
-    expect(graph.items).toHaveLength(50);
+    expect(graph.items).toHaveLength(52);
   });
 });
