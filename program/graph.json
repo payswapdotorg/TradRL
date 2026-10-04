@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "program": "TradRL",
- "updated_at": "2026-10-04T19:35:00Z",
+ "updated_at": "2026-10-04T20:30:00Z",
  "policies": {
   "max_concurrent_work_orders": 3,
   "allowed_statuses": [
@@ -1372,8 +1372,16 @@
    "write_surface": [
     "deploy/"
    ],
-   "status": "in_progress",
-   "branch": "work/T052-public-deployment"
+   "status": "merged",
+   "branch": "work/T052-public-deployment",
+   "pr": 19,
+   "merged_sha": "18ba4435da515f6e3991f8415fd4f27791921932",
+   "evidence": [
+    "PR #19 squash-merged at 18ba4435da515f6e3991f8415fd4f27791921932 (base c0ef616, worker head ab40095, checkpoints 29b84ce/90629c1/c5ea40d/ab40095)",
+    "GitHub Actions run 37232016551 (verify): success",
+    "Lead merge-result gates GREEN vs main c0ef616 (worktree 8aed3e8): typecheck 0 errors; vitest full-suite green (135s run; branch-identical tree worker-verified 6845 passed + 1 skipped / 472 files); program:check valid; governance passed; write surface compliant (deploy/** + the two granted root include lines only)",
+    "Worker completion report (W-3a..W-3e local chain, D-034): 124 deploy tests (vercel 37, neon+upstash 35, r2+resend+apify 38, contract+wire 14); SigV4/Neon/Upstash/Resend/Apify determinism vectors; L12 negative probes at every store + the composition layer; R46 degradation at every layer; the sync-port hydration seam documented as the honest limitation"
+   ]
   }
  ],
  "dispatch": {
