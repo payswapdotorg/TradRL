@@ -34,11 +34,15 @@ importers:
 
   bodies/cross-market-researcher: {}
 
+  bodies/execution: {}
+
   bodies/fundamental-researcher: {}
 
   bodies/regime-researcher: {}
 
   bodies/sentiment-researcher: {}
+
+  bodies/trading-director: {}
 
   packages/agent-body: {}
 
@@ -54,19 +58,35 @@ importers:
 
   packages/evaluation: {}
 
+  packages/evaluation-splits: {}
+
   packages/exchange-sim: {}
+
+  packages/execution-authority: {}
 
   packages/execution-policy: {}
 
+  packages/firm-memory: {}
+
   packages/market-protocol: {}
 
+  packages/observability: {}
+
   packages/organization: {}
+
+  packages/outcomes: {}
 
   packages/provider-sdk: {}
 
   packages/risk: {}
 
   packages/rl-protocol: {}
+
+  packages/sdk: {}
+
+  packages/search-lineage: {}
+
+  packages/security: {}
 
   packages/skills: {}
 
@@ -76,7 +96,15 @@ importers:
 
   packages/verification: {}
 
+  research/benchmarks: {}
+
+  research/evaluation-integrity: {}
+
   services/agent-runtime: {}
+
+  services/api: {}
+
+  services/audit: {}
 
   services/body-forge: {}
 
@@ -84,17 +112,29 @@ importers:
 
   services/environment-runner: {}
 
+  services/execution-gateway: {}
+
   services/execution-sim: {}
+
+  services/firm-memory: {}
 
   services/knowledge-firewall: {}
 
   services/learning: {}
 
+  services/observability: {}
+
   services/organization-compiler: {}
+
+  services/outcome-learning: {}
 
   services/research: {}
 
   services/risk: {}
+
+  services/security: {}
+
+  services/shadow-trading: {}
 
   services/strategy: {}
 

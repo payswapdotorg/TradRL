@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/web-console",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The web project console (Work Order T042): the project-centric human interface — R36/R37/R38 over the T041 API/SDK surface. A zero-dependency TypeScript application (DOM APIs only; no framework, no bundler, no runtime dependency): the twelve UX.md workspace sections (Goal, Organization, Market World, Time Machine, Research, Experiments, Decisions, Execution, Risk, Evidence, Outcomes, Lessons) as a typed workspace state machine fed by the API's read routes through STRUCTURAL MIRRORS of @tradrl/sdk (the console never imports workspace packages — D-003/D-004 law; interop trip-wire tests pin the parity), the primary launch flow (goal, constraints, capital/risk budget, markets/venues, horizon, data, execution mode, preferences -> project + job submission with async progress rendering), watch mode (R37: agent, capability, evidence, proposal, challenge, risk checks, decision — a render path that could surface hidden chain-of-thought is the typed ChainOfThoughtExposureError), the Time Machine (T-x, explicit timestamp, controlled playback — every visible datum passes the L4 availability projection; a post-availability fact at the interface is the typed AvailabilityViolationError), the eight UX.md notification event types as typed notice records folded deterministically from the API's read surface (inbox + unread state), and content-addressed evidence capsules (R38). The console RENDERS, never enforces (L20 — policy lives in the API/gateway); tenant context rides every read and a cross-tenant render is the typed CrossTenantRenderError (L12); instants are injected — a wall-clock read in a render path is the typed WallClockReadError. Boots from the TS entry via the documented no-build loader (apps/web/README.md) — no bundler, ever.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
