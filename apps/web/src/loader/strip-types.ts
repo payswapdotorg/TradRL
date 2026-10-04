@@ -349,6 +349,9 @@ export function scanTypeRegion(source: string, start: number, mode: TypeScanMode
       pos = scanQuoted(source, pos);
       continue;
     }
+    if (mode === 'return' && ch === '{' && depth === 0) {
+      return { end: pos, terminator: ch };
+    }
     if (ch === '(' || ch === '[' || ch === '{' || ch === '<') {
       depth += 1;
       pos += 1;
@@ -358,7 +361,7 @@ export function scanTypeRegion(source: string, start: number, mode: TypeScanMode
       if (depth === 0) {
         if (mode === 'param' && ch === ')') return { end: pos, terminator: ch };
         if (mode === 'cast' && (ch === ')' || ch === ']' || ch === '}')) return { end: pos, terminator: ch };
-        if (mode === 'generic' && ch === '>') return { end: pos, terminator: ch };
+        if (mode === 'generic' && ch === '>') return { end: pos + 1, terminator: ch };
         throw new LoaderErrorImpl('the type region opened at ' + start + ' (' + mode + ') is unbalanced at offset ' + pos);
       }
       depth -= 1;
@@ -452,10 +455,21 @@ export function stripTypes(source: string): string {
   const removals = state.removals.slice().sort(byStart);
   let output = '';
   let pos = 0;
+  let covered = -1;
   for (let index = 0; index < removals.length; index++) {
     const removal = removals[index];
+    if (removal.start < covered) {
+      // Overlaps a removal already applied (e.g. a sub-walk re-removing a token inside
+      // a region the first pass removed): merge — never re-emit the covered range.
+      if (removal.end > pos) {
+        pos = removal.end;
+        covered = removal.end;
+      }
+      continue;
+    }
     output += source.slice(pos, removal.start);
     pos = removal.end;
+    covered = removal.end;
   }
   output += source.slice(pos);
   return output.replace(/\/\*[\s\S]*?\*\//g, '').replace(/[ \t]*\/\/[^\n]*/g, '');
@@ -508,6 +522,15 @@ function matchingClose(state: StripState, open: number): number {
 /** Remove a source range. */
 function remove(state: StripState, start: number, end: number): void {
   state.removals.push({ start: start, end: end });
+}
+
+/** `true` when the token's range is already scheduled for removal (e.g. a declarator annotation removed by its keyword walker). */
+function isRemoved(state: StripState, token: Token): boolean {
+  for (let scan = 0; scan < state.removals.length; scan++) {
+    const range = state.removals[scan];
+    if (token.start >= range.start && token.end <= range.end) return true;
+  }
+  return false;
 }
 
 /** Remove one token. */
@@ -564,14 +587,14 @@ function walkIdent(state: StripState, index: number, token: Token, context: Cont
       return index + 1;
     }
   }
-  if (text === 'enum' || text === 'namespace' || text === 'module' || text === 'declare') {
+  if ((text === 'enum' || text === 'namespace' || text === 'module' || text === 'declare') && after !== null && after.kind === 'ident') {
     throw new LoaderErrorImpl('the ' + text + ' syntax at offset ' + token.start + ' is not erasable — the no-build loader refuses it (use interfaces, type aliases and plain objects)');
   }
   if (text === 'interface') {
     return removeInterface(state, index);
   }
   if (text === 'type' && after !== null && after.kind === 'ident') {
-    const beyond = nextCode(state, index + 2);
+    const beyond = nextCode(state, tokenIndexAfter(state, after));
     if (beyond !== null && beyond.text === '=' ) {
       return removeTypeAlias(state, index);
     }
@@ -594,12 +617,6 @@ function walkIdent(state: StripState, index: number, token: Token, context: Cont
   if (text === 'as' || text === 'satisfies') {
     const previous = prevCode(state, index);
     if (previous !== null && previous.kind === 'punct' && previous.text === '.') {
-      return index + 1;
-    }
-    if (previous !== null && previous.kind === 'ident' && isKeyword(previous.text) === false) {
-      return index + 1;
-    }
-    if (previous !== null && previous.kind === 'ident' && KEYWORDS.indexOf(previous.text) !== -1 && previous.text !== 'const' && previous.text !== 'let' && previous.text !== 'var' && previous.text !== 'return' && previous.text !== 'typeof' && previous.text !== 'await' && previous.text !== 'yield' && previous.text !== 'new' && previous.text !== 'in' && previous.text !== 'of' && previous.text !== 'delete' && previous.text !== 'void' && previous.text !== 'throw' && previous.text !== 'else' && previous.text !== 'do' && previous.text !== 'case') {
       return index + 1;
     }
     return removeCast(state, index, token);
@@ -651,11 +668,15 @@ function walkPunct(state: StripState, index: number, token: Token, context: Cont
     throw new LoaderErrorImpl('decorators are not erasable (offset ' + token.start + ')');
   }
   if (text === '!') {
+    const previous = prevCode(state, index);
+    const afterExpression = previous !== null && (previous.kind === 'string' || previous.kind === 'number' || previous.kind === 'template'
+      || (previous.kind === 'ident' && isKeyword(previous.text) === false)
+      || (previous.kind === 'punct' && (previous.text === ')' || previous.text === ']')));
     const nextText = source.charAt(token.end);
-    if (after !== null && after.kind === 'punct' && (after.text === '.' || after.text === '[' || after.text === '(')) {
+    if (afterExpression && (nextText === '.' || nextText === '[' || nextText === '(' || nextText === ';' || nextText === ',' || nextText === ')' || nextText === ':' || nextText === ' ' || nextText === '\n' || nextText === '\t')) {
       throw new LoaderErrorImpl('the non-null assertion at offset ' + token.start + ' is not erasable — check explicitly instead');
     }
-    if (nextText === '.' || nextText === '[' || nextText === '(') {
+    if (after !== null && after.kind === 'punct' && (after.text === '.' || after.text === '[' || after.text === '(')) {
       throw new LoaderErrorImpl('the non-null assertion at offset ' + token.start + ' is not erasable — check explicitly instead');
     }
     return index + 1;
@@ -679,6 +700,11 @@ function walkPunct(state: StripState, index: number, token: Token, context: Cont
     return index + 1;
   }
   if (text === ':') {
+    if (isRemoved(state, token)) return index + 1;
+    if (state.ternary.length > 0 && state.ternary[state.ternary.length - 1] === state.ctx.length) {
+      state.ternary.pop();
+      return index + 1;
+    }
     if (context.kind === 'object') {
       if (context.expectingKey && context.sawKey === false) {
         return index + 1;
@@ -688,8 +714,16 @@ function walkPunct(state: StripState, index: number, token: Token, context: Cont
         return index + 1;
       }
     }
-    if (state.ternary.length > 0 && state.ternary[state.ternary.length - 1] === state.ctx.length) {
-      state.ternary.pop();
+    if (context.kind === 'paren') {
+      // A parameter annotation (function/arrow/catch params): strip the colon and the type region.
+      const scan = scanTypeRegion(source, skipWs(source, token.end), 'param');
+      remove(state, token.start, scan.end);
+      return index + 1;
+    }
+    if (context.kind === 'class' && context.memberLevel) {
+      // A class field annotation: strip the colon and the type region (ends at the member semicolon).
+      const scan = scanTypeRegion(source, skipWs(source, token.end), 'param');
+      remove(state, token.start, scan.end);
       return index + 1;
     }
     throw new LoaderErrorImpl('the colon at offset ' + token.start + ' is neither an object key nor a ternary branch nor an annotation — labels and switch/case are not erasable');
@@ -713,7 +747,8 @@ function walkPunct(state: StripState, index: number, token: Token, context: Cont
     }
     if (next !== null && next.kind === 'punct' && next.text === ':') {
       if (state.ternary.length > 0 && state.ternary[state.ternary.length - 1] === state.ctx.length) {
-        state.ternary.pop();
+        // The colon belongs to a ternary branch (cond ? f(a) : b) — leave the
+        // ternary marker for the colon's own handler to pop.
         state.constructorFlag = false;
         return index + 1;
       }
@@ -821,6 +856,15 @@ function indexOfTokenEndingAt(state: StripState, pos: number): number {
   return -1;
 }
 
+
+/** The token index of a given token, or -1. */
+function indexOfToken(state: StripState, token: Token): number {
+  for (let scan = 0; scan < state.tokens.length; scan++) {
+    if (state.tokens[scan] === token) return scan;
+  }
+  return -1;
+}
+
 /** The token index after the given token. */
 function tokenIndexAfter(state: StripState, token: Token): number {
   for (let scan = 0; scan < state.tokens.length; scan++) {
@@ -911,14 +955,22 @@ function walkExport(state: StripState, index: number): number {
   const tokens = state.tokens;
   const after = nextCode(state, index + 1);
   if (after !== null && after.kind === 'ident' && after.text === 'type') {
-    const beyond = nextCode(state, index + 2);
-    if (beyond !== null && beyond.kind === 'punct' && beyond.text === '{') {
+    const name = nextCode(state, tokenIndexAfter(state, after));
+    const terminator = name !== null && name.kind === 'ident' ? nextCode(state, tokenIndexAfter(state, name)) : name;
+    if (terminator !== null && terminator.kind === 'punct' && terminator.text === '{') {
       return removeExportTypeSpecifiers(state, index);
     }
-    if (beyond !== null && beyond.kind === 'punct' && beyond.text === '=') {
-      throw new LoaderErrorImpl('export assignment (export = ...) is not erasable (offset ' + beyond.start + ')');
+    if (terminator !== null && terminator.kind === 'punct' && (terminator.text === '=' || terminator.text === '<')) {
+      // `export type X = ...` / `export type X<...> = ...`: a type alias — remove
+      // it through the alias terminator (unions of strings included).
+      return removeTypeAlias(state, tokenIndexAfter(state, after) === -1 ? index : indexOfToken(state, after));
     }
     return removeImportStatement(state, index);
+  }
+  if (after !== null && after.kind === 'punct' && after.text === '{') {
+    // `export { ... }` (with optional `from '...'`): the list may carry `as`
+    // aliases — skip past the whole statement, never strip them as casts.
+    return endOfImportStatement(state, index + 1);
   }
   return index + 1;
 }
@@ -966,11 +1018,36 @@ function cleanSpecifierList(state: StripState, index: number): number {
       if (specifiers === 0 && hasDefault === false) {
         return removeImportStatement(state, index);
       }
-      return scan + 1;
+      // Skip past the whole statement: the specifier list may carry `as` aliases,
+      // which are NOT casts and must never be stripped.
+      return endOfImportStatement(state, close + 1);
     }
     scan += 1;
   }
-  return index + 1;
+  return endOfImportStatement(state, index + 1);
+}
+
+/** The token index just past an import/export statement's terminator (the from-string and its optional semicolon). */
+function endOfImportStatement(state: StripState, from: number): number {
+  const tokens = state.tokens;
+  let scan = from;
+  while (scan < tokens.length) {
+    const token = tokens[scan];
+    if (token.kind === 'string') {
+      let next = scan + 1;
+      while (next < tokens.length && (tokens[next].kind === 'ws' || tokens[next].kind === 'comment')) next += 1;
+      if (next < tokens.length && tokens[next].kind === 'punct' && tokens[next].text === ';') return next + 1;
+      return scan + 1;
+    }
+    if (token.kind === 'punct' && token.text === ';') return scan + 1;
+    if (token.kind === 'punct' && token.text === '{') {
+      // a second brace group (export ... from): keep scanning past it
+      scan = matchingClose(state, scan) + 1;
+      continue;
+    }
+    scan += 1;
+  }
+  return tokens.length;
 }
 
 /** Remove `export type { ... }` statements entirely. */
@@ -1113,6 +1190,10 @@ function walkDeclaratorKeyword(state: StripState, index: number): number {
   const tokens = state.tokens;
   const after = nextCode(state, index + 1);
   if (after === null) return index + 1;
+  if (after.kind === 'ident' && (after.text === 'enum' || after.text === 'namespace' || after.text === 'module' || after.text === 'declare' || after.text === 'abstract' || after.text === 'switch')) {
+    // `const enum` and friends: let the walk visit the forbidden keyword itself.
+    return index + 1;
+  }
   if (after.kind === 'ident') {
     const annotation = nextCode(state, tokenIndexAfter(state, after));
     if (annotation !== null && annotation.kind === 'punct' && annotation.text === ':') {
