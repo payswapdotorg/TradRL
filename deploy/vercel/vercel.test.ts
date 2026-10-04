@@ -17,7 +17,10 @@
 //   5. the shell-config substitution anchors exist in the FROZEN shell
 //      and the build is deterministic + escaping-safe;
 //   6. secrets are never hardcoded anywhere under deploy/ and every
-//      env key the code reads is documented in deploy/.env.example.
+//      env key the code reads is documented in deploy/.env.example;
+//   7. the function BUILD typechecks under the repo's module resolution
+//      (the W-3i nearest-tsconfig pin api/tsconfig.json — @vercel/node
+//      must never typecheck the entry graph under nodenext).
 //
 // Spec anchors: R43/R46, ARCHITECTURE-LOCK L12 (same-origin keeps the
 // browser a single trust surface), D-033 (the free-tier provider set).
@@ -48,6 +51,17 @@ function walkFiles(dir: string, prefix = ''): string[] {
     else if (entry.isFile()) files.push(rel);
   }
   return files.sort();
+}
+
+/** Strip JSONC comments so a tsconfig.json carrying a header comment parses (tsc accepts them; JSON.parse does not). */
+function stripJsonComments(text: string): string {
+  // Full-line `//` comments only — a JSON line starting with `//` can never be
+  // payload (JSON strings cannot span lines), so nothing legitimate is cut.
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +137,36 @@ describe('deploy/vercel — the hosting config: free-tier envelope + zero-dep la
     expect(shim.includes("export { default } from '../deploy/vercel/api/router'")).toBe(true);
     const code = shim.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n').trim();
     expect(code).toBe("export { default } from '../deploy/vercel/api/router';");
+  });
+
+  it('the root api/tsconfig.json pins the function build\'s module resolution (the @vercel/node nearest-tsconfig law, W-3i)', () => {
+    // The W-3i lesson (deploy-triggered failure dpl_Ajr2KCQmT9axQGwDEcvpBkLFc4aV):
+    // the function WAS discovered through the W-3h shim, but @vercel/node's
+    // build-time typecheck runs with the tsconfig.json NEAREST the entry
+    // (walking up from api/router.ts) — and without this pin its default
+    // synthesis is moduleResolution "nodenext", which rejects the repo's
+    // extensionless relative imports (TS2835: "Relative import paths need
+    // explicit file extensions..."), collapsing services/api's types into
+    // cascade errors (TS2339/TS2322) and dropping the function from the
+    // deployment. The repo typechecks 0 errors under tsconfig.base.json
+    // (moduleResolution "Bundler") — the code is sound; only the function
+    // build's resolution mode was wrong.
+    //
+    // THE LAW: never add file extensions to the frozen services/api imports
+    // to satisfy a build tool — pin the resolution at the nearest tsconfig.
+    const pinPath = join(REPO_ROOT, 'api', 'tsconfig.json');
+    expect(existsSync(pinPath)).toBe(true);
+    const pin = JSON.parse(stripJsonComments(readFileSync(pinPath, 'utf8'))) as {
+      extends?: string;
+      compilerOptions?: { module?: string; moduleResolution?: string };
+    };
+    // Extends the repo base — the configuration the whole repo already
+    // typechecks green under.
+    expect(pin.extends).toBe('../tsconfig.base.json');
+    // The resolution pin (case-insensitive compare: "Bundler", never
+    // "NodeNext") and its required module mode.
+    expect(String(pin.compilerOptions?.moduleResolution).toLowerCase()).toBe('bundler');
+    expect(String(pin.compilerOptions?.module).toLowerCase()).toBe('esnext');
   });
 
   it('the root vercel.json (the b4561b7 hosting-exception copy) is byte-identical to deploy/vercel/vercel.json', () => {
