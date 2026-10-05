@@ -131,14 +131,22 @@ describe('boot path: the shell bootstrap (extracted from the REAL index.html)', 
 });
 
 describe('boot path: the FULL apps/web source graph through the REAL loadModuleGraph', () => {
-  it('the package main (the documented boot entry) loads: every module strips, compiles and resolves (data: URL imports)', async () => {
+  it('the shell boot sequence (app module, then package main) loads: every module strips, compiles and resolves (data: URL imports)', async () => {
+    // THE REAL SHELL SEQUENCE (index.html's inline bootstrap):
+    //   (1) the app module graph — parked on window.__TRADRL_CONSOLE_BOOT__
+    //       before the main loads (the main's own dynamic import of the
+    //       TS entry cannot resolve in the browser; the parked module is
+    //       the boot path);
+    //   (2) the package main, which auto-boots through that seam.
     const readPaths: string[] = [];
+    const app = (await loadModuleGraph('./src/app/console.ts', diskBindings(readPaths))) as Record<string, unknown>;
+    expect(typeof app.bootConsole).toBe('function');
     const main = (await loadModuleGraph('./src/index.ts', diskBindings(readPaths))) as Record<string, unknown>;
     expect(typeof main.bootFromShell).toBe('function');
     expect(typeof main.autoBoot).toBe('function');
     expect(typeof main.bootNoBuild).toBe('function');
-    // THE COVERAGE PIN: the entry's transitive closure is the whole
-    // non-test source tree — no module sits outside the boot path.
+    // THE COVERAGE PIN: the boot sequence's transitive closure is the
+    // whole non-test source tree — no module sits outside the boot path.
     const expected = allSourceModules();
     const normalize = (p: string): string => p.replace(/^\.\//, '').replace(/\\/g, '/');
     const read = readPaths.map(normalize);

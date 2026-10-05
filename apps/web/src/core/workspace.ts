@@ -212,11 +212,11 @@ function refoldNotices(state: WorkspaceState): InboxState {
 /** THE REDUCER — pure and total. Identical states + identical events -> identical states, byte for byte. */
 export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): WorkspaceState {
   const withHistory: WorkspaceState = { ...state, history: linkHistory(state, event) };
-  switch (event.kind) {
-    case 'connection-changed':
+  const selector = event.kind;
+  if (selector === 'connection-changed') {
       return { ...withHistory, connection: event.status };
 
-    case 'project-adopted': {
+  } else if (selector === 'project-adopted') {
       // The launch flow's bridge: the workspace opens on the launchpad
       // scope (no project yet) and adopts the created project's id — the
       // ONE scope transition the console knows. Every record ingested
@@ -226,32 +226,24 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         throw new Error(`reduceWorkspace: the workspace already adopted project ${state.project.id}; adopting ${event.projectId} is a typed input error`);
       }
       return { ...withHistory, scope: { tenantId: state.scope.tenantId, projectId: event.projectId } };
-    }
-
-    case 'project-loaded': {
+  } else if (selector === 'project-loaded') {
       assertProjectScope(state.scope, event.project);
       const next: WorkspaceState = { ...withHistory, project: event.project };
       return { ...next, inbox: refoldNotices(next) };
-    }
-
-    case 'goal-loaded': {
+  } else if (selector === 'goal-loaded') {
       if (event.goal.tenantId !== state.scope.tenantId) {
         // The goal statement carries its own tenant id (the T007 shape): a foreign goal never enters the workspace.
         assertProjectScope(state.scope, event.goal);
       }
       return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet };
-    }
-
-    case 'org-snapshot': {
+  } else if (selector === 'org-snapshot') {
       assertProjectScope(state.scope, event.snapshot);
       const seen = state.orgSnapshots.some((existing) => existing.organizationRef === event.snapshot.organizationRef && existing.at === event.snapshot.at);
       const next: WorkspaceState = seen
         ? withHistory
         : { ...withHistory, orgSnapshots: [...state.orgSnapshots, event.snapshot] };
       return { ...next, inbox: refoldNotices(next) };
-    }
-
-    case 'job-updated': {
+  } else if (selector === 'job-updated') {
       assertProjectScope(state.scope, event.job);
       const existing = state.jobs.findIndex((job) => job.jobId === event.job.jobId);
       const jobs = existing === -1
@@ -263,76 +255,62 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         ? { ...state.launch, progress: [...state.launch.progress, { status: event.job.status, at: event.at }] as readonly JobProgressPoint[] }
         : state.launch;
       return { ...next, launch, inbox: refoldNotices({ ...next, launch }) };
-    }
-
-    case 'outcomes-loaded': {
+  } else if (selector === 'outcomes-loaded') {
       for (const record of event.records) assertProjectScope(state.scope, record);
       const next: WorkspaceState = { ...withHistory, outcomes: Object.freeze([...event.records]) };
       return { ...next, inbox: refoldNotices(next) };
-    }
-
-    case 'post-mortems-loaded': {
+  } else if (selector === 'post-mortems-loaded') {
       for (const record of event.records) {
         assertProjectScope(state.scope, { tenant: record.lineage.tenant, project: record.lineage.project });
       }
       return { ...withHistory, postMortems: Object.freeze([...event.records]) };
-    }
-
-    case 'knowledge-loaded': {
+  } else if (selector === 'knowledge-loaded') {
       for (const record of event.records) assertProjectScope(state.scope, record.record);
       const next: WorkspaceState = { ...withHistory, knowledge: Object.freeze([...event.records]) };
       return { ...next, inbox: refoldNotices(next) };
-    }
-
-    case 'submission-recorded': {
+  } else if (selector === 'submission-recorded') {
       const seen = state.submissions.some((existing) => existing.submissionId === event.submission.submissionId);
       const next: WorkspaceState = seen
         ? withHistory
         : { ...withHistory, submissions: [...state.submissions, event.submission] };
       return { ...next, inbox: refoldNotices(next) };
-    }
-
-    case 'section-selected': {
+  } else if (selector === 'section-selected') {
       if (!isSectionId(event.section)) throw new Error(`reduceWorkspace: ${JSON.stringify(event.section)} is not a workspace section`);
       return { ...withHistory, selectedSection: event.section };
-    }
-
-    case 'view-live':
+  } else if (selector === 'view-live') {
       return { ...withHistory, timeMachine: backToLive(advanceAnchor(withHistory.timeMachine, event.at)) };
 
-    case 'view-tminus':
+  } else if (selector === 'view-tminus') {
       return { ...withHistory, timeMachine: setTMinus(advanceAnchor(withHistory.timeMachine, event.at), event.tMinusMs) };
 
-    case 'view-timestamp':
+  } else if (selector === 'view-timestamp') {
       return { ...withHistory, timeMachine: setTimestamp(advanceAnchor(withHistory.timeMachine, event.at), event.timestamp) };
 
-    case 'playback-start':
+  } else if (selector === 'playback-start') {
       return { ...withHistory, timeMachine: startPlayback(advanceAnchor(withHistory.timeMachine, event.at), event.fromAt, event.stepMs) };
 
-    case 'playback-tick':
+  } else if (selector === 'playback-tick') {
       return { ...withHistory, timeMachine: tickPlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
 
-    case 'notice-read':
+  } else if (selector === 'notice-read') {
       return { ...withHistory, inbox: markNoticeRead(withHistory.inbox, event.noticeId) };
 
-    case 'notices-read-all':
+  } else if (selector === 'notices-read-all') {
       return { ...withHistory, inbox: markAllNoticesRead(withHistory.inbox) };
 
-    case 'degraded-read': {
+  } else if (selector === 'degraded-read') {
       const notes = [...withHistory.degraded, { route: event.route, family: event.family, message: event.message, at: event.at }];
       return { ...withHistory, degraded: Object.freeze(notes.slice(-DEGRADED_RETENTION)), connection: 'degraded' };
-    }
-
-    case 'launch-draft-started':
+  } else if (selector === 'launch-draft-started') {
       return { ...withHistory, launch: { ...withHistory.launch, phase: 'draft', draft: event.draft, step: 'goal', error: null } };
 
-    case 'launch-draft-edited':
+  } else if (selector === 'launch-draft-edited') {
       return { ...withHistory, launch: { ...withHistory.launch, draft: event.draft } };
 
-    case 'launch-step-changed':
+  } else if (selector === 'launch-step-changed') {
       return { ...withHistory, launch: { ...withHistory.launch, step: event.step } };
 
-    case 'launch-submitted':
+  } else if (selector === 'launch-submitted') {
       return {
         ...withHistory,
         launch: {
@@ -345,18 +323,22 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         },
       };
 
-    case 'launch-progress':
+  } else if (selector === 'launch-progress') {
       return { ...withHistory, launch: { ...withHistory.launch, progress: [...withHistory.launch.progress, { status: event.status, at: event.at }] as readonly JobProgressPoint[] } };
 
-    case 'launch-completed':
+  } else if (selector === 'launch-completed') {
       return { ...withHistory, launch: { ...withHistory.launch, phase: 'launched' } };
 
-    case 'launch-failed':
+  } else if (selector === 'launch-failed') {
       return { ...withHistory, launch: { ...withHistory.launch, phase: 'failed', error: event.message } };
 
-    case 'launch-reset':
+  } else if (selector === 'launch-reset') {
       return { ...withHistory, launch: initialLaunchState() };
   }
+  // The union is closed and total above; an unknown kind is a typed
+  // input error (the erasable-subset if/else form cannot prove
+  // exhaustiveness to the compiler — this arm is the proof).
+  throw new Error(`reduceWorkspace: ${JSON.stringify(selector)} is not a workspace event kind`);
 }
 
 /** Apply a sequence of events (the convenience composition — fold of the reducer). */

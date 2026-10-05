@@ -737,7 +737,11 @@ function walkPunct(state: StripState, index: number, token: Token, context: Cont
     if (afterExpression && (nextText === '.' || nextText === '[' || nextText === '(' || nextText === ';' || nextText === ',' || nextText === ')' || nextText === ':' || nextText === ' ' || nextText === '\n' || nextText === '\t')) {
       throw new LoaderErrorImpl('the non-null assertion at offset ' + token.start + ' is not erasable — check explicitly instead');
     }
-    if (after !== null && after.kind === 'punct' && (after.text === '.' || after.text === '[' || after.text === '(')) {
+    // `x!(…)`, `x!.y`, `x![…]`: an assertion can only follow an
+    // expression END. A `!` in OPERATOR position is a unary NOT —
+    // `!(cond)` is ordinary code, never an assertion (the day-one
+    // unary-not-before-parens false positive).
+    if (afterExpression && after !== null && after.kind === 'punct' && (after.text === '.' || after.text === '[' || after.text === '(')) {
       throw new LoaderErrorImpl('the non-null assertion at offset ' + token.start + ' is not erasable — check explicitly instead');
     }
     return index + 1;
@@ -1036,6 +1040,13 @@ function typeContinuesAfter(state: StripState, index: number): boolean {
 function walkImport(state: StripState, index: number): number {
   const tokens = state.tokens;
   const after = nextCode(state, index + 1);
+  if (after !== null && after.kind === 'punct' && after.text === '(') {
+    // A DYNAMIC import (`import(...)`): an expression, never a
+    // statement — the specifier-list machinery must not touch it
+    // (skipping past one desynchronized the walk and left its `as`
+    // casts and closers unhandled — the day-one dynamic-import bug).
+    return index + 1;
+  }
   if (after !== null && after.kind === 'ident' && after.text === 'type') {
     return removeImportStatement(state, index);
   }
@@ -1164,59 +1175,52 @@ function removeExportTypeSpecifiers(state: StripState, index: number): number {
   return tokens.length;
 }
 
-/** Clean a `{ ... }` specifier list of type-marked entries. */
+/**
+ * Clean a `{ ... }` specifier list of type-marked entries: a group that
+ * is exactly `type NAME` is dropped TOGETHER WITH its adjacent
+ * separator comma, so `import { v, type VNode }` becomes
+ * `import { v }` and `import { type A, type B }` becomes `import { }`.
+ * (The old form removed `tokens[scan - 1]` — the WHITESPACE between
+ * `type` and the name, leaving the `type` keyword itself in the
+ * output: `import { v, type }` — the day-one inline-type bug.)
+ */
 function cleanBraces(state: StripState, open: number, close: number): void {
   const tokens = state.tokens;
-  let scan = open + 1;
-  let typeMarked: Token[] = [];
-  let pendingType = false;
-  while (scan < close) {
+  let groupStart = open + 1;
+  let separator: Token | null = null;
+  let kept = false;
+  for (let scan = open + 1; scan <= close; scan++) {
     const token = tokens[scan];
-    if (token.kind === 'ident' && token.text === 'type') {
-      const after = nextCode(state, scan + 1);
-      if (after !== null && after.kind === 'ident') {
-        pendingType = true;
-        scan += 1;
-        continue;
+    if (scan !== close && (token.kind !== 'punct' || token.text !== ',')) continue;
+    // scan is the group's separating comma, or `close` (the list's end).
+    let head: Token | null = null;
+    let name: Token | null = null;
+    let codeCount = 0;
+    for (let inner = groupStart; inner < scan; inner++) {
+      const innerToken = tokens[inner];
+      if (innerToken.kind === 'ws' || innerToken.kind === 'comment') continue;
+      codeCount += 1;
+      if (codeCount === 1) head = innerToken;
+      if (codeCount === 2) name = innerToken;
+    }
+    const isTypeGroup = head !== null && name !== null && codeCount === 2
+      && head.kind === 'ident' && head.text === 'type' && name.kind === 'ident';
+    if (isTypeGroup && head !== null && name !== null) {
+      removeToken(state, head);
+      removeToken(state, name);
+      if (kept && separator !== null) {
+        // A value specifier precedes: drop THIS group's leading comma.
+        removeToken(state, separator);
+      } else if (scan !== close) {
+        // Nothing kept yet and a group follows: drop the trailing comma.
+        removeToken(state, token);
       }
+    } else {
+      kept = true;
     }
-    if (token.kind === 'ident' && pendingType) {
-      removeToken(state, tokens[scan - 1]);
-      removeToken(state, token);
-      pendingType = false;
-      typeMarked.push(token);
-      scan += 1;
-      continue;
-    }
-    if (token.kind === 'punct' && token.text === ',') {
-      if (typeMarked.length > 0) {
-        const previous = prevCode(state, scan);
-        if (previous !== null && typeMarked.indexOf(previous) !== -1) {
-          removeToken(state, token);
-        }
-      }
-      scan += 1;
-      continue;
-    }
-    scan += 1;
+    if (scan !== close) separator = token;
+    groupStart = scan + 1;
   }
-  const tailContext = typeMarked.length > 0;
-  let tail: Token | null = null;
-  if (tailContext) tail = prevCode(state, close);
-  if (tail !== null && typeMarked.indexOf(tail) !== -1) {
-    const commaBefore = findCommaBefore(state, open, close);
-    if (commaBefore !== null) removeToken(state, commaBefore);
-  }
-}
-
-/** Find the last comma before `close` inside [open, close). */
-function findCommaBefore(state: StripState, open: number, close: number): Token | null {
-  const tokens = state.tokens;
-  let found: Token | null = null;
-  for (let scan = open + 1; scan < close; scan++) {
-    if (tokens[scan].kind === 'punct' && tokens[scan].text === ',') found = tokens[scan];
-  }
-  return found;
 }
 
 /** Count the value specifiers inside a cleaned `{ ... }` list. */
@@ -1334,9 +1338,10 @@ function indexOfTokenStartingAt(state: StripState, pos: number): number {
   return -1;
 }
 
-/** Build one walk context (shorthand/literal values only — the micro-style law: never bare identifiers after a key colon). */
+/** Build one walk context. Shorthand values only — the micro-style law: never a bare keyword literal after a key colon (the shell's regex pass would eat `: false` as a union-arm annotation). */
 function makeContext(kind: ContextKind, params: boolean, openIndex: number, memberLevel: boolean, expectingKey: boolean): Context {
-  return { kind, params, openIndex, sawKey: false, expectingKey, memberLevel };
+  const sawKey = false;
+  return { kind, params, openIndex, sawKey, expectingKey, memberLevel };
 }
 
 // ---------------------------------------------------------------------------
@@ -1429,10 +1434,25 @@ export async function loadModuleGraph(entry: string, bindings: LoaderBindings): 
   return await bindings.importModule(entryUrl);
 }
 
-/** Extract the module specifiers of a stripped source (import/export ... from '...'). */
+/**
+ * The import/export alternation, built from concatenated strings (never
+ * a regex literal): a literal spelling would carry the text
+ * `:import|export` — which the shell bootstrap's annotation pass reads
+ * as a UNION TYPE annotation and eats.
+ */
+const IMPORT_EXPORT_ALTERNATION = '(?:' + 'import' + '|' + 'export' + ')';
+
+/**
+ * The statement body: `\b` then a from-clause. `[^;]*?` spans NEWLINES
+ * (multi-line import braces) — an import statement carries no semicolon
+ * before its from-clause, so this cannot bleed across statements.
+ */
+const FROM_CLAUSE_TAIL = '\\b[^;]*?from[ \\t]*[\'"]';
+
+/** Extract the module specifiers of a stripped source (import/export ... from '...', MULTI-LINE statements included). */
 export function importSpecifiersOf(stripped: string): string[] {
   const specifiers: string[] = [];
-  const pattern = /(?:^|\n)[ \t]*(?:import|export)\b[^;\n]*?from[ \t]*['"]([^'"]+)['"]/g;
+  const pattern = new RegExp('(?:^|\\n)[ \\t]*' + IMPORT_EXPORT_ALTERNATION + FROM_CLAUSE_TAIL + '([^\'"]+)[\'"]', 'g');
   let match = pattern.exec(stripped);
   while (match !== null) {
     specifiers.push(match[1]);
@@ -1441,9 +1461,10 @@ export function importSpecifiersOf(stripped: string): string[] {
   return specifiers;
 }
 
-/** Rewrite every relative specifier of a stripped source to its dependency's URL. */
+/** Rewrite every relative specifier of a stripped source to its dependency's URL (multi-line statements included). */
 export function rewriteSpecifiers(stripped: string, path: string, modules: Record<string, LoadedModule>): string {
-  return stripped.replace(/(^|\n)([ \t]*(?:import|export)\b[^;\n]*?from[ \t]*['"])([^'"]+)(['"])/g, (whole: string, lead: string, head: string, specifier: string, tail: string): string => {
+  const rewriter = new RegExp('(^|\\n)([ \\t]*' + IMPORT_EXPORT_ALTERNATION + FROM_CLAUSE_TAIL + ')([^\'"]+)([\'"])', 'g');
+  return stripped.replace(rewriter, (whole: string, lead: string, head: string, specifier: string, tail: string): string => {
     const resolved = resolveSpecifier(path, specifier);
     const dependency = modules[resolved];
     if (dependency === undefined) throw new LoaderErrorImpl('the module ' + resolved + ' (imported by ' + path + ') was not loaded — the graph pass missed it');

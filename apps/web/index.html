@@ -117,6 +117,19 @@
         // 1. Load the loader source and strip it with the micro-style
         //    regex pass (self-hosting bootstrap; the equivalence with
         //    the full stripper is pinned by a test).
+        //    THE PASS SHAPE (hand-authored, documented — mirrors the
+        //    loader file's own micro-style laws verbatim):
+        //      - comments, interfaces, single-line type aliases first;
+        //        the alias pass stops BEFORE its trailing newline (the
+        //    full stripper keeps that newline too — byte parity);
+        //      - annotations: `: TYPE` where TYPE is named types,
+        //    readonly, arrays, unions and BOUNDED single-level generics
+        //    (no nested angle brackets), ending ahead of `, ) = ; {`
+        //    newline or `=>` (return types of both bodies and arrows).
+        //    No lookbehind: the loader's laws put no bare identifiers
+        //    or keyword literals after object-literal key colons, so
+        //    identifier-preceded colons (params, declarators) must
+        //    strip unconditionally.
         const loaderResponse = await fetch('./src/loader/strip-types.ts');
         if (loaderResponse.ok !== true) throw new Error('fetch ./src/loader/strip-types.ts -> ' + loaderResponse.status);
         const loaderSource = await loaderResponse.text();
@@ -124,8 +137,8 @@
           .replace(/\/\*[\s\S]*?\*\//g, '')
           .replace(/(^|\n)[ \t]*\/\/[^\n]*/g, '$1')
           .replace(/(^|\n)[ \t]*(?:export\s+)?interface\s+[A-Za-z0-9_$]+[\s\S]*?\n\}/g, '$1')
-          .replace(/(^|\n)[ \t]*(?:export\s+)?type\s+[^\n=]*=[^\n]*\n/g, '$1')
-          .replace(/(?<![A-Za-z0-9_$])(:[ \t]*(?:readonly[ \t]+)?[A-Za-z_$][A-Za-z0-9_$]*(?:\[\])?(?:[ \t]*\|[ \t]*[A-Za-z_$][A-Za-z0-9_$]*(?:\[\])?)*(?:[ \t]*\[\])?[ \t]*)(?=[,)=;]|\n)/g, '');
+          .replace(/(^|\n)[ \t]*(?:export\s+)?type\s+[^\n=]*=[^\n]*(?=\n|$)/g, '$1')
+          .replace(/(:[ \t]*(?:readonly[ \t]+)?[A-Za-z_$][A-Za-z0-9_$]*(?:<[A-Za-z0-9_$,'" \t\[\]]*>)?(?:\[\])?(?:[ \t]*\|[ \t]*[A-Za-z_$][A-Za-z0-9_$]*(?:<[A-Za-z0-9_$,'" \t\[\]]*>)?(?:\[\])?)*(?:[ \t]*\[\])?[ \t]*)(?=[,)=;{]|\n|=>)/g, '');
         const loaderUrl = URL.createObjectURL(new Blob([stripped], { type: 'text/javascript' }));
         const loader = await import(loaderUrl);
 

@@ -136,7 +136,9 @@ export function rankPalette(index: readonly PaletteEntry[], query: string): read
     const score = lowered.length === 0 ? 0 : fuzzyScore(index[position].haystack, lowered);
     if (score >= 0) ranked.push({ entry: index[position], score, index: position });
   }
-  const byKind = new Map<PaletteEntry['kind'], RankedResult[]>();
+  // The erasable-subset law: constructor type arguments (new Map<...>) are
+  // not in the published subset — the annotation carries the typing instead.
+  const byKind: Map<PaletteEntry['kind'], RankedResult[]> = new Map();
   for (const result of ranked) {
     const bucket = byKind.get(result.entry.kind);
     if (bucket === undefined) byKind.set(result.entry.kind, [result]);

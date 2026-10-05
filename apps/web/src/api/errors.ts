@@ -178,6 +178,22 @@ export class VersionMismatchError extends ApiConsoleError {
   }
 }
 
+/** One family's typed-error constructor (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
+type FamilyErrorCtor = (base: ApiConsoleError) => ApiConsoleError;
+
+/** The family -> typed-error mapping (the lookup-map alternative to switch/case — the erasable subset's own remedy). */
+const FAMILY_ERRORS: Readonly<Record<ApiErrorFamily, FamilyErrorCtor>> = Object.freeze({
+  auth: (base) => new AuthenticationError(base),
+  permission: (base) => new PermissionError(base),
+  tenant: (base) => new TenantIsolationError(base),
+  'rate-limit': (base) => new RateLimitError(base),
+  validation: (base) => new ValidationError(base),
+  conflict: (base) => new ConflictError(base),
+  unavailable: (base) => new UnavailableError(base),
+  'not-found': (base) => new NotFoundError(base),
+  version: (base) => new VersionMismatchError(base),
+});
+
 /**
  * Translate one boundary error envelope (the wire shape) into the
  * typed hierarchy. Unknown codes still surface (as the base class
@@ -198,26 +214,7 @@ export function errorFromEnvelope(envelope: {
     ? (envelope.problems.filter((p): p is ApiProblem => typeof p === 'object' && p !== null && typeof (p as ApiProblem).path === 'string' && typeof (p as ApiProblem).message === 'string') as ApiProblem[])
     : undefined;
   const base = new ApiConsoleError(code, message, status, { requestId, retryAfterMs, problems });
-  switch (API_ERROR_FAMILY_OF[code]) {
-    case 'auth':
-      return new AuthenticationError(base);
-    case 'permission':
-      return new PermissionError(base);
-    case 'tenant':
-      return new TenantIsolationError(base);
-    case 'rate-limit':
-      return new RateLimitError(base);
-    case 'validation':
-      return new ValidationError(base);
-    case 'conflict':
-      return new ConflictError(base);
-    case 'unavailable':
-      return new UnavailableError(base);
-    case 'not-found':
-      return new NotFoundError(base);
-    case 'version':
-      return new VersionMismatchError(base);
-  }
+  return FAMILY_ERRORS[API_ERROR_FAMILY_OF[code]](base);
 }
 
 /** `true` when the error is retryable per the taxonomy (rate limits and unavailability only — never 4xx semantics). */

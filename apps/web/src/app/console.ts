@@ -59,6 +59,12 @@ import { mountVTree } from '../render/dom';
 /** One workspace-state listener (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
 export type WorkspaceListener = (next: WorkspaceState) => void;
 
+/** The unsubscribe handle a listener registration returns (the erasable-subset law: same — named alias). */
+export type Unsubscribe = () => void;
+
+/** One degraded-read task (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
+export type ReadTask = () => Promise<void>;
+
 /** The boot bundle — every seam INJECTED (transport, instants, scheduler, mounts). */
 export interface ConsoleBootOptions {
   /** The API base URL (the browser transport adapter's target). */
@@ -154,7 +160,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     for (const listener of [...listeners]) listener(state);
   }
 
-  function onState(listener: (next: WorkspaceState) => void): () => void {
+  function onState(listener: WorkspaceListener): Unsubscribe {
     listeners.push(listener);
     listener(state);
     return () => {
@@ -164,7 +170,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   }
 
   /** One read, degraded gracefully: the typed error family + route land in the state, never a crash. */
-  async function read(route: string, run: () => Promise<void>): Promise<void> {
+  async function read(route: string, run: ReadTask): Promise<void> {
     try {
       await run();
     } catch (error) {

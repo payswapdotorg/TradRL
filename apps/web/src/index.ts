@@ -44,6 +44,9 @@ export interface ShellConfig {
   readonly simulated?: boolean;
 }
 
+/** The preloaded app module the shell's bootstrap parks on window before importing this module (the static-shell boot path; the erasable-subset law: object types live in named aliases, cast targets included). */
+type BootModuleHolder = { __TRADRL_CONSOLE_BOOT__?: typeof import('./app/console') };
+
 /** The static shell's root element id (index.html's #tradrl-console). */
 export const CONSOLE_ROOT_ID = 'tradrl-console';
 
@@ -121,7 +124,8 @@ export async function bootFromShell(options: {
     // The static-shell path: the inline bootstrap loads the entry
     // through the no-build loader (blob-module graph) and lands it on
     // window.__TRADRL_CONSOLE_BOOT__ before importing this module.
-    const preloaded = (globalThis as { __TRADRL_CONSOLE_BOOT__?: typeof import('./app/console') }).__TRADRL_CONSOLE_BOOT__;
+    const holder = globalThis as BootModuleHolder;
+    const preloaded = holder.__TRADRL_CONSOLE_BOOT__;
     if (preloaded === undefined || typeof preloaded.bootConsole !== 'function') {
       renderBootMessage(documentLike, root, 'The console could not start', 'the app module failed to load (see the browser console)');
       return null;

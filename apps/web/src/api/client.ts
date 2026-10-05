@@ -207,7 +207,10 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
       response = await rawRequest(method, path, options.body, headers);
     } catch (cause) {
       // A thrown transport is the unavailable family (retryable per policy — graceful degradation, never a crash).
-      throw new ApiConsoleError('unavailable', `the transport failed: ${(cause as Error)?.message ?? String(cause)}`, 503);
+      // The cast lives OUTSIDE the template interpolation (the erasable-subset law:
+      // no type syntax inside template-literal interpolations — hoist first).
+      const causeError = cause as Error;
+      throw new ApiConsoleError('unavailable', `the transport failed: ${causeError?.message ?? String(cause)}`, 503);
     }
     if (response.status === 404) {
       const body = response.body as { error?: { code?: string } } | null;
