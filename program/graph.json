@@ -1350,12 +1350,15 @@
         "docs/release/",
         "tests/performance/"
       ],
-      "status": "ready",
-      "branch": null,
-      "pr": null,
-      "merged_sha": null,
+      "status": "merged",
+      "branch": "work/T050-production-release",
+      "pr": 35,
+      "merged_sha": "93bd8bf7042fb0b3b51263d09f62fb229df43e74",
       "evidence": [
-        "D-049: ready (last dep T049 merged via PR #33); the final work order (52/52)"
+        "PR #35 squash-merged (worker W-11b, audit-then-complete of the dead W-11 session; own 39/39 across 4 files; FULL 7706 passed + 1 skipped / 529 files = floor 7667+1skip/525 @ 14357ae re-derived empirically + exactly +39/+4, zero regressions; typecheck 0; program valid; governance passed)",
+        "tests/performance/ (39 laws: api-plane 11, observability-plane 9, console-payload 5, smoke-tool 14) + ops/tooling/smoke.mjs the 7-point probe (failing origin -> FAILED 0/7 exit 1; usage exit 2; credential never echoed)",
+        "ops/ the runbooks (production-readiness, observability, incident-response) with every claim cross-checked against the real pipeline; docs/release/ (CHECKLIST.md the A/B/C/D release-cut phases, README.md, RELEASE-NOTES-v0.1.0.md the worked record with <at cut> operator fields)",
+        "D-051: THE 52-TASK PROGRAM IS COMPLETE (52/52); no root config lines added (tests/performance collected by the root vitest include) - no lockfile importer-parity action required"
       ],
       "depends": [
         "T035",
