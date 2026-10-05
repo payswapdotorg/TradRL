@@ -331,6 +331,17 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
       shellFactRow('tenant', state.scope.tenantId),
       shellFactRow('project', state.scope.projectId),
     ]),
+    // THE PRICING DISCLOSURE (W-19, the S5 CFO finding — "zero pricing
+    // information" was a stated adoption blocker; QuantConnect's only
+    // rubric win was pricing_fit). Honesty-first, the SIMULATED-badge
+    // register: the CURRENT factual state only — pilot access is free,
+    // commercial pricing is not yet published, no payment is collected
+    // today — and never an invented number or tier.
+    settingsRow('Pricing', 'What access costs today, stated plainly. This is a pilot: access is free while the pilot runs, no payment is collected, and commercial pricing has not been published yet — this card will carry the real numbers the day they exist.', [
+      shellFactRow('pilot access', 'free'),
+      shellFactRow('billing today', 'none — no payment is collected'),
+      shellFactRow('commercial pricing', 'not published yet'),
+    ]),
     // D7 row 4 — data export (an action that works: the deterministic serialized workspace record)
     settingsRow('Data export', 'Download everything the console currently knows about this workspace, as a JSON file.', [
       v('button', { class: 'connection-retry', 'data-action': 'export-workspace', type: 'button' }, ['Export workspace data']),
@@ -341,6 +352,41 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
     ]),
   ]);
 }
+
+/**
+ * THE R8 INTERACTION SUPPLEMENT (W-19, the nav hit-area fix — CSS-in-TS
+ * by design: the charter stylesheet src/shell/shell.css is outside this
+ * module's write surface, so the geometry laws live here as data and
+ * app/console.ts injects them once at mount under
+ * #tradrl-shell-interaction).
+ *
+ * The live-browser diagnosis (1280×720, Phase-2 register R8 — 22
+ * friction rows):
+ *   1. the connection popover's `.fact` rows are `11rem + 1fr` on a
+ *      ~208px-wide tile — the value column collapses to ~24px, so a
+ *      long degradation line wraps to hundreds of pixels tall and the
+ *      OPEN connection tile grows to ~1108px, covering the ENTIRE nav
+ *      (measured: nav visible height collapses to 24px; a click on the
+ *      Goal nav item is refused with "covered by <details.connection-
+ *      tile>"). The facts stack label-over-value here instead.
+ *   2. the fixed chrome (brand row, connection zone, env badge) is a
+ *      flex sibling of the nav; the nav paints and hit-tests ABOVE it
+ *      now, so no transient overlap can ever swallow a nav click.
+ *   3. the popover itself clamps to 40vh with its own scroll, so no
+ *      future content explosion can cover the nav either. (The scroll
+ *      reset itself — the second half of R8 — is fixed in the
+ *      projector: render/dom.ts preserves scroll offsets and open
+ *      <details> states across every beat re-projection.)
+ */
+export const SHELL_INTERACTION_CSS = [
+  '#tradrl-shell-interaction — the R8 nav hit-area supplement (W-19). Injected once at mount; every rule is additive layering/geometry, no repaint of the charter surface.',
+  '.shell-nav { position: relative; z-index: 2; }',
+  '.connection-zone { position: relative; z-index: 1; flex: none; }',
+  '.shell-sidebar > .brand-row { position: relative; z-index: 1; }',
+  '.shell-sidebar > .palette-affordance { position: relative; z-index: 1; }',
+  '.connection-popover .fact { grid-template-columns: 1fr; gap: 2px; }',
+  '.connection-popover { max-height: 40vh; overflow-y: auto; }',
+].join('\n');
 
 /**
  * The composed shell: root wrapper, mobile header, drawer backdrop, sidebar, main content, the open sheet.
