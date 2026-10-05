@@ -5,6 +5,17 @@ settings:
   excludeLinksFromLockfile: false
 
 importers:
+  services/marketplace: {}
+
+  packages/entitlements: {}
+
+  adapters/arena: {}
+
+  packages/capability-provider: {}
+
+  services/autonomous-learning:
+    dependencies: {}
+
 
   .:
     devDependencies:
@@ -20,8 +31,6 @@ importers:
 
   adapters/alternative-data: {}
 
-  adapters/arena: {}
-
   adapters/binance: {}
 
   adapters/brokers: {}
@@ -33,8 +42,6 @@ importers:
   adapters/news: {}
 
   adapters/oms-ems: {}
-
-  apps/web: {}
 
   bodies/cross-market-researcher: {}
 
@@ -52,15 +59,11 @@ importers:
 
   packages/agent-os: {}
 
-  packages/capability-provider: {}
-
   packages/compute: {}
 
   packages/control-domain: {}
 
   packages/domain-core: {}
-
-  packages/entitlements: {}
 
   packages/environment-protocol: {}
 
@@ -107,7 +110,6 @@ importers:
   research/benchmarks: {}
 
   research/evaluation-integrity: {}
-
   research/public-evaluation: {}
 
   services/agent-runtime: {}
@@ -115,8 +117,6 @@ importers:
   services/api: {}
 
   services/audit: {}
-
-  services/autonomous-learning: {}
 
   services/body-forge: {}
 
@@ -133,8 +133,6 @@ importers:
   services/knowledge-firewall: {}
 
   services/learning: {}
-
-  services/marketplace: {}
 
   services/observability: {}
 
