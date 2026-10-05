@@ -4,7 +4,7 @@
 |---|---|
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
-| Program phase | wave-36: T049 benchmark/evidence publication MERGED 51/52 via PR #33 (W-9c audit-then-complete; the flexible-scale platform + the public-evaluation machinery + the 18-test REAL-record interop suite); the J3 launch entry + J7 capsule surface merged via PR #34 (W-10d/W-10e); T050 (production reliability/performance/release) is the FINAL work order; Lead next: T050 dispatch, redeploy + the full J-catalog re-run |
+| Program phase | wave-36: T049 benchmark/evidence publication MERGED 51/52 via PR #33 (W-9c audit-then-complete; the flexible-scale platform + the public-evaluation machinery + the 18-test REAL-record interop suite); the J3 launch entry + J7 capsule surface MERGED via PR #34 (W-10d/W-10e — three launch-start affordances, the pure form bridge with the lost-second-field fix, the capsuleSurface payload; full 7503+1skip/520, browser-proven); T050 (production reliability/performance/release) is the FINAL work order; Lead next: T050 dispatch, redeploy + the full J-catalog re-run |
 | Current authorized Work Order | T050 (the final: production reliability/performance/release — ops/, docs/release/, tests/performance/) |
 | Active workers | 3 |
 | In-flight | T050 dispatching (W-11); Lead: console redeploy + J1-J12 verification on the public URL; chat-lane model retired 2026-10-05 (all lanes merged; local worker dispatch is the operating model) |
