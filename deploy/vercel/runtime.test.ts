@@ -665,14 +665,23 @@ describe('deploy/vercel — the L12 probes through the demo ports', () => {
 describe('deploy/vercel — the demo execution blotter (R2: order ids, states, routing — never an empty placeholder)', () => {
   it('every seeded row IS the boundary\'s own GatewaySubmissionRecord shape (the guard passes on each) and carries the blotter substance', () => {
     expect(demoBlotterIsValid()).toBe(true); // the boundary's own structural guard, row for row
-    const rows = demoSubmissionBlotter();
+    // A flat row view for the assertions below (the additive fields are
+    // optional on the wire; the view widens them for direct access).
+    const rows = demoSubmissionBlotter() as unknown as readonly {
+      kind: string; submissionId: string; auditId: string; decisionId: string | null; venue?: string; routedAt?: number; refusal?: { stage: string }; refusedAt?: number;
+      order?: { instrumentId: string; side: string; quantity: string; clientOrderId: string };
+      fill?: { state: string; notional: string; fee: string };
+      riskChecks?: readonly { dimension: string; outcome: string }[];
+    }[];
     expect(rows).toHaveLength(3);
     for (const row of rows) {
       expect(isGatewaySubmissionRecord(row)).toBe(true);
       expect(row.submissionId).toMatch(/^xgs:[0-9a-f]{8}$/); // the boundary's own id grammar
       expect(typeof row.auditId === 'string' && row.auditId.startsWith('xga:')).toBe(true);
     }
-    const [buy, trim, refused] = rows as readonly [{ kind: string; decisionId: string; venue: string; routedAt: number; order?: { instrumentId: string; side: string; quantity: string; clientOrderId: string }; fill?: { state: string; notional: string; fee: string } }, { kind: string }, { kind: string; refusal: { stage: string }; refusedAt: number; riskChecks?: readonly { dimension: string; outcome: string }[] }];
+    const buy = rows[0]!;
+    const trim = rows[1]!;
+    const refused = rows[2]!;
     // Row 1 — the seeded fill's own story: the 0.75 BTC-USD limit buy whose
     // notional 45750.375 / fee 0.02 the outcome record out:demo0001 carries.
     expect(buy.kind).toBe('routed');
@@ -689,7 +698,7 @@ describe('deploy/vercel — the demo execution blotter (R2: order ids, states, r
     expect(trim.kind).toBe('routed');
     // Row 3 — the honest refusal: the hard risk gate demonstrably says no.
     expect(refused.kind).toBe('refused');
-    expect(refused.refusal.stage).toBe('risk_limits');
+    expect(refused.refusal?.stage).toBe('risk_limits');
     expect(refused.riskChecks).toEqual([{ dimension: 'risk_limits', outcome: 'refused' }]);
     expect(typeof refused.refusedAt).toBe('number');
   });
@@ -819,7 +828,9 @@ describe('deploy/vercel — the seeded decision substance (R3: auditable decisio
   });
 
   it('the blotter rows\' decision audit substance: a named deciding body per verdict, rationale prose, risk checks with outcomes, and evidence refs that resolve to REAL seeded records', () => {
-    const rows = demoSubmissionBlotter() as readonly { decisionBody?: string; decisionRationale?: string; riskChecks?: readonly { dimension: string; outcome: string }[]; evidence?: readonly { kind: string; ref: string }[]; kind: string }[];
+    const rows = demoSubmissionBlotter() as unknown as readonly {
+      decisionBody?: string; decisionRationale?: string; riskChecks?: readonly { dimension: string; outcome: string }[]; evidence?: readonly { kind: string; ref: string }[]; kind: string;
+    }[];
     for (const row of rows) {
       expect(typeof row.decisionBody).toBe('string'); // never "unknown/unspecified" again
       expect((row.decisionRationale as string).length).toBeGreaterThan(40);
