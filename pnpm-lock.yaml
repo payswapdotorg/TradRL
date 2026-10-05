@@ -5,6 +5,9 @@ settings:
   excludeLinksFromLockfile: false
 
 importers:
+  services/autonomous-learning:
+    dependencies: {}
+
 
   .:
     devDependencies:

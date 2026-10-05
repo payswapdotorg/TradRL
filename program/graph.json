@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
  "program": "TradRL",
- "updated_at": "2026-10-04T20:30:00Z",
+ "updated_at": "2026-10-05T01:15:00Z",
  "policies": {
   "max_concurrent_work_orders": 3,
   "allowed_statuses": [
@@ -947,11 +947,13 @@
    "write_surface": [
     "services/autonomous-learning/"
    ],
-   "status": "in_progress",
+   "status": "merged",
    "branch": "work/T035-autonomous-improvement",
-   "pr": null,
-   "merged_sha": null,
-   "evidence": [],
+   "pr": 26,
+   "merged_sha": "85b7c8a4fa73d4302309b46dece12f9553b4152a",
+   "evidence": [
+    "PR #26 squash-merged (T035 continuous autonomous improvement; 71 own tests; full suite 6947+1skip; zero regressions; typecheck 0; program valid; lockfile importer parity by the Lead)"
+   ],
    "depends": [
     "T015",
     "T017",
