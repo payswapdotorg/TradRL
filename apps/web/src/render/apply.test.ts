@@ -14,14 +14,17 @@
 //     (data-row) with domain status pills;
 //   - the detail sheet opens for a job (§4.5a) through the shell view,
 //     gated by the same availability + scope laws as the rows;
-//   - Outcomes + Evidence render accordion rows (§4.5b) whose definition
-//     grids keep the exact decimals and the evidence refs verbatim;
+//   - Outcomes render accordion rows (§4.5b) whose definition grids
+//     keep the exact decimals verbatim; Evidence renders the §4.9
+//     capsule rows (mono content-address badges opening the payload +
+//     provenance inline, the evidence refs verbatim);
 //   - EVERY section's empty state is the teaching EmptyState (icon +
 //     ONE sentence + exactly ONE primary action) — never a blank region.
 
 import { describe, expect, it } from 'vitest';
 import type { JobRecord, OrgStatusSnapshot, OutcomeRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
 import { openWorkspace, reduceAll, type WorkspaceEvent, type WorkspaceState } from '../core/workspace';
+import { capsuleFromOutcome } from '../core/evidence';
 import { renderConsoleModel } from './model';
 import { serializeVNode } from './vtree';
 import { defaultShellView, type ShellView } from './shell';
@@ -173,12 +176,18 @@ describe('applied §4.5b: the accordion rows (decimals + refs verbatim)', () => 
     expect(outcomes).toContain('<div class="def-eyebrow">METRICS</div>');
   });
 
-  it('Evidence renders accordion capsule rows; the refs render verbatim', () => {
+  it('Evidence renders the §4.9 capsule rows (mono content-address badges); the refs render verbatim in the OPEN payload', () => {
     const state = reduceAll(populatedWorkspace(), [{ kind: 'view-live', at: T0 + 50 }, { kind: 'section-selected', at: T0 + 50, section: 'evidence' }]);
-    const evidence = render(state, { accountView: 'section' });
-    expect(evidence).toContain('accordion-row');
-    expect(evidence).toContain('fil-1');
-    expect(evidence).toContain('<div class="def-eyebrow">ADVANCED</div>');
+    const capsule = capsuleFromOutcome(SCOPE, outcome());
+    const closed = render(state, { accountView: 'section' });
+    expect(closed).toContain('capsule-row');
+    expect(closed).toContain(`data-capsule-open="${capsule.capsuleId}"`); // the badge's open button
+    expect(closed).not.toContain('capsule-payload');                          // closed by default
+    const opened = render(state, { accountView: 'section', openCapsule: capsule.capsuleId });
+    expect(opened).toContain('capsule-mono');
+    expect(opened).toContain('fil-1');                                       // the outcome's evidence ref, verbatim
+    expect(opened).toContain('capsule-provenance');
+    expect(opened).toContain(capsule.sourceRoute);                           // R45: the source route names itself
   });
 });
 
@@ -193,8 +202,9 @@ describe('applied §4.12: every section teaches (empty states are first-class)',
       expect(serialized, section).toContain('empty-circle');
       expect(serialized, section).toContain('class="empty-sentence"');
       expect(serialized.match(/class="empty-action"/g)?.length, section).toBe(1);
-      // the action navigates somewhere (the one-click reachability law)
-      expect(serialized, section).toMatch(/class="empty-action" data-target="[a-z-]+"/);
+      // the action resolves to an affordance (a nav target — or the J3
+      // launch entry's delegated action on Goal, the one-click law)
+      expect(serialized, section).toMatch(/class="empty-action"[^>]* (data-target|data-action)="[a-z-]+"/);
       // never a blank region: the section panel still carries its key
       expect(serialized, section).toContain(`data-section="${section}"`);
     }

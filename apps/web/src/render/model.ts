@@ -32,10 +32,19 @@ import type { GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeReco
 import { withRenderGuard } from '../core/clock';
 import { assertVisible, availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfProject, availabilityOfSubmission, projectToView } from '../core/availability';
 import { assertProjectScope, type WorkspaceScope } from '../core/tenant';
-import { isNonNegativeDecimal, renderDecimal } from '../core/decimals';
+import { renderDecimal } from '../core/decimals';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { PolicyEnforcementError } from '../core/errors';
 import { renderJobProgress, LAUNCH_STEPS, type JobProgressView, type LaunchStep } from '../core/launch';
+import {
+  EXECUTION_MODES,
+  constraintGrammarExample,
+  launchDraftProblems,
+  launchFieldValidation,
+  launchFormValues,
+  type LaunchFormValues,
+  type LaunchFieldName,
+} from '../core/launch-form';
 import type { SectionId } from '../core/sections';
 import { unreadCount, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, type EvidenceCapsule } from '../core/evidence';
@@ -43,7 +52,6 @@ import { viewAtOf, watchEventsOf, type WorkspaceState } from '../core/workspace'
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
 import type { WatchEvent } from '../core/watch';
 import { timelineBucketsOf, formatTimeUtc, type TimelineEntry } from '../core/timeline';
-import type { ShellTarget } from '../core/nav';
 import { activeTargetOf, defaultShellView, heroPanel, renderAppShell, settingsPanel, type SheetRef, type ShellView } from './shell';
 // The onboarding wizard's only render is renderAppShell's §4.13 modal
 // overlay (render/shell.ts) — this model never imports it (the W-10b
@@ -65,9 +73,9 @@ import {
   type PillTone,
 } from './components';
 import {
-  capsuleBadge,
-  capsulePayload,
+  capsuleSurface,
   labeledInput,
+  labeledSelect,
   noticeCopyOf,
   notificationBell,
   reviewStep,
@@ -286,32 +294,28 @@ function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt
   ]);
 }
 
-/** Render one evidence capsule as an accordion row (§4.5b; refs render — capsules never recompute, L20). */
-function capsuleCard(capsule: EvidenceCapsule, viewAt: number): VNode {
+/** Render one evidence capsule as the §4.9 inline surface: the monospace content-address badge (the open button) + the source kind; when open, the payload (mono) + the provenance line render inline (refs — never recomputed, L20). */
+function capsuleCard(capsule: EvidenceCapsule, viewAt: number, openCapsule: string | null): VNode {
   assertVisible({ datumRef: capsule.capsuleId, availableAt: capsule.availableAt }, viewAt);
-  return accordionRow({
-    icon: 'box',
-    title: capsule.capsuleId,
-    subtitle: capsule.sourceKind,
-    pill: { tone: 'live', label: capsule.sourceKind },
-    rowId: `capsule:${capsule.capsuleId}`,
-    details: [
-      { eyebrow: 'IDENTITY', pairs: [
-        ['capsule id', capsule.capsuleId],
-        ['source kind', capsule.sourceKind],
-        ['source route', capsule.sourceRoute],
-        ['available at', formatInstantUtc(capsule.availableAt)],
-      ] },
-      { eyebrow: 'ADVANCED', pairs: [
-        ...capsule.facts.map((entry) => [entry.label, entry.value] as const),
-        ['refs', capsule.refs.map((entry) => `${entry.kind}:${entry.ref}`).join(', ') || 'none'],
-      ] },
+  return capsuleSurface({
+    capsuleId: capsule.capsuleId,
+    sourceKind: capsule.sourceKind,
+    open: openCapsule === capsule.capsuleId,
+    payloadLines: [
+      ...capsule.facts.map((entry) => `${entry.label}: ${entry.value}`),
+      capsule.refs.length === 0 ? 'refs: none' : `refs: ${capsule.refs.map((entry) => `${entry.kind}:${entry.ref}`).join(', ')}`,
     ],
+    provenance: `read from ${capsule.sourceRoute} · ${capsule.sourceKind} ${capsule.sourceRef} · tenant ${capsule.tenantId} / project ${capsule.projectId} · available ${formatInstantUtc(capsule.availableAt)}`,
   });
 }
 
+/** The inline capsule badge of one record (the J7 “capsules render inline from Outcomes / Decisions” half): the record's own content-address badge, opening the same payload surface. */
+function capsuleInline(capsule: EvidenceCapsule, viewAt: number, openCapsule: string | null): VNode {
+  return capsuleCard(capsule, viewAt, openCapsule);
+}
+
 /** Render one watch event as a §4.7 stream card (the sanitized seven-lens shape; the chain-of-thought firewall is upstream at ingest — unchanged). */
-function watchEventRow(scope: WorkspaceScope, event: WatchEvent, viewAt: number): VNode {
+function watchEventRow(scope: WorkspaceScope, event: WatchEvent, viewAt: number, openCapsule: string | null): VNode {
   void scope;
   visibleAt(event, event.at, viewAt, `watch:${event.decision?.ref ?? event.agent ?? 'unknown'}`);
   return streamCard({
@@ -323,6 +327,7 @@ function watchEventRow(scope: WorkspaceScope, event: WatchEvent, viewAt: number)
     riskChecks: event.riskChecks,
     decision: event.decision,
     at: event.at,
+    openRef: openCapsule,
   });
 }
 
@@ -373,9 +378,14 @@ function timeMachineBar(state: WorkspaceState, viewAt: number): VNode {
 }
 
 /** The per-section teaching empty states (§4.12): the pinned T042 titles + ONE sentence + exactly ONE action. */
-const SECTION_EMPTY_STATES: Readonly<Record<SectionId | 'inbox', { readonly icon: ComponentIcon; readonly title: string; readonly sentence: string; readonly action: { readonly label: string; readonly target: ShellTarget } }>> = Object.freeze({
+const SECTION_EMPTY_STATES: Readonly<Record<SectionId | 'inbox', { readonly icon: ComponentIcon; readonly title: string; readonly sentence: string; readonly action: { readonly label: string; readonly target?: string; readonly action?: string } }>> = Object.freeze({
   'inbox': { icon: 'inbox', title: 'No notices at this view instant.', sentence: 'Notifications from your organization appear here as they happen.', action: { label: 'Open the overview', target: 'home' } },
-  'goal': { icon: 'target', title: 'No goal loaded yet.', sentence: 'Describe what this organization should achieve, then launch the primary flow.', action: { label: 'Open the overview', target: 'home' } },
+  // THE J3 ENTRY (the primary flow starts here): the Goal section's
+  // single primary action STARTS the guided launch wizard — a
+  // delegated action (data-action="launch-start"), never a
+  // navigation target (the click handler's nav branch would swallow
+  // it before the action branch could run).
+  'goal': { icon: 'target', title: 'No goal loaded yet.', sentence: 'Describe what this organization should achieve, then launch the primary flow.', action: { label: 'Describe your goal', action: 'launch-start' } },
   'organization': { icon: 'layers', title: 'No organization snapshots at this view instant.', sentence: 'An organization compiles here once the launch completes.', action: { label: 'Describe a goal', target: 'goal' } },
   'market-world': { icon: 'pulse', title: 'No launch context yet — the market world is specified at launch.', sentence: 'Markets, venues and data sources appear once a project launches.', action: { label: 'Open Goal', target: 'goal' } },
   'time-machine': { icon: 'clock', title: 'No view yet.', sentence: 'Pick a mode above to revisit any instant.', action: { label: 'Open the overview', target: 'home' } },
@@ -413,7 +423,22 @@ function noticeSeverityOf(kind: string): 'info' | 'warn' | 'error' {
  */
 function homePanel(state: WorkspaceState, viewAt: number): VNode {
   const fresh = state.project === null && state.jobs.length === 0 && state.outcomes.length === 0;
-  const hero = heroPanel();
+  // THE HERO'S LAUNCH AFFORDANCE (the J3 entry, Home shape): the
+  // primary flow's own CTA when nothing is running; a resume hint
+  // while the wizard is open (the wizard renders in the launch panel
+  // directly below); a progress note while a launch is in flight or
+  // has finished. Mirrors launchPanel's own states — never a dead
+  // button (a launch-start while a draft is open would be refused by
+  // the handler; the hero shows the honest state instead).
+  const launch = state.launch;
+  const draftActive = launch.draft !== null && (launch.phase === 'draft' || launch.phase === 'idle');
+  const launchQuiet = launch.draft === null && launch.progress.length === 0 && launch.error === null;
+  const heroCta: VNode | undefined = draftActive
+    ? v('p', { class: 'hero-note', 'data-hero-launch': 'draft' }, ['The launch wizard is open — continue below.'])
+    : launchQuiet
+      ? v('button', { class: 'hero-cta', 'data-action': 'launch-start', type: 'button' }, ['Describe your goal'])
+      : v('p', { class: 'hero-note', 'data-hero-launch': launch.phase }, ['A launch is in progress — details below.']);
+  const hero = heroPanel(heroCta);
   if (state.connection === 'connecting' && fresh) {
     return v('section', { class: 'panel home', 'data-section': 'home' }, [hero, loadingState('stat-grid')]);
   }
@@ -526,7 +551,19 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           ...state.constraintSet.constraints.map((constraint) => factRow(`${constraint.severity} ${constraint.id}`, `${constraint.domain}.${constraint.subject} ${constraint.predicate.kind}`)),
         ]));
       }
-      if (rows.length === 0) rows.push(sectionEmpty('goal'));
+      if (rows.length === 0) {
+        // THE J3 ENTRY: with no loaded goal, the section's single
+        // primary action starts the guided launch wizard — unless a
+        // draft is ALREADY in progress (re-starting would wipe the
+        // user's work; the wizard renders below this notice).
+        const draftActive = state.launch.draft !== null && (state.launch.phase === 'draft' || state.launch.phase === 'idle');
+        rows.push(draftActive
+          ? v('div', { class: 'card', 'data-goal': 'launch-in-progress' }, [
+              v('div', { class: 'card-title' }, ['The launch wizard is open']),
+              v('p', { class: 'card-note' }, ['Describe what this organization should achieve below — the goal loads here when the launch completes.']),
+            ])
+          : sectionEmpty('goal'));
+      }
       return v('section', { class: 'panel', 'data-section': 'goal' }, rows);
   } else if (selector === 'organization') {
       const projected = projectToView(state.orgSnapshots, viewAt, availabilityOfOrgSnapshot);
@@ -593,15 +630,21 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
       const watchFeed = projectToView(watchEventsOf(state), viewAt, (event) => event.at);
       return v('section', { class: 'panel', 'data-section': 'decisions' }, [
-        v('div', { class: 'watch' }, [v('h2', {}, ['Watch']), ...watchFeed.map((event) => watchEventRow(scope, event, viewAt))]),
-        ...submissions.map((submission) => submissionCard(scope, submission, viewAt)),
+        v('div', { class: 'watch' }, [v('h2', {}, ['Watch']), ...watchFeed.map((event) => watchEventRow(scope, event, viewAt, view.openCapsule))]),
+        ...submissions.map((submission) => v('div', { class: 'decision-block' }, [
+          submissionCard(scope, submission, viewAt),
+          capsuleInline(capsuleFromSubmission(scope, submission), viewAt, view.openCapsule),
+        ])),
         ...(submissions.length === 0 && watchFeed.length === 0 ? [sectionEmpty('decisions')] : []),
       ]);
   } else if (selector === 'execution') {
       const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
       return v('section', { class: 'panel', 'data-section': 'execution' }, [
         v('p', { class: 'hint' }, ['The console submits execution REQUESTS through the API; the gateway alone decides (L8/L20).']),
-        ...submissions.map((submission) => submissionCard(scope, submission, viewAt)),
+        ...submissions.map((submission) => v('div', { class: 'decision-block' }, [
+          submissionCard(scope, submission, viewAt),
+          capsuleInline(capsuleFromSubmission(scope, submission), viewAt, view.openCapsule),
+        ])),
         ...(submissions.length === 0 ? [sectionEmpty('execution')] : []),
       ]);
   } else if (selector === 'risk') {
@@ -630,12 +673,17 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...projectToView(state.submissions, viewAt, availabilityOfSubmission).map((submission) => capsuleFromSubmission(scope, submission)),
       ];
       return v('section', { class: 'panel', 'data-section': 'evidence' }, [
-        ...capsules.map((capsule) => capsuleCard(capsule, viewAt)),
+        ...capsules.map((capsule) => capsuleCard(capsule, viewAt, view.openCapsule)),
         ...(capsules.length === 0 ? [sectionEmpty('evidence')] : []),
       ]);
   } else if (selector === 'outcomes') {
       const projected = projectToView(state.outcomes, viewAt, availabilityOfOutcome);
-      const cards = projected.map((outcome) => outcomeCard(scope, outcome, viewAt));
+      const cards = projected.map((outcome) => v('div', { class: 'decision-block' }, [
+        outcomeCard(scope, outcome, viewAt),
+        // J7: the outcome's own evidence capsule renders INLINE (its
+        // content-address badge opens the payload + provenance here).
+        capsuleInline(capsuleFromOutcome(scope, outcome), viewAt, view.openCapsule),
+      ]));
       return v('section', { class: 'panel', 'data-section': 'outcomes' }, [
         ...cards,
         ...(projected.length === 0 ? [sectionEmpty('outcomes')] : []),
@@ -671,30 +719,46 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
     const draft = launch.draft;
     const armed = view.confirm === 'launch';
     const touched = view.touchedFields;
+    // THE J3 WIRING: the rendered field values are the MERGED live
+    // form (the draft's committed values + the app layer's pending
+    // edits — core/launch-form.ts's merge), so a re-render at any
+    // instant keeps what the user last typed even before the edit is
+    // committed into the state machine; the per-field validation is
+    // the SAME pure module the review gate and the flush use.
+    const form: LaunchFormValues = launchFormValues(draft, view.launchEdits);
+    const touchedOf = (field: LaunchFieldName): boolean => touched.includes(field);
+    const validationOf = (field: LaunchFieldName): { message: string; touched: boolean } | undefined => touchedOf(field) ? { message: launchFieldValidation(form, field), touched: true } : undefined;
     // The review step renders the summary + the two-step confirm; every other
-    // step renders its labeled fields (labels ABOVE, inline validation).
+    // step renders its labeled fields (labels ABOVE, inline validation on blur).
     const goalFields = [
-      ...labeledInput({ label: 'Name', name: 'name', value: draft.name, required: true, placeholder: 'e.g. Momentum scout', ...(touched.includes('name') ? { validation: { message: draft.name.length === 0 ? 'Give the launch a name.' : '', touched: true } } : {}) }),
-      ...labeledInput({ label: 'Objective', name: 'objective', value: draft.objective, required: true, hint: 'One sentence — what this organization should achieve.', ...(touched.includes('objective') ? { validation: { message: draft.objective.length === 0 ? 'Describe the objective in one sentence.' : '', touched: true } } : {}) }),
+      ...labeledInput({ label: 'Name', name: 'name', value: form.name, required: true, placeholder: 'e.g. Momentum scout', validation: validationOf('name') }),
+      ...labeledInput({ label: 'Objective', name: 'objective', value: form.objective, required: true, hint: 'One sentence — what this organization should achieve.', validation: validationOf('objective') }),
     ];
     const budgetFields = [
-      ...labeledInput({ label: 'Capital budget', name: 'capitalBudget', value: draft.capitalBudget, type: 'number', required: true, hint: 'An exact decimal, e.g. 10000.00.', ...(touched.includes('capitalBudget') ? { validation: { message: isNonNegativeDecimal(draft.capitalBudget) ? '' : 'Enter an exact non-negative decimal.', touched: true } } : {}) }),
-      ...labeledInput({ label: 'Risk budget', name: 'riskBudget', value: draft.riskBudget, type: 'number', required: true, hint: 'An exact decimal, e.g. 250.00.', ...(touched.includes('riskBudget') ? { validation: { message: isNonNegativeDecimal(draft.riskBudget) ? '' : 'Enter an exact non-negative decimal.', touched: true } } : {}) }),
+      ...labeledInput({ label: 'Capital budget', name: 'capitalBudget', value: form.capitalBudget, required: true, hint: 'An exact decimal, e.g. 10000.00.', validation: validationOf('capitalBudget') }),
+      ...labeledInput({ label: 'Risk budget', name: 'riskBudget', value: form.riskBudget, required: true, hint: 'An exact decimal, e.g. 250.00.', validation: validationOf('riskBudget') }),
     ];
     const marketFields = [
-      ...labeledInput({ label: 'Markets', name: 'markets', value: draft.markets.join(', '), required: true, hint: 'Comma-separated instrument ids.', ...(touched.includes('markets') ? { validation: { message: draft.markets.length === 0 ? 'List at least one market.' : '', touched: true } } : {}) }),
-      ...labeledInput({ label: 'Venues', name: 'venues', value: draft.venues.join(', '), required: true, hint: 'Comma-separated venue ids.', ...(touched.includes('venues') ? { validation: { message: draft.venues.length === 0 ? 'List at least one venue.' : '', touched: true } } : {}) }),
-      ...labeledInput({ label: 'Data sources', name: 'dataSources', value: draft.dataSources.join(', '), required: true, hint: 'Comma-separated data source refs.', ...(touched.includes('dataSources') ? { validation: { message: draft.dataSources.length === 0 ? 'List at least one data source.' : '', touched: true } } : {}) }),
+      ...labeledInput({ label: 'Markets', name: 'markets', value: form.markets, required: true, hint: 'Comma-separated instrument ids.', validation: validationOf('markets') }),
+      ...labeledInput({ label: 'Venues', name: 'venues', value: form.venues, required: true, hint: 'Comma-separated venue ids.', validation: validationOf('venues') }),
+      ...labeledInput({ label: 'Data sources', name: 'dataSources', value: form.dataSources, required: true, hint: 'Comma-separated data source refs.', validation: validationOf('dataSources') }),
     ];
     const worldFields = [
-      ...labeledInput({ label: 'Horizon starts', name: 'horizonStartsAt', value: String(draft.horizon.startsAt), type: 'number', required: true, hint: 'Epoch ms.' }),
-      ...labeledInput({ label: 'Horizon ends', name: 'horizonEndsAt', value: String(draft.horizon.endsAt), type: 'number', required: true, hint: 'Epoch ms.' }),
-      ...labeledInput({ label: 'Execution mode', name: 'executionMode', value: draft.executionMode, required: true, hint: 'simulation | shadow | live.' }),
-      ...labeledInput({ label: 'Preferences', name: 'preferences', value: draft.preferences.map((preference) => `${preference.key}=${preference.value}`).join(', '), hint: 'Optional key=value pairs.' }),
-      ...labeledInput({ label: 'Constraints', name: 'constraints', value: draft.constraints.map((constraint) => `${constraint.severity}:${constraint.id}`).join(', ') || 'none', hint: 'Optional — the executable limits.' }),
+      ...labeledInput({ label: 'Horizon starts', name: 'horizonStartsAt', value: form.horizonStartsAt, type: 'number', required: true, hint: 'Epoch ms.', validation: validationOf('horizonStartsAt') }),
+      ...labeledInput({ label: 'Horizon ends', name: 'horizonEndsAt', value: form.horizonEndsAt, type: 'number', required: true, hint: 'Epoch ms.', validation: validationOf('horizonEndsAt') }),
+      ...labeledSelect({ label: 'Execution mode', name: 'executionMode', value: form.executionMode, required: true, hint: 'Simulation is the safe default — live execution goes through the gateway.', choices: EXECUTION_MODES.map((mode) => [mode, mode] as const), validation: validationOf('executionMode') }),
+      ...labeledInput({ label: 'Preferences', name: 'preferences', value: form.preferences, hint: 'Optional key=value pairs.', validation: validationOf('preferences') }),
+      ...labeledInput({ label: 'Constraints', name: 'constraints', value: form.constraints, hint: `Optional executable limits, e.g. ${constraintGrammarExample()}.`, validation: validationOf('constraints') }),
     ];
     const fieldsByStep: Record<string, readonly VNode[]> = { goal: goalFields, budget: budgetFields, markets: marketFields, world: worldFields };
     const stepFields = fieldsByStep[launch.step] ?? [];
+    // THE REVIEW GATE: the review step renders the summary + the
+    // two-step confirm ONLY when the merged form passes every field
+    // validation; otherwise the problems render (every field treated
+    // as touched — the review is the gate before any launch, §4.11)
+    // and the arm button stays away until they are fixed.
+    const problems = launchDraftProblems(form);
+    const reviewValid = problems.length === 0;
     rows.push(v('div', { class: 'card launch-wizard', 'data-launch-step': launch.step }, [
       v('div', { class: 'card-title' }, [`Primary flow — ${launch.step}`]),
       v('div', { class: 'segmented tm-modes' }, LAUNCH_STEPS.map((step) => v('button', {
@@ -706,19 +770,26 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
       ...(launch.step === 'review'
         ? [
           reviewStep([
-            ['Name', draft.name],
-            ['Objective', draft.objective],
-            ['Capital budget', renderDecimal(draft.capitalBudget)],
-            ['Risk budget', renderDecimal(draft.riskBudget)],
-            ['Markets', draft.markets.join(', ')],
-            ['Venues', draft.venues.join(', ')],
-            ['Data sources', draft.dataSources.join(', ')],
-            ['Horizon', `${formatInstantUtc(draft.horizon.startsAt)} -> ${formatInstantUtc(draft.horizon.endsAt)}`],
-            ['Execution mode', draft.executionMode],
-            ['Preferences', draft.preferences.map((preference) => `${preference.key}=${preference.value}`).join(', ') || 'none'],
-            ['Constraints', draft.constraints.length === 0 ? 'none' : `${draft.constraints.length} statements`],
+            ['Name', form.name],
+            ['Objective', form.objective],
+            ['Capital budget', form.capitalBudget],
+            ['Risk budget', form.riskBudget],
+            ['Markets', form.markets],
+            ['Venues', form.venues],
+            ['Data sources', form.dataSources],
+            ['Horizon', `${form.horizonStartsAt} -> ${form.horizonEndsAt}`],
+            ['Execution mode', form.executionMode],
+            ['Preferences', form.preferences.length === 0 ? 'none' : form.preferences],
+            ['Constraints', form.constraints.length === 0 ? 'none' : form.constraints],
+            ['Success criteria', draft.successCriteria.map((criterion) => `${criterion.id}: ${criterion.metric} ${criterion.predicate.kind}`).join('; ')],
           ]),
-          twoStepConfirm('launch', armed),
+          ...(reviewValid
+            ? [twoStepConfirm('launch', armed)]
+            : [v('div', { class: 'review-problems', role: 'alert', 'data-review-problems': String(problems.length) }, [
+                v('div', { class: 'def-eyebrow' }, ['FIX BEFORE LAUNCHING']),
+                ...problems.map(([field, message]) => v('p', { class: 'field-error', 'data-problem-field': field }, [message])),
+                v('p', { class: 'field-hint' }, ['Fix each field on its step, then return here to launch.']),
+              ])]),
         ]
         : [...stepFields, v('div', { class: 'tm-playback' }, [
           v('button', { class: 'tm-button', 'data-action': `launch-step-${nextStepOf(launch.step)}`, type: 'button' }, [`Next: ${nextStepOf(launch.step)}`]),
@@ -743,7 +814,7 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
     ]));
   }
   if (progress !== null) {
-    rows.push(v('div', { class: 'card' }, [
+    rows.push(v('div', { class: 'card', 'data-launch-phase': progress.phase }, [
       v('div', { class: 'card-title' }, ['Launch progress']),
       ...factRows([
         ['phase', progress.phase],
@@ -756,8 +827,22 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
       ]),
     ]));
   }
-  if (launch.error !== null) rows.push(v('div', { class: 'card error-card' }, [v('div', { class: 'card-title' }, ['Launch failed']), factRow('error', launch.error)]));
-  if (rows.length === 0) rows.push(v('div', { class: 'empty' }, ['No launch in progress. Start one from the primary flow.']));
+  if (launch.error !== null) {
+    rows.push(v('div', { class: 'card error-card' }, [
+      v('div', { class: 'card-title' }, ['Launch failed']),
+      factRow('error', launch.error),
+      v('button', { class: 'tm-button', 'data-action': 'launch-reset', type: 'button' }, ['Start over']),
+    ]));
+  }
+  if (rows.length === 0) {
+    // THE J3 ENTRY's second affordance: the launch panel renders
+    // below every section — its idle state carries the primary flow's
+    // START action wherever the user is.
+    rows.push(v('div', { class: 'empty', 'data-launch-idle': 'true' }, [
+      v('span', {}, ['No launch in progress.']),
+      v('button', { class: 'tm-button', 'data-action': 'launch-start', type: 'button' }, ['Start the primary flow']),
+    ]));
+  }
   return v('section', { class: 'panel launch', 'data-section': 'launch' }, rows);
 }
 

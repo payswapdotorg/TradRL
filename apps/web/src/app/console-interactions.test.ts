@@ -52,7 +52,7 @@ import type { ApiTransport } from '../api/transport';
 import type { ConsoleHandle } from './console';
 import { bootConsole } from './console';
 import type { LaunchDraft } from '../core/launch';
-import type { JobRecord } from '../api/contracts';
+import type { JobRecord, OutcomeRecord } from '../api/contracts';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -81,6 +81,8 @@ class FakeElement {
   readonly attributes: Record<string, string> = {};
   focusCount = 0;
   clickCount = 0;
+  /** The input's live value (the launch-field wiring reads it — the DOM property). */
+  value = '';
 
   constructor(tagName: string) {
     this.tagName = tagName.toUpperCase();
@@ -163,6 +165,8 @@ class FakeDocument {
   /** Every element ever created (the export-workspace anchor is found here). */
   readonly created: FakeElement[] = [];
   readonly activeElement: FakeElement | null = null;
+  /** The harness's focus tracker (the browser's focus semantics — typeField/blurField move it like the real thing). */
+  focused: FakeElement | null = null;
 
   createElement(tagName: string): FakeElement {
     const element = new FakeElement(tagName);
@@ -181,7 +185,7 @@ class FakeDocument {
   }
 
   /** Dispatch one event to every listener of its type (the browser's capture order is irrelevant: one console). */
-  fire(type: string, event: { target: FakeElement | null; key?: string; ctrlKey?: boolean; metaKey?: boolean }): void {
+  fire(type: string, event: { target: FakeElement | null; relatedTarget?: FakeElement | null; key?: string; ctrlKey?: boolean; metaKey?: boolean }): void {
     for (const listener of [...(this.listeners.get(type) ?? [])]) listener(event as unknown as Record<string, unknown>);
   }
 
@@ -314,15 +318,15 @@ interface Rig {
   readonly storage: MapStorage;
 }
 
-/** Boot the real console with every seam injected and mount it (DOM-free until here — the architecture's law). */
-async function bootRig(stored: Record<string, string> = {}): Promise<Rig> {
+/** Boot the real console with every seam injected and mount it (DOM-free until here — the architecture's law). The project id defaults to the rig's scoped project; pass '' for the LAUNCHPAD (the shipped shell's own default — the primary flow starts there). */
+async function bootRig(stored: Record<string, string> = {}, transport: ApiTransport = offlineTransport, projectId = 'prj-a'): Promise<Rig> {
   const storage = new MapStorage();
   for (const [key, value] of Object.entries(stored)) storage.map.set(key, value);
   const handle = bootConsole({
     baseUrl: 'http://scripted.invalid',
     token: 'token-test',
-    scope: { tenantId: 'tenant-a', projectId: 'prj-a' },
-    transport: offlineTransport,
+    scope: { tenantId: 'tenant-a', projectId },
+    transport,
     instants: { nowMs: () => T0 + 1000 },
     theme: 'light',
     storage,
@@ -359,6 +363,34 @@ function clickNav(rig: Rig, target: string): void {
   const item = elementsOf(rig.root).find((element) => element.getAttribute('data-target') === target && element.tagName === 'BUTTON' && element.hasClass('nav-item'));
   if (item === undefined) throw new Error(`no nav item for ${target}`);
   click(rig, item);
+}
+
+/** Type into a launch field (the browser's semantics: the focus MOVES into the field first — a focusout fires on the previously focused launch field with relatedTarget = this field — then the input event; the live value rides the DOM property). */
+function typeField(rig: Rig, field: string, value: string): void {
+  const input = findByData(rig.root, 'data-launch-field', field);
+  if (input === null) throw new Error(`no launch field ${field} in the current tree`);
+  const prior = rig.doc.focused;
+  if (prior !== null && prior.getAttribute('data-launch-field') !== null) {
+    rig.doc.fire('focusout', { target: prior, relatedTarget: input }); // the inter-field focus move (never a re-render — the form stays live)
+  }
+  rig.doc.focused = input;
+  input.value = value;
+  rig.doc.fire('input', { target: input });
+}
+
+/** Blur a launch field (the browser's focusout with the focus leaving the form — §4.11's inline-validation trigger). */
+function blurField(rig: Rig, field: string): void {
+  const input = findByData(rig.root, 'data-launch-field', field);
+  if (input === null) throw new Error(`no launch field ${field} in the current tree`);
+  rig.doc.focused = null;
+  rig.doc.fire('focusout', { target: input, relatedTarget: null });
+}
+
+/** Click the first [data-action] affordance of the current tree. */
+function clickAction(rig: Rig, action: string): void {
+  const element = findByData(rig.root, 'data-action', action);
+  if (element === null) throw new Error(`no ${action} affordance in the current tree`);
+  click(rig, element);
 }
 
 /** Flush every pending microtask (the async submit path settles before assertions). */
@@ -546,7 +578,310 @@ describe('executed boot: the delegated action layer', () => {
 });
 
 // ---------------------------------------------------------------------------
-// THE REAL-LOADER PIN — the same interaction executes through the
+// J3 — the primary flow, END TO END (the Goal entry + the wired fields +
+// the review gate + the two-step confirm + the async progress).
+// ---------------------------------------------------------------------------
+
+/** A scripted transport that serves a working launch (the demo backing's honest animation, compressed): meta + reads + project create + the kickoff job + a job that advances running -> complete per poll. */
+function launchDemoTransport(): { readonly transport: ApiTransport; readonly polls: { count: number }; readonly createdProjectIds: string[] } {
+  const polls = { count: 0 };
+  const createdProjectIds: string[] = [];
+  const jobOf = (status: 'submitted' | 'running' | 'complete', project: string): JobRecord => ({ jobId: 'job-launch-1', kind: 'research', tenant: 'tenant-a', project, status, submittedAt: T0 + 1000 });
+  const projectOf = (id: string, name: string): Record<string, unknown> => ({
+    id, tenantId: 'tenant-a', name, executionMode: 'simulation',
+    lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+    lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  });
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+  const transport: ApiTransport = async (request) => {
+    const key = `${request.method} ${request.path.split('?')[0]}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Console Test Project'));
+    if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'POST /v1/projects') {
+      const body = request.body as { readonly id: string; readonly name: string };
+      createdProjectIds.push(body.id);
+      return ok(projectOf(body.id, body.name));
+    }
+    if (key === 'POST /v1/jobs/research') {
+      const body = request.body as { readonly projectId: string };
+      return ok(jobOf('submitted', body.projectId));
+    }
+    if (key.startsWith('GET /v1/jobs/')) {
+      polls.count += 1;
+      return ok(jobOf(polls.count === 1 ? 'running' : 'complete', createdProjectIds[0] ?? 'prj-a'));
+    }
+    return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
+  };
+  return { transport, polls, createdProjectIds };
+}
+
+describe('executed boot: J3 — the primary flow (the launch entry + the wired form)', () => {
+  it('the HOME HERO carries the primary flow\'s CTA (the discovery law: the entry is visible from Home, the natural starting point)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    const heroCta = findByData(rig.root, 'data-action', 'launch-start'); // on Home, before any navigation
+    if (heroCta === null) throw new Error('the Home hero carries no launch-start affordance');
+    expect(heroCta.hasClass('hero-cta')).toBe(true);
+    click(rig, heroCta);
+    expect(rig.handle.state().launch.phase).toBe('draft'); // the wizard opened WITHOUT leaving Home
+    expect(findByData(rig.root, 'data-launch-step', 'goal')).not.toBeNull();
+    expect(findByData(rig.root, 'data-hero-launch', 'draft')).not.toBeNull(); // the hero now carries the honest resume note
+    expect(findByData(rig.root, 'data-action', 'launch-start')).toBeNull(); // never a dead restart button
+  });
+
+  it('the Goal section\'s empty state STARTS the wizard (the missing launch-draft-started dispatcher, now wired)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'goal');
+    const entry = findByData(rig.root, 'data-action', 'launch-start');
+    if (entry === null) throw new Error('the Goal empty state carries no launch-start affordance');
+    click(rig, entry);
+    expect(rig.handle.state().launch.phase).toBe('draft');       // the state machine accepted the draft
+    expect(rig.handle.state().launch.draft).not.toBeNull();
+    expect(findByData(rig.root, 'data-launch-step', 'goal')).not.toBeNull(); // the wizard renders
+    expect(findByData(rig.root, 'data-launch-field', 'name')).not.toBeNull();
+    expect(findByData(rig.root, 'data-launch-field', 'objective')).not.toBeNull();
+    // a second start is REFUSED while one is in progress (nothing wipes the user's work)
+    const restart = findByData(rig.root, 'data-action', 'launch-start');
+    if (restart !== null) click(rig, restart);
+    expect(rig.handle.state().launch.draft).not.toBeNull();
+  });
+
+  it('the FULL form path: type -> flush on the next action -> validate on blur -> review gate -> arm/cancel/arm -> confirm -> the offline submit degrades gracefully', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+
+    // goal step: typing buffers; the next action's flush commits into the state machine
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    expect(rig.handle.state().launch.draft?.name).toBe(''); // not yet flushed (the buffer is the live form)
+    clickAction(rig, 'launch-step-budget');
+    expect(rig.handle.state().launch.draft?.name).toBe('Momentum scout'); // the flush committed
+    expect(rig.handle.state().launch.draft?.objective).toBe('Find and keep an edge in momentum.');
+
+    // budget step: a bad decimal validates destructively ON BLUR (§4.11), the fix passes
+    typeField(rig, 'capitalBudget', '10.5.0');
+    blurField(rig, 'capitalBudget');
+    expect(countByClass(rig.root, 'field-error')).toBe(1);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('field-error') && textOf(element) === 'Enter an exact non-negative decimal.')).toBe(true);
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    blurField(rig, 'capitalBudget');
+    expect(countByClass(rig.root, 'field-error')).toBe(0); // silent when valid
+
+    // markets step: csv lists parse at the flush
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT, kraken:ETH-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+
+    // world step: horizon + the execution-mode select + the optional grammars
+    clickAction(rig, 'launch-step-world');
+    typeField(rig, 'horizonStartsAt', String(T0));
+    typeField(rig, 'horizonEndsAt', String(T0 + 86_400_000));
+    typeField(rig, 'executionMode', 'shadow');
+    typeField(rig, 'preferences', 'rebalance=daily');
+    typeField(rig, 'constraints', 'c-1:outcome:risk.maxDrawdown:limit.max:0.2');
+
+    // review: the flush commits everything; the valid draft renders the summary + the arm
+    clickAction(rig, 'launch-step-review');
+    const draft = rig.handle.state().launch.draft;
+    if (draft === null) throw new Error('the draft vanished at review');
+    expect(draft.markets).toEqual(['binance:BTC-USDT', 'kraken:ETH-USDT']);
+    expect(draft.executionMode).toBe('shadow');
+    expect(draft.preferences).toEqual([{ key: 'rebalance', value: 'daily' }]);
+    expect(draft.constraints.length).toBe(1);
+    expect(findByData(rig.root, 'data-review', 'launch')).not.toBeNull();
+    clickAction(rig, 'confirm-arm-launch'); // arm
+    expect(findByData(rig.root, 'data-action', 'confirm-cancel-launch')).not.toBeNull();
+    clickAction(rig, 'confirm-cancel-launch'); // cancel disarms — the arm button returns (the two-step confirm, §4.11)
+    expect(findByData(rig.root, 'data-action', 'confirm-arm-launch')).not.toBeNull();
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch'); // confirm -> submitLaunch through the real composition
+    await settle();
+    // the offline transport rejects the composed create: the launch
+    // degrades GRACEFULLY (never a crash, never an unhandled rejection)
+    // — the error card + the Start over affordance render.
+    expect(rig.handle.state().launch.phase).toBe('failed');
+    expect(rig.handle.state().launch.error).toContain('offline');
+    expect(elementsOf(rig.root).some((element) => element.hasClass('error-card'))).toBe(true);
+    clickAction(rig, 'launch-reset'); // Start over -> the idle entry returns
+    expect(rig.handle.state().launch.phase).toBe('idle');
+    expect(rig.handle.state().launch.draft).toBeNull();
+    expect(findByData(rig.root, 'data-launch-idle', 'true')).not.toBeNull();
+    expect(findByData(rig.root, 'data-action', 'launch-start')).not.toBeNull();
+  });
+
+  it('an inter-field focus move never re-renders (the lost-second-field defect, proven live in a real browser): every typed edit survives', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    // THE DEFECT (found by the real-browser proof): typing into the
+    // SECOND field of a step moves the browser's focus into it — a
+    // focusout fires on the first field. A flush+re-render on that
+    // move re-projects the tree UNDER the pending focus: the browser
+    // strands its focus on a detached node and every keystroke into
+    // the new field lands on a dead node, silently lost (objective /
+    // riskBudget / venues all dropped). The fix: a focus move whose
+    // relatedTarget is another launch field NEVER re-renders.
+    const objectiveNode = findByData(rig.root, 'data-launch-field', 'objective');
+    if (objectiveNode === null) throw new Error('the objective field is missing before typing');
+    typeField(rig, 'name', 'Momentum scout'); // focuses name
+    typeField(rig, 'objective', 'Find and keep an edge.'); // the inter-field move: focusout(name, relatedTarget: objective)
+    expect(elementsOf(rig.root)).toContain(objectiveNode); // the SAME live node — no re-projection under the focus move
+    expect(rig.handle.state().launch.draft?.name).toBe(''); // nothing flushed yet — the buffer is the live form
+    // a blur OUT of the form (relatedTarget null) still commits + renders (§4.11):
+    typeField(rig, 'name', 'Momentum scout 2');
+    blurField(rig, 'name');
+    expect(rig.handle.state().launch.draft?.name).toBe('Momentum scout 2');
+    clickAction(rig, 'launch-step-review');
+    expect(rig.handle.state().launch.draft?.name).toBe('Momentum scout 2'); // BOTH edits carried
+    expect(rig.handle.state().launch.draft?.objective).toBe('Find and keep an edge.');
+  });
+
+  it('the async progress renders submitted -> running -> complete through the poll cadence (the launchpad boots the primary flow, the demo backing animates it)', async () => {
+    const demo = launchDemoTransport();
+    // the LAUNCHPAD scope (the shipped shell's own default): no project
+    // loaded — the created project is ADOPTED by the launch (the one
+    // scope transition the console knows).
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, demo.transport, '');
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-review');
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch');
+    await settle();
+    expect(findByData(rig.root, 'data-launch-phase', 'submitted')).not.toBeNull();
+    expect(demo.createdProjectIds.length).toBe(1); // the composed create hit the boundary once
+    expect(rig.handle.state().scope.projectId).toBe(demo.createdProjectIds[0]); // the workspace ADOPTED the created project
+
+    await rig.handle.beat(); // poll 1 -> running
+    expect(findByData(rig.root, 'data-launch-phase', 'running')).not.toBeNull();
+    await rig.handle.beat(); // poll 2 -> complete
+    expect(rig.handle.state().launch.phase).toBe('launched');
+    expect(findByData(rig.root, 'data-launch-phase', 'complete')).not.toBeNull();
+    // the goal panel now carries the loaded project + the goal statement (the launch's own cards)
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Momentum scout')).toBe(true);
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Goal statement')).toBe(true);
+  });
+
+  it('the REVIEW GATE blocks an invalid draft: the problems render, the arm button stays away (executed)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge.');
+    clickAction(rig, 'launch-step-review'); // budgets + lists never filled -> invalid
+    expect(findByData(rig.root, 'data-review-problems', '5')).not.toBeNull(); // capital + risk budgets + the three lists (name/objective/horizon/mode are valid)
+    expect(findByData(rig.root, 'data-action', 'confirm-arm-launch')).toBeNull(); // never the arm button
+  });
+});
+
+// ---------------------------------------------------------------------------
+// J7 — the evidence capsules (the §4.9 surface: the badge opens the
+// payload + provenance inline; capsules render inline from Outcomes /
+// Decisions; a raw evidence ref answers honestly, never silently).
+// ---------------------------------------------------------------------------
+
+/** One outcome record (the Evidence capsule's source). */
+function outcomeRecord(): OutcomeRecord {
+  return {
+    outcomeId: 'out-1', ordinal: 1, tenant: 'tenant-a', project: 'prj-a',
+    decision: { decisionRef: 'dec-1', intentRef: 'int-1', disposition: 'filled' },
+    outcomeClass: 'realized-profit',
+    expectation: { expectedQuantity: '10', expectedRealized: '1.5', tolerance: '0.25', declaredBy: 'b1' },
+    realization: { filledQuantity: '10', realizedOutcome: '1.75', feeTotal: '0.02', notionalTotal: '1000.00', unrealizedAtDecision: '0.00' },
+    deviation: { quantityShortfall: null, realizedGap: '0.25', withinTolerance: true },
+    evidence: [{ kind: 'fill', ref: 'fil-1' }],
+    lineage: { shadow: { fidelity: { mode: 'shadow' }, riskPolicy: { policyId: 'pol-1', version: 2 }, experiment: null } },
+    asOf: T0 + 30, priorChainHead: '00000000',
+  } as unknown as OutcomeRecord;
+}
+
+describe('executed boot: J7 — the evidence capsules (§4.9 open/close)', () => {
+  it('the Evidence section lists capsules with mono content-address badges; opening one renders the payload + provenance INLINE; closing works', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    rig.handle.dispatch({ kind: 'outcomes-loaded', at: T0 + 30, records: [outcomeRecord()] }); // the sanctioned write path
+    clickNav(rig, 'evidence');
+    const badge = elementsOf(rig.root).find((element) => element.getAttribute('data-action') === 'capsule-open');
+    if (badge === undefined) throw new Error('the Evidence section renders no capsule badge');
+    const capsuleId = badge.getAttribute('data-capsule-open') as string;
+    expect(capsuleId.startsWith('evc:')).toBe(true);              // the mono content address
+    expect(badge.getAttribute('aria-expanded')).toBe('false');    // closed
+    expect(countByData(rig.root, 'data-capsule-open', capsuleId)).toBe(1); // the badge only — no payload yet
+
+    click(rig, badge); // open
+    expect(countByData(rig.root, 'data-capsule-open', capsuleId)).toBe(2); // the badge + the payload
+    const payload = elementsOf(rig.root).find((element) => element.hasClass('capsule-payload'));
+    if (payload === undefined) throw new Error('the opened capsule renders no payload');
+    const mono = elementsOf(rig.root).find((element) => element.hasClass('capsule-mono'));
+    if (mono === undefined) throw new Error('the payload carries no mono block');
+    expect(textOf(mono)).toContain('disposition: filled');        // the record's own typed facts, verbatim
+    expect(textOf(mono)).toContain('fill:fil-1');                 // the record's evidence refs, verbatim (L20 — never recomputed)
+    const provenance = elementsOf(rig.root).find((element) => element.hasClass('capsule-provenance'));
+    if (provenance === undefined) throw new Error('the payload carries no provenance line');
+    expect(textOf(provenance)).toContain('/v1/outcomes/query');   // R45: the source route names itself
+    expect(textOf(provenance)).toContain('outcome out-1');
+    const openBadge = elementsOf(rig.root).find((element) => element.getAttribute('data-action') === 'capsule-open');
+    if (openBadge === undefined) throw new Error('the badge vanished while open');
+    expect(openBadge.getAttribute('aria-expanded')).toBe('true');
+
+    click(rig, openBadge); // close (the toggle)
+    expect(countByData(rig.root, 'data-capsule-open', capsuleId)).toBe(1); // the badge only again
+  });
+
+  it('capsules render INLINE from Outcomes (the outcome\'s own badge opens the payload)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    rig.handle.dispatch({ kind: 'outcomes-loaded', at: T0 + 30, records: [outcomeRecord()] });
+    clickNav(rig, 'outcomes');
+    const badge = elementsOf(rig.root).find((element) => element.getAttribute('data-action') === 'capsule-open');
+    if (badge === undefined) throw new Error('the Outcomes section renders no inline capsule badge');
+    expect(findByData(rig.root, 'data-row', 'outcome:out-1')).not.toBeNull(); // the outcome row renders too
+    click(rig, badge);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('capsule-payload'))).toBe(true);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('capsule-mono'))).toBe(true);
+  });
+
+  it('capsules render INLINE from Decisions (the submission\'s badge + the stream card\'s raw evidence ref answers honestly)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    rig.handle.dispatch({
+      kind: 'submission-recorded', at: T0 + 20,
+      submission: { kind: 'routed', submissionId: 'sub-1', decisionId: 'dec-1', auditId: 'aud-1', requestRef: 'req-1', venue: 'venue-x', adapterRef: 'ad-1', channelRef: 'ch-1', routedAt: T0 + 20 },
+    });
+    clickNav(rig, 'decisions');
+    // the submission's own capsule renders inline
+    const badges = elementsOf(rig.root).filter((element) => element.getAttribute('data-action') === 'capsule-open');
+    expect(badges.length).toBeGreaterThanOrEqual(2); // the stream card's evidence badge + the submission's own capsule badge
+    const capsuleBadge = badges.find((badge) => (badge.getAttribute('data-capsule-open') as string).startsWith('evc:'));
+    if (capsuleBadge === undefined) throw new Error('the Decisions section renders no inline capsule badge');
+    click(rig, capsuleBadge);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('capsule-payload'))).toBe(true);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('capsule-provenance'))).toBe(true);
+    // the stream card's RAW evidence ref (gateway-audit:aud-1) opens the honest reference-only render — never a silent no-op
+    const rawBadge = badges.find((badge) => badge.getAttribute('data-capsule-open') === 'gateway-audit:aud-1');
+    if (rawBadge === undefined) throw new Error('the stream card renders no evidence badge');
+    click(rig, rawBadge);
+    const mono = elementsOf(rig.root).find((element) => element.hasClass('capsule-mono'));
+    if (mono === undefined) throw new Error('the raw evidence ref renders no payload');
+    expect(textOf(mono)).toContain('gateway-audit:aud-1'); // the ref, verbatim
+    const provenance = elementsOf(rig.root).find((element) => element.hasClass('capsule-provenance'));
+    if (provenance === undefined) throw new Error('the raw evidence ref renders no provenance');
+    expect(textOf(provenance)).toContain('L20'); // the honest provenance note
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE REAL-LOADER PIN — the same interactions execute through the
 // module graph the browser actually boots (strip-types + data: URLs).
 // ---------------------------------------------------------------------------
 

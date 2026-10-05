@@ -53,6 +53,8 @@ export interface ShellView {
   readonly confirm: 'launch' | null;
   /** The launch form's touched field names (§4.11 — inline validation renders only after blur). */
   readonly touchedFields: readonly string[];
+  /** The launch form's PENDING edits (the J3 wiring): field -> the last typed string, not yet committed into the state machine — the render merges them so a re-render never reverts the user's text. */
+  readonly launchEdits: Readonly<Record<string, string>>;
   /** The inline-opened evidence capsule (§4.9): its data-capsule ref, or null. */
   readonly openCapsule: string | null;
 }
@@ -80,7 +82,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], openCapsule: null };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, openCapsule: null };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */
@@ -288,11 +290,16 @@ function pageScaffold(target: ShellTarget, state: WorkspaceState, view: ShellVie
 }
 
 /** The Home hero (§3: Home has no header — the hero IS the page). */
-export function heroPanel(): VNode {
+export function heroPanel(cta?: VNode): VNode {
   return v('section', { class: 'panel hero', 'data-section': 'home' }, [
     v('p', { class: 'hero-eyebrow' }, ['TradRL Console']),
     v('h1', { class: 'hero-title' }, ['Your organization at a glance.']),
     v('p', { class: 'hero-lede' }, ['Set a goal, watch the organization work, and audit every decision.']),
+    // THE J3 ENTRY's third affordance (the natural starting point): the
+    // primary flow's first action lives IN the hero — the onboarding's
+    // step-3 copy says "Start by describing a goal", and Home is where
+    // a first-run user lands. A delegated action, never a nav target.
+    ...(cta === undefined ? [] : [cta]),
   ]);
 }
 

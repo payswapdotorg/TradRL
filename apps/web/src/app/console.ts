@@ -27,6 +27,8 @@ import { createConsoleClient, type ConsoleClient } from '../api/client';
 import type { ApiConsoleError } from '../api/errors';
 import type { LaunchDraft, LaunchIds } from '../core/launch';
 import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, validateLaunchDraft } from '../core/launch';
+import { InvalidLaunchDraftError } from '../core/errors';
+import { absorbedEdit, blankLaunchDraft, editLaunchField, isLaunchFieldName, launchFormValuesOfDraft, type LaunchFieldName } from '../core/launch-form';
 import { digestOf } from '../core/digest';
 import type { InstantSource, TickScheduler } from '../core/clock';
 import { systemNowMs } from '../core/clock';
@@ -130,13 +132,28 @@ export interface DelegatedKeyEvent {
   preventDefault?(): void;
 }
 
+/** The interaction target of a delegated launch-field event (the input/change/focusout wiring): a closest()-capable target whose live value the form reads. */
+export interface FieldEventTarget extends ClickTarget {
+  /** The input's live value (the DOM property — the browser binding provides it; the test harness scripts it). */
+  readonly value?: string;
+  /** The attribute read (the delegated vocabulary lives in data- attributes). */
+  getAttribute(name: string): string | null;
+}
+
+/** A delegated launch-field event (the J3 wiring): input/change/focusout on [data-launch-field] inputs. */
+export interface DelegatedFieldEvent {
+  readonly target: FieldEventTarget | null;
+  /** The element the focus is moving TO (focusout only; null when the focus leaves to nothing — the browser binding provides it). */
+  readonly relatedTarget?: unknown;
+}
+
 /** The minimal document surface the mount needs (DOM APIs only). */
 export interface MountDocument {
   createElement(tag: string): Element;
   createTextNode(text: string): Text;
-  addEventListener(type: string, listener: (event: DelegatedClickEvent & Partial<DelegatedKeyEvent>) => void): void;
-  /** Optional: the focusable-element query for the drawer's focus trap (the browser binding provides it). */
-  querySelectorAll?(selector: string): Iterable<{ focus(): void }>;
+  addEventListener(type: string, listener: (event: DelegatedClickEvent & Partial<DelegatedKeyEvent> & Partial<DelegatedFieldEvent>) => void): void;
+  /** Optional: the focusable-element query for the drawer's focus trap + the launch form's focus restoration (the browser binding provides it). */
+  querySelectorAll?(selector: string): Iterable<{ focus(): void } & Partial<{ getAttribute(name: string): string | null; setSelectionRange(start: number, end: number): void }>>;
   /** Optional: the active element (the browser binding provides it). */
   readonly activeElement?: Element | null;
 }
@@ -234,8 +251,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   }
 
   async function submitLaunch(draft: LaunchDraft): Promise<void> {
-    validateLaunchDraft(draft);
-    dispatch({ kind: 'launch-draft-started', at: instants.nowMs(), draft });
+    // THE VALIDATION GATE (typed, before any API call): an invalid
+    // draft surfaces as the launch error card — never an unhandled
+    // rejection, never a wrong submission. (The review step's gate
+    // keeps the confirm away from invalid drafts; this is the defense
+    // in depth on the submit path itself.)
+    try {
+      validateLaunchDraft(draft);
+    } catch (error) {
+      if (error instanceof InvalidLaunchDraftError) {
+        dispatch({ kind: 'launch-failed', at: instants.nowMs(), message: error.message });
+        return;
+      }
+      throw error;
+    }
     const at = instants.nowMs();
     const ids: LaunchIds = {
       projectId: `prj-${digestOf({ tenant: scope.tenantId, draft, at }).slice(0, 12)}`,
@@ -276,17 +305,109 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       toast: null,
       confirm: null,
       touchedFields: [],
+      launchEdits: {},
       openCapsule: null,
     };
     let paletteResults: readonly PaletteEntry[] = [];
     const host = root as Element & { setAttribute(name: string, value: string): void; classList?: { add(name: string): void } };
     if (host.classList !== undefined) host.classList.add('tradrl-host');
+    // THE LAUNCH FORM'S PENDING EDITS + THE POINTER GATE (the J3
+    // wiring): field edits buffer in the view (the render merges them
+    // via core/launch-form.ts, so any re-render keeps the user's
+    // text) and COMMIT into the state machine on the next action —
+    // never synchronously on focusout, because a re-render between
+    // mousedown and mouseup replaces the clicked button and the
+    // browser would drop the click (the silent-no-op class this
+    // program keeps meeting). `pointerDown` marks a click in flight;
+    // the click handler itself flushes before running any action.
+    let pointerDown = false;
+    /** Read the launch field name of an event target (null when the target is not a launch field). */
+    const launchFieldOf = (target: unknown): { readonly field: LaunchFieldName; readonly value: string } | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      const name = element.getAttribute('data-launch-field');
+      if (name === null || !isLaunchFieldName(name)) return null;
+      const value = typeof element.value === 'string' ? element.value : '';
+      return { field: name, value };
+    };
+    /** Commit the buffered field edits into the state machine (one launch-draft-edited per flush; unabsorbed grammars stay buffered). */
+    const flushLaunchEdits = (): void => {
+      const entries = Object.entries(view.launchEdits);
+      if (entries.length === 0) return;
+      const remaining: Record<string, string> = {};
+      const draft = state.launch.draft;
+      if (draft === null) {
+        view = { ...view, launchEdits: {} };
+        return;
+      }
+      let next = draft;
+      for (const [field, value] of entries) {
+        if (!isLaunchFieldName(field)) continue;
+        next = editLaunchField(next, field, value);
+        if (!absorbedEdit(field, value)) remaining[field] = value; // an unparseable grammar stays pending (rendered + validated, never dropped)
+      }
+      if (JSON.stringify(launchFormValuesOfDraft(next)) !== JSON.stringify(launchFormValuesOfDraft(draft))) {
+        dispatch({ kind: 'launch-draft-edited', at: instants.nowMs(), draft: next }); // renders via onState
+      }
+      if (Object.keys(remaining).length !== entries.length) view = { ...view, launchEdits: remaining };
+    };
+    /** Mark a launch field touched (§4.11 — inline validation renders after blur). */
+    const touchLaunchField = (field: LaunchFieldName): void => {
+      if (view.touchedFields.includes(field)) return;
+      view = { ...view, touchedFields: [...view.touchedFields, field] };
+    };
+    /** The focus-restore key of an element the browser was moving focus TO (its delegated-vocabulary identity), null when it carries none. */
+    const focusKeyOf = (element: unknown): { readonly attr: string; readonly value: string } | null => {
+      const candidate = element as FieldEventTarget | null | undefined;
+      if (candidate === null || candidate === undefined || typeof candidate.getAttribute !== 'function') return null;
+      for (const attr of ['data-launch-field', 'data-action', 'data-target']) {
+        const value = candidate.getAttribute(attr);
+        if (value !== null) return { attr, value };
+      }
+      return null;
+    };
+    /** Re-focus the re-projected node matching a focus key (the tree was rebuilt under a pending focus move — best effort). */
+    const restoreFocusByKey = (key: { readonly attr: string; readonly value: string } | null): void => {
+      if (key === null || document.querySelectorAll === undefined) return;
+      for (const candidate of document.querySelectorAll(`[${key.attr}="${key.value}"]`)) {
+        const element = candidate as { focus(): void };
+        element.focus();
+        return;
+      }
+    };
     const render = (): void => {
       // The drawer state ALSO lands on the persistent host element so
       // the slide transition survives between renders (the projected
       // tree is rebuilt per state change; the host is not).
       host.setAttribute('data-drawer', view.drawerOpen ? 'open' : 'closed');
+      // FOCUS PRESERVATION ACROSS THE FULL RE-PROJECTION: the tree is
+      // rebuilt per state change, which replaces a focused launch
+      // input mid-typing (a poll beat, a notice toast) — capture the
+      // focused field (+ caret) and restore it on the new node so
+      // typing never breaks.
+      let focusedField: string | null = null;
+      let focusedSelection: { readonly start: number; readonly end: number } | null = null;
+      const active = document.activeElement as (FieldEventTarget & Partial<{ selectionStart: number | null; selectionEnd: number | null }>) | null | undefined;
+      if (active !== null && active !== undefined && typeof active.getAttribute === 'function') {
+        const name = active.getAttribute('data-launch-field');
+        if (name !== null) {
+          focusedField = name;
+          if (typeof (active as { readonly selectionStart?: number | null }).selectionStart === 'number' && typeof (active as { readonly selectionEnd?: number | null }).selectionEnd === 'number') {
+            focusedSelection = { start: (active as { readonly selectionStart: number }).selectionStart, end: (active as { readonly selectionEnd: number }).selectionEnd };
+          }
+        }
+      }
       mountVTree(document, root, renderConsoleModel(state, instants.nowMs(), view, paletteResults));
+      if (focusedField !== null && document.querySelectorAll !== undefined) {
+        for (const candidate of document.querySelectorAll('[data-launch-field]')) {
+          const element = candidate as { focus(): void; getAttribute(name: string): string | null; setSelectionRange?(start: number, end: number): void };
+          if (element.getAttribute('data-launch-field') === focusedField) {
+            element.focus();
+            if (focusedSelection !== null && element.setSelectionRange !== undefined) element.setSelectionRange(focusedSelection.start, focusedSelection.end);
+            break;
+          }
+        }
+      }
     };
 
     /** The evidence capsules for the palette (the Evidence section's own fold — mirrors render/model.ts's capsule list, unprojected). */
@@ -355,6 +476,62 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       }
     };
 
+    // THE LAUNCH FIELD WIRING (the J3 fix): delegated input/change/
+    // focusout listeners on the document — the same delegation model
+    // as clicks. Edits BUFFER in the view (launchEdits) and commit on
+    // the next action (the flush) — never synchronously on focusout
+    // while a click is in flight (the re-render between mousedown and
+    // mouseup would drop the click), and never on a click that lands
+    // on a non-action element (the re-render would steal the focus
+    // the browser just moved into the next input).
+    document.addEventListener('mousedown', () => {
+      pointerDown = true;
+    });
+    document.addEventListener('input', (event) => {
+      const entry = launchFieldOf(event.target);
+      if (entry === null) return;
+      view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } }; // NO render — the buffer IS the live form (merged at render time)
+    });
+    document.addEventListener('change', (event) => {
+      const entry = launchFieldOf(event.target);
+      if (entry === null) return;
+      // Buffer ONLY — never a flush here: the browser fires `change`
+      // on the field being LEFT (before focusout) whenever its value
+      // changed, and an immediate flush would re-render UNDER the
+      // pending focus move, stranding the destination input on a
+      // detached node (the lost-second-field defect — the same class
+      // the focusout guard below closes). The flush belongs to the
+      // focusout (which sees where the focus is going) or to the next
+      // action click; a select committed by keyboard commits at the
+      // same places.
+      view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } };
+    });
+    document.addEventListener('focusout', (event) => {
+      const entry = launchFieldOf(event.target);
+      if (entry === null) return;
+      view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } };
+      touchLaunchField(entry.field); // §4.11: inline validation renders after blur
+      // A focus move WITHIN the form (Tab between fields, a
+      // programmatic focus into the next input) must NOT re-render:
+      // the full re-projection replaces the input mid-focus-move,
+      // stranding the browser's pending focus on a detached node —
+      // the next field would go dead and every edit typed into it
+      // would land on a detached node, silently lost (the
+      // lost-second-field defect, proven live in the browser proof:
+      // objective/riskBudget/venues all dropped). The flush + the
+      // §4.11 validation render happen when the focus LEAVES the
+      // form (and on the next action — the click's own flush).
+      const related = (event as Partial<{ readonly relatedTarget: unknown }>).relatedTarget;
+      const relatedElement = related as FieldEventTarget | null | undefined;
+      const relatedIsLaunchField = relatedElement !== null && relatedElement !== undefined && typeof relatedElement.getAttribute === 'function' && relatedElement.getAttribute('data-launch-field') !== null;
+      if (!pointerDown && !relatedIsLaunchField) {
+        const key = focusKeyOf(related);
+        flushLaunchEdits(); // a blur out of the form commits + renders now; a click-blur defers to the click's own flush
+        render();
+        restoreFocusByKey(key); // the tree was rebuilt under the pending focus move
+      }
+    });
+
     // The delegated interaction layer: shell navigation (the fifteen
     // targets), the drawer, the theme controls, the refresh action,
     // the inbox read-all button and the Time Machine controls. Every
@@ -371,7 +548,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // was intercepted here as a navigation and returned silently,
     // before any [data-action] branch could run (the J1 hard block).
     document.addEventListener('click', (event) => {
+      pointerDown = false; // the click concludes the press
       const target = event.target?.closest?.('[data-target]');
+      const navResolved = target !== null && target !== undefined && target.tagName === 'BUTTON' && target.getAttribute('data-target') !== null && isShellTarget(target.getAttribute('data-target') as string);
+      const action = event.target?.closest?.('[data-action]');
+      const actionKind = action === null || action === undefined ? null : action.getAttribute('data-action');
+      // THE FLUSH: a click that resolves to an interactive affordance
+      // commits the buffered launch-field edits FIRST (the event's
+      // target refs are already captured above — the re-render the
+      // flush triggers cannot strand this click), so every action —
+      // step navigation, review, arm, confirm — reads the FULL draft.
+      if (navResolved || actionKind !== null) flushLaunchEdits();
       if (target !== null && target !== undefined && target.tagName === 'BUTTON') {
         const id = target.getAttribute('data-target');
         if (id !== null && isShellTarget(id)) {
@@ -403,9 +590,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         return;
       }
-      const action = event.target?.closest?.('[data-action]');
       if (action !== null && action !== undefined) {
-        const kind = action.getAttribute('data-action');
+        const kind = actionKind;
         if (kind === 'notices-read-all') dispatch({ kind: 'notices-read-all', at: instants.nowMs() });
         if (kind === 'view-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
         if (kind === 'view-tminus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
@@ -463,6 +649,22 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             view = { ...view, confirm: null };
           }
         }
+        // THE J3 ENTRY (the missing launch-draft-started dispatcher):
+        // the Goal section's empty-state CTA and the launch panel's
+        // idle CTA both start the guided wizard from the seeded blank
+        // draft (a re-start is refused while one is in progress — the
+        // segments navigate instead; nothing wipes the user's work).
+        if (kind === 'launch-start') {
+          const inProgress = state.launch.draft !== null && (state.launch.phase === 'draft' || state.launch.phase === 'idle');
+          if (!inProgress) {
+            dispatch({ kind: 'launch-draft-started', at: instants.nowMs(), draft: blankLaunchDraft(instants.nowMs()) }); // renders via onState
+            view = { ...view, confirm: null, touchedFields: [], launchEdits: {} };
+          }
+        }
+        if (kind === 'launch-reset') {
+          dispatch({ kind: 'launch-reset', at: instants.nowMs() }); // renders via onState
+          view = { ...view, confirm: null, touchedFields: [], launchEdits: {}, openCapsule: view.openCapsule };
+        }
         if (kind === 'confirm-arm-launch') {
           view = { ...view, confirm: 'launch' };
           render();
@@ -516,6 +718,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // Ctrl/Cmd+K opens the palette and ↑ ↓ Enter navigate it (§4.14); Tab is
     // trapped inside whichever overlay is open (§4.5a / §2).
     document.addEventListener('keydown', (event) => {
+      pointerDown = false; // a key press ends any pointer-press assumption
       const key = event.key;
       // §4.14 Ctrl/Cmd+K opens (or closes) the palette from anywhere.
       const ctrlKey = (event as { readonly ctrlKey?: boolean }).ctrlKey === true;

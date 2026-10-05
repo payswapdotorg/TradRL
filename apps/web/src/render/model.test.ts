@@ -22,8 +22,10 @@ import { systemNowMs } from '../core/clock';
 import { AvailabilityViolationError, CrossTenantRenderError, PolicyEnforcementError, WallClockReadError } from '../core/errors';
 import { assertVisible } from '../core/availability';
 import { openWorkspace, reduceAll, type WorkspaceEvent, type WorkspaceState } from '../core/workspace';
+import { capsuleFromOutcome } from '../core/evidence';
 import { WORKSPACE_SECTIONS } from '../core/sections';
 import { assertVerdictFaithful, renderConsoleModel, serializeConsoleModel, submissionVerdictBadgeOf, type VerdictBadge } from './model';
+import { defaultShellView } from './shell';
 import { serializeVNode } from './vtree';
 
 const SCOPE = { tenantId: 'tenant-a', projectId: 'proj-a' } as const;
@@ -121,12 +123,18 @@ describe('render model: the twelve section panels', () => {
     const serialized = serializeConsoleModel(outcomes, T0 + 50);
     expect(serialized).toContain('1.75'); // realized outcome, verbatim decimal
     expect(serialized).toContain('1000.00'); // notional total, verbatim decimal
-    // the outcome's evidence ref renders in the evidence section (the capsule's refs)
+    // the outcome's evidence ref renders in the evidence section's OPENED
+    // capsule payload (the §4.9 badge opens the mono payload + provenance)
     const evidence = reduceAll(populatedWorkspace(), [
       { kind: 'view-live', at: T0 + 50 },
       { kind: 'section-selected', at: T0 + 50, section: 'evidence' },
     ]);
-    expect(serializeConsoleModel(evidence, T0 + 50)).toContain('fil-1');
+    const capsule = capsuleFromOutcome(SCOPE, outcome());
+    const evidenceBytes = serializeVNode(renderConsoleModel(evidence, T0 + 50, { ...defaultShellView(evidence), accountView: 'section' }));
+    expect(evidenceBytes).toContain(`data-capsule-open="${capsule.capsuleId}"`); // the mono content-address badge
+    const openedBytes = serializeVNode(renderConsoleModel(evidence, T0 + 50, { ...defaultShellView(evidence), accountView: 'section', openCapsule: capsule.capsuleId }));
+    expect(openedBytes).toContain('fil-1');
+    expect(openedBytes).toContain('capsule-provenance');
   });
 
   it('a PAST view hides records whose availability is after the view instant (the projection in the model)', () => {

@@ -361,6 +361,23 @@
 }
 .hero-title { font-size: 1.875rem; font-weight: 600; letter-spacing: -0.025em; margin: 0; color: var(--foreground); }
 .hero-lede { font-size: 0.9375rem; color: var(--muted-foreground); margin: 0; max-width: 46rem; }
+/* The hero's primary action (the J3 entry's Home shape) + its honest state notes. */
+.hero-cta {
+  all: unset;
+  box-sizing: border-box;
+  justify-self: start;
+  margin-top: 4px;
+  padding: 10px 18px;
+  border-radius: 9999px;
+  border: 1px solid var(--tradrl-live);
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.hero-cta:hover { filter: brightness(0.97); }
+.hero-note { margin: 6px 0 0; font-size: 0.8125rem; color: var(--muted-foreground); }
 
 /* ---------------------------------------------------------------------------
    Legacy T042 surface styles, retokened (the twelve section panels,
@@ -830,7 +847,14 @@ details.list-row > summary::-webkit-details-marker { display: none; }
   box-sizing: border-box;
 }
 .capsule-badge:hover { border-color: color-mix(in oklch, var(--foreground) 30%, transparent); }
+.capsule-badge.open { border-color: var(--tradrl-live); background: var(--tradrl-live-soft); }
 .capsule-address { font-family: var(--font-mono); font-size: 0.7rem; color: var(--accent-foreground); }
+/* The §4.9 capsule row (the Evidence list + the inline surfaces): the badge line + the opened payload. */
+.capsule-row { display: grid; gap: 10px; }
+.capsule-row-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.capsule-kind { font-size: 0.75rem; color: var(--muted-foreground); }
+/* A record card + its inline capsule (J7: capsules render inline from Outcomes / Decisions). */
+.decision-block { display: grid; gap: 10px; }
 .capsule-payload {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -926,6 +950,16 @@ details.list-row > summary::-webkit-details-marker { display: none; }
 }
 .field-input:focus-visible { outline: 2px solid var(--tradrl-live); outline-offset: 2px; }
 .field.field-invalid .field-input { border-color: var(--destructive); }
+.field-select { cursor: pointer; }
+/* The review gate's problem card (§4.11: the review step is the gate before any launch). */
+.review-problems {
+  border: 1px solid color-mix(in oklch, var(--destructive) 40%, var(--border));
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklch, var(--destructive) 6%, var(--card));
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+}
 .field-hint { margin: 0; font-size: 0.75rem; color: var(--muted-foreground); }
 .field-error { margin: 0; font-size: 0.8125rem; color: var(--destructive); }
 .review-step {
