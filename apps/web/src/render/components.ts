@@ -278,13 +278,16 @@ export function definitionGrid(sections: readonly DefinitionSection[]): VNode[] 
 export interface AccordionRowProps extends ListRowProps {
   /** The definition sections revealed by the expansion. */
   readonly details: readonly DefinitionSection[];
+  /** Optional action affordances at the end of the revealed details (the inbox's per-notice read toggle, §4.10 — the W-14b wiring). */
+  readonly actions?: readonly VNode[];
 }
 
 /**
  * The inline accordion row (§4.5b): "Show details"/"Hide details" with a
  * chevron that rotates 180deg — a native <details> element, so the
  * toggle needs zero JS (the label swap is CSS on [open]); the revealed
- * content is the definition grid.
+ * content is the definition grid, followed by the row's own action
+ * affordances when it carries any.
  */
 export function accordionRow(props: AccordionRowProps): VNode {
   return v('details', {
@@ -306,7 +309,7 @@ export function accordionRow(props: AccordionRowProps): VNode {
         chevron('row-chevron'),
       ]),
     ]),
-    v('div', { class: 'row-details' }, definitionGrid(props.details)),
+    v('div', { class: 'row-details' }, [...definitionGrid(props.details), ...(props.actions === undefined ? [] : props.actions)]),
   ]);
 }
 

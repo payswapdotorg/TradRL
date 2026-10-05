@@ -152,15 +152,20 @@ export async function bootFromShell(options: {
       ...(storage === undefined ? {} : { storage }),
       ...(storage === undefined ? {} : { onboardingStorage: storage }),
       simulated: config.simulated ?? false,
-      // THE BROWSER TIMER SEAM (the live J03 finding's second half):
+      // THE BROWSER TIMER SEAM (the live J03 finding's second half, and
+      // the J05/J06 finding's shared root cause — deduped at the W-15b-r
+      // rebase: PRs #36 and #38 each landed this same injection):
       // the beat cadence (job polling + playback ticks + the toast
       // auto-dismiss) is armed ONLY through the injected scheduler — a
       // boot without one freezes every cadence (the launch progress
       // card stuck at 'submitted' forever: the async submitted ->
       // running -> complete animation never rendered on the deployed
-      // console). The browser binding is the setTimeout seam
-      // (core/clock.ts browserScheduler — the only DOM-timer seam, boot
-      // boundary only).
+      // console; and the same seam froze PLAYBACK's advance and the
+      // toast's dismissal — the J05/J06 REDs). The browser binding is
+      // the setTimeout seam (core/clock.ts browserScheduler — the only
+      // DOM-timer seam, boot boundary only). Exactly ONE injection —
+      // a second would double-arm the beat cadence (double-speed
+      // playback + toast bugs).
       scheduler: browserScheduler(),
       ...(options.transport === undefined ? {} : { transport: options.transport }),
     });

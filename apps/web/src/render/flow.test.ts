@@ -209,6 +209,13 @@ describe('flow §4.10: notifications (bell + toast + the eight event types)', ()
     expect(bytes).toContain(NOTICE_SENTENCES.failed_evaluation);
   });
 
+  it('the toast record carries a DISMISS affordance (§4.10: the app layer\'s toast-close handler has an element — the J6 stuck-toast fix)', () => {
+    const bytes = render(toastRecord('failed_evaluation', 'Failed evaluation', NOTICE_SENTENCES.failed_evaluation));
+    expect(bytes).toContain('data-action="toast-close"');
+    expect(bytes).toContain('aria-label="Dismiss notification"');
+    expect(bytes).toContain('class="toast-close"');
+  });
+
   it('ALL EIGHT UX.md event types carry a distinct icon + ONE plain-language sentence', () => {
     expect(NOTICE_KINDS.length).toBe(8);
     const icons = new Set<string>();
