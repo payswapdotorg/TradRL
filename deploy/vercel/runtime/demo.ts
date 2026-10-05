@@ -38,8 +38,41 @@
 // un-bound/un-reported (org-status answers the honest typed
 // not-found; jobs stay submitted) — never a crash (R46).
 //
+// THE DEMO SUBSTANCE (T052 follow-up W-8 — the Phase-2 fix-forward):
+// the seeded demo world now carries the substance the competitive
+// experiment proved missing (phase2-competitive-report.md R2-R5):
+//   - R2: an EXECUTION BLOTTER — seeded gateway-submission records
+//     (routed fills + one honest risk-limit refusal) with order ids,
+//     instruments, sides, quantity/notional/fee, states, routing and
+//     timestamps, consistent with the seeded fill (the 0.75 BTC-USD
+//     limit buy whose notional 45750.375 / fee 0.02 the outcome
+//     record has carried since W-3f). Served read-only through the
+//     HOST-OWNED demo-substance route GET /v1/execution/submissions
+//     (runtime/routes.ts — additive; the frozen T041 route table is
+//     untouched) plus every live submission the demo gateway records.
+//   - R3: DECISION AUDIT SUBSTANCE on the seeded decision records —
+//     additive fields (`decisionBody`, `decisionRationale`,
+//     `riskChecks`, `evidence`) carrying the deciding body (a named
+//     desk), the decision's stated rationale (audit-grade prose, the
+//     post-mortem-note class — never hidden chain-of-thought), the
+//     pre-trade risk checks with outcomes, and evidence refs that
+//     resolve to the REAL seeded records (out:demo0001, pmr:demo0001,
+//     swo/shs:demo0001). The field names deliberately avoid the
+//     console watch surface's reasoning-key vocabulary
+//     (apps/web/src/core/watch.ts REASONING_KEYS) so the enriched
+//     records keep passing its chain-of-thought firewall.
+//   - R4: the machinery's ORG-COMPILE PASS — the W-3f compile ran
+//     only for the seeded demo project at boot; the tick now compiles
+//     ANY user-launched project of the credential tenant (bind
+//     through the real public route + the watch snapshot through the
+//     real private route), once per project, point-in-time stable.
+//   - R5: the demo project's seeded goal + constraint set carry
+//     NUMERIC bounds end-to-end (demoGoalStatement/demoConstraintSet
+//     — every predicate.bound / predicate.value a number), served
+//     read-only through the host-owned GET /v1/projects/:id/goal.
+//
 // Zero-dep law: platform APIs only. Spec anchors: R46, L12/L20,
-// UX-DESIGN §7, D-033.
+// UX-DESIGN §7, D-033, phase2-competitive-report R2-R5.
 
 import {
   fakeControlPlane,
@@ -49,18 +82,26 @@ import {
   fixtureKnowledge,
   recordingGateway,
   routedSubmission,
-  validCreateProjectRequest,
   validOrgStatusSnapshot,
 } from '../../../services/api/src/fixtures';
 import {
   deepFreeze,
+  fnv1a32Hex,
+  canonicalJson,
+  isGatewaySubmissionRecord,
   isOrgStatusSnapshot,
   isOutcomeRecordMirror,
   isPostMortemRecordMirror,
   type ApiService,
+  type ExecutionGatewayPort,
+  type GatewaySubmissionRecord,
+  type GoalStatement,
+  type ConstraintSetStatement,
   type OrgStatusSnapshot,
   type OutcomeRecordMirror,
   type PostMortemRecordMirror,
+  type StrategyIntent,
+  type TenantId,
   type TimestampMs,
 } from '../../../services/api/src/index';
 
@@ -82,6 +123,93 @@ export const DEMO_JOB_RUNNING_AFTER_MS = 3_000;
 
 /** The demo machinery's schedule: a job renders COMPLETE this long after submission. */
 export const DEMO_JOB_COMPLETE_AFTER_MS = 8_000;
+
+/** The demo capital budget (the seeded constraint set's numeric `equals` bound — the R5 story). */
+export const DEMO_CAPITAL_BUDGET = 250_000;
+
+/** The demo risk budget (the seeded constraint set's numeric `equals` bound — the R5 story). */
+export const DEMO_RISK_BUDGET = 25_000;
+
+/** The demo execution desk — the deciding body the seeded decision records name (the R3 story). */
+export const DEMO_EXECUTION_DESK = 'desk:tradrl-demo-execution';
+
+/** The pre-trade risk gate — the deciding body named on the seeded refusal (the R3 story). */
+export const DEMO_RISK_GATE = 'gate:pre-trade-risk';
+
+// ---------------------------------------------------------------------------
+// The demo goal + constraint set (R5 — numeric bounds end-to-end)
+// ---------------------------------------------------------------------------
+
+/**
+ * The demo project's goal statement (T007's GoalStatement, demo-branded).
+ * Every success criterion carries a NUMERIC predicate bound — the Risk
+ * section's render can display the numbers (R5: "a limit without a number
+ * is not a limit"). Exported for the host-owned goal read route
+ * (runtime/routes.ts) and the seed's create-project request.
+ */
+export function demoGoalStatement(tenant: string): GoalStatement {
+  return deepFreeze({
+    id: 'goal-tradrl-demo' as GoalStatement['id'],
+    version: 1,
+    tenantId: tenant as GoalStatement['tenantId'],
+    objective: 'Operate the TradRL demo organization inside its declared risk envelope with committee-grade evidence on every step',
+    horizon: { startsAt: (DEMO_T0 - 90 * 24 * 3_600_000) as TimestampMs, endsAt: (DEMO_T0 + 90 * 24 * 3_600_000) as TimestampMs, label: 'the demo evaluation window' },
+    successCriteria: {
+      criteria: [
+        { id: 'c-return', metric: 'returns.sharpe', predicate: { kind: 'limit.min', bound: 1.0 }, description: 'risk-adjusted return' },
+        { id: 'c-drawdown', metric: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.15 }, description: 'bounded drawdown' },
+        { id: 'c-costs', metric: 'costs.bps', predicate: { kind: 'limit.max', bound: 25 }, description: 'execution cost ceiling' },
+      ],
+      requiredSatisfaction: 2 / 3,
+    },
+    evaluation: { blindRef: 'blind:v1', walkForwardRef: 'wf:v1', regimeRef: 'regime:v1', adversarialRequired: true },
+    createdAt: (DEMO_T0 - 1000) as TimestampMs,
+    description: 'the seeded demo goal of the TradRL console',
+  });
+}
+
+/**
+ * The demo project's constraint set (T007's ConstraintSetStatement,
+ * demo-branded). Every predicate bound/value is a NUMBER (R5) — the
+ * capital/risk budgets the launch flow echoes, the gross-exposure cap the
+ * seeded intents' constraint proofs cite (k-position, limit.max 2), the
+ * turnover ceiling and the drawdown hard limit. Exported for the
+ * host-owned goal read route and the seed's create-project request.
+ */
+export function demoConstraintSet(tenant: string): ConstraintSetStatement {
+  return deepFreeze({
+    id: 'cs-tradrl-demo' as ConstraintSetStatement['id'],
+    version: 1,
+    tenantId: tenant as ConstraintSetStatement['tenantId'],
+    name: 'the TradRL demo constraint set',
+    constraints: [
+      { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: DEMO_CAPITAL_BUDGET }, severity: 'blocking', description: 'the demo capital budget' },
+      { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: DEMO_RISK_BUDGET }, severity: 'blocking', description: 'the demo risk budget' },
+      { id: 'k-position', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 2 }, severity: 'blocking', description: 'gross exposure cap (the seeded intents cite this proof)' },
+      { id: 'k-turnover', domain: 'action', subject: 'costs.dailyTurnover', predicate: { kind: 'limit.max', bound: 500 }, severity: 'advisory', description: 'daily turnover ceiling' },
+      { id: 'k-drawdown', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.15 }, severity: 'blocking', description: 'drawdown hard limit' },
+    ],
+    createdAt: (DEMO_T0 - 1000) as TimestampMs,
+  });
+}
+
+/**
+ * The demo project's create-project request (the demo goal + constraint
+ * set, numeric bounds end-to-end) — the body `seedDemoWorld` drives
+ * THROUGH the real POST /v1/projects route (the full T007 pipeline: L12
+ * tenant injection, the goal/constraint same-tenant law, the audit +
+ * metering tail).
+ */
+export function demoCreateProjectRequest(tenant: string, projectId: string): Record<string, unknown> {
+  return deepFreeze({
+    id: projectId,
+    name: 'the TradRL demo project',
+    executionMode: 'simulation',
+    goal: demoGoalStatement(tenant),
+    constraintSet: demoConstraintSet(tenant),
+    at: DEMO_T0,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // The demo records (the outcome/post-mortem seed — T033 mirror shapes)
@@ -127,6 +255,24 @@ export function demoOutcomeRecord(tenant: string, project: string): OutcomeRecor
       trajectoryRef: null,
       experiment: null,
     },
+    // R3 (W-8) — the decision-audit substance, ADDITIVE fields on the
+    // mirror shape (the structural guards check presence, never absence;
+    // the names deliberately avoid the console watch surface's
+    // reasoning-key vocabulary so the chain-of-thought firewall keeps
+    // passing): the deciding body behind decision xd:demo0001, its stated
+    // rationale (audit prose, the post-mortem-note class), and the
+    // pre-trade risk checks that passed before the fill.
+    decisionBody: DEMO_EXECUTION_DESK,
+    decisionRationale: 'The desk approved the 0.75 BTC-USD rebalance on a 0.07 weight drift against the 0.25 target; the realized fill landed -12.5 against the 45.5 expectation (tolerance 0.05) — the adverse gap post-mortem pmr:demo0001 attributes to the simulated venue lag.',
+    riskChecks: [
+      { dimension: 'kill_switch', outcome: 'pass' },
+      { dimension: 'identity', outcome: 'pass' },
+      { dimension: 'authorization', outcome: 'pass' },
+      { dimension: 'limits', outcome: 'pass' },
+      { dimension: 'venue_permissions', outcome: 'pass' },
+      { dimension: 'rate_limits', outcome: 'pass' },
+      { dimension: 'credentials', outcome: 'pass' },
+    ],
     asOf: DEMO_T0 as TimestampMs,
     priorChainHead: '00000000',
   });
@@ -164,35 +310,285 @@ export function demoPostMortemRecord(tenant: string, project: string): PostMorte
 }
 
 // ---------------------------------------------------------------------------
-// The demo ports (the fixture fakes, knowledge/outcome data seeded)
+// The demo execution blotter (R2 — the execution surface's seeded substance)
 // ---------------------------------------------------------------------------
 
-/** The demo backing's five ports (the REAL fixture fakes — the same objects the composition injects). */
+/** One seeded blotter row's order echo (the intent's order form, verbatim fields). */
+interface DemoBlotterOrder {
+  readonly clientOrderId: string;
+  readonly instrumentId: string;
+  readonly venueId: string;
+  readonly side: 'buy' | 'sell';
+  readonly kind: string;
+  readonly quantity: string;
+  readonly price: string;
+  readonly timeInForce: string;
+  readonly createdAt: string;
+}
+
+/** One seeded blotter row's simulated fill (the honest SIMULATED economics). */
+interface DemoBlotterFill {
+  readonly state: 'filled';
+  readonly quantity: string;
+  readonly price: string;
+  readonly notional: string;
+  readonly fee: string;
+  readonly filledAt: number;
+}
+
+/** A deterministic demo submission id ('xgs:' + 8 hex — the boundary's own grammar). */
+function demoSubmissionId(story: string): string {
+  return `xgs:${fnv1a32Hex(canonicalJson(['demo-submission', story] as never))}`;
+}
+
+/** One pre-trade risk check as the decision-audit substance carries it (the watch surface's own shape). */
+export interface DemoRiskCheck {
+  readonly dimension: string;
+  readonly outcome: string;
+}
+
+/** A typed evidence reference (kind + ref — the records' own evidence-refs shape). */
+export interface DemoEvidenceRef {
+  readonly kind: string;
+  readonly ref: string;
+}
+
+/**
+ * ONE SEEDED BLOTTER ROW: the boundary's own GatewaySubmissionRecord shape
+ * (routed | refused — the guard passes on every row) PLUS the ADDITIVE
+ * demo-substance fields (the console's contracts may gain optional fields
+ * in parallel — the render surface owns their display):
+ *   - `order` — the order form echo (ids, instrument, side, quantity, price);
+ *   - `fill` — the simulated fill (state, notional, fee, timestamps);
+ *   - `decisionBody` / `decisionRationale` / `riskChecks` / `evidence` — the
+ *     R3 decision-audit substance (a named deciding body, the decision's
+ *     stated rationale, the pre-trade risk checks with outcomes, evidence
+ *     refs that resolve to the REAL seeded records). The names deliberately
+ *     avoid the console watch surface's reasoning-key vocabulary
+ *     (apps/web/src/core/watch.ts REASONING_KEYS) — the enriched records
+ *     keep passing its chain-of-thought firewall.
+ */
+export type DemoBlotterRow = GatewaySubmissionRecord & {
+  readonly order?: DemoBlotterOrder;
+  readonly fill?: DemoBlotterFill;
+  readonly decisionBody?: string;
+  readonly decisionRationale?: string;
+  readonly riskChecks?: readonly DemoRiskCheck[];
+  readonly evidence?: readonly DemoEvidenceRef[];
+};
+
+/** The pre-trade risk-check pass list the routed rows carry (the R3 audit substance). */
+const PASSED_PRE_TRADE_CHECKS: readonly DemoRiskCheck[] = deepFreeze([
+  { dimension: 'kill_switch', outcome: 'pass' },
+  { dimension: 'identity', outcome: 'pass' },
+  { dimension: 'authorization', outcome: 'pass' },
+  { dimension: 'limits', outcome: 'pass' },
+  { dimension: 'venue_permissions', outcome: 'pass' },
+  { dimension: 'rate_limits', outcome: 'pass' },
+  { dimension: 'credentials', outcome: 'pass' },
+]);
+
+/**
+ * THE DEMO EXECUTION BLOTTER (R2, W-8): seeded gateway-submission records —
+ * the console's Execution section reads exactly the GatewaySubmissionRecord
+ * shape (routed | refused), so every row IS that shape (the boundary's own
+ * guard passes on each), enriched with ADDITIVE fields the console render
+ * may surface: `order` (the order form echo — ids, instrument, side,
+ * quantity, price), `fill` (the simulated fill — state, notional, fee,
+ * timestamps), and the R3 decision-audit substance (`decisionBody`,
+ * `decisionRationale`, `riskChecks`, `evidence` — refs that resolve to the
+ * REAL seeded records). Row 1 is THE seeded fill's own story: the 0.75
+ * BTC-USD limit buy at 61000.50 (notional 45750.375, fee 0.02) whose
+ * adverse gap out:demo0001 / post-mortem pmr:demo0001 carry — the blotter
+ * and the Outcomes section now tell one coherent tale. Row 3 is an honest
+ * risk-limit refusal: the hard risk gate demonstrably refuses (the
+ * k-position gross-exposure cap the demo constraint set declares).
+ */
+export function demoSubmissionBlotter(): readonly DemoBlotterRow[] {
+  const buyOrder: DemoBlotterOrder = {
+    clientOrderId: 'ord-demo-0001',
+    instrumentId: 'BTC-USD',
+    venueId: 'BROKER-FIX',
+    side: 'buy',
+    kind: 'limit',
+    quantity: '0.75',
+    price: '61000.50',
+    timeInForce: 'gtc',
+    createdAt: new Date(DEMO_T0).toISOString(),
+  };
+  const trimOrder: DemoBlotterOrder = {
+    clientOrderId: 'ord-demo-0002',
+    instrumentId: 'ETH-USD',
+    venueId: 'BROKER-FIX',
+    side: 'sell',
+    kind: 'limit',
+    quantity: '6.0',
+    price: '3412.10',
+    timeInForce: 'gtc',
+    createdAt: new Date(DEMO_T0 + 60_000).toISOString(),
+  };
+  const refusedOrder: DemoBlotterOrder = {
+    clientOrderId: 'ord-demo-0003',
+    instrumentId: 'BTC-USD',
+    venueId: 'BROKER-FIX',
+    side: 'buy',
+    kind: 'limit',
+    quantity: '0.9',
+    price: '61000.50',
+    timeInForce: 'gtc',
+    createdAt: new Date(DEMO_T0 + 120_000).toISOString(),
+  };
+  const seededFill: DemoBlotterFill = { state: 'filled', quantity: '0.75', price: '61000.50', notional: '45750.375', fee: '0.02', filledAt: DEMO_T0 + 250 };
+  const trimFill: DemoBlotterFill = { state: 'filled', quantity: '6.0', price: '3412.10', notional: '20472.60', fee: '0.03', filledAt: DEMO_T0 + 60_250 };
+  return deepFreeze([
+    // Row 1 — the seeded adverse-gap trade: routed + filled; decision
+    // xd:demo0001 / intent si:demo0001 (the outcome record's own refs).
+    {
+      kind: 'routed',
+      submissionId: demoSubmissionId('0001'),
+      decisionId: 'xd:demo0001',
+      auditId: 'xga:demo0001',
+      requestRef: 'gor:demo0001',
+      venue: 'BROKER-FIX',
+      adapterRef: 'adapter:demo-broker',
+      channelRef: 'chan:demo-main',
+      routedAt: DEMO_T0 as TimestampMs,
+      order: buyOrder,
+      fill: seededFill,
+      decisionBody: DEMO_EXECUTION_DESK,
+      decisionRationale: 'Rebalance drift on BTC-USD reached 0.07 against the 0.25 target weight; the desk ordered a 0.75 limit buy at the seeded session price to restore the band. The gateway routed it; the fill economics (notional 45750.375, fee 0.02) are the outcome out:demo0001\'s own realization.',
+      riskChecks: PASSED_PRE_TRADE_CHECKS,
+      evidence: [
+        { kind: 'shadow_outcome', ref: 'swo:demo0001' },
+        { kind: 'shadow_session', ref: 'shs:demo0001' },
+        { kind: 'outcome', ref: 'out:demo0001' },
+      ],
+    },
+    // Row 2 — the same shadow session's trim: routed + filled, clean.
+    {
+      kind: 'routed',
+      submissionId: demoSubmissionId('0002'),
+      decisionId: 'xd:demo0002',
+      auditId: 'xga:demo0002',
+      requestRef: 'gor:demo0002',
+      venue: 'BROKER-FIX',
+      adapterRef: 'adapter:demo-broker',
+      channelRef: 'chan:demo-main',
+      routedAt: (DEMO_T0 + 60_000) as TimestampMs,
+      order: trimOrder,
+      fill: trimFill,
+      decisionBody: DEMO_EXECUTION_DESK,
+      decisionRationale: 'Trim the ETH-USD overweight after the session\'s adverse gap; a 6.0 limit sell reduces concentrated exposure ahead of the post-mortem window.',
+      riskChecks: PASSED_PRE_TRADE_CHECKS,
+      evidence: [
+        { kind: 'shadow_session', ref: 'shs:demo0001' },
+        { kind: 'outcome', ref: 'out:demo0001' },
+      ],
+    },
+    // Row 3 — the honest refusal: the hard risk gate demonstrably says no
+    // (the risk-limits stage; the k-position cap the demo constraint set
+    // declares). A blotter that only ever fills would be a lie.
+    {
+      kind: 'refused',
+      submissionId: demoSubmissionId('0003'),
+      decisionId: null,
+      auditId: 'xga:demo0003',
+      refusal: {
+        stage: 'risk_limits',
+        evaluationId: 'rev:demo0003',
+        refusals: [
+          { constraintId: 'k-position', domain: 'state', subject: 'position.grossExposure', severity: 'blocking', predicate: { kind: 'limit.max', bound: 2 }, observed: '2.4' },
+        ],
+      },
+      refusedAt: (DEMO_T0 + 120_000) as TimestampMs,
+      order: refusedOrder,
+      decisionBody: DEMO_RISK_GATE,
+      decisionRationale: 'The order was refused at the risk-limits stage: projected gross exposure 2.4 exceeds the blocking limit.max bound 2 (constraint k-position of cs-tradrl-demo). The desk\'s request never reached routing.',
+      riskChecks: [{ dimension: 'risk_limits', outcome: 'refused' }],
+      evidence: [{ kind: 'gateway-audit', ref: 'xga:demo0003' }],
+    },
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// The demo ports (the fixture fakes, knowledge/outcome/blotter data seeded)
+// ---------------------------------------------------------------------------
+
+/** One live-recorded gateway submission (the record + the intent's project scope). */
+export interface DemoGatewayRecording {
+  readonly record: GatewaySubmissionRecord;
+  readonly project: string;
+}
+
+/**
+ * The demo execution gateway: the REAL fixture recording fake, wrapped so
+ * every submission the boundary ROUTES through it is also RECORDED (record
+ * + the intent's project) — the host-owned execution blotter read route
+ * (runtime/routes.ts) serves the seeded rows PLUS these live rows, so the
+ * Execution section is a real blotter (seeded history + session activity).
+ * The routed responses themselves are the fixture's own records, verbatim
+ * (W-3f behavior unchanged).
+ */
+export function demoExecutionGateway(): ExecutionGatewayPort & { readonly recorded: readonly DemoGatewayRecording[] } {
+  const recorded: DemoGatewayRecording[] = [];
+  const inner = recordingGateway((intent) => routedSubmission(intent, intent.asOf));
+  return {
+    get recorded(): readonly DemoGatewayRecording[] {
+      return Object.freeze([...recorded]);
+    },
+    submitRequest(intent: StrategyIntent) {
+      const result = inner.submitRequest(intent);
+      if (result.ok) recorded.push({ record: result.value, project: intent.project });
+      return result;
+    },
+  };
+}
+
+/** The demo backing's ports (the REAL fixture fakes — the same objects the composition injects) + the seeded blotter. */
 export interface DemoPorts {
   readonly controlPlane: ReturnType<typeof fakeControlPlane>;
   readonly firmMemory: ReturnType<typeof fakeFirmMemory>;
   readonly outcomeLearning: ReturnType<typeof fakeOutcomeLearning>;
-  readonly executionGateway: ReturnType<typeof recordingGateway>;
+  readonly executionGateway: ReturnType<typeof demoExecutionGateway>;
   readonly jobSubmission: ReturnType<typeof fakeJobSubmission>;
+  /** The seeded execution blotter (R2 — read data, like the outcome records; served by the host-owned read route). */
+  readonly submissions: readonly GatewaySubmissionRecord[];
 }
+
+/**
+ * The demo project's full execution blotter at one instant: the SEEDED rows
+ * (all scoped to the demo project) plus every LIVE submission the demo
+ * gateway has routed for the requested project. Order-stable (seeded first,
+ * then live in routing order).
+ */
+export function demoSubmissionsOf(ports: DemoPorts, project: string): readonly GatewaySubmissionRecord[] {
+  // The seeded rows are the DEMO project's own (the record shape carries no
+  // scope fields — the console's watch fold inherits the workspace scope,
+  // and the host read route scopes by the project query parameter).
+  const seeded = project === DEMO_PROJECT_ID ? ports.submissions : [];
+  const live = ports.executionGateway.recorded.filter((entry) => entry.project === project).map((entry) => entry.record);
+  return Object.freeze([...seeded, ...live]);
+}
+
 /**
  * Build the demo ports (the REAL fixture fakes, imported from the
- * frozen service's own fixtures — never edited). The knowledge and
- * outcome ports are seeded READ data scoped to the deployment's
+ * frozen service's own fixtures — never edited). The knowledge, outcome
+ * and submission ports are seeded READ data scoped to the deployment's
  * credential tenant (L12: a foreign tenant's credential is served
  * nothing of it); the control plane starts empty — the demo project is
  * created through the real route (see seedDemoWorld); the gateway
  * serves ROUTED submissions for every valid intent (the fixture's own
- * L8 record shapes); the job port records submissions (the async
- * pattern's entry state).
+ * L8 record shapes) and records them into the live blotter; the job
+ * port records submissions (the async pattern's entry state).
  */
 export function seedDemoBacking(tenant: string): DemoPorts {
   return {
     controlPlane: fakeControlPlane(),
     firmMemory: fakeFirmMemory([...fixtureKnowledge(tenant, DEMO_PROJECT_ID)]),
     outcomeLearning: fakeOutcomeLearning([demoOutcomeRecord(tenant, DEMO_PROJECT_ID)], [demoPostMortemRecord(tenant, DEMO_PROJECT_ID)]),
-    executionGateway: recordingGateway((intent) => routedSubmission(intent, intent.asOf)),
+    executionGateway: demoExecutionGateway(),
     jobSubmission: fakeJobSubmission(),
+    submissions: demoSubmissionBlotter(),
   };
 }
 
@@ -218,13 +614,13 @@ export interface DemoWorldSeedResult {
 
 /**
  * Seed the demo world through the REAL routes, immediately after the
- * service is composed: one project (the fixture goal/constraint shapes
- * for the credential tenant) +, when the internal credential is
- * configured, the organization bind and the org-status snapshot report
- * (the watch surface's only writer). `at` is the host-injected boot
- * instant. Throws only on an impossible seed (the fixture builders are
- * the canonical valid shapes — a failure means the frozen contract
- * drifted, which must be loud).
+ * service is composed: one project (the demo goal/constraint shapes —
+ * NUMERIC bounds end-to-end, R5 — for the credential tenant) +, when the
+ * internal credential is configured, the organization bind and the
+ * org-status snapshot report (the watch surface's only writer). `at` is
+ * the host-injected boot instant. Throws only on an impossible seed (the
+ * demo builders are canonical valid shapes — a failure means the frozen
+ * contract drifted, which must be loud).
  */
 export function seedDemoWorld(service: ApiService, seed: DemoWorldSeed, at: number): DemoWorldSeedResult {
   const developer = { authorization: `Bearer ${seed.developerToken}` };
@@ -234,7 +630,7 @@ export function seedDemoWorld(service: ApiService, seed: DemoWorldSeed, at: numb
     method: 'POST',
     path: '/v1/projects',
     headers: developer,
-    body: validCreateProjectRequest(seed.tenant, DEMO_PROJECT_ID, 'the TradRL demo project'),
+    body: demoCreateProjectRequest(seed.tenant, DEMO_PROJECT_ID),
   });
   if (created.status !== 201) {
     throw new Error(`demo backing: the demo project seed was refused (${created.status}) — the frozen create contract may have drifted`);
@@ -277,21 +673,89 @@ export function seedDemoWorld(service: ApiService, seed: DemoWorldSeed, at: numb
 }
 
 // ---------------------------------------------------------------------------
-// The demo machinery (advances jobs THROUGH the real private plane)
+// The demo machinery (org compile + job animation — THROUGH the real planes)
 // ---------------------------------------------------------------------------
 
+/** The machinery's fixed inputs (the composition's own values). */
+export interface DemoMachineryContext {
+  /** The demo ports (the control plane's project listing drives the org-compile pass). */
+  readonly ports: DemoPorts;
+  /** The credential tenant (L12 — the compile pass serves ONLY this tenant's projects). */
+  readonly tenant: string;
+  /** The public-plane developer token (the organization bind route). */
+  readonly developerToken: string;
+  /** The private-plane internal token (the org-status report + the job transitions). */
+  readonly internalToken: string;
+}
+
 /**
- * One demo machinery tick: advance every non-terminal job toward
- * completion THROUGH THE REAL PRIVATE PLANE (POST
- * /internal/jobs/transitions — the async pattern's only transition
- * writer; the transition legality machine in services/api rejects
- * illegal moves, so the tick is idempotent by construction). `at` is
- * the host-injected request instant. Research jobs complete with a
- * release-candidate result record (the console's release-candidate
- * notice + evidence surfaces); learning jobs complete with a plain
- * training summary.
+ * The organization ref the machinery compiles a launched project onto —
+ * deterministic per project (the same project always compiles onto the
+ * same organization; a re-compile would re-bind the same ref).
  */
-export function demoMachineryTick(service: ApiService, internalToken: string, at: number): void {
+export function compiledOrganizationRefOf(projectId: string): string {
+  return `org:compiled-${projectId}`;
+}
+
+/**
+ * THE ORG-COMPILE PASS (R4, W-8): the W-3f compile ran only for the seeded
+ * demo project, at boot — every USER-LAUNCHED project stayed "Not compiled
+ * yet / No organization snapshots" forever (phase2-competitive-report R4,
+ * 9/15 personas blocked). This pass compiles EVERY bindable-but-unbound
+ * project of the credential tenant, THROUGH the same real routes the demo
+ * seed uses: the organization bind (POST /v1/projects/:id/organization —
+ * the public plane, the full pipeline) + the watch snapshot report (POST
+ * /internal/organizations/status — the private plane, the watch store's
+ * only writer). The snapshot's `at` is the compile tick's instant — the
+ * compile happens ONCE (the bind flips organizationRef, so later ticks
+ * skip the project) and the point-in-time story stays stable (the org
+ * becomes knowable at the compile instant; a later tick never rewrites
+ * it). A project the real route refuses to bind (not draft/paused, a port
+ * failure) is SKIPPED — never a crash (R46: the machinery must never take
+ * the request down).
+ */
+function compileOrganizations(service: ApiService, context: DemoMachineryContext, at: number): void {
+  const listed = context.ports.controlPlane.projectsOf(context.tenant as TenantId);
+  if (!listed.ok) return; // R46: a port failure skips the pass — never a crash
+  for (const project of listed.value) {
+    if (project.lifecycle.organizationRef !== null) continue; // already compiled (or bound by its owner)
+    if (project.lifecycle.status !== 'draft' && project.lifecycle.status !== 'paused') continue; // the real route would refuse — skip without the request
+    const organizationRef = compiledOrganizationRefOf(project.id);
+    // NOTE: the machinery drives the service DIRECTLY (service.handle), and
+    // the T041 route table expects DECODED public paths (its own tests drive
+    // raw ids; the HTTP layer percent-decodes before the wrap) — the raw id
+    // goes into the path, never the encoded form.
+    const bound = service.handle({
+      method: 'POST',
+      path: `/v1/projects/${project.id}/organization`,
+      headers: { authorization: `Bearer ${context.developerToken}` },
+      body: { organizationRef, at },
+    });
+    if (bound.status !== 200) continue; // the real route refused — honest, never a crash
+    const snapshot: OrgStatusSnapshot = deepFreeze({ ...validOrgStatusSnapshot(context.tenant, project.id, organizationRef), at });
+    if (!isOrgStatusSnapshot(snapshot)) continue; // unreachable (the fixture builder is the canonical shape) — skip, never a crash
+    service.handle({
+      method: 'POST',
+      path: '/internal/organizations/status',
+      headers: { authorization: `Bearer ${context.internalToken}` },
+      body: { snapshot },
+    });
+  }
+}
+
+/**
+ * One demo machinery tick: (1) the org-compile pass above, then (2) advance
+ * every non-terminal job toward completion THROUGH THE REAL PRIVATE PLANE
+ * (POST /internal/jobs/transitions — the async pattern's only transition
+ * writer; the transition legality machine in services/api rejects illegal
+ * moves, so the tick is idempotent by construction). `at` is the
+ * host-injected request instant. Research jobs complete with a
+ * release-candidate result record (the console's release-candidate notice
+ * + evidence surfaces); learning jobs complete with a plain training
+ * summary.
+ */
+export function demoMachineryTick(service: ApiService, context: DemoMachineryContext, at: number): void {
+  compileOrganizations(service, context, at);
   for (const job of service.jobs()) {
     if (job.status === 'complete' || job.status === 'failed') continue;
     const age = at - job.submittedAt;
@@ -302,7 +766,7 @@ export function demoMachineryTick(service: ApiService, internalToken: string, at
     service.handle({
       method: 'POST',
       path: '/internal/jobs/transitions',
-      headers: { authorization: `Bearer ${internalToken}` },
+      headers: { authorization: `Bearer ${context.internalToken}` },
       body: status === 'complete'
         ? {
             jobId: job.jobId,
@@ -329,4 +793,9 @@ export function demoOutcomeRecordIsValid(tenant: string, project: string): boole
 /** Guard pin: the demo post-mortem record satisfies the boundary's own structural guard. */
 export function demoPostMortemRecordIsValid(tenant: string, project: string): boolean {
   return isPostMortemRecordMirror(demoPostMortemRecord(tenant, project));
+}
+
+/** Guard pin: every seeded blotter row satisfies the boundary's own GatewaySubmissionRecord guard. */
+export function demoBlotterIsValid(): boolean {
+  return demoSubmissionBlotter().every((row) => isGatewaySubmissionRecord(row));
 }

@@ -19,18 +19,35 @@
 // stay the typed pending stubs until the W-3e hydration seam
 // (deploy/wire/production.md) — those routes answer the typed 503.
 //
+// THE HOST-OWNED DEMO-SUBSTANCE READ ROUTES (W-8, additive): under the
+// demo backing, two read-only routes are served from the seeded demo
+// data BEFORE the boundary wrap (GET /v1/execution/submissions — the
+// execution blotter, R2; GET /v1/projects/:id/goal — the seeded goal +
+// constraint set, R5). The paths are declared nowhere in the frozen
+// route table, so every other backing/shape keeps the exact pre-W-8
+// behavior (the typed not-found). See runtime/routes.ts.
+//
 // NO CORS headers are ever emitted (the same-origin law — the console
 // reaches this function through rewrites, never cross-origin).
 //
 // Zero-dep law: platform APIs only. Function config (region, memory,
 // timeout) lives in deploy/vercel/vercel.json.
 
-import { getDeploymentService } from '../runtime/compose';
+import { getDeploymentService, type DeploymentComposition } from '../runtime/compose';
 import { toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
+import { serveDemoSubstanceRoute } from '../runtime/routes';
 
-export default async function handler(request: FunctionRequest, response: FunctionResponse): Promise<void> {
+/** The demo-substance read routes' request serial (per instance — the minted request ids stay unique per invocation). */
+let demoSubstanceSerial = 0;
+
+/**
+ * Serve ONE request over an ALREADY-COMPOSED deployment (the test seam:
+ * the runtime harness drives the full function path — tick, wrap,
+ * host-route, boundary — without env games; the default `handler` below
+ * composes from the process environment exactly as before).
+ */
+export async function handleDeploymentRequest(deployment: DeploymentComposition, request: FunctionRequest, response: FunctionResponse): Promise<void> {
   // 1. Compose (memoized per instance — warm starts reuse the service).
-  const deployment = getDeploymentService();
   if (!deployment.ok) {
     // The typed degraded state (R46): the deployment is not configured —
     // MISSING KEY NAMES ONLY, never values (secrets never cross the wire).
@@ -41,8 +58,10 @@ export default async function handler(request: FunctionRequest, response: Functi
   // 2. The demo machinery tick (W-3f): under the demo backing, advance
   //    non-terminal jobs through the real private plane BEFORE the
   //    request is served, so the console's job polling observes the
-  //    async pattern (submitted -> running -> complete). A no-op under
-  //    every other backing / without the internal credential.
+  //    async pattern (submitted -> running -> complete) — and compile
+  //    any user-launched project's organization (W-8's R4 pass, same
+  //    tick). A no-op under every other backing / without the internal
+  //    credential.
   if (deployment.demo !== null && deployment.demo.tick !== null) {
     deployment.demo.tick(Date.now());
   }
@@ -54,9 +73,29 @@ export default async function handler(request: FunctionRequest, response: Functi
     return;
   }
 
-  // 4. One request through the whole T041 pipeline.
+  // 4. The host-owned demo-substance read routes (W-8, additive): served
+  //    from the demo backing's seeded data when the request is one of
+  //    them; every other request (and every other backing) falls through
+  //    to the boundary unchanged.
+  if (deployment.demo !== null) {
+    const hostRoute = serveDemoSubstanceRoute(
+      { ports: deployment.demo.ports, verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization },
+      wrapped.request,
+      demoSubstanceSerial++,
+    );
+    if (hostRoute !== null) {
+      writeApiResponse(response, hostRoute);
+      return;
+    }
+  }
+
+  // 5. One request through the whole T041 pipeline.
   const apiResponse = deployment.service.handle(wrapped.request);
 
-  // 5. Write the envelope out (no CORS — same-origin only).
+  // 6. Write the envelope out (no CORS — same-origin only).
   writeApiResponse(response, apiResponse);
+}
+
+export default async function handler(request: FunctionRequest, response: FunctionResponse): Promise<void> {
+  await handleDeploymentRequest(getDeploymentService(), request, response);
 }

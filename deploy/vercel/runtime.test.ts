@@ -21,14 +21,25 @@ import { describe, expect, it } from 'vitest';
 import { composeDeployment, DEPLOY_ADAPTER_PENDING, degradedPorts, getDeploymentService } from './runtime/compose';
 import { API_ENV_KEYS, DURABLE_PROVIDER_ENV_KEYS, missingApiEnvKeys, readApiEnv, readConsoleEnv, resolveDeployBacking } from './runtime/env';
 import {
+  compiledOrganizationRefOf,
+  DEMO_CAPITAL_BUDGET,
+  DEMO_EXECUTION_DESK,
   DEMO_JOB_COMPLETE_AFTER_MS,
   DEMO_JOB_RUNNING_AFTER_MS,
   DEMO_ORGANIZATION_REF,
   DEMO_PROJECT_ID,
+  DEMO_RISK_BUDGET,
+  demoBlotterIsValid,
+  demoConstraintSet,
+  demoGoalStatement,
   demoOutcomeRecordIsValid,
+  demoOutcomeRecord,
   demoPostMortemRecordIsValid,
+  demoSubmissionBlotter,
 } from './runtime/demo';
-import { validStrategyIntent } from '../../services/api/src/fixtures';
+import { validCreateProjectRequest, validStrategyIntent } from '../../services/api/src/fixtures';
+import { isGatewaySubmissionRecord, isOutcomeRecordMirror, type ApiService } from '../../services/api/src/index';
+import { handleDeploymentRequest } from './api/router';
 import { FUNCTION_MOUNT_PATH, publicPathOf, queryOf, readJsonBody, toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from './runtime/http';
 
 // ---------------------------------------------------------------------------
@@ -644,5 +655,413 @@ describe('deploy/vercel — the L12 probes through the demo ports', () => {
       expect(outcomeItems.length).toBe(1);
       expect(outcomeItems[0]!.tenant).toBe(tenant);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The demo execution blotter (R2 — W-8: the Execution section's substance)
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the demo execution blotter (R2: order ids, states, routing — never an empty placeholder)', () => {
+  it('every seeded row IS the boundary\'s own GatewaySubmissionRecord shape (the guard passes on each) and carries the blotter substance', () => {
+    expect(demoBlotterIsValid()).toBe(true); // the boundary's own structural guard, row for row
+    // A flat row view for the assertions below (the additive fields are
+    // optional on the wire; the view widens them for direct access).
+    const rows = demoSubmissionBlotter() as unknown as readonly {
+      kind: string; submissionId: string; auditId: string; decisionId: string | null; venue?: string; routedAt?: number; refusal?: { stage: string }; refusedAt?: number;
+      order?: { instrumentId: string; side: string; quantity: string; clientOrderId: string };
+      fill?: { state: string; notional: string; fee: string };
+      riskChecks?: readonly { dimension: string; outcome: string }[];
+    }[];
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(isGatewaySubmissionRecord(row)).toBe(true);
+      expect(row.submissionId).toMatch(/^xgs:[0-9a-f]{8}$/); // the boundary's own id grammar
+      expect(typeof row.auditId === 'string' && row.auditId.startsWith('xga:')).toBe(true);
+    }
+    const buy = rows[0]!;
+    const trim = rows[1]!;
+    const refused = rows[2]!;
+    // Row 1 — the seeded fill's own story: the 0.75 BTC-USD limit buy whose
+    // notional 45750.375 / fee 0.02 the outcome record out:demo0001 carries.
+    expect(buy.kind).toBe('routed');
+    expect(buy.decisionId).toBe('xd:demo0001'); // the outcome record's own decision ref — one coherent tale
+    expect(buy.venue).toBe('BROKER-FIX');
+    expect(buy.order?.instrumentId).toBe('BTC-USD');
+    expect(buy.order?.side).toBe('buy');
+    expect(buy.order?.quantity).toBe('0.75');
+    expect(buy.order?.clientOrderId).toBe('ord-demo-0001');
+    expect(buy.fill?.state).toBe('filled');
+    expect(buy.fill?.notional).toBe('45750.375');
+    expect(buy.fill?.fee).toBe('0.02');
+    // Row 2 — the same shadow session's trim (a sell, a second instrument).
+    expect(trim.kind).toBe('routed');
+    // Row 3 — the honest refusal: the hard risk gate demonstrably says no.
+    expect(refused.kind).toBe('refused');
+    expect(refused.refusal?.stage).toBe('risk_limits');
+    expect(refused.riskChecks).toEqual([{ dimension: 'risk_limits', outcome: 'refused' }]);
+    expect(typeof refused.refusedAt).toBe('number');
+  });
+
+  it('the host route GET /v1/execution/submissions serves the seeded blotter through the FULL function handler (the page envelope, no CORS)', async () => {
+    const composed = composeDeployment(apiEnv());
+    expect(composed.ok).toBe(true);
+    if (!composed.ok) return;
+    const { response, captured } = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: `/v1/execution/submissions?project=${encodeURIComponent(DEMO_PROJECT_ID)}`,
+      headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` },
+    }), response);
+    const written = captured();
+    expect(written.status).toBe(200);
+    expect(written.headers['content-type']).toBe('application/json; charset=utf-8');
+    expect(written.headers['x-api-version']).toBe('v1');
+    expect(written.headers['x-request-id']).toMatch(/^req:/);
+    for (const key of Object.keys(written.headers)) expect(key.toLowerCase()).not.toContain('access-control');
+    const body = JSON.parse(written.payload as string) as { requestId: string; data: { items: readonly { kind: string; submissionId: string }[] } };
+    expect(body.requestId).toBe(written.headers['x-request-id']);
+    expect(body.data.items.map((row) => row.kind)).toEqual(['routed', 'routed', 'refused']);
+    expect(body.data.items.every((row) => row.submissionId.startsWith('xgs:'))).toBe(true);
+  });
+
+  it('the host route auth law mirrors the boundary\'s own: absent/unknown Bearer is the typed 401; a missing project param is the typed 400', async () => {
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const noToken = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: `/v1/execution/submissions?project=${DEMO_PROJECT_ID}`, headers: {} }), noToken.response);
+    expect(noToken.captured().status).toBe(401);
+    expect((JSON.parse(noToken.captured().payload as string) as { error: { code: string } }).error.code).toBe('unauthenticated');
+    const wrongToken = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: `/v1/execution/submissions?project=${DEMO_PROJECT_ID}`, headers: { authorization: 'Bearer tok-wrong' } }), wrongToken.response);
+    expect(wrongToken.captured().status).toBe(401);
+    const noProject = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: '/v1/execution/submissions', headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` } }), noProject.response);
+    expect(noProject.captured().status).toBe(400);
+    expect((JSON.parse(noProject.captured().payload as string) as { error: { code: string } }).error.code).toBe('validation_failed');
+  });
+
+  it('the project scoping: a foreign project\'s page is empty (the seeded rows are the demo project\'s own)', async () => {
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const { response, captured } = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: '/v1/execution/submissions?project=prj-someone-elses',
+      headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` },
+    }), response);
+    expect(captured().status).toBe(200);
+    expect((JSON.parse(captured().payload as string) as { data: { items: readonly unknown[] } }).data.items).toEqual([]);
+  });
+
+  it('ADDITIVE / backward-compatible: under the DURABLE backing, under port overrides, and for non-GET methods the route falls through to the boundary (the typed not_found — the pre-W-8 behavior)', async () => {
+    for (const [label, composed] of [
+      ['the durable backing', composeDeployment(apiEnv({ TRADRL_DEPLOY_BACKING: 'durable' }))],
+      ['port overrides (the injection seam owns its own world)', composeDeployment(apiEnv(), { controlPlane: degradedPorts().controlPlane })],
+      ['the demo backing (a non-GET method)', composeDeployment(apiEnv())],
+    ] as const) {
+      expect(composed.ok, label).toBe(true);
+      if (!composed.ok) continue;
+      const { response, captured } = capture();
+      await handleDeploymentRequest(composed, streamingRequest({
+        method: label === 'the demo backing (a non-GET method)' ? 'POST' : 'GET',
+        url: `/v1/execution/submissions?project=${DEMO_PROJECT_ID}`,
+        headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}`, 'idempotency-key': 'idem:w8:falloff' },
+        chunks: ['{}'],
+      }), response);
+      expect(captured().status, label).toBe(404);
+      expect((JSON.parse(captured().payload as string) as { error: { code: string } }).error.code, label).toBe('not_found');
+    }
+  });
+
+  it('live execution requests join the blotter: a real POST /v1/execution/requests is recorded and served after the seeded rows', async () => {
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const intent = validStrategyIntent(VALID_ENV[API_ENV_KEYS.apiDeveloperTenant], DEMO_PROJECT_ID as never);
+    const response = composed.service.handle({
+      method: 'POST',
+      path: '/v1/execution/requests',
+      headers: { ...bearer, 'idempotency-key': 'idem:demo:blotter:live:1' },
+      body: { intent },
+    });
+    expect(response.status).toBe(200);
+    const { response: routeResponse, captured } = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: `/v1/execution/submissions?project=${DEMO_PROJECT_ID}`,
+      headers: bearer,
+    }), routeResponse);
+    const body = JSON.parse(captured().payload as string) as { data: { items: readonly { submissionId: string }[] } };
+    expect(body.data.items).toHaveLength(4); // 3 seeded + the live routed submission
+    const live = body.data.items[3]!;
+    expect(live.submissionId).toBe((response.body as { data: { submissionId: string } }).data.submissionId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The seeded decision substance (R3 — deciding body, rationale, risk checks,
+// live evidence refs — additive fields on the seeded decision records)
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the seeded decision substance (R3: auditable decisions, additive fields)', () => {
+  it('the enriched outcome record still satisfies the boundary\'s mirror guard and carries the deciding body, the stated rationale and the risk checks — served through the REAL route', () => {
+    const tenant = VALID_ENV[API_ENV_KEYS.apiDeveloperTenant];
+    expect(demoOutcomeRecordIsValid(tenant, DEMO_PROJECT_ID)).toBe(true);
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const outcomes = composed.service.handle({
+      method: 'POST',
+      path: '/v1/outcomes/query',
+      headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` },
+      body: { project: DEMO_PROJECT_ID, at: 1_730_000_000_000 },
+    });
+    expect(outcomes.status).toBe(200);
+    const record = (outcomes.body as { data: { items: readonly Record<string, unknown>[] } }).data.items[0]!;
+    expect(record.decisionBody).toBe(DEMO_EXECUTION_DESK);
+    expect(typeof record.decisionRationale).toBe('string');
+    expect((record.decisionRationale as string).length).toBeGreaterThan(40); // rationale PROSE, not a bare ref
+    expect(record.riskChecks).toEqual(expect.arrayContaining([
+      { dimension: 'kill_switch', outcome: 'pass' },
+      { dimension: 'limits', outcome: 'pass' },
+    ]));
+  });
+
+  it('the blotter rows\' decision audit substance: a named deciding body per verdict, rationale prose, risk checks with outcomes, and evidence refs that resolve to REAL seeded records', () => {
+    const rows = demoSubmissionBlotter() as unknown as readonly {
+      decisionBody?: string; decisionRationale?: string; riskChecks?: readonly { dimension: string; outcome: string }[]; evidence?: readonly { kind: string; ref: string }[]; kind: string;
+    }[];
+    for (const row of rows) {
+      expect(typeof row.decisionBody).toBe('string'); // never "unknown/unspecified" again
+      expect((row.decisionRationale as string).length).toBeGreaterThan(40);
+      expect(row.riskChecks?.length).toBeGreaterThan(0); // never "Risk checks: none" again
+      expect(row.evidence?.length).toBeGreaterThan(0); // never dead chips again
+    }
+    // The routed rows name the desk; the refusal names the risk gate (the body that decided).
+    expect(rows[0]!.decisionBody).toBe(DEMO_EXECUTION_DESK);
+    expect(rows[2]!.decisionBody).toBe('gate:pre-trade-risk');
+    // The evidence refs resolve to records the seed REALLY serves (the outcome
+    // + post-mortem queries are the capsules' read surfaces).
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const outcomes = composed.service.handle({ method: 'POST', path: '/v1/outcomes/query', headers: bearer, body: { project: DEMO_PROJECT_ID, at: 1_730_000_000_000 } });
+    const postMortems = composed.service.handle({ method: 'POST', path: '/v1/post-mortems/query', headers: bearer, body: { project: DEMO_PROJECT_ID, at: 1_730_000_000_000, latestPerOutcome: true } });
+    const servedRefs = new Set<string>([
+      ...((outcomes.body as { data: { items: readonly { outcomeId: string; evidence: readonly { ref: string }[] }[] } }).data.items.flatMap((record) => [record.outcomeId, ...record.evidence.map((entry) => entry.ref)])),
+      ...((postMortems.body as { data: { items: readonly { postMortemId: string; evidence: readonly { ref: string }[] }[] } }).data.items.flatMap((record) => [record.postMortemId, ...record.evidence.map((entry) => entry.ref)])),
+    ]);
+    for (const ref of rows[0]!.evidence!.map((entry) => entry.ref)) {
+      expect(servedRefs.has(ref)).toBe(true); // swo:demo0001, shs:demo0001, out:demo0001 — all real
+    }
+  });
+
+  it('TRIP-WIRE — the additive field names stay off the console watch surface\'s reasoning-key vocabulary (the chain-of-thought firewall never trips on the enriched records)', () => {
+    // The vocabulary mirrored from apps/web/src/core/watch.ts REASONING_KEYS
+    // (frozen there; mirrored here as a test-only trip wire — deploy code
+    // never imports the console, D-003/D-004 law). An additive field that
+    // matches one of these keys would make the console's watch fold refuse
+    // the record (ChainOfThoughtExposureError) — this pin keeps the demo
+    // substance and the firewall compatible.
+    const reasoningKeys = ['reasoning', 'rationale', 'chainOfThought', 'chain_of_thought', 'thought', 'thoughts', 'thinking', 'innerMonologue', 'inner_monologue', 'monologue', 'prompt', 'systemPrompt', 'system_prompt', 'scratchpad', 'deliberation', 'explanation', 'justification'];
+    const isReasoningKey = (key: string): boolean => {
+      const lowered = key.toLowerCase();
+      return reasoningKeys.some((candidate) => lowered === candidate.toLowerCase() || lowered === `the${candidate.toLowerCase()}`);
+    };
+    const collectKeys = (value: unknown, into: string[]): void => {
+      if (Array.isArray(value)) { value.forEach((item) => collectKeys(item, into)); return; }
+      if (typeof value !== 'object' || value === null) return;
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) { into.push(key); collectKeys(child, into); }
+    };
+    const tenant = VALID_ENV[API_ENV_KEYS.apiDeveloperTenant];
+    const enrichedRecords: unknown[] = [demoSubmissionBlotter(), demoOutcomeRecord(tenant, DEMO_PROJECT_ID)];
+    for (const record of enrichedRecords) {
+      const keys: string[] = [];
+      collectKeys(record, keys);
+      for (const key of keys) expect(isReasoningKey(key)).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The seeded constraint numeric bounds (R5 — a limit without a number is not
+// a limit; the seed side carries numbers end-to-end)
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the seeded constraint numeric bounds (R5: every bound a number, end-to-end)', () => {
+  it('every seeded constraint predicate carries a NUMERIC bound/value, and the goal\'s success criteria too', () => {
+    const tenant = VALID_ENV[API_ENV_KEYS.apiDeveloperTenant];
+    for (const constraint of demoConstraintSet(tenant).constraints) {
+      const predicate = constraint.predicate as { kind: string; bound?: unknown; value?: unknown; min?: unknown; max?: unknown };
+      if (predicate.kind === 'limit.max' || predicate.kind === 'limit.min') expect(typeof predicate.bound).toBe('number');
+      else if (predicate.kind === 'limit.range') { expect(typeof predicate.min).toBe('number'); expect(typeof predicate.max).toBe('number'); }
+      else if (predicate.kind === 'equals' || predicate.kind === 'notEquals') expect(typeof predicate.value).toBe('number');
+    }
+    expect(demoConstraintSet(tenant).constraints.map((constraint) => constraint.id)).toEqual(['k-capital-budget', 'k-risk-budget', 'k-position', 'k-turnover', 'k-drawdown']);
+    const budget = demoConstraintSet(tenant).constraints[0]!.predicate as { value: unknown };
+    expect(budget.value).toBe(DEMO_CAPITAL_BUDGET); // 250000 — a number, not "250000.00"
+    expect((demoConstraintSet(tenant).constraints[1]!.predicate as { value: unknown }).value).toBe(DEMO_RISK_BUDGET);
+    for (const criterion of demoGoalStatement(tenant).successCriteria.criteria) {
+      expect(typeof (criterion.predicate as { bound?: unknown }).bound).toBe('number');
+    }
+  });
+
+  it('end-to-end: the numeric-bound goal/constraint set is ACCEPTED by the real create route (the demo project IS it) and served by the host goal route', async () => {
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    // The demo project was created through the REAL route with exactly these
+    // shapes at seed time — the lineage refs prove the numeric set landed.
+    const project = composed.service.handle({ method: 'GET', path: `/v1/projects/${DEMO_PROJECT_ID}`, headers: bearer });
+    expect(project.status).toBe(200);
+    const record = (project.body as { data: { lineage: { goal: { goalId: string }; constraintSet: { id: string; version: number } } } }).data;
+    expect(record.lineage.goal.goalId).toBe('goal-tradrl-demo');
+    expect(record.lineage.constraintSet.id).toBe('cs-tradrl-demo');
+    // The host goal route serves the same numeric bounds (the console's read path).
+    const { response, captured } = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: `/v1/projects/${encodeURIComponent(DEMO_PROJECT_ID)}/goal`,
+      headers: bearer,
+    }), response);
+    expect(captured().status).toBe(200);
+    const body = JSON.parse(captured().payload as string) as { requestId: string; data: { goal: { id: string; successCriteria: { criteria: readonly { predicate: { bound?: unknown } }[] } }; constraintSet: { id: string; constraints: readonly { predicate: { bound?: unknown; value?: unknown } }[] } } };
+    expect(body.data.goal.id).toBe('goal-tradrl-demo');
+    expect(body.data.constraintSet.id).toBe('cs-tradrl-demo');
+    expect(body.data.constraintSet.constraints.every((constraint) => typeof constraint.predicate.bound === 'number' || typeof constraint.predicate.value === 'number')).toBe(true);
+    expect(body.data.goal.successCriteria.criteria.every((criterion) => typeof criterion.predicate.bound === 'number')).toBe(true);
+    expect(body.requestId).toBe(captured().headers['x-request-id']);
+  });
+
+  it('the host goal route: 401 without the credential; the typed not-found for any project but the demo project', async () => {
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const unauthenticated = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: `/v1/projects/${DEMO_PROJECT_ID}/goal`, headers: {} }), unauthenticated.response);
+    expect(unauthenticated.captured().status).toBe(401);
+    const foreign = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: '/v1/projects/prj-not-the-demo/goal',
+      headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` },
+    }), foreign.response);
+    expect(foreign.captured().status).toBe(404);
+    expect((JSON.parse(foreign.captured().payload as string) as { error: { code: string } }).error.code).toBe('not_found');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The launched-org compile (R4 — user-launched projects compile like the demo)
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the launched-org compile (R4: a user launch produces organization snapshots)', () => {
+  /** The user-launch harness: create a project through the REAL route + the kickoff research job (the console's launch flow). */
+  function launchProject(service: ApiService, projectId: string): { jobId: string; submittedAt: number } {
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const created = service.handle({
+      method: 'POST',
+      path: '/v1/projects',
+      headers: bearer,
+      body: validCreateProjectRequest(VALID_ENV[API_ENV_KEYS.apiDeveloperTenant], projectId, 'the user-launched project'),
+    });
+    expect(created.status).toBe(201);
+    const job = service.handle({
+      method: 'POST',
+      path: '/v1/jobs/research',
+      headers: { ...bearer, 'idempotency-key': `idem:w8:launch:${projectId}` },
+      body: { kind: 'research', projectId, spec: { source: 'w8-runtime-test', project: projectId } },
+    });
+    expect(job.status).toBe(202);
+    const record = (job.body as { data: { jobId: string; submittedAt: number } }).data;
+    return { jobId: record.jobId, submittedAt: record.submittedAt };
+  }
+
+  it('the full story: launch -> one machinery tick -> the project is BOUND and the watch read serves the compiled team\'s snapshot', () => {
+    const composed = composeDeployment(apiEnv({ [API_ENV_KEYS.apiInternalToken]: 'tok-internal-demo', [API_ENV_KEYS.apiInternalPrincipal]: 'demo-machinery' }));
+    expect(composed.ok).toBe(true);
+    if (!composed.ok || composed.demo === null || composed.demo.tick === null) return;
+    const launch = launchProject(composed.service, 'prj-user-launch-1');
+    // Before the tick: the launched project is unbound and the watch read is the honest not-found.
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const before = composed.service.handle({ method: 'GET', path: '/v1/projects/prj-user-launch-1', headers: bearer });
+    expect((before.body as { data: { lifecycle: { organizationRef: string | null } } }).data.lifecycle.organizationRef).toBeNull();
+    // One tick (the console's first poll beat after the launch): the compile pass binds + reports.
+    const compileAt = 1_730_000_000_123;
+    composed.demo.tick(compileAt);
+    const bound = composed.service.handle({ method: 'GET', path: '/v1/projects/prj-user-launch-1', headers: bearer });
+    expect((bound.body as { data: { lifecycle: { organizationRef: string | null } } }).data.lifecycle.organizationRef).toBe(compiledOrganizationRefOf('prj-user-launch-1'));
+    const status = composed.service.handle({
+      method: 'GET',
+      path: `/v1/organizations/${compiledOrganizationRefOf('prj-user-launch-1')}/status`,
+      headers: bearer,
+      query: { project: 'prj-user-launch-1' },
+    });
+    expect(status.status).toBe(200);
+    const snapshot = (status.body as { data: { tenant: string; project: string; status: string; at: number; instanceRefs: readonly string[] } }).data;
+    expect(snapshot.tenant).toBe(VALID_ENV[API_ENV_KEYS.apiDeveloperTenant]);
+    expect(snapshot.project).toBe('prj-user-launch-1');
+    expect(snapshot.status).toBe('active');
+    expect(snapshot.at).toBe(compileAt); // the compile instant — point-in-time stable
+    expect(snapshot.instanceRefs).toEqual(['ai:director-1', 'ai:researcher-2']); // the compiled team
+    // The same tick advances the kickoff job (the machinery's other pass is unchanged).
+    composed.demo.tick(launch.submittedAt + DEMO_JOB_COMPLETE_AFTER_MS + 1);
+    const job = composed.service.handle({ method: 'GET', path: `/v1/jobs/${launch.jobId}`, headers: bearer });
+    expect((job.body as { data: { status: string } }).data.status).toBe('complete');
+  });
+
+  it('the compile is ONCE per project and point-in-time stable: later ticks never re-bind or re-report (the snapshot keeps its compile instant); the demo project\'s own snapshot keeps its boot instant', () => {
+    const composed = composeDeployment(apiEnv({ [API_ENV_KEYS.apiInternalToken]: 'tok-internal-demo', [API_ENV_KEYS.apiInternalPrincipal]: 'demo-machinery' }));
+    if (!composed.ok || composed.demo === null || composed.demo.tick === null) return;
+    launchProject(composed.service, 'prj-user-launch-2');
+    const compileAt = 1_730_000_100_000;
+    composed.demo.tick(compileAt);
+    const snapshotsAfterFirst = composed.service.orgStatusSnapshots().filter((snapshot) => snapshot.project === 'prj-user-launch-2');
+    expect(snapshotsAfterFirst).toHaveLength(1);
+    composed.demo.tick(compileAt + 60_000);
+    composed.demo.tick(compileAt + 120_000);
+    const snapshotsAfterMore = composed.service.orgStatusSnapshots().filter((snapshot) => snapshot.project === 'prj-user-launch-2');
+    expect(snapshotsAfterMore).toHaveLength(1); // never re-reported
+    expect(snapshotsAfterMore[0]!.at).toBe(compileAt); // the compile instant stays
+    // The demo project's own snapshot is the BOOT one (its org ref is the seeded one, not a compile ref).
+    const demoSnapshots = composed.service.orgStatusSnapshots().filter((snapshot) => snapshot.project === DEMO_PROJECT_ID);
+    expect(demoSnapshots.every((snapshot) => snapshot.organizationRef === DEMO_ORGANIZATION_REF)).toBe(true);
+  });
+
+  it('WITHOUT the internal credential: the machinery is absent (tick null) — a launched project stays unbound and the watch read stays the honest not-found (R46)', () => {
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok || composed.demo === null) return;
+    expect(composed.demo.tick).toBeNull();
+    launchProject(composed.service, 'prj-user-launch-3');
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const project = composed.service.handle({ method: 'GET', path: '/v1/projects/prj-user-launch-3', headers: bearer });
+    expect((project.body as { data: { lifecycle: { organizationRef: string | null } } }).data.lifecycle.organizationRef).toBeNull();
+    const status = composed.service.handle({
+      method: 'GET',
+      path: `/v1/organizations/${compiledOrganizationRefOf('prj-user-launch-3')}/status`,
+      headers: bearer,
+      query: { project: 'prj-user-launch-3' },
+    });
+    expect(status.status).toBe(404);
+    expect((status.body as { error: { code: string } }).error.code).toBe('not_found');
+  });
+
+  it('a non-bindable project (activated before any tick) is skipped WITHOUT a request — the machinery never crashes the request (R46)', () => {
+    const composed = composeDeployment(apiEnv({ [API_ENV_KEYS.apiInternalToken]: 'tok-internal-demo', [API_ENV_KEYS.apiInternalPrincipal]: 'demo-machinery' }));
+    if (!composed.ok || composed.demo === null || composed.demo.tick === null) return;
+    launchProject(composed.service, 'prj-user-launch-4');
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const activated = composed.service.handle({
+      method: 'POST',
+      path: '/v1/projects/prj-user-launch-4/lifecycle',
+      headers: bearer,
+      body: { event: 'activate', at: 1_730_000_200_000 },
+    });
+    expect(activated.status).toBe(200);
+    composed.demo.tick(1_730_000_200_500); // would be refused by the real bind route (active) — the pass must skip, not crash
+    const project = composed.service.handle({ method: 'GET', path: '/v1/projects/prj-user-launch-4', headers: bearer });
+    expect((project.body as { data: { lifecycle: { organizationRef: string | null; status: string } } }).data.lifecycle.organizationRef).toBeNull();
+    // And the request path still serves (the tick never took anything down).
+    const meta = composed.service.handle({ method: 'GET', path: '/v1/meta', headers: bearer });
+    expect(meta.status).toBe(200);
   });
 });
