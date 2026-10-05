@@ -210,3 +210,52 @@ describe('watch: deterministic ordering + the L12 gate', () => {
     expect(() => watchEventFromPostMortem(SCOPE, { ...postMortem(), lineage: { ...postMortem().lineage, tenant: 'tenant-b' } })).toThrow(CrossTenantRenderError);
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE W-22 ENRICHED PROJECTION (R3): the served records carry the
+// decision-substance fields (a named deciding body, the gateway's own
+// risk checks, the record's evidence refs) and they project onto the
+// CLOSED seven-lens shape — agent = the deciding body, the risk-check
+// lens = the record's own checks, the evidence lens = the record's own
+// refs. No new field ever enters the WatchEvent (the closed shape is
+// the chain-of-thought firewall's structural half).
+// ---------------------------------------------------------------------------
+
+describe('the W-22 enriched projection (R3): decision substance onto the closed seven-lens shape', () => {
+  it('an outcome that carries a deciding body projects it as the acting agent + its risk checks render verbatim; a body-less outcome keeps the honest null', () => {
+    const enriched = { ...outcome(), decisionBody: 'desk:tradrl-demo-execution', riskChecks: [{ dimension: 'kill_switch', outcome: 'pass' }, { dimension: 'limits', outcome: 'pass' }] } as OutcomeRecord;
+    const event = watchEventFromOutcome(SCOPE, enriched);
+    expect(event.agent).toBe('desk:tradrl-demo-execution'); // the NAMED deciding body — never 'unknown'
+    expect(event.riskChecks).toEqual([{ dimension: 'kill_switch', outcome: 'pass' }, { dimension: 'limits', outcome: 'pass' }]); // the record's own checks, verbatim
+    expect(event.decision).toEqual({ kind: 'observed', ref: enriched.decision.decisionRef });
+    // the closed shape holds: the rationale prose NEVER enters the watch event (no prose slot exists)
+    expect(Object.keys(event).sort()).toEqual(['agent', 'at', 'capability', 'challenge', 'decision', 'evidenceConsulted', 'projectId', 'proposal', 'riskChecks', 'tenantId']);
+    const bare = watchEventFromOutcome(SCOPE, outcome());
+    expect(bare.agent).toBe(null); // a body-less record keeps the honest null
+    expect(bare.riskChecks).toEqual([]);
+  });
+
+  it('a submission that carries a deciding body + risk checks projects them; the refused fallback keeps the stage check when no served checks exist', () => {
+    const routed = { ...routedSubmission(), decisionBody: 'desk:tradrl-demo-execution', riskChecks: [{ dimension: 'kill_switch', outcome: 'pass' }], evidence: [{ kind: 'outcome', ref: 'out:demo0001' }] } as GatewaySubmissionRecord;
+    const routedEvent = watchEventFromSubmission(SCOPE, routed);
+    expect(routedEvent.agent).toBe('desk:tradrl-demo-execution');
+    expect(routedEvent.riskChecks).toEqual([{ dimension: 'kill_switch', outcome: 'pass' }]);
+    expect(routedEvent.evidenceConsulted).toEqual([{ kind: 'outcome', ref: 'out:demo0001' }]); // the record's own evidence refs ride the lens
+    const refusedEnriched = { ...refusedSubmission(), decisionBody: 'gate:pre-trade-risk', riskChecks: [{ dimension: 'risk_limits', outcome: 'refused' }] } as GatewaySubmissionRecord;
+    const refusedEvent = watchEventFromSubmission(SCOPE, refusedEnriched);
+    expect(refusedEvent.agent).toBe('gate:pre-trade-risk');
+    expect(refusedEvent.riskChecks).toEqual([{ dimension: 'risk_limits', outcome: 'refused' }]); // the served checks win
+    const refusedBareRecord = refusedSubmission();
+    if (refusedBareRecord.kind !== 'refused') throw new Error('the fixture is not a refused submission');
+    const refusedBare = watchEventFromSubmission(SCOPE, refusedBareRecord);
+    expect(refusedBare.agent).toBe(null);
+    expect(refusedBare.riskChecks).toEqual([{ dimension: refusedBareRecord.refusal.stage, outcome: 'refused' }]); // the synthetic stage check stays the fallback
+  });
+
+  it('the enriched fields pass the chain-of-thought firewall: the audit field names are not reasoning-shaped keys (exact-match vocabulary), and the prose never rides the event', () => {
+    const enriched = { ...outcome(), decisionBody: 'desk:tradrl-demo-execution', decisionRationale: 'published audit prose — the deciding record owns it', riskChecks: [{ dimension: 'limits', outcome: 'pass' }] } as OutcomeRecord;
+    expect(() => watchEventFromOutcome(SCOPE, enriched)).not.toThrow(); // the audit fields are served substance, not hidden reasoning keys
+    const event = watchEventFromOutcome(SCOPE, enriched);
+    expect(JSON.stringify(event)).not.toContain('published audit prose'); // the prose itself NEVER enters the watch surface
+  });
+});

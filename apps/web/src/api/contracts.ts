@@ -236,6 +236,12 @@ export interface OutcomeRecord {
   readonly realization: { readonly filledQuantity: string | null; readonly realizedOutcome: string; readonly feeTotal: string; readonly notionalTotal: string; readonly unrealizedAtDecision: string };
   readonly deviation: { readonly quantityShortfall: string | null; readonly realizedGap: string | null; readonly withinTolerance: boolean | null };
   readonly evidence: readonly { readonly kind: string; readonly ref: string }[];
+  /** THE W-8 DECISION-SUBSTANCE FIELDS (served additively since the W-8 wave — R3's deciding body, audit rationale and risk checks on the outcome's own decision record). Optional: the frozen SDK surface does not declare them (the boundary passes the served record through opaquely), so the parity witness keeps compiling. */
+  readonly decisionBody?: string;
+  /** The decision's audit rationale (published audit prose — an audit field, never hidden chain-of-thought). */
+  readonly decisionRationale?: string;
+  /** The decision's risk checks (dimension + outcome, verbatim — L20). */
+  readonly riskChecks?: readonly SubmissionRiskCheck[];
   readonly lineage: {
     readonly shadow: {
       readonly sessionId: string;
@@ -382,27 +388,84 @@ export interface GatewayRefusal {
   readonly [key: string]: unknown;
 }
 
+/** One risk check as the gateway's record carries it (the dimension + the gateway's own outcome — L20: rendered verbatim, never re-decided). */
+export interface SubmissionRiskCheck {
+  readonly dimension: string;
+  readonly outcome: string;
+}
+
+/** The order leg the gateway's submission record carries (the request the gate decided over — the served blotter's W-8 additive shape). */
+export interface SubmissionOrderLeg {
+  readonly clientOrderId: string;
+  readonly instrumentId: string;
+  readonly venueId: string;
+  readonly side: 'buy' | 'sell';
+  readonly kind: string;
+  readonly quantity: string;
+  readonly price?: string;
+  readonly timeInForce: string;
+  readonly createdAt: string;
+}
+
+/** The fill economics the gateway's routed record carries (state, quantity, price, notional, fee). */
+export interface SubmissionFill {
+  readonly state: string;
+  readonly quantity: string;
+  readonly price: string;
+  readonly notional: string;
+  readonly fee: string;
+  readonly filledAt: number;
+}
+
+/**
+ * THE W-8 DEMO-SUBSTANCE ADDITIVE FIELDS (served by the host-owned
+ * `GET /v1/execution/submissions` route since the W-8 wave — the
+ * execution blotter's own shape: the order leg, the fill economics,
+ * the named deciding body, the decision rationale and the risk
+ * checks). All OPTIONAL: the frozen SDK surface (packages/sdk) and
+ * the POST /v1/execution/requests response do not carry them, so the
+ * structural-parity witnesses keep compiling while the blotter read
+ * projects the richer served shape (the interop trip-wire documents
+ * the amendment).
+ */
+export interface SubmissionEnrichment {
+  /** The order leg the gate decided over (client order id, instrument, side, quantity, price). */
+  readonly order?: SubmissionOrderLeg;
+  /** The fill economics (routed rows; state/quantity/price/notional/fee). */
+  readonly fill?: SubmissionFill;
+  /** The named deciding body (e.g. 'desk:…' / 'gate:pre-trade-risk'). */
+  readonly decisionBody?: string;
+  /** The decision's audit rationale (the deciding record's own published prose — an audit field, never hidden chain-of-thought). */
+  readonly decisionRationale?: string;
+  /** The gateway's risk checks (dimension + outcome, verbatim — L20). */
+  readonly riskChecks?: readonly SubmissionRiskCheck[];
+  /** The record's resolvable evidence refs (kind + ref). */
+  readonly evidence?: readonly { readonly kind: string; readonly ref: string }[];
+}
+
 /** One submission's outcome as the boundary serves it (routed or refused — both are successful requests). */
-export type GatewaySubmissionRecord =
-  | {
-      readonly kind: 'routed';
-      readonly submissionId: string;
-      readonly decisionId: string;
-      readonly auditId: string;
-      readonly requestRef: string;
-      readonly venue: string;
-      readonly adapterRef: string;
-      readonly channelRef: string;
-      readonly routedAt: number;
-    }
-  | {
-      readonly kind: 'refused';
-      readonly submissionId: string;
-      readonly decisionId: string | null;
-      readonly auditId: string;
-      readonly refusal: GatewayRefusal;
-      readonly refusedAt: number;
-    };
+export type GatewaySubmissionRecord = SubmissionEnrichment &
+  (
+    | {
+        readonly kind: 'routed';
+        readonly submissionId: string;
+        readonly decisionId: string;
+        readonly auditId: string;
+        readonly requestRef: string;
+        readonly venue: string;
+        readonly adapterRef: string;
+        readonly channelRef: string;
+        readonly routedAt: number;
+      }
+    | {
+        readonly kind: 'refused';
+        readonly submissionId: string;
+        readonly decisionId: string | null;
+        readonly auditId: string;
+        readonly refusal: GatewayRefusal;
+        readonly refusedAt: number;
+      }
+  );
 
 // ---------------------------------------------------------------------------
 // The organization status mirror (the watch surface)

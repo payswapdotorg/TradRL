@@ -151,6 +151,13 @@ export async function bootFromShell(options: {
       theme: storage === undefined ? 'light' : readStoredTheme(storage),
       ...(storage === undefined ? {} : { storage }),
       ...(storage === undefined ? {} : { onboardingStorage: storage }),
+      // THE SCOPE PERSISTENCE SEAM (R6b, W-22): the same storage seam
+      // that carries the theme + the onboarding completion carries the
+      // workspace's current project id (localStorage
+      // `tradrl_scope_project`) — a reload reopens the user's world,
+      // not the env pin's (validated against the tenant's project
+      // directory at boot; a stale id falls back to the pin).
+      ...(storage === undefined ? {} : { scopeStorage: storage }),
       simulated: config.simulated ?? false,
       // THE BROWSER TIMER SEAM (the live J03 finding's second half, and
       // the J05/J06 finding's shared root cause — deduped at the W-15b-r

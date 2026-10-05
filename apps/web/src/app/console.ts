@@ -89,6 +89,8 @@ export interface ConsoleBootOptions {
   readonly theme?: ThemeName;
   /** The theme persistence seam (the browser's localStorage in production). */
   readonly storage?: ThemeStorage;
+  /** THE SCOPE PERSISTENCE SEAM (R6b, W-22): the browser's localStorage in production. When injected, the workspace's project id persists on every scope change and a stored scope that still exists in the tenant's project directory is RESTORED at boot (a stale/deleted id falls back to the env pin, exactly the pre-W-22 behavior). */
+  readonly scopeStorage?: { getItem(key: string): string | null; setItem(key: string, value: string): void };
   /** True when the console runs on a fake/demo adapter (the SIMULATED environment badge; §7 anti-deception). */
   readonly simulated?: boolean;
   /** The onboarding storage seam (localStorage `tradrl_onboarded`; returning users skip the wizard — §4.13). */
@@ -163,6 +165,20 @@ export interface MountDocument {
 /** The launchpad project id — the workspace's pre-launch scope placeholder. */
 export const LAUNCHPAD_PROJECT_ID = '(launchpad)';
 
+/** The persisted-scope storage key (R6b, W-22 — localStorage `tradrl_scope_project` in production). */
+export const SCOPE_STORAGE_KEY = 'tradrl_scope_project';
+
+/** Read the persisted workspace project id (null when none is stored). */
+export function readStoredScopeProject(storage: { getItem(key: string): string | null }): string | null {
+  const stored = storage.getItem(SCOPE_STORAGE_KEY);
+  return typeof stored === 'string' && stored.length > 0 ? stored : null;
+}
+
+/** Persist the workspace project id (the scope seam's write-through; an empty value clears it). */
+export function persistScopeProject(storage: { setItem(key: string, value: string): void }, projectId: string): void {
+  storage.setItem(SCOPE_STORAGE_KEY, projectId);
+}
+
 /** A head element's querySelector (the erasable-subset law: function types live in named aliases, never inline in casts). */
 type HeadQuerySelectorOf = (selector: string) => Element | null;
 
@@ -179,7 +195,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   const listeners: WorkspaceListener[] = [];
 
   function dispatch(event: WorkspaceEvent): void {
+    const scopeBefore = state.scope.projectId;
     state = reduceWorkspace(state, event);
+    // THE SCOPE PERSISTENCE WRITE-THROUGH (R6b, W-22): the workspace
+    // moved to another project (a launch adoption, a switcher choice,
+    // a stored-scope restore) — persist the current project id so a
+    // reload reopens THE USER'S world, not the env pin's (the 69-friction-row
+    // finding: reload silently reset the scope to the demo project).
+    // The launchpad placeholder never persists (there is no project yet).
+    if (state.scope.projectId !== scopeBefore && state.scope.projectId !== LAUNCHPAD_PROJECT_ID && options.scopeStorage !== undefined) {
+      persistScopeProject(options.scopeStorage, state.scope.projectId);
+    }
     for (const listener of [...listeners]) listener(state);
   }
 
@@ -218,37 +244,107 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     }
   }
 
+  // THE SCOPE-CHANGE SEAM (R6a, the W-22 fix — the architectural
+  // blocker's read half): the console read its world ONCE at boot, so
+  // after a launch ADOPTED a new project (reduceWorkspace's
+  // project-adopted arm resets every record + moves the scope) NO read
+  // ever ran for the adopted scope — the launched org's compiled
+  // snapshot (which the backing now serves, W-8's R4 pass) never
+  // rendered, the Organization section stayed empty forever, and every
+  // other section rendered the RESET (empty) world. The beat tracks the
+  // last-fetched scope; when state.scope.projectId differs, it re-runs
+  // the full read bundle for the adopted scope.
+  let lastFetchedScope: string | null = null;
+
+  /** Dispatch a read result ONLY while the workspace still carries the scope it was read for — a mid-flight adoption (a launch, a switch) supersedes the scope, so the stale read's dispatch is dropped (the typed assertProjectScope would refuse it; the beat's scope-change refetch re-reads everything for the adopted scope). */
+  function dispatchIfCurrent(projectId: string, event: WorkspaceEvent): void {
+    if (state.scope.projectId !== projectId) return;
+    dispatch(event);
+  }
+
   async function refresh(): Promise<void> {
-    await read('GET /v1/meta', async () => {
-      await client.negotiateVersion();
-      dispatch({ kind: 'connection-changed', at: instants.nowMs(), status: 'connected' });
-    });
-    const projectId = state.scope.projectId;
-    if (projectId === LAUNCHPAD_PROJECT_ID) return;
-    await read('GET /v1/projects/:id', async () => {
-      const project = await client.projects.get(projectId);
-      dispatch({ kind: 'project-loaded', at: instants.nowMs(), project });
-    });
-    await read('POST /v1/knowledge/query', async () => {
-      const page = await client.knowledge.query({ project: projectId, at: instants.nowMs() });
-      dispatch({ kind: 'knowledge-loaded', at: instants.nowMs(), records: [...page.items] });
-    });
-    await read('POST /v1/outcomes/query', async () => {
-      const page = await client.outcomes.query({ project: projectId, at: instants.nowMs() });
-      dispatch({ kind: 'outcomes-loaded', at: instants.nowMs(), records: [...page.items] });
-    });
-    await read('POST /v1/post-mortems/query', async () => {
-      const page = await client.outcomes.postMortems({ project: projectId, at: instants.nowMs(), latestPerOutcome: true });
-      dispatch({ kind: 'post-mortems-loaded', at: instants.nowMs(), records: [...page.items] });
-    });
-    const organizationRef = state.project?.lifecycle.organizationRef ?? null;
-    if (organizationRef !== null) {
-      await read('GET /v1/organizations/:ref/status', async () => {
-        const snapshot = await client.organizations.status(organizationRef, projectId);
-        dispatch({ kind: 'org-snapshot', at: instants.nowMs(), snapshot });
+    // The scope THIS bundle reads for, captured before the first await:
+    // a mid-flight adoption (a launch, a switch) supersedes it, the
+    // dispatchIfCurrent guards drop the stale dispatches, and the
+    // finally marks THIS scope (not the current one) as fetched so the
+    // beat still sees the difference and refetches for the adopted
+    // scope (marking the CURRENT scope here would mark the adopted
+    // scope as fetched without ever reading it — the R6a defect).
+    const bundleScope = state.scope.projectId;
+    try {
+      await read('GET /v1/meta', async () => {
+        await client.negotiateVersion();
+        dispatch({ kind: 'connection-changed', at: instants.nowMs(), status: 'connected' });
       });
+      // THE PROJECT DIRECTORY + THE STORED-SCOPE RESTORE (R6b/R6c,
+      // W-22): the tenant's readable projects list once per bundle —
+      // the scope switcher's data (R6c) — and the validation surface
+      // for the persisted scope (R6b): when a stored project id exists
+      // in the directory and differs from the booted scope, the
+      // workspace ADOPTS it (the same reset+switch transition a launch
+      // rides; this bundle's captured-scope reads then drop through
+      // the dispatchIfCurrent guard and the beat refetches for the
+      // adopted scope). A stored id that no longer exists is stale —
+      // cleared and ignored, falling back to the env pin EXACTLY as
+      // the pre-W-22 boot behaved (no stored scope -> no behavior
+      // change at all).
+      await read('GET /v1/projects', async () => {
+        const records = await client.projects.listAll();
+        dispatch({ kind: 'projects-listed', at: instants.nowMs(), records: [...records] });
+        const stored = options.scopeStorage === undefined ? null : readStoredScopeProject(options.scopeStorage);
+        if (stored !== null && stored !== state.scope.projectId) {
+          if (records.some((record) => record.id === stored)) {
+            dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
+          } else if (options.scopeStorage !== undefined) {
+            persistScopeProject(options.scopeStorage, ''); // stale (deleted upstream) — clear it and keep the env pin
+          }
+        }
+      });
+      const projectId = bundleScope;
+      if (projectId === LAUNCHPAD_PROJECT_ID) return;
+      await read('GET /v1/projects/:id', async () => {
+        const project = await client.projects.get(projectId);
+        dispatchIfCurrent(projectId, { kind: 'project-loaded', at: instants.nowMs(), project });
+      });
+      await read('POST /v1/knowledge/query', async () => {
+        const page = await client.knowledge.query({ project: projectId, at: instants.nowMs() });
+        dispatchIfCurrent(projectId, { kind: 'knowledge-loaded', at: instants.nowMs(), records: [...page.items] });
+      });
+      await read('POST /v1/outcomes/query', async () => {
+        const page = await client.outcomes.query({ project: projectId, at: instants.nowMs() });
+        dispatchIfCurrent(projectId, { kind: 'outcomes-loaded', at: instants.nowMs(), records: [...page.items] });
+      });
+      await read('POST /v1/post-mortems/query', async () => {
+        const page = await client.outcomes.postMortems({ project: projectId, at: instants.nowMs(), latestPerOutcome: true });
+        dispatchIfCurrent(projectId, { kind: 'post-mortems-loaded', at: instants.nowMs(), records: [...page.items] });
+      });
+      // THE EXECUTION BLOTTER READ (R2, the W-22 fix — the seam the
+      // Lead verified broken live): the backing serves the gateway's
+      // submission records at GET /v1/execution/submissions?project=…
+      // (the W-8 host route), but the console never READ them — the
+      // Execution section rendered state.submissions, which only the
+      // watch events populated (the console's own submissions), so the
+      // seeded blotter stayed invisible forever. The read follows the
+      // bundle's own pattern; each served row dispatches the existing
+      // submission-recorded event, whose reducer arm merges deduped by
+      // submissionId (the same dedup the watch path rides).
+      await read('GET /v1/execution/submissions', async () => {
+        const page = await client.execution.submissions(projectId);
+        for (const submission of page.items) {
+          dispatchIfCurrent(projectId, { kind: 'submission-recorded', at: instants.nowMs(), submission });
+        }
+      });
+      const organizationRef = state.project?.lifecycle.organizationRef ?? null;
+      if (organizationRef !== null) {
+        await read('GET /v1/organizations/:ref/status', async () => {
+          const snapshot = await client.organizations.status(organizationRef, projectId);
+          dispatchIfCurrent(projectId, { kind: 'org-snapshot', at: instants.nowMs(), snapshot });
+        });
+      }
+      await pollJobs();
+    } finally {
+      lastFetchedScope = bundleScope;
     }
-    await pollJobs();
   }
 
   async function pollJobs(): Promise<void> {
@@ -303,6 +399,49 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const nextViewAt = timeMachine.playback.fromAt + (timeMachine.playback.ticks + 1) * timeMachine.playback.stepMs;
       if (nextViewAt <= timeMachine.anchorAt) {
         dispatch({ kind: 'playback-tick', at: instants.nowMs() });
+      }
+    }
+    // THE SCOPE-CHANGE REFETCH (R6a, the W-22 fix): the workspace's
+    // scope moved since the last completed read bundle — a launch
+    // adopted a project (project-adopted resets every record + moves
+    // the scope), or a switch did — so the beat re-runs the FULL bundle
+    // for the adopted scope: project, knowledge, outcomes, post-mortems,
+    // the org-status read and job polling. Before this, the launched
+    // project's world (its compiled org snapshot included — the backing
+    // compiles it on its own clock, W-8's R4 pass) NEVER rendered
+    // without a page reload: the console kept the boot scope's world
+    // forever. The bundle degrades gracefully per-read like every other
+    // cadence (the read wrapper); the finally-marked lastFetchedScope
+    // keeps this from re-firing while the scope holds.
+    const scopeNow = state.scope.projectId;
+    if (scopeNow !== LAUNCHPAD_PROJECT_ID && scopeNow !== lastFetchedScope) {
+      // The full bundle ends with its own job polling, and this beat's
+      // poll ran INSIDE it — return here so a scope-change beat polls
+      // exactly once (the poll cadence's per-beat contract is unchanged).
+      await refresh();
+      return;
+    } else if (scopeNow !== LAUNCHPAD_PROJECT_ID && state.project !== null && state.project.lifecycle.organizationRef === null) {
+      // THE ORG-COMPILE POLL (R6a's second half): the backing binds the
+      // organization ref on its OWN clock (the demo compile pass runs on
+      // a later request's tick, AFTER the adoption-time project read saw
+      // organizationRef null), so the one refetch above can still miss
+      // the compiled snapshot. While the CURRENT project record carries
+      // no organization ref, each beat re-observes the project; the
+      // moment the ref flips, the org-status read runs and the
+      // Organization section renders the compiled snapshot — still
+      // without any reload. Self-terminating: the moment the ref
+      // exists, this branch stops (the org-snapshot dedup keeps repeats
+      // idempotent).
+      await read('GET /v1/projects/:id', async () => {
+        const project = await client.projects.get(scopeNow);
+        dispatchIfCurrent(scopeNow, { kind: 'project-loaded', at: instants.nowMs(), project });
+      });
+      const organizationRef = state.project?.lifecycle.organizationRef ?? null;
+      if (organizationRef !== null) {
+        await read('GET /v1/organizations/:ref/status', async () => {
+          const snapshot = await client.organizations.status(organizationRef, scopeNow);
+          dispatchIfCurrent(scopeNow, { kind: 'org-snapshot', at: instants.nowMs(), snapshot });
+        });
       }
     }
     await pollJobs();
@@ -471,6 +610,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const element = target as FieldEventTarget | null;
       if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
       return element.getAttribute('data-action') === 'tm-scrub' ? element : null;
+    };
+    /** THE PROJECT SWITCHER'S SELECT (R6c, W-22): the delegated change on [data-action=project-switch] — the committed choice's live value is the project id to adopt. */
+    const switchTargetOf = (target: unknown): FieldEventTarget | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      return element.getAttribute('data-action') === 'project-switch' ? element : null;
     };
     // THE SCRUB BUFFER (the J5 wiring — the J3 pointer discipline): a
     // drag fires `input` per pointer move; those BUFFER here and never
@@ -676,6 +821,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } }; // NO render — the buffer IS the live form (merged at render time)
     });
     document.addEventListener('change', (event) => {
+      // THE PROJECT SWITCHER'S COMMIT (R6c, W-22): the select's change
+      // event — the user's committed choice — adopts that project (the
+      // same reset+switch transition a launch rides; the beat's
+      // scope-change refetch then reads the adopted project's whole
+      // world, and the dispatch hook persists the new scope). A
+      // re-selection of the CURRENT project is a no-op.
+      const switcher = switchTargetOf(event.target);
+      if (switcher !== null) {
+        const projectId = typeof switcher.value === 'string' ? switcher.value : '';
+        if (projectId.length > 0 && projectId !== state.scope.projectId) {
+          dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId }); // renders via onState
+        }
+        return;
+      }
       // THE SCRUBBER'S COMMIT (the J5 wiring): the `change` event — the
       // drag's release, or a keyboard arrow's commit — moves the view
       // instant to the scrubbed position (an explicit instant: the

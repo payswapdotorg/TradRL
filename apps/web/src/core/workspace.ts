@@ -137,6 +137,8 @@ export interface WorkspaceState {
   readonly postMortems: readonly PostMortemRecord[];
   readonly knowledge: readonly ServedKnowledge[];
   readonly submissions: readonly GatewaySubmissionRecord[];
+  /** The tenant's project directory (R6c, W-22): every project the credential can read — the scope switcher's list. Cross-project by design (the workspace stays ONE project's world; this is the directory you may switch that world to). */
+  readonly projectDirectory: readonly ProjectRecord[];
   readonly timeMachine: TimeMachineState;
   readonly inbox: InboxState;
   readonly degraded: readonly DegradationNote[];
@@ -162,6 +164,7 @@ export function openWorkspace(scope: WorkspaceScope, at: number): WorkspaceState
     postMortems: [],
     knowledge: [],
     submissions: [],
+    projectDirectory: [],
     timeMachine: liveTimeMachine(at),
     inbox: emptyInbox(),
     degraded: [],
@@ -185,6 +188,7 @@ export type WorkspaceEvent =
   | { readonly kind: 'post-mortems-loaded'; readonly at: number; readonly records: readonly PostMortemRecord[] }
   | { readonly kind: 'knowledge-loaded'; readonly at: number; readonly records: readonly ServedKnowledge[] }
   | { readonly kind: 'submission-recorded'; readonly at: number; readonly submission: GatewaySubmissionRecord }
+  | { readonly kind: 'projects-listed'; readonly at: number; readonly records: readonly ProjectRecord[] }
   | { readonly kind: 'section-selected'; readonly at: number; readonly section: SectionId }
   | { readonly kind: 'view-live'; readonly at: number }
   | { readonly kind: 'view-tminus'; readonly at: number; readonly tMinusMs: number }
@@ -364,6 +368,14 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         ? withHistory
         : { ...withHistory, submissions: [...state.submissions, event.submission] };
       return { ...next, inbox: refoldNotices(next) };
+  } else if (selector === 'projects-listed') {
+      // THE PROJECT DIRECTORY (R6c, W-22): the tenant's readable
+      // projects, replaced wholesale per read (the boundary's own
+      // ordering). NO scope assert: the directory spans projects by
+      // design — it is the switcher's list, never the workspace's
+      // records (a switch goes through project-adopted, which resets
+      // every record first).
+      return { ...withHistory, projectDirectory: Object.freeze([...event.records]) };
   } else if (selector === 'section-selected') {
       if (!isSectionId(event.section)) throw new Error(`reduceWorkspace: ${JSON.stringify(event.section)} is not a workspace section`);
       return { ...withHistory, selectedSection: event.section };

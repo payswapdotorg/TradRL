@@ -241,6 +241,8 @@ function seamTransport(): ApiTransport {
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
     if (key === 'POST /v1/outcomes/query') return ok({ items: [shadowOutcome] });
     if (key === 'GET /v1/organizations/org:seam/status') return ok(snapshot);
+    if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/projects') return ok({ items: [] }); // the W-22 project-directory read: no projects under this rig
     return { status: 404, headers: {}, body: { requestId: 'req-seam', error: { code: 'not_found', message: 'no route', status: 404 } } };
   };
   return transport;
@@ -300,6 +302,33 @@ describe('the boot seam (bootFromShell): the REAL browser boot injects a REAL sc
     expect(rig.handle.state().inbox.notices.length).toBe(2); // the fold worked: shadow_degradation + organization_compiled
     const shell = elementsOf(rig.root).find((element) => element.hasClass('tradrl-shell'));
     expect(shell).toBeDefined(); // the console rendered into the shell root
+  });
+
+  it('R6b: the REAL browser boot carries the scope persistence seam — a stored scope the tenant directory no longer serves is cleared, and the env pin holds (the pre-W-22 boot behavior)', async () => {
+    // The browser's localStorage, stubbed: a PREVIOUS session persisted a
+    // workspace scope (localStorage `tradrl_scope_project`) that this
+    // tenant's directory (empty under this rig's backing) no longer
+    // serves. The entry must hand the storage seam to the console (the
+    // seam the W-22 wiring added) — the boot then clears the stale id
+    // and keeps the env-pinned project, exactly as a pre-W-22 boot did.
+    const writes: string[] = [];
+    vi.stubGlobal('localStorage', {
+      getItem(key: string): string | null {
+        return key === 'tradrl_scope_project' ? 'prj-gone' : null;
+      },
+      setItem(key: string, value: string): void {
+        writes.push(`${key}=${value}`);
+      },
+    });
+    try {
+      const rig = await bootSeam();
+      expect(rig.handle.state().scope.projectId).toBe('prj-seam'); // the env pin holds — the stored id is not in the directory
+      expect(writes).toContain('tradrl_scope_project='); // the stale id was CLEARED through the real entry's storage seam
+      expect(rig.handle.state().degraded).toEqual([]); // the directory read answered (empty) — nothing degraded
+      expect(rig.handle.state().projectDirectory).toEqual([]); // the switcher's data loaded (empty directory, honestly rendered)
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('J06: a new notice toasts and AUTO-DISMISSES after ~5s through the browser scheduler (the stuck-toast fix)', async () => {

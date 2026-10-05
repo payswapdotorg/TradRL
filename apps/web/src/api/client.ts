@@ -126,9 +126,11 @@ export interface ConsoleClient {
     get(jobId: string): Promise<JobRecord>;
   };
 
-  /** `POST /v1/execution/requests` — THE L8 ROUTE: forward an intent through the execution gateway (the console REQUESTS; the gateway decides). */
+  /** The execution routes: THE L8 ROUTE (forward an intent — the console REQUESTS; the gateway decides) + the HOST-OWNED blotter read. */
   readonly execution: {
     submitRequest(intent: StrategyIntent, options?: ConsequentialOptions): Promise<GatewaySubmissionRecord>;
+    /** `GET /v1/execution/submissions?project=<id>` — the execution blotter (the HOST-OWNED W-8 demo-substance route: served from the seeded demo data BEFORE the boundary wrap, so the frozen SDK surface does not carry it — the mirror extends the family for the console's own read; interop.test.ts documents the amendment). */
+    submissions(project: string): Promise<Page<GatewaySubmissionRecord>>;
   };
 
   /** `GET /v1/organizations/:organizationRef/status?project=...` — the watch read. */
@@ -310,6 +312,9 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
       async submitRequest(intent, options) {
         const body: ExecutionRequest = { intent };
         return request('POST', '/v1/execution/requests', { body, idempotencyKey: keyFor('execution.requests', intent.intentId, options) }) as Promise<GatewaySubmissionRecord>;
+      },
+      async submissions(project) {
+        return request('GET', withQuery('/v1/execution/submissions', { project })) as Promise<Page<GatewaySubmissionRecord>>;
       },
     },
 

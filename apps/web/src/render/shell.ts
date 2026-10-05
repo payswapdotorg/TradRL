@@ -331,6 +331,24 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
       shellFactRow('tenant', state.scope.tenantId),
       shellFactRow('project', state.scope.projectId),
     ]),
+    // THE PROJECT SWITCHER (R6c, W-22 — the minimal switcher): the
+    // current project, stated plainly, + a select of the tenant's
+    // readable projects (the workspace state's projectDirectory, read
+    // from GET /v1/projects). A committed choice ADOPTS that project —
+    // every section refetches for it (the beat's scope-change refetch)
+    // and the choice persists across reloads (the scope storage seam).
+    settingsRow('Project', 'Switch the workspace to another project; every section refetches for the project you choose, and your choice is remembered for future visits.', [
+      shellFactRow('current project', state.scope.projectId === '(launchpad)' ? 'the launchpad (no project yet)' : state.scope.projectId),
+      v('select', { class: 'project-select', 'data-action': 'project-switch', 'data-project-select': 'true', 'aria-label': 'Switch the workspace to another project' }, [
+        ...state.projectDirectory.map((project) => v('option', {
+          value: project.id,
+          ...(project.id === state.scope.projectId ? { selected: 'selected' } : {}),
+        }, [`${project.id} — ${project.name}`])),
+      ]),
+      ...(state.projectDirectory.length === 0
+        ? [v('p', { class: 'card-note' }, ['No projects readable yet — the list loads with the next refresh.'])]
+        : []),
+    ]),
     // THE PRICING DISCLOSURE (W-19, the S5 CFO finding — "zero pricing
     // information" was a stated adoption blocker; QuantConnect's only
     // rubric win was pricing_fit). Honesty-first, the SIMULATED-badge
