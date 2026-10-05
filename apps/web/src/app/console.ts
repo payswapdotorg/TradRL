@@ -218,37 +218,67 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     }
   }
 
+  // THE SCOPE-CHANGE SEAM (R6a, the W-22 fix — the architectural
+  // blocker's read half): the console read its world ONCE at boot, so
+  // after a launch ADOPTED a new project (reduceWorkspace's
+  // project-adopted arm resets every record + moves the scope) NO read
+  // ever ran for the adopted scope — the launched org's compiled
+  // snapshot (which the backing now serves, W-8's R4 pass) never
+  // rendered, the Organization section stayed empty forever, and every
+  // other section rendered the RESET (empty) world. The beat tracks the
+  // last-fetched scope; when state.scope.projectId differs, it re-runs
+  // the full read bundle for the adopted scope.
+  let lastFetchedScope: string | null = null;
+
+  /** Dispatch a read result ONLY while the workspace still carries the scope it was read for — a mid-flight adoption (a launch, a switch) supersedes the scope, so the stale read's dispatch is dropped (the typed assertProjectScope would refuse it; the beat's scope-change refetch re-reads everything for the adopted scope). */
+  function dispatchIfCurrent(projectId: string, event: WorkspaceEvent): void {
+    if (state.scope.projectId !== projectId) return;
+    dispatch(event);
+  }
+
   async function refresh(): Promise<void> {
-    await read('GET /v1/meta', async () => {
-      await client.negotiateVersion();
-      dispatch({ kind: 'connection-changed', at: instants.nowMs(), status: 'connected' });
-    });
-    const projectId = state.scope.projectId;
-    if (projectId === LAUNCHPAD_PROJECT_ID) return;
-    await read('GET /v1/projects/:id', async () => {
-      const project = await client.projects.get(projectId);
-      dispatch({ kind: 'project-loaded', at: instants.nowMs(), project });
-    });
-    await read('POST /v1/knowledge/query', async () => {
-      const page = await client.knowledge.query({ project: projectId, at: instants.nowMs() });
-      dispatch({ kind: 'knowledge-loaded', at: instants.nowMs(), records: [...page.items] });
-    });
-    await read('POST /v1/outcomes/query', async () => {
-      const page = await client.outcomes.query({ project: projectId, at: instants.nowMs() });
-      dispatch({ kind: 'outcomes-loaded', at: instants.nowMs(), records: [...page.items] });
-    });
-    await read('POST /v1/post-mortems/query', async () => {
-      const page = await client.outcomes.postMortems({ project: projectId, at: instants.nowMs(), latestPerOutcome: true });
-      dispatch({ kind: 'post-mortems-loaded', at: instants.nowMs(), records: [...page.items] });
-    });
-    const organizationRef = state.project?.lifecycle.organizationRef ?? null;
-    if (organizationRef !== null) {
-      await read('GET /v1/organizations/:ref/status', async () => {
-        const snapshot = await client.organizations.status(organizationRef, projectId);
-        dispatch({ kind: 'org-snapshot', at: instants.nowMs(), snapshot });
+    // The scope THIS bundle reads for, captured before the first await:
+    // a mid-flight adoption (a launch, a switch) supersedes it, the
+    // dispatchIfCurrent guards drop the stale dispatches, and the
+    // finally marks THIS scope (not the current one) as fetched so the
+    // beat still sees the difference and refetches for the adopted
+    // scope (marking the CURRENT scope here would mark the adopted
+    // scope as fetched without ever reading it — the R6a defect).
+    const bundleScope = state.scope.projectId;
+    try {
+      await read('GET /v1/meta', async () => {
+        await client.negotiateVersion();
+        dispatch({ kind: 'connection-changed', at: instants.nowMs(), status: 'connected' });
       });
+      const projectId = bundleScope;
+      if (projectId === LAUNCHPAD_PROJECT_ID) return;
+      await read('GET /v1/projects/:id', async () => {
+        const project = await client.projects.get(projectId);
+        dispatchIfCurrent(projectId, { kind: 'project-loaded', at: instants.nowMs(), project });
+      });
+      await read('POST /v1/knowledge/query', async () => {
+        const page = await client.knowledge.query({ project: projectId, at: instants.nowMs() });
+        dispatchIfCurrent(projectId, { kind: 'knowledge-loaded', at: instants.nowMs(), records: [...page.items] });
+      });
+      await read('POST /v1/outcomes/query', async () => {
+        const page = await client.outcomes.query({ project: projectId, at: instants.nowMs() });
+        dispatchIfCurrent(projectId, { kind: 'outcomes-loaded', at: instants.nowMs(), records: [...page.items] });
+      });
+      await read('POST /v1/post-mortems/query', async () => {
+        const page = await client.outcomes.postMortems({ project: projectId, at: instants.nowMs(), latestPerOutcome: true });
+        dispatchIfCurrent(projectId, { kind: 'post-mortems-loaded', at: instants.nowMs(), records: [...page.items] });
+      });
+      const organizationRef = state.project?.lifecycle.organizationRef ?? null;
+      if (organizationRef !== null) {
+        await read('GET /v1/organizations/:ref/status', async () => {
+          const snapshot = await client.organizations.status(organizationRef, projectId);
+          dispatchIfCurrent(projectId, { kind: 'org-snapshot', at: instants.nowMs(), snapshot });
+        });
+      }
+      await pollJobs();
+    } finally {
+      lastFetchedScope = bundleScope;
     }
-    await pollJobs();
   }
 
   async function pollJobs(): Promise<void> {
@@ -303,6 +333,49 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const nextViewAt = timeMachine.playback.fromAt + (timeMachine.playback.ticks + 1) * timeMachine.playback.stepMs;
       if (nextViewAt <= timeMachine.anchorAt) {
         dispatch({ kind: 'playback-tick', at: instants.nowMs() });
+      }
+    }
+    // THE SCOPE-CHANGE REFETCH (R6a, the W-22 fix): the workspace's
+    // scope moved since the last completed read bundle — a launch
+    // adopted a project (project-adopted resets every record + moves
+    // the scope), or a switch did — so the beat re-runs the FULL bundle
+    // for the adopted scope: project, knowledge, outcomes, post-mortems,
+    // the org-status read and job polling. Before this, the launched
+    // project's world (its compiled org snapshot included — the backing
+    // compiles it on its own clock, W-8's R4 pass) NEVER rendered
+    // without a page reload: the console kept the boot scope's world
+    // forever. The bundle degrades gracefully per-read like every other
+    // cadence (the read wrapper); the finally-marked lastFetchedScope
+    // keeps this from re-firing while the scope holds.
+    const scopeNow = state.scope.projectId;
+    if (scopeNow !== LAUNCHPAD_PROJECT_ID && scopeNow !== lastFetchedScope) {
+      // The full bundle ends with its own job polling, and this beat's
+      // poll ran INSIDE it — return here so a scope-change beat polls
+      // exactly once (the poll cadence's per-beat contract is unchanged).
+      await refresh();
+      return;
+    } else if (scopeNow !== LAUNCHPAD_PROJECT_ID && state.project !== null && state.project.lifecycle.organizationRef === null) {
+      // THE ORG-COMPILE POLL (R6a's second half): the backing binds the
+      // organization ref on its OWN clock (the demo compile pass runs on
+      // a later request's tick, AFTER the adoption-time project read saw
+      // organizationRef null), so the one refetch above can still miss
+      // the compiled snapshot. While the CURRENT project record carries
+      // no organization ref, each beat re-observes the project; the
+      // moment the ref flips, the org-status read runs and the
+      // Organization section renders the compiled snapshot — still
+      // without any reload. Self-terminating: the moment the ref
+      // exists, this branch stops (the org-snapshot dedup keeps repeats
+      // idempotent).
+      await read('GET /v1/projects/:id', async () => {
+        const project = await client.projects.get(scopeNow);
+        dispatchIfCurrent(scopeNow, { kind: 'project-loaded', at: instants.nowMs(), project });
+      });
+      const organizationRef = state.project?.lifecycle.organizationRef ?? null;
+      if (organizationRef !== null) {
+        await read('GET /v1/organizations/:ref/status', async () => {
+          const snapshot = await client.organizations.status(organizationRef, scopeNow);
+          dispatchIfCurrent(scopeNow, { kind: 'org-snapshot', at: instants.nowMs(), snapshot });
+        });
       }
     }
     await pollJobs();

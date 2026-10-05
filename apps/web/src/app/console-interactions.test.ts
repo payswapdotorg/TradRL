@@ -1737,3 +1737,159 @@ describe('executed boot: the R8 interaction supplement injection (W-19)', () => 
     expect(findByData(root, 'data-section', 'goal')).not.toBeNull(); // the console still rendered
   });
 });
+
+// ---------------------------------------------------------------------------
+// R6a — THE SCOPE-CHANGE REFETCH (the W-22 wave, the architectural
+// blocker's read half): the console read its world ONCE at boot, so a
+// mid-session launch (which ADOPTS the created project — the scope
+// moves + every record resets) left the adopted scope's world unread:
+// the launched org's compiled snapshot never rendered without a page
+// reload. The beat now tracks the last-fetched scope and re-runs the
+// read bundle when it differs — plus the org-compile poll while the
+// current project's organization ref is still null (the backing binds
+// it on its own clock, W-8's R4 pass).
+// ---------------------------------------------------------------------------
+
+/** The scripted backing for the scope-change journey: prj-a boots with a bound org; a launch creates the adopted project (organizationRef NULL — the deployed law at creation time); the compile pass flips that project's organizationRef after ONE more project read (the demo tick's own clock), then serves the compiled snapshot's status. */
+function scopeChangeTransport(): {
+  readonly transport: ApiTransport;
+  readonly reads: { projectGets: string[]; orgStatusReads: string[]; knowledgeReads: string[] };
+  createdProjectId(): string | null;
+} {
+  const reads = { projectGets: [] as string[], orgStatusReads: [] as string[], knowledgeReads: [] as string[] };
+  let created: string | null = null;
+  const projectOf = (id: string, organizationRef: string | null): Record<string, unknown> => ({
+    id, tenantId: 'tenant-a', name: id === 'prj-a' ? 'Console Test Project' : 'Launched Project', executionMode: 'simulation',
+    lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef },
+    lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  });
+  const jobOf = (status: 'submitted' | 'running' | 'complete', project: string): JobRecord => ({ jobId: 'job-launch-1', kind: 'research', tenant: 'tenant-a', project, status, submittedAt: T0 + 1000, ...(status === 'complete' ? { completedAt: T0 + 2000 } : {}) });
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+  const notFound = () => ({ status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } });
+  const transport: ApiTransport = async (request) => {
+    const key = `${request.method} ${request.path.split('?')[0]}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key.startsWith('GET /v1/projects/')) {
+      const id = request.path.split('/').pop() ?? '';
+      reads.projectGets.push(id);
+      if (id === 'prj-a') return ok(projectOf('prj-a', 'org:seeded'));
+      if (id === created) {
+        // the compile pass's own clock: the first re-read after the launch
+        // still sees no organization; the SECOND sees the compiled ref
+        const observed = reads.projectGets.filter((seen) => seen === id).length;
+        return ok(projectOf(id, observed >= 2 ? `org:compiled-${id}` : null));
+      }
+      return notFound();
+    }
+    if (key.startsWith('GET /v1/organizations/')) {
+      // the client encodes the ref's colon (encodeURIComponent) — decode before matching
+      const ref = decodeURIComponent(key.slice('GET /v1/organizations/'.length).split('/status')[0] ?? '');
+      if (ref === 'org:seeded') return ok({ organizationRef: 'org:seeded', tenant: 'tenant-a', project: 'prj-a', status: 'active', at: T0, instanceRefs: ['ai:director-1'] });
+      if (created !== null && ref === `org:compiled-${created}`) {
+        reads.orgStatusReads.push(ref);
+        return ok({ organizationRef: ref, tenant: 'tenant-a', project: created, status: 'active', at: T0, instanceRefs: ['ai:director-1', 'ai:researcher-2'] }); // visible at the rig's frozen view instant (T0+1000)
+      }
+      return notFound();
+    }
+    if (key === 'POST /v1/knowledge/query') { reads.knowledgeReads.push(String((request.body as { project: string }).project)); return ok({ items: [] }); }
+    if (key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'POST /v1/projects') { created = (request.body as { id: string }).id; return ok(projectOf(created, null)); } // created WITHOUT an org (the deployed law)
+    if (key === 'POST /v1/jobs/research') return ok(jobOf('submitted', (request.body as { projectId: string }).projectId));
+    if (key.startsWith('GET /v1/jobs/')) return ok(jobOf('complete', created ?? 'prj-a'));
+    return notFound();
+  };
+  return { transport, reads, createdProjectId: (): string | null => created };
+}
+
+describe('executed boot: R6a — the scope-change refetch (launch -> the adopted scope reads without a reload)', () => {
+  it('the beat RE-RUNS the read bundle when the scope moves: the launch adopts prj-new, the next beat reads THAT project\'s world, and the org-compile poll lands the compiled snapshot', async () => {
+    const api = scopeChangeTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    expect(rig.handle.state().scope.projectId).toBe('prj-a');
+    expect(rig.handle.state().orgSnapshots.map((snapshot) => snapshot.organizationRef)).toEqual(['org:seeded']); // the boot bundle read the seeded org
+
+    // LAUNCH: the created project is ADOPTED (the scope moves + every record resets)
+    await rig.handle.submitLaunch(VALID_DRAFT);
+    const adopted = api.createdProjectId();
+    if (adopted === null) throw new Error('the launch created no project');
+    expect(rig.handle.state().scope.projectId).toBe(adopted);
+    expect(rig.handle.state().orgSnapshots).toEqual([]); // the adoption reset the prior project's records
+    expect(api.reads.knowledgeReads.length).toBeGreaterThan(0); // the boot read the seeded scope's world...
+    expect(api.reads.knowledgeReads.every((project) => project === 'prj-a')).toBe(true); // ...and ONLY that (the adopted scope has NOT been read yet — the R6a defect: never)
+
+    // BEAT 1: the scope differs from the last-fetched scope -> the FULL bundle for the adopted project
+    await rig.handle.beat();
+    expect(api.reads.knowledgeReads.filter((project) => project === adopted).length).toBeGreaterThan(0); // the adopted scope's reads ran
+    expect(api.reads.knowledgeReads.every((project) => project === 'prj-a' || project === adopted)).toBe(true); // and nothing else
+    expect(api.reads.projectGets).toContain(adopted);
+    // the compile pass has not flipped the org ref yet (its own clock) -> no snapshot yet, but the poll is armed
+    expect(rig.handle.state().orgSnapshots).toEqual([]);
+
+    // BEAT 2: the org-compile poll re-observes the project -> the ref flipped -> the org read lands
+    await rig.handle.beat();
+    expect(rig.handle.state().project?.lifecycle.organizationRef).toBe(`org:compiled-${adopted}`);
+    expect(api.reads.orgStatusReads).toEqual([`org:compiled-${adopted}`]);
+    const compiled = rig.handle.state().orgSnapshots.find((snapshot) => snapshot.organizationRef === `org:compiled-${adopted}`);
+    expect(compiled).toBeDefined();
+    expect(compiled?.status).toBe('active');
+    expect(compiled?.instanceRefs).toEqual(['ai:director-1', 'ai:researcher-2']);
+
+    // the Organization section renders the compiled snapshot WITHOUT any reload
+    clickNav(rig, 'organization');
+    const snapshotRow = findByData(rig.root, 'data-row', `snapshot:org:compiled-${adopted}`);
+    if (snapshotRow === null) throw new Error('the Organization section did not render the compiled snapshot');
+    expect(elementsOf(snapshotRow).some((element) => textOf(element) === `org:compiled-${adopted}`)).toBe(true); // the named ref renders
+    expect(elementsOf(snapshotRow).some((element) => textOf(element).includes('2 instances'))).toBe(true); // the compiled instance list renders
+
+    // BEAT 3: the scope holds -> no further scope-change refetch (the reads settle)
+    const knowledgeReadsAfterBeat2 = api.reads.knowledgeReads.length;
+    await rig.handle.beat();
+    expect(api.reads.knowledgeReads.length).toBe(knowledgeReadsAfterBeat2); // no re-run while the scope holds
+  });
+
+  it('a stale mid-flight read for the SUPERSEDED scope is DROPPED, never dispatched into the adopted workspace (the typed cross-scope guard stays upstream of the reducer)', async () => {
+    const api = scopeChangeTransport();
+    // a transport whose prj-a project read is SLOW: the launch adoption lands while the boot bundle's project read is still in flight
+    let releaseProjectRead: (() => void) | null = null;
+    const slow: ApiTransport = async (request) => {
+      const key = `${request.method} ${request.path.split('?')[0]}`;
+      if (key === 'GET /v1/projects/prj-a') await new Promise<void>((resolve) => { releaseProjectRead = resolve; });
+      return api.transport(request);
+    };
+    const handle = bootConsole({
+      baseUrl: 'http://scripted.invalid',
+      token: 'token-test',
+      scope: { tenantId: 'tenant-a', projectId: 'prj-a' },
+      transport: slow,
+      instants: { nowMs: () => T0 + 1000 },
+      storage: new MapStorage(),
+      onboardingStorage: new MapStorage(),
+    });
+    const doc = new FakeDocument();
+    const root = new FakeElement('div');
+    handle.mount(root as unknown as Parameters<ConsoleHandle['mount']>[0], doc as unknown as Parameters<ConsoleHandle['mount']>[1]);
+    const booting = handle.refresh(); // parks on the slow prj-a project read
+    await settle();
+    expect(handle.state().scope.projectId).toBe('prj-a');
+
+    // LAUNCH while the boot bundle is parked: the adoption supersedes the scope mid-flight
+    const launching = handle.submitLaunch(VALID_DRAFT);
+    await settle();
+    expect(handle.state().scope.projectId).toBe(api.createdProjectId()); // the adoption landed while the prj-a read was in flight
+
+    // release the stale read: its dispatch (and every later prj-a dispatch in that bundle) must be DROPPED
+    if (releaseProjectRead === null) throw new Error('the slow prj-a read never parked');
+    releaseProjectRead();
+    await booting;
+    await launching;
+    // the stale prj-a project record never entered the adopted workspace...
+    expect(handle.state().project === null || handle.state().project?.id === api.createdProjectId()).toBe(true);
+    // ...and nothing degraded: the stale dispatch was dropped before the typed cross-scope guard could refuse it
+    expect(handle.state().degraded).toEqual([]);
+
+    // the beat then reads the adopted scope cleanly (the bundleScope mark kept it "unfetched")
+    await handle.beat();
+    expect(handle.state().project?.id).toBe(api.createdProjectId());
+  });
+});
