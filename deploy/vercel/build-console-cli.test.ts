@@ -107,8 +107,19 @@ function runCli(cwd: string, scriptArg: string) {
   });
 }
 
+// THE TIMEOUT LAW (W-8, FW-2-b): these two cases each spawn the REAL CLI —
+// a full static copy + a full tsc emit of the function entry graph — and
+// the pre-W-8 margin against vitest's 5000ms default was razor-thin (base
+// 04cc5d5 measures ~4.4s/case on an idle machine; the W-8 runtime surface
+// adds runtime/routes.ts to the emit graph and grows runtime/demo.ts, and a
+// loaded CI machine tips the spawn over the default). A timeout here would
+// measure MACHINE LOAD, not the contract — the per-test timeout is raised
+// to a generous ceiling for these integration-shaped spawns (the assertions
+// themselves stay byte-strict).
+const FULL_BUILD_SPAWN_TIMEOUT_MS = 60_000;
+
 describe('deploy/vercel/build-console.mjs — the CLI entry resolves the repo root from the script location (W-3g) and emits the prebuilt tree (W-3k)', () => {
-  it('spawned as the vercel.json buildCommand (relative path, from the repo root) it builds the COMPLETE prebuilt output under the FIXTURE repo — never its parent', async () => {
+  it('spawned as the vercel.json buildCommand (relative path, from the repo root) it builds the COMPLETE prebuilt output under the FIXTURE repo — never its parent', { timeout: FULL_BUILD_SPAWN_TIMEOUT_MS }, async () => {
     const result = runCli(FIXTURE_REPO, 'deploy/vercel/build-console.mjs');
     // The W-3g bug crashed HERE: exit != 0 with an ENOENT stack (it looked
     // for <parent>/apps/web, which does not exist in a repo-shaped layout).
@@ -165,7 +176,7 @@ describe('deploy/vercel/build-console.mjs — the CLI entry resolves the repo ro
     expect(existsSync(join(FIXTURE_REPO, 'deploy', 'vercel', 'dist'))).toBe(false);
   });
 
-  it('resolves the root from the SCRIPT location, not the cwd (spawned from apps/web with an absolute path, output still under the fixture repo)', () => {
+  it('resolves the root from the SCRIPT location, not the cwd (spawned from apps/web with an absolute path, output still under the fixture repo)', { timeout: FULL_BUILD_SPAWN_TIMEOUT_MS }, () => {
     const result = runCli(join(FIXTURE_REPO, 'apps', 'web'), FIXTURE_SCRIPT);
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
