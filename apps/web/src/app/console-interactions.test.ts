@@ -47,10 +47,11 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ApiTransport } from '../api/transport';
 import type { ConsoleHandle } from './console';
 import { bootConsole } from './console';
+import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
 import type { JobRecord, OutcomeRecord } from '../api/contracts';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
@@ -187,6 +188,12 @@ class FakeDocument {
   /** Dispatch one event to every listener of its type (the browser's capture order is irrelevant: one console). */
   fire(type: string, event: { target: FakeElement | null; relatedTarget?: FakeElement | null; key?: string; ctrlKey?: boolean; metaKey?: boolean }): void {
     for (const listener of [...(this.listeners.get(type) ?? [])]) listener(event as unknown as Record<string, unknown>);
+  }
+
+  /** The shell root lookup (index.ts's findConsoleRoot — the browser boot path's own entry). */
+  readonly rootsById = new Map<string, FakeElement>();
+  getElementById(id: string): FakeElement | null {
+    return this.rootsById.get(id) ?? null;
   }
 
   /** The focus traps' query surface: descendant selectors of .class and [data-action="value"] tokens. */
@@ -775,6 +782,63 @@ describe('executed boot: J3 — the primary flow (the launch entry + the wired f
     expect(elementsOf(rig.root).some((element) => textOf(element) === 'Goal statement')).toBe(true);
   });
 
+  it('J03 on the DEPLOYED configuration: the shell boots scoped to a REAL project (the seeded demo), the launch ADOPTS the created project (superseding it) and the progress animates submitted -> running -> complete', async () => {
+    // THE LIVE RED (W-12a's catalog finding, J03): the deployed shell
+    // boots scoped to prj-demo-console (TRADRL_CONSOLE_PROJECT_ID) and
+    // the boot read cadence LOADS that project — the launch's
+    // POST /v1/projects 201 then tried to adopt the CREATED project and
+    // the workspace refused ("the workspace already adopted project …"),
+    // so the journey died at the error card and the async progress
+    // NEVER rendered. The fix's law: the launch bridge adopts the
+    // created project wherever the workspace was (supersede semantics —
+    // the prior project's records leave the sections, the chain keeps
+    // everything).
+    const demo = launchDemoTransport();
+    // prj-a plays the seeded demo project (the deployed shell's project scope).
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, demo.transport, 'prj-a');
+    expect(rig.handle.state().project?.id).toBe('prj-a'); // the demo project's world loaded at boot (the deployed reality)
+
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-review');
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch');
+    await settle();
+
+    // NO error card: the create succeeded server-side and the adoption superseded the demo project
+    expect(rig.handle.state().launch.phase).toBe('launching');
+    expect(rig.handle.state().launch.error).toBeNull();
+    expect(demo.createdProjectIds.length).toBe(1); // POST /v1/projects created the project (201)
+    expect(rig.handle.state().scope.projectId).toBe(demo.createdProjectIds[0]); // the launch ADOPTED it
+    expect(rig.handle.state().project?.id).toBe(demo.createdProjectIds[0]);     // the created project IS the workspace's world now
+    expect(findByData(rig.root, 'data-launch-phase', 'submitted')).not.toBeNull(); // the progress surface renders
+    expect(elementsOf(rig.root).some((element) => element.hasClass('error-card'))).toBe(false);
+
+    await rig.handle.beat(); // poll 1 -> running
+    expect(findByData(rig.root, 'data-launch-phase', 'running')).not.toBeNull();
+    await rig.handle.beat(); // poll 2 -> complete
+    expect(rig.handle.state().launch.phase).toBe('launched');
+    expect(findByData(rig.root, 'data-launch-phase', 'complete')).not.toBeNull();
+    // the goal panel carries the launched goal; the kickoff job is the workspace's tracked job
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Momentum scout')).toBe(true);
+    expect(rig.handle.state().jobs).toHaveLength(1);
+    expect(rig.handle.state().jobs[0]?.status).toBe('complete');
+    // the honest terminal render: the Launch (launched) card + the complete progress; never an error card
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Launch (launched)')).toBe(true);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('error-card'))).toBe(false);
+    // the workspace STAYS on the adopted project (the launch happened; the demo project's world is superseded)
+    expect(rig.handle.state().scope.projectId).toBe(demo.createdProjectIds[0]);
+  });
+
   it('the REVIEW GATE blocks an invalid draft: the problems render, the arm button stays away (executed)', async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' });
     clickNav(rig, 'goal');
@@ -784,6 +848,87 @@ describe('executed boot: J3 — the primary flow (the launch entry + the wired f
     clickAction(rig, 'launch-step-review'); // budgets + lists never filled -> invalid
     expect(findByData(rig.root, 'data-review-problems', '5')).not.toBeNull(); // capital + risk budgets + the three lists (name/objective/horizon/mode are valid)
     expect(findByData(rig.root, 'data-action', 'confirm-arm-launch')).toBeNull(); // never the arm button
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE BROWSER BOOT PATH — the shipped shell's own entry (bootFromShell)
+// executes end to end: the shell config (the deployed shape — a REAL
+// project scope), the parked boot module (the inline bootstrap's
+// window.__TRADRL_CONSOLE_BOOT__ seam), localStorage, and THE BEAT
+// CADENCE the browser timer seam must arm (the live J03 finding's
+// second half: without a scheduler the progress card freezes at
+// 'submitted' forever — submitted -> running -> complete NEVER renders).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: the BROWSER boot path (bootFromShell arms the beat cadence)', () => {
+  it('the shipped entry boots scoped to the demo project, launches, and the SCHEDULER-DRIVEN poll cadence animates submitted -> running -> complete (no manual beat anywhere)', async () => {
+    vi.useFakeTimers();
+    // THE SHELL'S OWN SEAM: park the real app module where the inline
+    // bootstrap parks it (the browser cannot resolve the TS entry
+    // itself — the holder is the boot path), stub localStorage (the
+    // persisted onboarding), and boot through the shipped entry.
+    const app = await import('./console');
+    const holder = globalThis as { __TRADRL_CONSOLE_BOOT__?: unknown };
+    const parked: unknown = app;
+    holder.__TRADRL_CONSOLE_BOOT__ = parked;
+    const storage = new MapStorage();
+    storage.map.set('tradrl_onboarded', 'true');
+    const globals = globalThis as { localStorage?: unknown };
+    const hadLocalStorage = Object.prototype.hasOwnProperty.call(globals, 'localStorage');
+    const priorLocalStorage = globals.localStorage;
+    globals.localStorage = storage;
+    const demo = launchDemoTransport();
+    const doc = new FakeDocument();
+    const root = new FakeElement('div');
+    doc.rootsById.set('tradrl-console', root);
+    try {
+      const handle = await bootFromShell({
+        document: doc as unknown as Document,
+        config: { token: 'token-test', tenantId: 'tenant-a', projectId: 'prj-a' }, // the DEPLOYED shape: scoped to the seeded project
+        transport: demo.transport,
+      });
+      expect(handle).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(0); // settle the boot read cadence's microtasks
+      expect(handle?.state().project?.id).toBe('prj-a'); // the demo project's world loaded (the deployed reality)
+
+      // the full primary flow through the delegated layer (the browser's own events)
+      const rig: Rig = { handle: handle as ConsoleHandle, doc, root, storage };
+      clickNav(rig, 'goal');
+      clickAction(rig, 'launch-start');
+      typeField(rig, 'name', 'Momentum scout');
+      typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+      clickAction(rig, 'launch-step-budget');
+      typeField(rig, 'capitalBudget', '10000.00');
+      typeField(rig, 'riskBudget', '250.00');
+      clickAction(rig, 'launch-step-markets');
+      typeField(rig, 'markets', 'binance:BTC-USDT');
+      typeField(rig, 'venues', 'binance');
+      typeField(rig, 'dataSources', 'candles:1m');
+      clickAction(rig, 'launch-step-review');
+      clickAction(rig, 'confirm-arm-launch');
+      clickAction(rig, 'confirm-launch');
+      await vi.advanceTimersByTimeAsync(0); // settle the composed submit
+
+      expect(demo.createdProjectIds.length).toBe(1);                              // POST /v1/projects created the project
+      expect(handle?.state().scope.projectId).toBe(demo.createdProjectIds[0]);    // the launch ADOPTED it (superseding the demo project)
+      expect(findByData(root, 'data-launch-phase', 'submitted')).not.toBeNull();  // the progress surface renders
+
+      // THE CADENCE: the beats fire from the SCHEDULER (the browser
+      // timer seam), never from the test — the animation the live
+      // deployment never rendered (its boot injected no scheduler).
+      await vi.advanceTimersByTimeAsync(1000); // beat 1 -> running
+      expect(findByData(root, 'data-launch-phase', 'running')).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(1000); // beat 2 -> complete
+      expect(handle?.state().launch.phase).toBe('launched');
+      expect(findByData(root, 'data-launch-phase', 'complete')).not.toBeNull();
+      expect(handle?.state().jobs[0]?.status).toBe('complete'); // the kickoff job tracked through the cadence
+    } finally {
+      vi.useRealTimers();
+      delete holder.__TRADRL_CONSOLE_BOOT__;
+      if (hadLocalStorage) globals.localStorage = priorLocalStorage;
+      else delete globals.localStorage;
+    }
   });
 });
 

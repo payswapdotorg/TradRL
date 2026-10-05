@@ -217,15 +217,39 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       return { ...withHistory, connection: event.status };
 
   } else if (selector === 'project-adopted') {
-      // The launch flow's bridge: the workspace opens on the launchpad
-      // scope (no project yet) and adopts the created project's id — the
-      // ONE scope transition the console knows. Every record ingested
-      // after it must carry the adopted project (the gate enforces it).
+      // The launch flow's bridge: the workspace ADOPTS the created
+      // project's id. From the launchpad scope (no project yet — the
+      // shipped shell's default) this is the first adoption; from a
+      // PROJECT-SCOPED boot (the deployed shell: TRADRL_CONSOLE_PROJECT_ID
+      // scopes it to the seeded demo project, which the boot read cadence
+      // loads) the launch SUPERSEDES the prior project — the console is
+      // project-centric (R36) and the workspace is ONE project's world
+      // (L12), so the prior project's records leave the sections and the
+      // created project's world becomes the workspace's (the history
+      // chain keeps everything, append-only; the session's folded notices
+      // stay — they happened). Every record ingested after the adoption
+      // must carry the adopted project (the gate enforces it); the prior
+      // project's records are foreign from here on (a re-ingest is the
+      // typed cross-scope error).
       if (event.projectId.length === 0) throw new Error('reduceWorkspace: project-adopted requires the created project id');
-      if (state.project !== null && state.project.id !== event.projectId) {
-        throw new Error(`reduceWorkspace: the workspace already adopted project ${state.project.id}; adopting ${event.projectId} is a typed input error`);
+      if (state.project !== null && state.project.id === event.projectId) {
+        // Re-adopting the project the workspace already carries: an
+        // idempotent no-op (no record churn, no double transition).
+        return withHistory;
       }
-      return { ...withHistory, scope: { tenantId: state.scope.tenantId, projectId: event.projectId } };
+      const superseded: WorkspaceState = {
+        ...withHistory,
+        project: null,
+        goal: null,
+        constraintSet: null,
+        orgSnapshots: [],
+        jobs: [],
+        outcomes: [],
+        postMortems: [],
+        knowledge: [],
+        submissions: [],
+      };
+      return { ...superseded, scope: { tenantId: state.scope.tenantId, projectId: event.projectId } };
   } else if (selector === 'project-loaded') {
       assertProjectScope(state.scope, event.project);
       const next: WorkspaceState = { ...withHistory, project: event.project };
