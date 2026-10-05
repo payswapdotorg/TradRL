@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/autonomous-learning-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The autonomous-learning service (Work Order T035): the continuous self-improvement loop that closes the Learning from reality section — it consumes T033's evaluation hooks (the typed per-outcome learning signals) and T034's served firm knowledge, and turns realized outcomes into the three improvement products: improved curricula (T015-shaped capability gaps + the revised plan input), refined skills (T017-shaped forge commissions, adoption-gated), and updated firm memory (T034-shaped ingestion feeds) — with T031's integrity guarantees: every improvement is an in-search trial in the retained search lineage, adoption requires holdout-distinguished attained evidence, cited evidence outside the retained search record is the typed hidden_trials, and the improvement log itself is append-only and chain-verified. Zero runtime dependencies; mirrors, never imports (D-003/D-004); no ambient clock, no ambient randomness — injected instants and content-addressed ids only.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
