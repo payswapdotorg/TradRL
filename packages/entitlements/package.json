@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/entitlements",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Entitlements contracts (Work Order T047): what a tenant is allowed to consume — the typed allowance records (closed kind vocabulary: spend-allowance / api-quota / artifact-license, exact canonical decimals, L4 validity windows, versioned append-only amendments), the append-only chain-verified per-tenant entitlement ledger (grant / amend / revoke / consume — every draw-down is a content-addressed consumption record; over-consumption is the typed entitlement_exhausted), the point-in-time entitlement snapshot (ask what a tenant was allowed at instant T — L4), and the R41 usage enforcement: the T041 usage-metering fact surface (per-tenant per-route usage records, mirrored) checked against api-quota grants. Zero runtime dependencies; mirrors, never imports (D-003/D-004); no ambient clock, no ambient randomness — injected instants and content-addressed ids only.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
