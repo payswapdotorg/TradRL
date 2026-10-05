@@ -306,6 +306,33 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         const project = await client.projects.get(projectId);
         dispatchIfCurrent(projectId, { kind: 'project-loaded', at: instants.nowMs(), project });
       });
+      // THE GOAL READ (D-1, the W-23 fix — the boot seam the Lead
+      // verified broken live): `goal-loaded` fired ONLY inside the
+      // launch submit path (from the launch DRAFT), so after any page
+      // reload or project switch state.goal/state.constraintSet stayed
+      // null — the Goal section lost its "Goal statement" card and the
+      // Risk section its "Constraint set" card (the R5 numeric-bounds
+      // render included) for every session that didn't just launch.
+      // The read rides the bundle's own cadence, so it runs at boot
+      // here AND on the beat's scope-change refetch for every adopted
+      // scope (a launch adoption, a switcher choice, a stored-scope
+      // restore — the same refresh()). Unlike its siblings it degrades
+      // SILENTLY: the route is HOST-OWNED and demo-backing-only (it
+      // serves the demo project's seeded records and answers a typed
+      // 404 everywhere else — every launched project included), so on
+      // ANY failure (a typed 404 included) NOTHING dispatches: no
+      // goal-loaded, no degraded-read note, no offline flip — the
+      // state stays exactly as today, the honest pre-fix absence
+      // (never a fabricated goal, never a degradation note for a route
+      // the host never promised this scope).
+      try {
+        const bundle = await client.projects.goal(projectId);
+        dispatchIfCurrent(projectId, { kind: 'goal-loaded', at: instants.nowMs(), goal: bundle.goal, constraintSet: bundle.constraintSet });
+      } catch {
+        // the goal route is host-owned demo-backing-only — an absent
+        // goal is the host's answer, not a failure of the console's
+        // own reads; skip silently and keep the bundle moving.
+      }
       await read('POST /v1/knowledge/query', async () => {
         const page = await client.knowledge.query({ project: projectId, at: instants.nowMs() });
         dispatchIfCurrent(projectId, { kind: 'knowledge-loaded', at: instants.nowMs(), records: [...page.items] });
