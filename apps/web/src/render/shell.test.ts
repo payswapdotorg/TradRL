@@ -303,6 +303,17 @@ describe('shell: the composed model keeps T042 pins (regression floor)', () => {
     expect(serialized).toContain('class="shell-sidebar"');
   });
 
+  it('the content region is a <main> landmark — exactly one per page (J12; the existing landmarks stay)', () => {
+    const serialized = render(stateAt());
+    expect(serialized).toContain('<main class="shell-main"');
+    expect(serialized.match(/<main[\s>]/g)?.length ?? 0).toBe(1);
+    // the pre-existing landmarks are untouched: the complementary
+    // sidebar, the Primary nav, and the page scaffold's header.
+    expect(serialized).toContain('<aside class="shell-sidebar"');
+    expect(serialized).toContain('aria-label="Primary"');
+    expect(serialized).toContain('class="page-scaffold"');
+  });
+
   it('the Time Machine bar still renders inside the shell (T042 law)', () => {
     const serialized = render(stateAt());
     expect(serialized).toContain('class="timemachine"');

@@ -385,7 +385,11 @@ export function renderAppShell(
       shellNav(activeTarget, unreadCount(state.inbox)),
       connectionZone(state, view, at),
     ]),
-    v('div', { class: 'shell-main' }, [
+    // §6 J12 (the W-17b fix): the content region is the <main> landmark
+    // — one per page, wrapping every section; the pre-existing landmarks
+    // (the complementary sidebar, the Primary nav, the scaffold headers)
+    // are untouched. Class-styled only, so the §2 layout is unchanged.
+    v('main', { class: 'shell-main' }, [
       v('div', { class: 'shell-content' }, [
         ...(activeTarget === 'home' ? [] : [pageScaffold(activeTarget, state, view)]),
         content.timeMachine,
