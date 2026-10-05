@@ -49,6 +49,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import type { ApiTransport } from '../api/transport';
+import type { InstantSource, TickScheduler } from '../core/clock';
+import { formatInstantUtc } from '../core/format';
 import type { ConsoleHandle } from './console';
 import { bootConsole } from './console';
 import { bootFromShell } from '../index';
@@ -317,34 +319,85 @@ const FAILED_JOB: JobRecord = {
   submittedAt: T0 + 10,
 };
 
+/** A SECOND failed job, later in time (a distinct notice id — the "a NEW notice toasts" signal). */
+const FAILED_JOB_2: JobRecord = {
+  jobId: 'job-2',
+  kind: 'research',
+  tenant: 'tenant-a',
+  project: 'prj-a',
+  status: 'failed',
+  submittedAt: T0 + 40,
+};
+
+/** One scripted scheduled tick (the scheduler seam's test double). */
+interface ScheduledTick {
+  readonly delayMs: number;
+  readonly tick: () => void;
+}
+
+/** The scripted scheduler: records schedule() calls; tests fire ticks BY HAND (deterministic beats + toast timers — no wall clock anywhere). */
+class ScriptedScheduler implements TickScheduler {
+  readonly pending: ScheduledTick[] = [];
+  schedule(delayMs: number, tick: () => void): void {
+    this.pending.push({ delayMs, tick });
+  }
+  /** Fire the first pending tick scheduled at exactly the given delay (the toast's 5000ms vs the beat's 1000ms). */
+  fireAt(delayMs: number): boolean {
+    const index = this.pending.findIndex((entry) => entry.delayMs === delayMs);
+    if (index === -1) return false;
+    const spliced = this.pending.splice(index, 1);
+    const entry = spliced[0];
+    if (entry === undefined) return false;
+    entry.tick();
+    return true;
+  }
+  /** Fire the OLDEST pending tick (the beat loop's next beat). */
+  fireNext(): boolean {
+    const entry = this.pending.shift();
+    if (entry === undefined) return false;
+    entry.tick();
+    return true;
+  }
+}
+
 /** One booted + mounted console on the fake document. */
 interface Rig {
   readonly handle: ConsoleHandle;
   readonly doc: FakeDocument;
   readonly root: FakeElement;
   readonly storage: MapStorage;
+  /** The injected scheduler (when the test passed one — the beat loop + the toast timers, fired by hand). */
+  readonly scheduler: ScriptedScheduler | null;
+}
+
+/** The per-rig seam overrides (the scheduler + an instant source other than the fixed one). */
+interface RigOverrides {
+  readonly scheduler?: ScriptedScheduler;
+  readonly instants?: InstantSource;
 }
 
 /** Boot the real console with every seam injected and mount it (DOM-free until here — the architecture's law). The project id defaults to the rig's scoped project; pass '' for the LAUNCHPAD (the shipped shell's own default — the primary flow starts there). */
-async function bootRig(stored: Record<string, string> = {}, transport: ApiTransport = offlineTransport, projectId = 'prj-a'): Promise<Rig> {
+async function bootRig(stored: Record<string, string> = {}, transport: ApiTransport = offlineTransport, projectId = 'prj-a', overrides: RigOverrides = {}): Promise<Rig> {
   const storage = new MapStorage();
   for (const [key, value] of Object.entries(stored)) storage.map.set(key, value);
+  const scheduler = overrides.scheduler ?? null;
   const handle = bootConsole({
     baseUrl: 'http://scripted.invalid',
     token: 'token-test',
     scope: { tenantId: 'tenant-a', projectId },
     transport,
-    instants: { nowMs: () => T0 + 1000 },
+    instants: overrides.instants ?? { nowMs: () => T0 + 1000 },
     theme: 'light',
     storage,
     onboardingStorage: storage,
     simulated: true,
+    ...(scheduler === null ? {} : { scheduler }),
   });
   const doc = new FakeDocument();
   const root = new FakeElement('div');
   handle.mount(root as unknown as Parameters<ConsoleHandle['mount']>[0], doc as unknown as Parameters<ConsoleHandle['mount']>[1]);
   await handle.refresh(); // settle the boot read cadence (every read degrades — deterministic)
-  return { handle, doc, root, storage };
+  return { handle, doc, root, storage, scheduler };
 }
 
 /** Fire a delegated click at the element (the browser's dispatch, one target). */
@@ -893,7 +946,10 @@ describe('executed boot: the BROWSER boot path (bootFromShell arms the beat cade
       expect(handle?.state().project?.id).toBe('prj-a'); // the demo project's world loaded (the deployed reality)
 
       // the full primary flow through the delegated layer (the browser's own events)
-      const rig: Rig = { handle: handle as ConsoleHandle, doc, root, storage };
+      // (scheduler: null — this rig booted through the REAL bootFromShell, whose
+      // browser scheduler the fake timers own; there is no scripted scheduler to
+      // fire by hand here.)
+      const rig: Rig = { handle: handle as ConsoleHandle, doc, root, storage, scheduler: null };
       clickNav(rig, 'goal');
       clickAction(rig, 'launch-start');
       typeField(rig, 'name', 'Momentum scout');
@@ -1123,6 +1179,102 @@ describe('executed boot: J8 — the command palette query (the dead input wiring
 });
 
 // ---------------------------------------------------------------------------
+// J5 — the Time Machine (the J-catalog's RED half): the scrubber drag
+// (data-action=tm-scrub — INERT on the deployed console: flow.ts renders
+// it, no handler consumes it) and the PLAYBACK beat (frozen at fromAt:
+// the beat scheduler only armed when a scheduler is INJECTED — the
+// browser boot passed none).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: J5 — the Time Machine (the scrubber + the playback beat)', () => {
+  it('the scrubber DRAG: input events buffer (nothing commits mid-drag), the change COMMIT moves the view instant (mode -> timestamp, the mono readout follows)', async () => {
+    // The ADVANCING instant source: the anchor drifts past the opened
+    // instant when the app observes a fresh one, so the scrubber's
+    // range is REAL (a degenerate min === max rig would make the drag
+    // vacuous).
+    let nowMs = T0;
+    const instants: InstantSource = { nowMs: () => (nowMs += 50) };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { instants });
+    // The scripted clock jumps forward (minutes pass) and the app
+    // observes a fresh live instant — the anchor's own law (advanceAnchor
+    // runs on the view transitions; the scripted source continues FROM
+    // the jump so the anchor never regresses).
+    nowMs = T0 + 5_000;
+    rig.handle.dispatch({ kind: 'view-live', at: instants.nowMs() });
+    const scrubber = findByData(rig.root, 'data-action', 'tm-scrub');
+    if (scrubber === null) throw new Error('the Time Machine renders no scrubber');
+    const state = rig.handle.state();
+    const anchor = state.timeMachine.anchorAt;
+    const floor = Math.min(state.openedAt, anchor);
+    expect(anchor).toBeGreaterThan(floor); // the rig guarantees a non-degenerate scrub range
+
+    // THE DRAG: input events fire per pointer move — they must NOT
+    // dispatch (a re-render under the pointer replaces the range input
+    // and the browser drops the drag — the same silent-no-op class the
+    // J3 pointer gate closes for the launch form).
+    scrubber.value = String(anchor - 100);
+    rig.doc.fire('input', { target: scrubber });
+    expect(rig.handle.state().timeMachine.mode).toBe('live'); // nothing committed mid-drag
+
+    // THE RELEASE: the change event commits the scrubbed instant.
+    rig.doc.fire('change', { target: scrubber });
+    expect(rig.handle.state().timeMachine.mode).toBe('timestamp');
+    expect(rig.handle.state().timeMachine.timestamp).toBe(anchor - 100);
+    const readout = elementsOf(rig.root).find((element) => element.hasClass('tm-readout'));
+    if (readout === undefined) throw new Error('the mono readout is missing');
+    expect(textOf(readout)).toBe(formatInstantUtc(anchor - 100)); // the readout follows the drag
+
+    // A hostile value beyond the anchor CLAMPS to the anchor (the view instant may never point after it — the machine's typed law).
+    const again = findByData(rig.root, 'data-action', 'tm-scrub');
+    if (again === null) throw new Error('the scrubber vanished after the commit');
+    const anchorBeforeClamp = rig.handle.state().timeMachine.anchorAt;
+    again.value = String(anchorBeforeClamp + 5_000_000);
+    rig.doc.fire('input', { target: again });
+    rig.doc.fire('change', { target: again });
+    expect(rig.handle.state().timeMachine.mode).toBe('timestamp');
+    expect(rig.handle.state().timeMachine.timestamp).toBe(anchorBeforeClamp); // clamped to the anchor — never the future
+  });
+
+  it('the beat loop advances armed playback (the scheduler seam): each scripted beat is one controlled step, the readout moves with it', async () => {
+    const scheduler = new ScriptedScheduler();
+    let nowMs = T0;
+    const instants: InstantSource = { nowMs: () => (nowMs += 100) };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler, instants });
+    nowMs = T0 + 60_000; // the scripted clock jumps forward — the playback span is real and the anchor never regresses
+    rig.handle.dispatch({ kind: 'view-live', at: instants.nowMs() });
+    clickAction(rig, 'tm-mode-playback'); // arm playback from the opened instant, step 500ms
+    const armed = rig.handle.state().timeMachine.playback;
+    if (armed === null) throw new Error('playback did not arm');
+    expect(armed.ticks).toBe(0);
+
+    for (let beat = 0; beat < 3; beat += 1) {
+      expect(scheduler.fireNext(), `beat ${beat + 1} was scheduled`).toBe(true);
+      await settle(); // beat() settles before the loop re-arms
+    }
+    const playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('the beats disarmed playback');
+    expect(playback.ticks).toBe(3); // one controlled step per beat
+    const readout = elementsOf(rig.root).find((element) => element.hasClass('tm-readout'));
+    if (readout === undefined) throw new Error('the mono readout is missing');
+    expect(textOf(readout)).toBe(formatInstantUtc(playback.fromAt + playback.ticks * playback.stepMs)); // advancing, not frozen
+  });
+
+  it('the beat NEVER throws when playback sits AT the anchor (the pure machine\'s tick-past-anchor input error is the app layer\'s to guard — the browser beat loop must not spray unhandled rejections)', async () => {
+    const scheduler = new ScriptedScheduler();
+    // The FIXED instant source: openedAt === anchorAt, so playback arms with a ZERO span.
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler });
+    clickAction(rig, 'tm-mode-playback');
+    const armed = rig.handle.state().timeMachine.playback;
+    if (armed === null) throw new Error('playback did not arm');
+    expect(rig.handle.state().timeMachine.anchorAt).toBe(armed.fromAt); // the zero-span premise
+    await expect(rig.handle.beat()).resolves.toBeUndefined(); // RED on the unguarded tree: tickPlayback throws
+    const after = rig.handle.state().timeMachine.playback;
+    if (after === null) throw new Error('the beat disarmed playback');
+    expect(after.ticks).toBe(0); // the guard SKIPPED the dispatch (no view past the anchor)
+  });
+});
+
+// ---------------------------------------------------------------------------
 // J9 — the OFFLINE state (the W-14c fix: the never-dispatched 'offline').
 // The live catalog finding: blocking the API renders DEGRADED (amber),
 // never the catalog's UNREACHABLE surface — console.ts's only
@@ -1242,6 +1394,70 @@ describe('executed boot: J9 — the offline state (the boot/initial-read total f
     expect(connectionLabelOf(rig)).toBe('DEGRADED');
     expect(elementsOf(rig.root).some((element) => element.hasClass('connection-offline'))).toBe(false);
     expect(elementsOf(rig.root).some((element) => element.hasClass('error-state'))).toBe(false); // no ErrorState: the API is reachable
+  });
+});
+
+// ---------------------------------------------------------------------------
+// J6 — the inbox read toggle + the toast lifecycle (the J-catalog's RED
+// half): the per-notice notice-read dispatch (the workspace supported
+// it; NO affordance dispatched it — and the delegated row branch would
+// have swallowed the click anyway) and the toast (auto-dismiss needs
+// the scheduler seam; the close button was never rendered; the re-fire
+// guard keeps §4.10's "for NEW notices" honest).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: J6 — the inbox read toggle + the toast lifecycle', () => {
+  it('the per-notice READ TOGGLE: the affordance renders on unread rows, dispatches notice-read (the row falls to read, the badge drops), and read rows carry none', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB }); // folds one unread notice
+    const notice = rig.handle.state().inbox.notices[0];
+    if (notice === undefined) throw new Error('the fixture folded no notice');
+    expect(rig.handle.state().inbox.readNoticeIds.includes(notice.noticeId)).toBe(false);
+    clickNav(rig, 'inbox');
+
+    const row = findByData(rig.root, 'data-row', `notice:${notice.noticeId}`);
+    if (row === null) throw new Error('the Inbox renders no notice row');
+    expect(row.hasClass('unread')).toBe(true);
+    const markRead = findByData(rig.root, 'data-notice-read', notice.noticeId);
+    if (markRead === null) throw new Error('the unread notice row carries no Mark-read affordance'); // RED on the unfixed tree
+    expect(markRead.getAttribute('data-action')).toBe('notice-read');
+
+    click(rig, markRead); // the click lives INSIDE the row — the row branch must not swallow it
+    expect(rig.handle.state().inbox.readNoticeIds).toContain(notice.noticeId); // the sanctioned write path fired
+    const readRow = findByData(rig.root, 'data-row', `notice:${notice.noticeId}`);
+    if (readRow === null) throw new Error('the notice row vanished');
+    expect(readRow.hasClass('read')).toBe(true);
+    expect(findByData(rig.root, 'data-notice-read', notice.noticeId)).toBeNull(); // read rows carry no toggle
+    expect(countByData(rig.root, 'data-unread', '1')).toBe(0); // the bell badge dropped to zero
+  });
+
+  it('the toast AUTO-DISMISSES through the ~5s scheduler timer and NEVER re-fires for the same notice (§4.10: toasts are for NEW notices)', async () => {
+    const scheduler = new ScriptedScheduler();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    expect(findByData(rig.root, 'data-toast', 'failed_evaluation')).not.toBeNull(); // §4.10 D6: the notice surfaced
+    expect(scheduler.fireAt(5000)).toBe(true); // the ~5s timer was scheduled at show time
+    expect(findByData(rig.root, 'data-toast', 'failed_evaluation')).toBeNull(); // auto-dismissed
+
+    // The re-fire guard: an UNRELATED dispatch must not bring the toast back (the unfixed layer re-toasted the latest notice on EVERY state change — with auto-dismiss that becomes an infinite toast loop).
+    rig.handle.dispatch({ kind: 'section-selected', at: T0 + 21, section: 'goal' });
+    expect(findByData(rig.root, 'data-toast', 'failed_evaluation')).toBeNull(); // RED on the unguarded tree
+
+    // A NEW notice surfaces again (a distinct id — the second failed job).
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 22, job: FAILED_JOB_2 });
+    expect(findByData(rig.root, 'data-toast', 'failed_evaluation')).not.toBeNull();
+  });
+
+  it('the toast carries a WORKING close button (the console.ts toast-close handler finally has an element)', async () => {
+    const scheduler = new ScriptedScheduler();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    const close = findByData(rig.root, 'data-action', 'toast-close');
+    if (close === null) throw new Error('the toast renders no close affordance'); // RED on the unfixed tree
+    click(rig, close);
+    expect(findByData(rig.root, 'data-toast', 'failed_evaluation')).toBeNull(); // dismissed NOW, no timer needed
+    expect(scheduler.fireAt(5000)).toBe(true); // the pending timer still fires…
+    expect(findByData(rig.root, 'data-toast', 'failed_evaluation')).toBeNull(); // …but is token-checked: no resurrection
   });
 });
 

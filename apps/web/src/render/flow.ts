@@ -296,7 +296,7 @@ export function notificationBell(unread: number, target = 'inbox'): VNode {
   ]);
 }
 
-/** The toast record (§4.10): top-right, role=status, ~5s auto-dismiss (the app layer owns the timer). */
+/** The toast record (§4.10): top-right, role=status, ~5s auto-dismiss (the app layer owns the timer) + the manual dismiss (the W-14b close button — the app layer's toast-close handler finally has an element). */
 export function toastRecord(kind: NoticeKind, title: string, sentence: string): VNode {
   return v('div', { class: `toast toast-${kind}`, role: 'status', 'data-toast': kind }, [
     iconOf(NOTICE_ICONS[kind], 'ci ci-16'),
@@ -304,6 +304,7 @@ export function toastRecord(kind: NoticeKind, title: string, sentence: string): 
       v('div', { class: 'toast-title' }, [title]),
       v('div', { class: 'toast-sentence' }, [sentence]),
     ]),
+    v('button', { class: 'toast-close', 'data-action': 'toast-close', type: 'button', 'aria-label': 'Dismiss notification' }, ['\u00d7']),
   ]);
 }
 

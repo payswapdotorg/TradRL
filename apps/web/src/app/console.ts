@@ -165,6 +165,7 @@ export const LAUNCHPAD_PROJECT_ID = '(launchpad)';
 export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   const transport = options.transport ?? createFetchTransport(options.baseUrl, options.fetchLike);
   const instants: InstantSource = options.instants ?? { nowMs: systemNowMs };
+  const scheduler: TickScheduler | undefined = options.scheduler;
   const client: ConsoleClient = createConsoleClient({ transport, token: options.token });
   const scope: WorkspaceScope = { tenantId: options.scope.tenantId, projectId: options.scope.projectId.length > 0 ? options.scope.projectId : LAUNCHPAD_PROJECT_ID };
   const beatMs = options.beatMs ?? 1000;
@@ -260,8 +261,19 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   }
 
   async function beat(): Promise<void> {
-    if (state.timeMachine.mode === 'playback') {
-      dispatch({ kind: 'playback-tick', at: instants.nowMs() });
+    // §4.8 controlled playback: the beat advances armed playback ONE
+    // controlled step — but never past the anchor. A tick beyond it is
+    // the pure machine's typed input error (the view instant may never
+    // point after "now"); the app layer guards the scheduled path so
+    // the beat loop simply STOPS at the anchor instead of spraying
+    // unhandled rejections every beat (the browser would console-error
+    // forever once playback catches up).
+    const timeMachine = state.timeMachine;
+    if (timeMachine.mode === 'playback' && timeMachine.playback !== null) {
+      const nextViewAt = timeMachine.playback.fromAt + (timeMachine.playback.ticks + 1) * timeMachine.playback.stepMs;
+      if (nextViewAt <= timeMachine.anchorAt) {
+        dispatch({ kind: 'playback-tick', at: instants.nowMs() });
+      }
     }
     await pollJobs();
   }
@@ -325,6 +337,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       openCapsule: null,
     };
     let paletteResults: readonly PaletteEntry[] = [];
+    // §4.10's once-per-notice toast guard: the id of the notice the
+    // chrome last toasted (chrome state only — never workspace state).
+    let lastToastedNoticeId: string | null = null;
     const host = root as Element & { setAttribute(name: string, value: string): void; classList?: { add(name: string): void } };
     if (host.classList !== undefined) host.classList.add('tradrl-host');
     // THE LAUNCH FORM'S PENDING EDITS + THE POINTER GATE (the J3
@@ -388,6 +403,24 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (value !== null) return { attr, value };
       }
       return null;
+    };
+    /** The Time Machine's scrubber event target (the §4.8 range input carrying data-action=tm-scrub), null when the target is not the scrubber. */
+    const scrubTargetOf = (target: unknown): FieldEventTarget | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      return element.getAttribute('data-action') === 'tm-scrub' ? element : null;
+    };
+    // THE SCRUB BUFFER (the J5 wiring — the J3 pointer discipline): a
+    // drag fires `input` per pointer move; those BUFFER here and never
+    // dispatch, because a re-render under the pointer replaces the
+    // range input mid-drag and the browser silently drops the drag.
+    // The `change` event (the release / the keyboard commit) is the
+    // one commit point.
+    let scrubAt: number | null = null;
+    /** Parse the scrubber's live value (NaN-safe: a garbage value commits nothing). */
+    const scrubValueOf = (element: FieldEventTarget): number | null => {
+      const parsed = Number.parseInt(typeof element.value === 'string' ? element.value : '', 10);
+      return Number.isFinite(parsed) ? parsed : null;
     };
     /** Re-focus the re-projected node matching a focus key (the tree was rebuilt under a pending focus move — best effort). */
     const restoreFocusByKey = (key: { readonly attr: string; readonly value: string } | null): void => {
@@ -481,16 +514,27 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       render();
       // §4.10 D6: a NEW notice surfaces as a toast within the poll cycle; the
       // toast auto-dismisses after ~5s (the scheduler seam — never a wall-clock
-      // read in a render path; the timer only clears chrome state).
+      // read in a render path; the timer only clears chrome state). §4.10's own
+      // words — toasts are for NEW notices — so the latest notice toasts ONCE
+      // (the W-14b re-fire guard: the old layer re-toasted the latest notice on
+      // EVERY state change, which once auto-dismissal worked became an
+      // endless toast loop on every dispatch).
       const latest = next.inbox.notices.length === 0 ? null : next.inbox.notices[next.inbox.notices.length - 1] as { readonly kind: string; readonly noticeId: string; readonly title: string; readonly at: number };
-      if (latest !== null && view.toast === null && next.connection !== 'connecting') {
+      if (latest !== null && view.toast === null && next.connection !== 'connecting' && latest.noticeId !== lastToastedNoticeId) {
         const copy = noticeCopyOf(latest.kind as 'failed_evaluation');
-        view = { ...view, toast: { kind: latest.kind, title: copy.title, sentence: copy.sentence } };
+        const shown = { kind: latest.kind, title: copy.title, sentence: copy.sentence };
+        view = { ...view, toast: shown };
+        lastToastedNoticeId = latest.noticeId;
         render();
         if (scheduler !== undefined) {
           scheduler.schedule(5000, () => {
-            view = { ...view, toast: null };
-            render();
+            // The timer is TOKEN-CHECKED: a manual close (or a newer
+            // toast replacing this one) already cleared it — the late
+            // tick must not dismiss anything else.
+            if (view.toast === shown) {
+              view = { ...view, toast: null };
+              render();
+            }
           });
         }
       }
@@ -555,11 +599,39 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         return;
       }
+      // THE SCRUBBER (the J5 wiring): a drag's input events BUFFER the
+      // live position — never a dispatch, never a render (a re-projection
+      // under the pointer replaces the range input and the browser
+      // silently drops the drag; the J3 pointer discipline, same class).
+      const scrubber = scrubTargetOf(event.target);
+      if (scrubber !== null) {
+        const parsed = scrubValueOf(scrubber);
+        if (parsed !== null) scrubAt = parsed;
+        return;
+      }
       const entry = launchFieldOf(event.target);
       if (entry === null) return;
       view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } }; // NO render — the buffer IS the live form (merged at render time)
     });
     document.addEventListener('change', (event) => {
+      // THE SCRUBBER'S COMMIT (the J5 wiring): the `change` event — the
+      // drag's release, or a keyboard arrow's commit — moves the view
+      // instant to the scrubbed position (an explicit instant: the
+      // timestamp mode), clamped to the anchor (the view may never
+      // point after it — the machine's typed law, guarded here so the
+      // delegated listener can never throw at the user).
+      const scrubber = scrubTargetOf(event.target);
+      if (scrubber !== null) {
+        const raw = scrubAt ?? scrubValueOf(scrubber);
+        scrubAt = null;
+        if (raw !== null) {
+          const anchor = state.timeMachine.anchorAt;
+          const floor = Math.min(state.openedAt, anchor);
+          const clamped = Math.min(Math.max(raw, floor), anchor);
+          dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: clamped }); // renders via onState
+        }
+        return;
+      }
       const entry = launchFieldOf(event.target);
       if (entry === null) return;
       // Buffer ONLY — never a flush here: the browser fires `change`
@@ -655,19 +727,31 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const row = event.target?.closest?.('[data-row]');
       if (row !== null && row !== undefined) {
         const rowId = row.getAttribute('data-row');
-        if (rowId !== null) {
-          const sheet = parseSheetRef(rowId);
-          if (sheet !== null) {
-            view = { ...view, sheet };
-            render();
-            focusSheetStart();
-          }
+        const sheet = rowId === null ? null : parseSheetRef(rowId);
+        if (sheet !== null) {
+          view = { ...view, sheet };
+          render();
+          focusSheetStart();
+          return;
         }
-        return;
+        // A row that opens NO sheet (the inbox's notice rows, the
+        // outcome accordion rows) FALLS THROUGH to the action branches:
+        // a nested affordance — the §4.10 per-notice read toggle — wins
+        // over the inert row. (The J6 wiring: previously ANY click
+        // inside a data-row returned here, so a toggle button rendered
+        // inside a notice row would have been silently swallowed — the
+        // same dead-affordance class this program keeps meeting.)
       }
       if (action !== null && action !== undefined) {
         const kind = actionKind;
         if (kind === 'notices-read-all') dispatch({ kind: 'notices-read-all', at: instants.nowMs() });
+        // §4.10 the per-notice read toggle (the J6 wiring): the
+        // workspace's own notice-read event, dispatched by the row's
+        // explicit affordance (read/unread state is the inbox's law).
+        if (kind === 'notice-read') {
+          const noticeId = action.getAttribute('data-notice-read');
+          if (noticeId !== null) dispatch({ kind: 'notice-read', at: instants.nowMs(), noticeId }); // renders via onState
+        }
         if (kind === 'view-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
         if (kind === 'view-tminus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
         if (kind === 'playback-start') dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt: state.openedAt, stepMs: 500 });
@@ -892,7 +976,6 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
 
   // The boot read cadence: refresh now, then the scheduler beats.
   void refresh();
-  const scheduler = options.scheduler;
   if (scheduler !== undefined) {
     const scheduleNext = (): void => {
       scheduler.schedule(beatMs, () => {

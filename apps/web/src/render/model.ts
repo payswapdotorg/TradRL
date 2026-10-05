@@ -331,7 +331,7 @@ function watchEventRow(scope: WorkspaceScope, event: WatchEvent, viewAt: number,
   });
 }
 
-/** The inbox panel (§4.10): the bell + list rows with read/unread state + mark-all-read. */
+/** The inbox panel (§4.10): the bell + list rows with read/unread state + mark-all-read + the per-notice read toggle (the W-14b J6 wiring — the workspace's own notice-read event, dispatched by the row's explicit affordance). */
 function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
   const unread = unreadCount(state.inbox);
   const projected = projectToView(state.inbox.notices, viewAt, (record) => record.at);
@@ -351,6 +351,11 @@ function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
         { eyebrow: 'IDENTITY', pairs: [['notice id', record.noticeId], ['event type', record.kind]] },
         { eyebrow: 'ADVANCED', pairs: [['source route', record.source.route], ['source ref', record.source.ref], ...record.facts.map((entry) => [entry.label, entry.value] as const)] },
       ],
+      // The per-notice read toggle rides the revealed details (a
+      // button inside the native <summary> would toggle the accordion
+      // on the same click); unread rows only — a read row carries no
+      // dead button.
+      ...(isRead ? {} : { actions: [v('button', { class: 'row-action notice-read-toggle', 'data-action': 'notice-read', 'data-notice-read': record.noticeId, type: 'button', 'aria-label': `Mark "${record.title}" as read` }, ['Mark read'])] }),
     });
   });
   return v('aside', { class: 'inbox', 'data-unread': String(unread) }, [

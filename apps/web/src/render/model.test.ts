@@ -176,6 +176,30 @@ describe('render model: the DEGRADED state (the graceful-degradation contract)',
   });
 });
 
+describe('render model: the Inbox panel (§4.10 — the per-notice read toggle, the J6 wiring)', () => {
+  it('an UNREAD notice row carries the Mark-read affordance (data-action=notice-read + the notice id); a READ row carries none', () => {
+    const state = populatedWorkspace(); // the active org snapshot folds one unread organization_compiled notice
+    const notice = state.inbox.notices[0];
+    if (notice === undefined) throw new Error('the fixture folded no notice');
+    expect(state.inbox.readNoticeIds.includes(notice.noticeId)).toBe(false);
+    // The notice is visible only at a view instant at/after its availability
+    // (T0 + 10): observe a fresh anchor first (the app's own view-live law).
+    const viewing = reduceAll(state, [{ kind: 'view-live', at: T0 + 100 }]);
+    const unreadBytes = serializeVNode(renderConsoleModel(viewing, T0 + 100, { ...defaultShellView(viewing), accountView: 'inbox' }));
+    expect(unreadBytes).toContain('data-action="notice-read"');          // RED on the unfixed tree: no affordance rendered
+    expect(unreadBytes).toContain(`data-notice-read="${notice.noticeId}"`);
+    expect(unreadBytes).toContain('class="list-row accordion-row notice notice-organization_compiled unread"');
+
+    // After the sanctioned write path, the row re-renders read — and the affordance is gone (no dead button).
+    const events: readonly WorkspaceEvent[] = [{ kind: 'notice-read', at: T0 + 101, noticeId: notice.noticeId }];
+    const read = reduceAll(viewing, events);
+    expect(read.inbox.readNoticeIds).toContain(notice.noticeId);
+    const readBytes = serializeVNode(renderConsoleModel(read, T0 + 102, { ...defaultShellView(read), accountView: 'inbox' }));
+    expect(readBytes).toContain('class="list-row accordion-row notice notice-organization_compiled read"');
+    expect(readBytes).not.toContain('data-action="notice-read"');
+  });
+});
+
 describe('render model: THE LAW GATES (typed errors from the model pass)', () => {
   it('L4: a post-availability datum at the view time is the typed AvailabilityViolationError', () => {
     // Force the gate: view the world at T0+5 while the outcome (asOf T0+30) is in the state.
