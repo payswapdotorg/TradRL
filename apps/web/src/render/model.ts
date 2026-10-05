@@ -488,8 +488,8 @@ function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView):
 /** The per-section panel — the selected section's projection at the view instant. */
 function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = defaultShellView(state)): VNode {
   const scope = state.scope;
-  switch (state.selectedSection) {
-    case 'goal': {
+  const selector = state.selectedSection;
+  if (selector === 'goal') {
       const rows: VNode[] = [];
       if (state.project !== null) {
         visibleAt(state.project, availabilityOfProject(state.project), viewAt, state.project.id);
@@ -526,18 +526,14 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       }
       if (rows.length === 0) rows.push(sectionEmpty('goal'));
       return v('section', { class: 'panel', 'data-section': 'goal' }, rows);
-    }
-
-    case 'organization': {
+  } else if (selector === 'organization') {
       const projected = projectToView(state.orgSnapshots, viewAt, availabilityOfOrgSnapshot);
       const cards = projected.map((snapshot) => orgSnapshotCard(scope, snapshot, viewAt));
       return v('section', { class: 'panel', 'data-section': 'organization' }, [
         ...cards,
         ...(projected.length === 0 ? [sectionEmpty('organization')] : []),
       ]);
-    }
-
-    case 'market-world': {
+  } else if (selector === 'market-world') {
       const draft = state.launch.draft;
       if (draft === null) {
         return v('section', { class: 'panel', 'data-section': 'market-world' }, [sectionEmpty('market-world')]);
@@ -556,9 +552,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           ]),
         ]),
       ]);
-    }
-
-    case 'time-machine': {
+  } else if (selector === 'time-machine') {
       const knowable: VNode[] = [
         factRow('view instant', formatInstantUtc(viewAt)),
         factRow('mode', state.timeMachine.mode),
@@ -570,20 +564,16 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         v('div', { class: 'card' }, [v('div', { class: 'card-title' }, ['Time Machine']), ...knowable]),
         v('p', { class: 'hint' }, ['Every visible datum above passed the availability projection for this view instant (L4).']),
       ]);
-    }
-
-    case 'research': {
+  } else if (selector === 'research') {
       const projected = projectToView(state.jobs.filter((job) => job.kind === 'research'), viewAt, availabilityOfJob);
       const cards = projected.map((job) => jobCard(scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : [])));
       return v('section', { class: 'panel', 'data-section': 'research' }, [
         ...cards,
         ...(projected.length === 0 ? [sectionEmpty('research')] : []),
       ]);
-    }
-
-    case 'experiments': {
+  } else if (selector === 'experiments') {
       const projected = projectToView(state.jobs, viewAt, availabilityOfJob);
-      const experiments = new Map<string, string>();
+      const experiments: Map<string, string> = new Map();
       for (const outcome of projectToView(state.outcomes, viewAt, availabilityOfOutcome)) {
         if (outcome.lineage.experiment !== null) experiments.set(outcome.lineage.experiment.experimentRef, outcome.lineage.experiment.trialRef);
       }
@@ -597,9 +587,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...cards,
         ...(projected.length === 0 ? [sectionEmpty('experiments')] : []),
       ]);
-    }
-
-    case 'decisions': {
+  } else if (selector === 'decisions') {
       const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
       const watchFeed = projectToView(watchEventsOf(state), viewAt, (event) => event.at);
       return v('section', { class: 'panel', 'data-section': 'decisions' }, [
@@ -607,18 +595,14 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...submissions.map((submission) => submissionCard(scope, submission, viewAt)),
         ...(submissions.length === 0 && watchFeed.length === 0 ? [sectionEmpty('decisions')] : []),
       ]);
-    }
-
-    case 'execution': {
+  } else if (selector === 'execution') {
       const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
       return v('section', { class: 'panel', 'data-section': 'execution' }, [
         v('p', { class: 'hint' }, ['The console submits execution REQUESTS through the API; the gateway alone decides (L8/L20).']),
         ...submissions.map((submission) => submissionCard(scope, submission, viewAt)),
         ...(submissions.length === 0 ? [sectionEmpty('execution')] : []),
       ]);
-    }
-
-    case 'risk': {
+  } else if (selector === 'risk') {
       const rows: VNode[] = [];
       if (state.constraintSet !== null) {
         rows.push(v('div', { class: 'card' }, [
@@ -626,7 +610,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           ...state.constraintSet.constraints.map((constraint) => factRow(`${constraint.severity} ${constraint.id}`, `${constraint.domain}.${constraint.subject} ${constraint.predicate.kind}`)),
         ]));
       }
-      const riskPolicies = new Map<string, string>();
+      const riskPolicies: Map<string, string> = new Map();
       for (const outcome of projectToView(state.outcomes, viewAt, availabilityOfOutcome)) {
         riskPolicies.set(outcome.lineage.shadow.riskPolicy.policyId, `v${outcome.lineage.shadow.riskPolicy.version}`);
       }
@@ -636,9 +620,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...(riskPolicies.size === 0 ? [factRow('risk policies', 'none at this view instant')] : []),
       ]));
       return v('section', { class: 'panel', 'data-section': 'risk' }, rows);
-    }
-
-    case 'evidence': {
+  } else if (selector === 'evidence') {
       const capsules: EvidenceCapsule[] = [
         ...projectToView(state.outcomes, viewAt, availabilityOfOutcome).map((outcome) => capsuleFromOutcome(scope, outcome)),
         ...projectToView(state.postMortems, viewAt, availabilityOfPostMortem).map((postMortem) => capsuleFromPostMortem(scope, postMortem)),
@@ -649,18 +631,14 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...capsules.map((capsule) => capsuleCard(capsule, viewAt)),
         ...(capsules.length === 0 ? [sectionEmpty('evidence')] : []),
       ]);
-    }
-
-    case 'outcomes': {
+  } else if (selector === 'outcomes') {
       const projected = projectToView(state.outcomes, viewAt, availabilityOfOutcome);
       const cards = projected.map((outcome) => outcomeCard(scope, outcome, viewAt));
       return v('section', { class: 'panel', 'data-section': 'outcomes' }, [
         ...cards,
         ...(projected.length === 0 ? [sectionEmpty('outcomes')] : []),
       ]);
-    }
-
-    case 'lessons': {
+  } else if (selector === 'lessons') {
       const knowledgeProjected = projectToView(state.knowledge, viewAt, availabilityOfKnowledge);
       const postMortemProjected = projectToView(state.postMortems, viewAt, availabilityOfPostMortem);
       return v('section', { class: 'panel', 'data-section': 'lessons' }, [
@@ -669,7 +647,9 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...(knowledgeProjected.length + postMortemProjected.length === 0 ? [sectionEmpty('lessons')] : []),
       ]);
     }
-  }
+  // The section union is closed and total above (the erasable-subset
+  // if/else form cannot prove exhaustiveness to the compiler).
+  throw new Error(`sectionPanel: ${JSON.stringify(selector)} is not a workspace section`);
 }
 
 /** The launch panel (the primary flow's wizard + progress). */

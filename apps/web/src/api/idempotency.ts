@@ -24,8 +24,11 @@ function canonicalJson(value: unknown): string {
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (Array.isArray(value)) return `[${value.map((element) => canonicalJson(element)).join(',')}]`;
   if (typeof value === 'object') {
-    const keys = Object.keys(value as Record<string, unknown>).sort();
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(',')}}`;
+    // The cast lives OUTSIDE the template interpolation (the erasable-subset law:
+    // no type syntax inside template-literal interpolations — hoist first).
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`;
   }
   return 'null';
 }

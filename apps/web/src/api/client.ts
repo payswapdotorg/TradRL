@@ -77,6 +77,9 @@ export interface ConsequentialOptions {
 // The client
 // ---------------------------------------------------------------------------
 
+/** The lifecycle-transition envelope (the erasable-subset law: no inline object types at call-site generic arguments). */
+export type ProjectLifecycleTransitionResult = { readonly record: ProjectRecord; readonly effects: readonly unknown[] };
+
 /** The typed client over the boundary's public plane (the console's mirror of the SDK's resource surface). */
 export interface ConsoleClient {
   /** `GET /v1/meta` — the version + capability surface (also the negotiation call). */
@@ -95,7 +98,7 @@ export interface ConsoleClient {
     /** `GET /v1/projects/:projectId` — read one project. */
     get(projectId: string): Promise<ProjectRecord>;
     /** `POST /v1/projects/:projectId/lifecycle` — apply a lifecycle event. */
-    transition(projectId: string, event: ProjectLifecycleEvent, at: number, options?: ConsequentialOptions): Promise<{ readonly record: ProjectRecord; readonly effects: readonly unknown[] }>;
+    transition(projectId: string, event: ProjectLifecycleEvent, at: number, options?: ConsequentialOptions): Promise<ProjectLifecycleTransitionResult>;
     /** `POST /v1/projects/:projectId/organization` — bind an organization. */
     bindOrganization(projectId: string, organizationRef: string, at: number, options?: ConsequentialOptions): Promise<ProjectRecord>;
   };
@@ -178,7 +181,7 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
   /** The version negotiation: the served versions must include this client's contract version. */
   async function negotiate(): Promise<ApiMeta> {
     const response = await rawRequest('GET', '/v1/meta');
-    const meta = parseEnvelope<ApiMeta>(response);
+    const meta = parseEnvelope(response) as ApiMeta;
     if (!Array.isArray(meta.supportedVersions) || !meta.supportedVersions.includes(apiVersion)) {
       throw new VersionMismatchError(new ApiConsoleError(
         'unsupported_version',
@@ -204,7 +207,10 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
       response = await rawRequest(method, path, options.body, headers);
     } catch (cause) {
       // A thrown transport is the unavailable family (retryable per policy — graceful degradation, never a crash).
-      throw new ApiConsoleError('unavailable', `the transport failed: ${(cause as Error)?.message ?? String(cause)}`, 503);
+      // The cast lives OUTSIDE the template interpolation (the erasable-subset law:
+      // no type syntax inside template-literal interpolations — hoist first).
+      const causeError = cause as Error;
+      throw new ApiConsoleError('unavailable', `the transport failed: ${causeError?.message ?? String(cause)}`, 503);
     }
     if (response.status === 404) {
       const body = response.body as { error?: { code?: string } } | null;
@@ -214,20 +220,20 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
         throw new VersionMismatchError(new ApiConsoleError('unsupported_version', 'the boundary no longer serves this console\'s contract version — re-negotiate', 404));
       }
     }
-    return parseEnvelope<T>(response);
+    return parseEnvelope(response) as T;
   }
 
   /** One request through negotiation + the bounded retry of the retryable families. */
   async function request<T>(method: SdkRequest['method'], path: string, options: { readonly body?: unknown; readonly idempotencyKey?: string } = {}, attemptCount = 1): Promise<T> {
     await ensureNegotiated();
     try {
-      return await attempt<T>(method, path, options);
+      return await attempt(method, path, options) as T;
     } catch (error) {
       const retryable = error instanceof ApiConsoleError && isRetryable(error);
       if (!retryable || attemptCount >= maxAttempts) throw error;
       const delay = error.retryAfterMs ?? 0;
       if (sleep !== undefined && delay > 0) await sleep(delay);
-      return request<T>(method, path, options, attemptCount + 1);
+      return request(method, path, options, attemptCount + 1) as Promise<T>;
     }
   }
 
@@ -244,7 +250,7 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
 
   return {
     async meta(): Promise<ApiMeta> {
-      return request<ApiMeta>('GET', '/v1/meta');
+      return request('GET', '/v1/meta') as Promise<ApiMeta>;
     },
     async negotiateVersion(): Promise<ApiMeta> {
       return negotiate();
@@ -252,64 +258,64 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
 
     projects: {
       async create(input, options) {
-        return request<ProjectRecord>('POST', '/v1/projects', { body: input, idempotencyKey: keyFor('projects.create', input, options) });
+        return request('POST', '/v1/projects', { body: input, idempotencyKey: keyFor('projects.create', input, options) }) as Promise<ProjectRecord>;
       },
       async list(params) {
-        return request<Page<ProjectRecord>>('GET', withQuery('/v1/projects', { cursor: params?.cursor, limit: params?.limit === undefined ? undefined : String(params.limit) }));
+        return request('GET', withQuery('/v1/projects', { cursor: params?.cursor, limit: params?.limit === undefined ? undefined : String(params.limit) })) as Promise<Page<ProjectRecord>>;
       },
       async listAll(params) {
-        return collectAll((cursor) => request<Page<ProjectRecord>>('GET', withQuery('/v1/projects', { cursor, limit: params?.limit === undefined ? undefined : String(params.limit) })));
+        return collectAll((cursor) => request('GET', withQuery('/v1/projects', { cursor, limit: params?.limit === undefined ? undefined : String(params.limit) })) as Promise<Page<ProjectRecord>>);
       },
       async get(projectId) {
-        return request<ProjectRecord>('GET', `/v1/projects/${encodeURIComponent(projectId)}`);
+        return request('GET', `/v1/projects/${encodeURIComponent(projectId)}`) as Promise<ProjectRecord>;
       },
       async transition(projectId, event, at, options) {
-        return request<{ record: ProjectRecord; effects: readonly unknown[] }>('POST', `/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, { body: { event, at }, idempotencyKey: keyFor('projects.lifecycle', [projectId, event, at], options) });
+        return request('POST', `/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, { body: { event, at }, idempotencyKey: keyFor('projects.lifecycle', [projectId, event, at], options) }) as Promise<ProjectLifecycleTransitionResult>;
       },
       async bindOrganization(projectId, organizationRef, at, options) {
-        return request<ProjectRecord>('POST', `/v1/projects/${encodeURIComponent(projectId)}/organization`, { body: { organizationRef, at }, idempotencyKey: keyFor('projects.bindOrganization', [projectId, organizationRef, at], options) });
+        return request('POST', `/v1/projects/${encodeURIComponent(projectId)}/organization`, { body: { organizationRef, at }, idempotencyKey: keyFor('projects.bindOrganization', [projectId, organizationRef, at], options) }) as Promise<ProjectRecord>;
       },
     },
 
     knowledge: {
       async query(queryRequest) {
-        return request<KnowledgeQueryResponse>('POST', '/v1/knowledge/query', { body: queryRequest });
+        return request('POST', '/v1/knowledge/query', { body: queryRequest }) as Promise<KnowledgeQueryResponse>;
       },
     },
 
     outcomes: {
       async query(queryRequest) {
-        return request<Page<OutcomeRecord>>('POST', '/v1/outcomes/query', { body: queryRequest });
+        return request('POST', '/v1/outcomes/query', { body: queryRequest }) as Promise<Page<OutcomeRecord>>;
       },
       async postMortems(queryRequest) {
-        return request<Page<PostMortemRecord>>('POST', '/v1/post-mortems/query', { body: queryRequest });
+        return request('POST', '/v1/post-mortems/query', { body: queryRequest }) as Promise<Page<PostMortemRecord>>;
       },
     },
 
     jobs: {
       async submitResearch(input, options) {
         const body: SubmitJobRequest = { kind: 'research', projectId: input.projectId, spec: input.spec };
-        return request<JobRecord>('POST', '/v1/jobs/research', { body, idempotencyKey: keyFor('jobs.research', body, options) });
+        return request('POST', '/v1/jobs/research', { body, idempotencyKey: keyFor('jobs.research', body, options) }) as Promise<JobRecord>;
       },
       async submitLearning(input, options) {
         const body: SubmitJobRequest = { kind: 'learning', projectId: input.projectId, spec: input.spec };
-        return request<JobRecord>('POST', '/v1/jobs/learning', { body, idempotencyKey: keyFor('jobs.learning', body, options) });
+        return request('POST', '/v1/jobs/learning', { body, idempotencyKey: keyFor('jobs.learning', body, options) }) as Promise<JobRecord>;
       },
       async get(jobId) {
-        return request<JobRecord>('GET', `/v1/jobs/${encodeURIComponent(jobId)}`);
+        return request('GET', `/v1/jobs/${encodeURIComponent(jobId)}`) as Promise<JobRecord>;
       },
     },
 
     execution: {
       async submitRequest(intent, options) {
         const body: ExecutionRequest = { intent };
-        return request<GatewaySubmissionRecord>('POST', '/v1/execution/requests', { body, idempotencyKey: keyFor('execution.requests', intent.intentId, options) });
+        return request('POST', '/v1/execution/requests', { body, idempotencyKey: keyFor('execution.requests', intent.intentId, options) }) as Promise<GatewaySubmissionRecord>;
       },
     },
 
     organizations: {
       async status(organizationRef, project) {
-        return request<OrgStatusSnapshot>('GET', withQuery(`/v1/organizations/${encodeURIComponent(organizationRef)}/status`, { project }));
+        return request('GET', withQuery(`/v1/organizations/${encodeURIComponent(organizationRef)}/status`, { project })) as Promise<OrgStatusSnapshot>;
       },
     },
   };

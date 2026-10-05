@@ -52,16 +52,12 @@ export function liveTimeMachine(anchorAt: number): TimeMachineState {
 
 /** The projected view instant of a state (the instant the availability projection consumes). */
 export function viewAtOf(state: TimeMachineState): number {
-  switch (state.mode) {
-    case 'live':
-      return state.anchorAt;
-    case 't-minus':
-      return state.anchorAt - state.tMinusMs;
-    case 'timestamp':
-      return state.timestamp;
-    case 'playback':
-      return state.playback === null ? state.anchorAt : state.playback.fromAt + state.playback.ticks * state.playback.stepMs;
-  }
+  // if/else over the mode union (the erasable-subset law: no switch/case).
+  if (state.mode === 'live') return state.anchorAt;
+  if (state.mode === 't-minus') return state.anchorAt - state.tMinusMs;
+  if (state.mode === 'timestamp') return state.timestamp;
+  if (state.playback === null) return state.anchorAt;
+  return state.playback.fromAt + state.playback.ticks * state.playback.stepMs;
 }
 
 /** Guard: a non-negative millisecond offset. */

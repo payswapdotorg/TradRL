@@ -68,22 +68,28 @@ export type ComponentIcon =
   | 'spark' | 'clock' | 'check' | 'alert' | 'flask' | 'layers'
   | 'pulse' | 'shield' | 'inbox' | 'box' | 'target' | 'chart';
 
+/** One icon glyph renderer (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
+type IconGlyph = (extraClass: string) => VNode;
+
+/** The semantic-slot -> glyph mapping (the lookup-map alternative to switch/case — the erasable subset's own remedy). */
+const ICON_GLYPHS: Readonly<Record<ComponentIcon, IconGlyph>> = Object.freeze({
+  spark: (extraClass) => icon([P('M12 3.5 13.7 9l5.5 1.7-5.5 1.7L12 18l-1.7-5.6L4.8 10.7 10.3 9Z')], extraClass),
+  clock: (extraClass) => icon([C('12', '12', '8.25'), P('M12 7.25V12l3.25 2.25')], extraClass),
+  check: (extraClass) => icon([C('12', '12', '8.25'), P('M8.4 12.2l2.3 2.3 4.9-4.9')], extraClass),
+  alert: (extraClass) => icon([P('M12 4 20 19.5H4Z'), P('M12 10v4.25'), v('circle', { cx: '12', cy: '16.9', r: '0.9', fill: 'currentColor', stroke: 'none' }, [])], extraClass),
+  flask: (extraClass) => icon([P('M10 3.5h4M11 3.5v5.2L5.6 18.4A1.6 1.6 0 0 0 7 20.5h10a1.6 1.6 0 0 0 1.4-2.1L13 8.7V3.5M8.2 14.5h7.6')], extraClass),
+  layers: (extraClass) => icon([RECT('4', '5', '16', '5.5', '2'), RECT('4', '13.5', '16', '5.5', '2')], extraClass),
+  pulse: (extraClass) => icon([P('M3.75 12h4l2.25-6 3.5 12 2.25-6h4.75')], extraClass),
+  shield: (extraClass) => icon([P('M12 3.5 19 6v5.2c0 4.8-2.9 8.1-7 9.3-4.1-1.2-7-4.5-7-9.3V6Z')], extraClass),
+  inbox: (extraClass) => icon([P('M7 16v-4.5a5 5 0 0 1 10 0V16l1.75 2.75H5.25Z'), P('M10.25 20.25a2 2 0 0 0 3.5 0')], extraClass),
+  box: (extraClass) => icon([RECT('4', '7', '16', '11', '3.5'), P('M4 11.5h16')], extraClass),
+  target: (extraClass) => icon([C('12', '12', '8.25'), C('12', '12', '4'), v('circle', { cx: '12', cy: '12', r: '0.9', fill: 'currentColor', stroke: 'none' }, [])], extraClass),
+  chart: (extraClass) => icon([P('M4.5 20h15'), P('M7.5 20v-6'), P('M12 20V9.5'), P('M16.5 20v-9.5')], extraClass),
+});
+
 /** The icon mark of a semantic slot (deterministic, closed set). */
 export function iconOf(name: ComponentIcon, extraClass = 'ci ci-16'): VNode {
-  switch (name) {
-    case 'spark': return icon([P('M12 3.5 13.7 9l5.5 1.7-5.5 1.7L12 18l-1.7-5.6L4.8 10.7 10.3 9Z')], extraClass);
-    case 'clock': return icon([C('12', '12', '8.25'), P('M12 7.25V12l3.25 2.25')], extraClass);
-    case 'check': return icon([C('12', '12', '8.25'), P('M8.4 12.2l2.3 2.3 4.9-4.9')], extraClass);
-    case 'alert': return icon([P('M12 4 20 19.5H4Z'), P('M12 10v4.25'), v('circle', { cx: '12', cy: '16.9', r: '0.9', fill: 'currentColor', stroke: 'none' }, [])], extraClass);
-    case 'flask': return icon([P('M10 3.5h4M11 3.5v5.2L5.6 18.4A1.6 1.6 0 0 0 7 20.5h10a1.6 1.6 0 0 0 1.4-2.1L13 8.7V3.5M8.2 14.5h7.6')], extraClass);
-    case 'layers': return icon([RECT('4', '5', '16', '5.5', '2'), RECT('4', '13.5', '16', '5.5', '2')], extraClass);
-    case 'pulse': return icon([P('M3.75 12h4l2.25-6 3.5 12 2.25-6h4.75')], extraClass);
-    case 'shield': return icon([P('M12 3.5 19 6v5.2c0 4.8-2.9 8.1-7 9.3-4.1-1.2-7-4.5-7-9.3V6Z')], extraClass);
-    case 'inbox': return icon([P('M7 16v-4.5a5 5 0 0 1 10 0V16l1.75 2.75H5.25Z'), P('M10.25 20.25a2 2 0 0 0 3.5 0')], extraClass);
-    case 'box': return icon([RECT('4', '7', '16', '11', '3.5'), P('M4 11.5h16')], extraClass);
-    case 'target': return icon([C('12', '12', '8.25'), C('12', '12', '4'), v('circle', { cx: '12', cy: '12', r: '0.9', fill: 'currentColor', stroke: 'none' }, [])], extraClass);
-    case 'chart': return icon([P('M4.5 20h15'), P('M7.5 20v-6'), P('M12 20V9.5'), P('M16.5 20v-9.5')], extraClass);
-  }
+  return ICON_GLYPHS[name](extraClass);
 }
 
 /** The trailing chevron (translates on hover; rotates 180 in the open accordion). */

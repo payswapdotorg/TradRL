@@ -29,14 +29,29 @@
 //             inside template-literal interpolations, definite
 //             assignment (x!: T).
 //
-// THE MICRO-STYLE LAWS (this file only, so the regex bootstrap can
-// strip it): no imports (self-contained); no classes/enums/
-// ternaries; no annotated arrow parameters; annotations restricted
-// to named types, single-level generics, arrays and unions; type
-// aliases single-line; interfaces close at column zero; object
-// literal values are literals or shorthand (never bare identifiers
-// after a key colon); no ' as ' text inside string/template
-// literals; no optional parameters; no generic functions.
+// THE MICRO-STYLE LAWS (this file only, so the static shell's
+// inline regex bootstrap can strip it BYTE-IDENTICALLY to the full
+// stripper — the equivalence is pinned by a test that parses the
+// real index.html, so the two can never drift):
+//   - no imports (self-contained); no enums; no ternaries (if/else
+//     only); no template literals; no as/satisfies casts; no
+//     optional parameters; no generic functions; the one class (the
+//     exported error type) carries no type syntax beyond constructor
+//     param annotations; parameter annotations (including on the one
+//     replace-callback) stay within the micro shapes below;
+//   - annotations restricted to named types, single-level generics
+//     (no nested angle brackets), arrays and unions — every
+//     annotation and every parameter list on ONE line;
+//   - type aliases single-line; interfaces close at column zero;
+//   - object literal values are literals or shorthand — never bare
+//     identifiers and never the keyword literals true/false/null/
+//     undefined confusion-shapes after a key colon (build context
+//     records through makeContext / shorthand instead);
+//   - no ' as ' text inside string literals; string and regex
+//     literals never contain the byte pairs // /* or */ (so the
+//     comment passes can never self-mangle — this file's own
+//     comment-stripping regexes are therefore built from strings
+//     via new RegExp).
 //
 // Zero dependencies: pure string and array code, no DOM, no node
 // builtins, no Math.random, no clock. Deterministic: identical
@@ -190,16 +205,17 @@ function scanRegex(source: string, start: number): number {
   throw new LoaderErrorImpl('the regex literal opened at ' + start + ' is unterminated');
 }
 
-/** `true` when a `/` at `pos` starts a regex (the prev-significant-token heuristic). */
-function regexAllowedAfter(previous: Token | null): boolean {
-  if (previous === null) return true;
-  if (previous.kind === 'comment' || previous.kind === 'ws') return regexAllowedAfter(null);
-  if (previous.kind === 'ident') {
-    return previous.kind === 'ident' && REGEX_PRECEDERS.indexOf(previous.text) !== -1;
-  }
-  if (previous.kind === 'number' || previous.kind === 'string' || previous.kind === 'template' || previous.kind === 'regex') return false;
-  if (previous.kind === 'punct') {
-    return previous.text !== ')' && previous.text !== ']' && previous.text !== '}' && previous.text !== '++' && previous.text !== '--';
+/** `true` when a `/` before token `index` starts a regex (the prev-significant-token heuristic — JS-faithful: after a plain identifier `/` is DIVISION, never a regex). */
+function regexAllowedAfter(tokens: readonly Token[], index: number): boolean {
+  for (let scan = index - 1; scan >= 0; scan--) {
+    const token = tokens[scan];
+    if (token.kind === 'ws' || token.kind === 'comment') continue;
+    if (token.kind === 'ident') return REGEX_PRECEDERS.indexOf(token.text) !== -1;
+    if (token.kind === 'number' || token.kind === 'string' || token.kind === 'template' || token.kind === 'regex') return false;
+    if (token.kind === 'punct') {
+      return token.text !== ')' && token.text !== ']' && token.text !== '}' && token.text !== '++' && token.text !== '--';
+    }
+    return true;
   }
   return true;
 }
@@ -209,28 +225,31 @@ export function lex(source: string): readonly Token[] {
   const tokens: Token[] = [];
   let pos = 0;
   let newlineBefore = false;
-  let previous: Token | null = null;
   while (pos < source.length) {
     const ch = source.charAt(pos);
     if (ch === ' ' || ch === '\t' || ch === '\r') {
       const start = pos;
       while (pos < source.length && (source.charAt(pos) === ' ' || source.charAt(pos) === '\t' || source.charAt(pos) === '\r')) pos += 1;
-      previous = pushToken(tokens, 'ws', source, start, pos, newlineBefore, previous);
+      pushToken(tokens, 'ws', source, start, pos, newlineBefore);
       newlineBefore = false;
       continue;
     }
     if (ch === '\n') {
       const start = pos;
       pos += 1;
-      previous = pushToken(tokens, 'ws', source, start, pos, newlineBefore, previous);
+      pushToken(tokens, 'ws', source, start, pos, newlineBefore);
       newlineBefore = true;
       continue;
     }
     if (ch === '/' && source.charAt(pos + 1) === '/') {
       const start = pos;
       const end = source.indexOf('\n', pos);
-      pos = end === -1 ? source.length : end;
-      previous = pushToken(tokens, 'comment', source, start, pos, newlineBefore, previous);
+      if (end === -1) {
+        pos = source.length;
+      } else {
+        pos = end;
+      }
+      pushToken(tokens, 'comment', source, start, pos, newlineBefore);
       continue;
     }
     if (ch === '/' && source.charAt(pos + 1) === '*') {
@@ -238,19 +257,19 @@ export function lex(source: string): readonly Token[] {
       const end = source.indexOf('*/', pos + 2);
       if (end === -1) throw new LoaderErrorImpl('the block comment opened at ' + start + ' is unterminated');
       pos = end + 2;
-      previous = pushToken(tokens, 'comment', source, start, pos, newlineBefore, previous);
+      pushToken(tokens, 'comment', source, start, pos, newlineBefore);
       continue;
     }
     if (ch === '\'' || ch === '"') {
       const start = pos;
       pos = scanQuoted(source, pos);
-      previous = pushToken(tokens, 'string', source, start, pos, newlineBefore, previous);
+      pushToken(tokens, 'string', source, start, pos, newlineBefore);
       continue;
     }
     if (ch === '`') {
       const start = pos;
       pos = scanTemplate(source, pos);
-      previous = pushToken(tokens, 'template', source, start, pos, newlineBefore, previous);
+      pushToken(tokens, 'template', source, start, pos, newlineBefore);
       continue;
     }
     if (isDigit(ch) || (ch === '.' && isDigit(source.charAt(pos + 1)))) {
@@ -263,26 +282,26 @@ export function lex(source: string): readonly Token[] {
         }
         break;
       }
-      previous = pushToken(tokens, 'number', source, start, pos, newlineBefore, previous);
+      pushToken(tokens, 'number', source, start, pos, newlineBefore);
       continue;
     }
-    if (ch === '/' && regexAllowedAfter(previous)) {
+    if (ch === '/' && regexAllowedAfter(tokens, tokens.length)) {
       const start = pos;
       pos = scanRegex(source, pos);
-      previous = pushToken(tokens, 'regex', source, start, pos, newlineBefore, previous);
+      pushToken(tokens, 'regex', source, start, pos, newlineBefore);
       continue;
     }
     if (isIdentStart(ch)) {
       const start = pos;
       while (pos < source.length && isIdentPart(source.charAt(pos))) pos += 1;
-      previous = pushToken(tokens, 'ident', source, start, pos, newlineBefore, previous);
+      pushToken(tokens, 'ident', source, start, pos, newlineBefore);
       continue;
     }
     const punctuator = matchPunctuator(source, pos);
     if (punctuator !== null) {
       const start = pos;
       pos += punctuator.length;
-      previous = pushToken(tokens, 'punct', source, start, pos, newlineBefore, previous);
+      pushToken(tokens, 'punct', source, start, pos, newlineBefore);
       continue;
     }
     throw new LoaderErrorImpl('the character ' + JSON.stringify(ch) + ' at offset ' + pos + ' is not lexable');
@@ -290,9 +309,9 @@ export function lex(source: string): readonly Token[] {
   return tokens;
 }
 
-/** Push one token onto the list, returning it (the prev-token link). */
-function pushToken(tokens: Token[], kind: TokenKind, source: string, start: number, end: number, newlineBefore: boolean, _previous: Token | null): Token {
-  const token: Token = { kind: kind, text: source.slice(start, end), start: start, end: end, newlineBefore: newlineBefore };
+/** Push one token onto the list, returning it. */
+function pushToken(tokens: Token[], kind: TokenKind, source: string, start: number, end: number, newlineBefore: boolean): Token {
+  const token: Token = { kind, text: source.slice(start, end), start, end, newlineBefore };
   tokens.push(token);
   return token;
 }
@@ -325,12 +344,32 @@ export interface TypeScan {
   readonly terminator: string;
 }
 
+
+/** Build one type-scan result (shorthand only — the micro-style law: never bare identifiers after a key colon). */
+function typeScan(end: number, terminator: string): TypeScan {
+  return { end, terminator };
+}
+
 /** `true` when the char at `pos` continues a multi-line type (a leading `|`/`&` continuation line). */
 function continuesType(source: string, pos: number): boolean {
   let scan = pos;
   while (scan < source.length && (source.charAt(scan) === ' ' || source.charAt(scan) === '\t' || source.charAt(scan) === '\r')) scan += 1;
   const ch = source.charAt(scan);
   return ch === '|' || ch === '&' || ch === '.';
+}
+
+/** `true` when the char before `pos` (skipping whitespace) is a union/intersection separator. */
+function unionArmBefore(source: string, pos: number): boolean {
+  let scan = pos - 1;
+  while (scan >= 0) {
+    const ch = source.charAt(scan);
+    if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') {
+      scan -= 1;
+      continue;
+    }
+    return ch === '|' || ch === '&';
+  }
+  return false;
 }
 
 /**
@@ -350,7 +389,18 @@ export function scanTypeRegion(source: string, start: number, mode: TypeScanMode
       continue;
     }
     if (mode === 'return' && ch === '{' && depth === 0) {
-      return { end: pos, terminator: ch };
+      // An inline OBJECT return type: a `{` that LEADS the region or
+      // continues a union/intersection arm (after `|`/`&`) opens a
+      // type brace; any other `{` at depth zero is the function BODY
+      // and ends the region here. (Decided from the region's own
+      // leading text — never by probing the body, which holds real
+      // code: strings, regexes and templates.)
+      if (pos === start || unionArmBefore(source, pos)) {
+        depth += 1;
+        pos += 1;
+        continue;
+      }
+      return typeScan(pos, ch);
     }
     if (ch === '(' || ch === '[' || ch === '{' || ch === '<') {
       depth += 1;
@@ -359,9 +409,9 @@ export function scanTypeRegion(source: string, start: number, mode: TypeScanMode
     }
     if (ch === ')' || ch === ']' || ch === '}' || ch === '>') {
       if (depth === 0) {
-        if (mode === 'param' && ch === ')') return { end: pos, terminator: ch };
-        if (mode === 'cast' && (ch === ')' || ch === ']' || ch === '}')) return { end: pos, terminator: ch };
-        if (mode === 'generic' && ch === '>') return { end: pos + 1, terminator: ch };
+        if (mode === 'param' && ch === ')') return typeScan(pos, ch);
+        if (mode === 'cast' && (ch === ')' || ch === ']' || ch === '}')) return typeScan(pos, ch);
+        if (mode === 'generic' && ch === '>') return typeScan(pos + 1, ch);
         throw new LoaderErrorImpl('the type region opened at ' + start + ' (' + mode + ') is unbalanced at offset ' + pos);
       }
       depth -= 1;
@@ -369,15 +419,15 @@ export function scanTypeRegion(source: string, start: number, mode: TypeScanMode
       continue;
     }
     if (ch === '=' && source.charAt(pos + 1) === '>') {
-      if (depth === 0 && (mode === 'return' || mode === 'cast')) return { end: pos, terminator: '=>' };
+      if (depth === 0 && (mode === 'return' || mode === 'cast')) return typeScan(pos, '=>');
       throw new LoaderErrorImpl('the type region opened at ' + start + ' contains an arrow at depth zero — name a type alias for function types (the erasable subset)');
     }
     if (depth === 0) {
-      if (ch === ',') return { end: pos, terminator: ch };
-      if (ch === ';') return { end: pos, terminator: ch };
-      if (ch === '=') return { end: pos, terminator: ch };
-      if (ch === '{' && mode === 'return') return { end: pos, terminator: ch };
-      if (ch === '?') return { end: pos, terminator: ch };
+      if (ch === ',') return typeScan(pos, ch);
+      if (ch === ';') return typeScan(pos, ch);
+      if (ch === '=') return typeScan(pos, ch);
+      if (ch === '{' && mode === 'return') return typeScan(pos, ch);
+      if (ch === '?') return typeScan(pos, ch);
       if (ch === '\n') {
         if (mode === 'param' || mode === 'generic') {
           pos += 1;
@@ -387,7 +437,7 @@ export function scanTypeRegion(source: string, start: number, mode: TypeScanMode
           pos += 1;
           continue;
         }
-        return { end: pos, terminator: ch };
+        return typeScan(pos, ch);
       }
     }
     pos += 1;
@@ -450,7 +500,7 @@ export interface Removal {
 /** The main strip: erase every type construct; refuse every non-erasable one. */
 export function stripTypes(source: string): string {
   const tokens = lex(source);
-  const state: StripState = { source: source, tokens: tokens, removals: [], ctx: [{ kind: 'top', params: false, openIndex: -1, sawKey: false, expectingKey: false, memberLevel: true }], ternary: [], constructorFlag: false };
+  const state: StripState = { source, tokens, removals: [], ctx: [makeContext('top', false, -1, true, false)], ternary: [], constructorFlag: false };
   walkRange(state, 0, tokens.length);
   const removals = state.removals.slice().sort(byStart);
   let output = '';
@@ -472,7 +522,13 @@ export function stripTypes(source: string): string {
     covered = removal.end;
   }
   output += source.slice(pos);
-  return output.replace(/\/\*[\s\S]*?\*\//g, '').replace(/[ \t]*\/\/[^\n]*/g, '');
+  // The comment passes are built from strings via new RegExp (the
+  // micro-style law): a regex-literal spelling of these patterns
+  // would contain the byte pairs // and */ and be mangled by the
+  // very pass it defines when THIS file strips itself.
+  const blockComment = new RegExp('/\\*[\\s\\S]*?\\*/', 'g');
+  const lineComment = new RegExp('[ \\t]*\\/\\/[^\\n]*', 'g');
+  return output.replace(blockComment, '').replace(lineComment, '');
 }
 
 /** Sort removals by start. */
@@ -480,20 +536,24 @@ function byStart(a: Removal, b: Removal): number {
   return a.start - b.start;
 }
 
-/** The next code token at or after `index` (skipping ws and comments). */
+/** The next code token at or after `index` (skipping ws, comments and tokens already scheduled for removal). */
 function nextCode(state: StripState, index: number): Token | null {
   for (let scan = index; scan < state.tokens.length; scan++) {
     const token = state.tokens[scan];
-    if (token.kind !== 'ws' && token.kind !== 'comment') return token;
+    if (token.kind === 'ws' || token.kind === 'comment') continue;
+    if (isRemoved(state, token)) continue;
+    return token;
   }
   return null;
 }
 
-/** The previous code token before `index` (skipping ws and comments). */
+/** The previous code token before `index` (skipping ws, comments and tokens already scheduled for removal). */
 function prevCode(state: StripState, index: number): Token | null {
   for (let scan = index - 1; scan >= 0; scan--) {
     const token = state.tokens[scan];
-    if (token.kind !== 'ws' && token.kind !== 'comment') return token;
+    if (token.kind === 'ws' || token.kind === 'comment') continue;
+    if (isRemoved(state, token)) continue;
+    return token;
   }
   return null;
 }
@@ -521,7 +581,7 @@ function matchingClose(state: StripState, open: number): number {
 
 /** Remove a source range. */
 function remove(state: StripState, start: number, end: number): void {
-  state.removals.push({ start: start, end: end });
+  state.removals.push({ start, end });
 }
 
 /** `true` when the token's range is already scheduled for removal (e.g. a declarator annotation removed by its keyword walker). */
@@ -556,9 +616,10 @@ function walkRange(state: StripState, from: number, to: number): void {
   }
 }
 
-/** Handle one code token; returns the next index. */
+/** Handle one code token; returns the next index. Tokens already inside a scheduled removal are skipped whole (their syntax is gone — re-walking removed interiors corrupts the context stack). */
 function walkToken(state: StripState, index: number, to: number): number {
   const token = state.tokens[index];
+  if (isRemoved(state, token)) return index + 1;
   const source = state.source;
   const context = top(state);
   if (token.kind === 'ident') {
@@ -676,7 +737,11 @@ function walkPunct(state: StripState, index: number, token: Token, context: Cont
     if (afterExpression && (nextText === '.' || nextText === '[' || nextText === '(' || nextText === ';' || nextText === ',' || nextText === ')' || nextText === ':' || nextText === ' ' || nextText === '\n' || nextText === '\t')) {
       throw new LoaderErrorImpl('the non-null assertion at offset ' + token.start + ' is not erasable — check explicitly instead');
     }
-    if (after !== null && after.kind === 'punct' && (after.text === '.' || after.text === '[' || after.text === '(')) {
+    // `x!(…)`, `x!.y`, `x![…]`: an assertion can only follow an
+    // expression END. A `!` in OPERATOR position is a unary NOT —
+    // `!(cond)` is ordinary code, never an assertion (the day-one
+    // unary-not-before-parens false positive).
+    if (afterExpression && after !== null && after.kind === 'punct' && (after.text === '.' || after.text === '[' || after.text === '(')) {
       throw new LoaderErrorImpl('the non-null assertion at offset ' + token.start + ' is not erasable — check explicitly instead');
     }
     return index + 1;
@@ -732,7 +797,7 @@ function walkPunct(state: StripState, index: number, token: Token, context: Cont
     const previous = prevCode(state, index);
     const isHead = previous !== null && previous.kind === 'ident' && isKeyword(previous.text) === false && (context.kind === 'class' || context.kind === 'object') && context.memberLevel;
     const isFunction = previous !== null && previous.kind === 'ident' && (previous.text === 'function');
-    state.ctx.push({ kind: 'paren', params: isHead || isFunction, openIndex: index, sawKey: false, expectingKey: false, memberLevel: false });
+    state.ctx.push(makeContext('paren', isHead || isFunction, index, false, false));
     return index + 1;
   }
   if (text === ')') {
@@ -760,7 +825,7 @@ function walkPunct(state: StripState, index: number, token: Token, context: Cont
         if (scan.terminator === '{') {
           const bodyOpen = nextCode(state, indexOfTokenEndingAt(state, scan.end));
           if (bodyOpen !== null && bodyOpen.text === '{') {
-            state.ctx.push({ kind: 'block', params: false, openIndex: -1, sawKey: false, expectingKey: false, memberLevel: false });
+            state.ctx.push(makeContext('block', false, -1, false, false));
             return tokenIndexAfter(state, bodyOpen);
           }
         }
@@ -777,15 +842,15 @@ function walkPunct(state: StripState, index: number, token: Token, context: Cont
     const isObjectIdent = previous !== null && previous.kind === 'ident' && (previous.text === 'return' || previous.text === 'typeof' || previous.text === 'await' || previous.text === 'case' || previous.text === 'new' || previous.text === 'void' || previous.text === 'throw' || previous.text === 'yield' || previous.text === 'do');
     const isObjectPunct = previous !== null && previous.kind === 'punct' && (previous.text === '=' || previous.text === '(' || previous.text === ',' || previous.text === '[' || previous.text === ':' || previous.text === '=>' || previous.text === '&&' || previous.text === '||' || previous.text === '??' || previous.text === '?' || previous.text === '!');
     if (isObjectPunct || isObjectIdent) {
-      state.ctx.push({ kind: 'object', params: false, openIndex: index, sawKey: false, expectingKey: true, memberLevel: true });
+      state.ctx.push(makeContext('object', false, index, true, true));
       return index + 1;
     }
     if (classBodyPending(state)) {
       clearClassPending(state);
-      state.ctx.push({ kind: 'class', params: false, openIndex: index, sawKey: false, expectingKey: false, memberLevel: true });
+      state.ctx.push(makeContext('class', false, index, true, false));
       return index + 1;
     }
-    state.ctx.push({ kind: 'block', params: false, openIndex: index, sawKey: false, expectingKey: false, memberLevel: false });
+    state.ctx.push(makeContext('block', false, index, false, false));
     return index + 1;
   }
   if (text === '}') {
@@ -795,7 +860,7 @@ function walkPunct(state: StripState, index: number, token: Token, context: Cont
     return index + 1;
   }
   if (text === '[') {
-    state.ctx.push({ kind: 'bracket', params: false, openIndex: index, sawKey: false, expectingKey: false, memberLevel: false });
+    state.ctx.push(makeContext('bracket', false, index, false, false));
     return index + 1;
   }
   if (text === ']') {
@@ -835,12 +900,20 @@ function skipWs(source: string, pos: number): number {
     }
     if (ch === '/' && source.charAt(scan + 1) === '/') {
       const end = source.indexOf('\n', scan);
-      scan = end === -1 ? source.length : end;
+      if (end === -1) {
+        scan = source.length;
+      } else {
+        scan = end;
+      }
       continue;
     }
     if (ch === '/' && source.charAt(scan + 1) === '*') {
       const end = source.indexOf('*/', scan + 2);
-      scan = end === -1 ? source.length : end + 2;
+      if (end === -1) {
+        scan = source.length;
+      } else {
+        scan = end + 2;
+      }
       continue;
     }
     return scan;
@@ -877,7 +950,7 @@ function tokenIndexAfter(state: StripState, token: Token): number {
 function subwalkParams(state: StripState, open: number, close: number): void {
   const saved = state.ctx.slice();
   const savedTernary = state.ternary.slice();
-  state.ctx = [{ kind: 'top', params: false, openIndex: -1, sawKey: false, expectingKey: false, memberLevel: true }, { kind: 'paren', params: true, openIndex: open, sawKey: false, expectingKey: false, memberLevel: true }];
+  state.ctx = [makeContext('top', false, -1, true, false), makeContext('paren', true, open, true, false)];
   state.ternary = [];
   walkRange(state, open + 1, close);
   state.ctx = saved;
@@ -900,7 +973,8 @@ function removeInterface(state: StripState, index: number): number {
       depth -= 1;
       if (depth === 0) {
         const previous = prevCode(state, index);
-        const start = previous !== null && previous.kind === 'ident' && previous.text === 'export' ? previous.start : state.tokens[index].start;
+        let start = state.tokens[index].start;
+        if (previous !== null && previous.kind === 'ident' && previous.text === 'export') start = previous.start;
         remove(state, start, token.end);
         return scan + 1;
       }
@@ -910,28 +984,41 @@ function removeInterface(state: StripState, index: number): number {
   throw new LoaderErrorImpl('the interface at offset ' + state.tokens[index].start + ' is never closed');
 }
 
-/** Remove a type alias (or export type alias): keyword through the statement end. */
+/** Remove a type alias (or export type alias): keyword through the statement end — multi-line union aliases are ONE alias. */
 function removeTypeAlias(state: StripState, index: number): number {
-  const source = state.source;
   const tokens = state.tokens;
   let scan = index + 1;
   let depth = 0;
+  let sawEquals = false;
   while (scan < tokens.length) {
     const token = tokens[scan];
     if (token.kind === 'punct') {
       if (token.text === '(' || token.text === '[' || token.text === '{') depth += 1;
       if (token.text === ')' || token.text === ']' || token.text === '}') depth -= 1;
-      if (depth === 0 && (token.text === ';' || token.text === '\n')) {
+      if (depth === 0 && token.text === '=' && sawEquals === false) {
+        sawEquals = true;
+        scan += 1;
+        continue;
+      }
+      if (depth === 0 && token.text === ';') {
         const previous = prevCode(state, index);
-        const start = previous !== null && previous.kind === 'ident' && previous.text === 'export' ? previous.start : tokens[index].start;
-        const end = token.text === ';' ? token.end : token.start;
-        remove(state, start, end);
+        let start = tokens[index].start;
+        if (previous !== null && previous.kind === 'ident' && previous.text === 'export') start = previous.start;
+        remove(state, start, token.end);
         return scan + 1;
       }
     }
-    if (token.kind === 'ws' && token.text.indexOf('\n') !== -1 && depth === 0) {
+    if (token.kind === 'ws' && token.text.indexOf('\n') !== -1 && depth === 0 && sawEquals) {
+      // A newline ends the alias only when the type does not continue
+      // on the next line (a leading `|`/`&` arm) and did not trail one
+      // on this line — `type X =\n  | A\n  | B` is one alias.
+      if (typeContinuesAfter(state, scan)) {
+        scan += 1;
+        continue;
+      }
       const previous = prevCode(state, index);
-      const start = previous !== null && previous.kind === 'ident' && previous.text === 'export' ? previous.start : tokens[index].start;
+      let start = tokens[index].start;
+      if (previous !== null && previous.kind === 'ident' && previous.text === 'export') start = previous.start;
       remove(state, start, token.start);
       return scan + 1;
     }
@@ -940,10 +1027,26 @@ function removeTypeAlias(state: StripState, index: number): number {
   throw new LoaderErrorImpl('the type alias at offset ' + tokens[index].start + ' never ends');
 }
 
+/** `true` when the type alias continues around the newline token at `index` (a union arm on either side). */
+function typeContinuesAfter(state: StripState, index: number): boolean {
+  const next = nextCode(state, index + 1);
+  if (next !== null && next.kind === 'punct' && (next.text === '|' || next.text === '&')) return true;
+  const previous = prevCode(state, index);
+  if (previous !== null && previous.kind === 'punct' && (previous.text === '|' || previous.text === '&')) return true;
+  return false;
+}
+
 /** Walk an import statement: drop `import type` entirely; drop type-marked specifiers. */
 function walkImport(state: StripState, index: number): number {
   const tokens = state.tokens;
   const after = nextCode(state, index + 1);
+  if (after !== null && after.kind === 'punct' && after.text === '(') {
+    // A DYNAMIC import (`import(...)`): an expression, never a
+    // statement — the specifier-list machinery must not touch it
+    // (skipping past one desynchronized the walk and left its `as`
+    // casts and closers unhandled — the day-one dynamic-import bug).
+    return index + 1;
+  }
   if (after !== null && after.kind === 'ident' && after.text === 'type') {
     return removeImportStatement(state, index);
   }
@@ -956,14 +1059,17 @@ function walkExport(state: StripState, index: number): number {
   const after = nextCode(state, index + 1);
   if (after !== null && after.kind === 'ident' && after.text === 'type') {
     const name = nextCode(state, tokenIndexAfter(state, after));
-    const terminator = name !== null && name.kind === 'ident' ? nextCode(state, tokenIndexAfter(state, name)) : name;
+    let terminator: Token | null = name;
+    if (name !== null && name.kind === 'ident') terminator = nextCode(state, tokenIndexAfter(state, name));
     if (terminator !== null && terminator.kind === 'punct' && terminator.text === '{') {
       return removeExportTypeSpecifiers(state, index);
     }
     if (terminator !== null && terminator.kind === 'punct' && (terminator.text === '=' || terminator.text === '<')) {
       // `export type X = ...` / `export type X<...> = ...`: a type alias — remove
       // it through the alias terminator (unions of strings included).
-      return removeTypeAlias(state, tokenIndexAfter(state, after) === -1 ? index : indexOfToken(state, after));
+      let aliasIndex = indexOfToken(state, after);
+      if (aliasIndex === -1) aliasIndex = index;
+      return removeTypeAlias(state, aliasIndex);
     }
     return removeImportStatement(state, index);
   }
@@ -1069,60 +1175,55 @@ function removeExportTypeSpecifiers(state: StripState, index: number): number {
   return tokens.length;
 }
 
-/** Clean a `{ ... }` specifier list of type-marked entries. */
+/**
+ * Clean a `{ ... }` specifier list of type-marked entries: a group that
+ * is exactly `type NAME` is dropped TOGETHER WITH its adjacent
+ * separator comma, so `import { v, type VNode }` becomes
+ * `import { v }` and `import { type A, type B }` becomes `import { }`.
+ * (The old form removed `tokens[scan - 1]` — the WHITESPACE between
+ * `type` and the name, leaving the `type` keyword itself in the
+ * output: `import { v, type }` — the day-one inline-type bug.)
+ */
 function cleanBraces(state: StripState, open: number, close: number): void {
   const tokens = state.tokens;
-  let scan = open + 1;
-  let typeMarked: Token[] = [];
-  let pendingType = false;
-  while (scan < close) {
+  let groupStart = open + 1;
+  let separator: Token | null = null;
+  let kept = false;
+  for (let scan = open + 1; scan <= close; scan++) {
     const token = tokens[scan];
-    if (token.kind === 'ident' && token.text === 'type') {
-      const after = nextCode(state, scan + 1);
-      if (after !== null && after.kind === 'ident') {
-        pendingType = true;
-        scan += 1;
-        continue;
+    if (scan !== close && (token.kind !== 'punct' || token.text !== ',')) continue;
+    // scan is the group's separating comma, or `close` (the list's end).
+    let head: Token | null = null;
+    let name: Token | null = null;
+    let codeCount = 0;
+    for (let inner = groupStart; inner < scan; inner++) {
+      const innerToken = tokens[inner];
+      if (innerToken.kind === 'ws' || innerToken.kind === 'comment') continue;
+      codeCount += 1;
+      if (codeCount === 1) head = innerToken;
+      if (codeCount === 2) name = innerToken;
+    }
+    const isTypeGroup = head !== null && name !== null && codeCount === 2
+      && head.kind === 'ident' && head.text === 'type' && name.kind === 'ident';
+    if (isTypeGroup && head !== null && name !== null) {
+      removeToken(state, head);
+      removeToken(state, name);
+      if (kept && separator !== null) {
+        // A value specifier precedes: drop THIS group's leading comma.
+        removeToken(state, separator);
+      } else if (scan !== close) {
+        // Nothing kept yet and a group follows: drop the trailing comma.
+        removeToken(state, token);
       }
+    } else {
+      kept = true;
     }
-    if (token.kind === 'ident' && pendingType) {
-      removeToken(state, tokens[scan - 1]);
-      removeToken(state, token);
-      pendingType = false;
-      typeMarked.push(token);
-      scan += 1;
-      continue;
-    }
-    if (token.kind === 'punct' && token.text === ',') {
-      if (typeMarked.length > 0) {
-        const previous = prevCode(state, scan);
-        if (previous !== null && typeMarked.indexOf(previous) !== -1) {
-          removeToken(state, token);
-        }
-      }
-      scan += 1;
-      continue;
-    }
-    scan += 1;
-  }
-  const tail = typeMarked.length > 0 ? prevCode(state, close) : null;
-  if (tail !== null && typeMarked.indexOf(tail) !== -1) {
-    const commaBefore = findCommaBefore(state, open, close);
-    if (commaBefore !== null) removeToken(state, commaBefore);
+    if (scan !== close) separator = token;
+    groupStart = scan + 1;
   }
 }
 
-/** Find the last comma before `close` inside [open, close). */
-function findCommaBefore(state: StripState, open: number, close: number): Token | null {
-  const tokens = state.tokens;
-  let found: Token | null = null;
-  for (let scan = open + 1; scan < close; scan++) {
-    if (tokens[scan].kind === 'punct' && tokens[scan].text === ',') found = tokens[scan];
-  }
-  return found;
-}
-
-/** Count the value specifiers inside a cleaned `{ ... }` list. */
+/** Count the value specifiers inside a cleaned `{ ... }` list (the `type` lookahead stays INSIDE the braces and ignores removals — a removed-name lookahead that escapes the braces would count the `type` keyword itself as a value specifier). */
 function countValueSpecifiers(state: StripState, open: number, close: number): number {
   const tokens = state.tokens;
   let count = 0;
@@ -1130,8 +1231,9 @@ function countValueSpecifiers(state: StripState, open: number, close: number): n
   for (let scan = open + 1; scan < close; scan++) {
     const token = tokens[scan];
     if (token.kind === 'ident' && token.text === 'type') {
-      const after = nextCode(state, scan + 1);
-      if (after !== null && after.kind === 'ident') {
+      let probe = scan + 1;
+      while (probe < close && (tokens[probe].kind === 'ws' || tokens[probe].kind === 'comment')) probe += 1;
+      if (probe < close && tokens[probe].kind === 'ident') {
         pendingType = true;
         continue;
       }
@@ -1217,11 +1319,30 @@ function walkDeclaratorKeyword(state: StripState, index: number): number {
 /** Remove an `as Type` / `satisfies Type` cast. */
 function removeCast(state: StripState, index: number, token: Token): number {
   const scan = scanTypeRegion(state.source, skipWs(state.source, token.end), 'cast');
-  const start = token.start;
+  let lead = token.start;
   const previous = prevCode(state, index);
-  const lead = previous !== null ? previous.end : start;
+  if (previous !== null) lead = previous.end;
   remove(state, lead, scan.end);
-  return indexOfTokenEndingAt(state, scan.end) === -1 ? index + 1 : indexOfTokenEndingAt(state, scan.end);
+  // Resume AT the region's terminator token (a resume on the token
+  // BEFORE it would re-walk a closer and corrupt the context stack —
+  // the `(x as T).y` mis-strip class).
+  const resume = indexOfTokenStartingAt(state, scan.end);
+  if (resume !== -1) return resume;
+  return index + 1;
+}
+
+/** The token index whose `start` equals `pos`, or -1. */
+function indexOfTokenStartingAt(state: StripState, pos: number): number {
+  for (let scan = 0; scan < state.tokens.length; scan++) {
+    if (state.tokens[scan].start === pos) return scan;
+  }
+  return -1;
+}
+
+/** Build one walk context. Shorthand values only — the micro-style law: never a bare keyword literal after a key colon (the shell's regex pass would eat `: false` as a union-arm annotation). */
+function makeContext(kind: ContextKind, params: boolean, openIndex: number, memberLevel: boolean, expectingKey: boolean): Context {
+  const sawKey = false;
+  return { kind, params, openIndex, sawKey, expectingKey, memberLevel };
 }
 
 // ---------------------------------------------------------------------------
@@ -1254,7 +1375,8 @@ export function resolveSpecifier(importer: string, specifier: string): string {
   if (specifier.startsWith('./') === false && specifier.startsWith('../') === false) {
     throw new LoaderErrorImpl('the specifier ' + JSON.stringify(specifier) + ' in ' + importer + ' is not relative — the console is zero-dependency; every import is a workspace-relative path');
   }
-  const importerDir = importer.indexOf('/') === -1 ? '' : importer.slice(0, importer.lastIndexOf('/'));
+  let importerDir = '';
+  if (importer.indexOf('/') !== -1) importerDir = importer.slice(0, importer.lastIndexOf('/'));
   const parts = (importerDir + '/' + specifier).split('/');
   const stack: string[] = [];
   for (let index = 0; index < parts.length; index++) {
@@ -1299,7 +1421,7 @@ export async function loadModuleGraph(entry: string, bindings: LoaderBindings): 
     }
     visiting.pop();
     order.push(path);
-    modules[path] = { path: path, code: code, stripped: stripped, url: '' };
+    modules[path] = { path, code, stripped, url: '' };
   }
   await load(entry);
   for (let index = 0; index < order.length; index++) {
@@ -1307,16 +1429,31 @@ export async function loadModuleGraph(entry: string, bindings: LoaderBindings): 
     const module = modules[path];
     const rewritten = rewriteSpecifiers(module.stripped, path, modules);
     const url = await bindings.createModuleUrl(rewritten);
-    modules[path] = { path: path, code: module.code, stripped: module.stripped, url: url };
+    modules[path] = { path, code: module.code, stripped: module.stripped, url };
   }
   const entryUrl = modules[entry].url;
   return await bindings.importModule(entryUrl);
 }
 
-/** Extract the module specifiers of a stripped source (import/export ... from '...'). */
+/**
+ * The import/export alternation, built from concatenated strings (never
+ * a regex literal): a literal spelling would carry the text
+ * `:import|export` — which the shell bootstrap's annotation pass reads
+ * as a UNION TYPE annotation and eats.
+ */
+const IMPORT_EXPORT_ALTERNATION = '(?:' + 'import' + '|' + 'export' + ')';
+
+/**
+ * The statement body: `\b` then a from-clause. `[^;]*?` spans NEWLINES
+ * (multi-line import braces) — an import statement carries no semicolon
+ * before its from-clause, so this cannot bleed across statements.
+ */
+const FROM_CLAUSE_TAIL = '\\b[^;]*?from[ \\t]*[\'"]';
+
+/** Extract the module specifiers of a stripped source (import/export ... from '...', MULTI-LINE statements included). */
 export function importSpecifiersOf(stripped: string): string[] {
   const specifiers: string[] = [];
-  const pattern = /(?:^|\n)[ \t]*(?:import|export)\b[^;\n]*?from[ \t]*['"]([^'"]+)['"]/g;
+  const pattern = new RegExp('(?:^|\\n)[ \\t]*' + IMPORT_EXPORT_ALTERNATION + FROM_CLAUSE_TAIL + '([^\'"]+)[\'"]', 'g');
   let match = pattern.exec(stripped);
   while (match !== null) {
     specifiers.push(match[1]);
@@ -1325,9 +1462,10 @@ export function importSpecifiersOf(stripped: string): string[] {
   return specifiers;
 }
 
-/** Rewrite every relative specifier of a stripped source to its dependency's URL. */
+/** Rewrite every relative specifier of a stripped source to its dependency's URL (multi-line statements included). */
 export function rewriteSpecifiers(stripped: string, path: string, modules: Record<string, LoadedModule>): string {
-  return stripped.replace(/(^|\n)([ \t]*(?:import|export)\b[^;\n]*?from[ \t]*['"])([^'"]+)(['"])/g, (whole: string, lead: string, head: string, specifier: string, tail: string): string => {
+  const rewriter = new RegExp('(^|\\n)([ \\t]*' + IMPORT_EXPORT_ALTERNATION + FROM_CLAUSE_TAIL + ')([^\'"]+)([\'"])', 'g');
+  return stripped.replace(rewriter, (whole: string, lead: string, head: string, specifier: string, tail: string): string => {
     const resolved = resolveSpecifier(path, specifier);
     const dependency = modules[resolved];
     if (dependency === undefined) throw new LoaderErrorImpl('the module ' + resolved + ' (imported by ' + path + ') was not loaded — the graph pass missed it');
