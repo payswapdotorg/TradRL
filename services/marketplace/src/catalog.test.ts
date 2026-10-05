@@ -120,7 +120,7 @@ describe('publishListing (the source + snapshot + pricing laws)', () => {
     const state = fresh();
     if (!state.ok) throw new Error('unreachable');
     const smuggled = publishListing(state.value, {
-      declaration: { ...validDeclaration(), offers: [{ ...(validDeclaration().offers as unknown[])[0], profession: 'quant researcher' }] },
+      declaration: { ...validDeclaration(), offers: [{ ...((validDeclaration().offers as unknown[])[0] as Record<string, unknown>), profession: 'quant researcher' }] },
       offerRef: 'offer-liquidity-analysis',
       pricing: { kind: 'fixed-fee', currency: 'usd-cents', amount: '1' },
       listedAt: T0 + 1000,
@@ -196,7 +196,7 @@ describe('discoverListings (the point-in-time deterministic fold)', () => {
     current = alpha.value.state;
     // A second provider: metered, cheaper first-unit economics.
     const beta = publishListing(current, {
-      declaration: { ...validDeclaration(), providerRef: 'vendor-beta', displayName: 'Beta Sentiment Desk', declaredAt: T0, offers: [{ ...(validDeclaration().offers as unknown[])[0], offerRef: 'offer-sentiment-scan', capabilityKey: 'sentiment-event-analysis', deliverableKinds: ['expert-evidence'] }] },
+      declaration: { ...validDeclaration(), providerRef: 'vendor-beta', displayName: 'Beta Sentiment Desk', declaredAt: T0, offers: [{ ...((validDeclaration().offers as unknown[])[0] as Record<string, unknown>), offerRef: 'offer-sentiment-scan', capabilityKey: 'sentiment-event-analysis', deliverableKinds: ['expert-evidence'] }] },
       offerRef: 'offer-sentiment-scan',
       pricing: { kind: 'usage-metered', currency: 'usd-cents', rate: '0.5', unit: 'per-annotation' },
       listedAt: T0 + 1500,
@@ -205,7 +205,7 @@ describe('discoverListings (the point-in-time deterministic fold)', () => {
     current = beta.value.state;
     // A third: free.
     const free = publishListing(current, {
-      declaration: { ...validDeclaration(), providerRef: 'vendor-open-research', displayName: 'Open Research Collective', declaredAt: T0, offers: [{ ...(validDeclaration().offers as unknown[])[0], offerRef: 'offer-open-regime', capabilityKey: 'regime-classification' }] },
+      declaration: { ...validDeclaration(), providerRef: 'vendor-open-research', displayName: 'Open Research Collective', declaredAt: T0, offers: [{ ...((validDeclaration().offers as unknown[])[0] as Record<string, unknown>), offerRef: 'offer-open-regime', capabilityKey: 'regime-classification' }] },
       offerRef: 'offer-open-regime',
       pricing: { kind: 'fixed-fee', currency: 'usd-cents', amount: '0' },
       listedAt: T0 + 2000,
@@ -244,8 +244,8 @@ describe('discoverListings (the point-in-time deterministic fold)', () => {
     const state = catalog();
     const byCapability = discoverListings(state, { capabilityKey: 'liquidity-regime-analysis', at: T0 + 5000 });
     expect(byCapability.ok && byCapability.value).toHaveLength(1);
-    const byKind = discoverListings(state, { deliverableKind: 'expert-evidence', at: T0 + 5000 });
-    expect(byKind.ok && byCapability.value).toHaveLength(1);
+    const byKind = discoverListings(state, { deliverableKind: 'capability-artifact', at: T0 + 5000 });
+    expect(byKind.ok && byKind.value).toHaveLength(2); // alpha + the free listing (beta lists expert-evidence only)
     const byVerification = discoverListings(state, { verificationKind: 'benchmark', at: T0 + 5000 });
     expect(byVerification.ok && byVerification.value).toHaveLength(3);
     const byCurrency = discoverListings(state, { currency: 'eur-cents', at: T0 + 5000 });

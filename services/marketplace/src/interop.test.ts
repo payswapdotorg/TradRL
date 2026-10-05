@@ -43,10 +43,6 @@ import {
   createMarketplace,
   deriveIdempotencyKeyMirror,
   entitlementSnapshot,
-  isCapabilityRequestMirror,
-  isEngagementMirror,
-  isProviderQuoteMirror,
-  isProviderVerificationReportMirror,
   issueEntitlementGrant,
   licenseCoversImport,
   licensedArtifactRef,
@@ -57,7 +53,7 @@ import {
   stableDigest,
   verifyMarketplaceChain,
 } from './index';
-import type { EntitlementLedgerState, LicenseGrantView, MarketplaceState } from './index';
+import type { CapabilityRequestMirror, EngagementMirror, EntitlementLedgerState, LicenseGrantView, MarketplaceState, ProviderQuoteMirror } from './index';
 import { FIXTURE_GAP_ID, FIXTURE_PROJECT, FIXTURE_TENANT, FIXTURE_VERIFICATION, T0, validDeclaration, validDeclarationDraft } from './fixtures';
 import { stableDigestJson } from './imports';
 
@@ -66,19 +62,19 @@ import { stableDigestJson } from './imports';
 // ---------------------------------------------------------------------------
 
 /** Compiles iff the REAL T045 CapabilityRequest IS this lane's mirror. */
-function realRequestSatisfiesMirror(request: capabilityProvider.CapabilityRequest): ReturnType<typeof isCapabilityRequestMirror> {
+function realRequestSatisfiesMirror(request: capabilityProvider.CapabilityRequest): CapabilityRequestMirror {
   return request;
 }
 void realRequestSatisfiesMirror;
 
 /** Compiles iff the REAL T045 ProviderQuote IS this lane's mirror. */
-function realQuoteSatisfiesMirror(quote: capabilityProvider.ProviderQuote): ReturnType<typeof isProviderQuoteMirror> {
+function realQuoteSatisfiesMirror(quote: capabilityProvider.ProviderQuote): ProviderQuoteMirror {
   return quote;
 }
 void realQuoteSatisfiesMirror;
 
 /** Compiles iff the REAL T045 Engagement IS this lane's mirror. */
-function realEngagementSatisfiesMirror(engagement: capabilityProvider.Engagement): ReturnType<typeof isEngagementMirror> {
+function realEngagementSatisfiesMirror(engagement: capabilityProvider.Engagement): EngagementMirror {
   return engagement;
 }
 void realEngagementSatisfiesMirror;

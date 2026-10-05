@@ -514,7 +514,8 @@ describe('THE PAYMENT GATE (settlePurchase)', () => {
     if (!opened.ok) throw new Error('unreachable');
     const voided = voidPurchase(opened.value.state, { purchaseId: opened.value.record.purchaseId, voidedAt: T0 + 5000 });
     expect(voided.ok).toBe(true);
-    if (voided.ok) expect(voided.value.record.status).toBe('voided');
+    if (!voided.ok) throw new Error('unreachable');
+    expect(voided.value.record.status).toBe('voided');
     // A voided purchase never opens again on the same request (new purchase allowed).
     const reopened = openPurchase(voided.value.state, {
       listingRef,
