@@ -297,6 +297,35 @@ export interface JobRecord {
   readonly completedAt?: number;
 }
 
+// ---------------------------------------------------------------------------
+// The job-machinery RESULT payload mirrors (W-19, the R1 fix — additive
+// documentation types; JobRecord.result stays `unknown` at rest and the
+// render treats it structurally, exactly like core/notices.ts's
+// release-candidate marker). These mirror the shapes the demo job
+// machinery completes jobs with (deploy/vercel/runtime/demo.ts): a
+// research job completes with a release-candidate record, a learning
+// job with a training summary. Every field is optional at the wire —
+// the console renders what the payload actually carries, verbatim,
+// and never fabricates a field a payload did not serve (L20).
+// ---------------------------------------------------------------------------
+
+/** The research job's completion payload: the release-candidate deliverable marker. */
+export interface ReleaseCandidateResult {
+  readonly kind: 'release-candidate';
+  readonly specId?: string;
+  readonly version?: number;
+  readonly project?: string;
+  readonly title?: string;
+  readonly summary?: string;
+}
+
+/** The learning job's completion payload: the training summary marker. */
+export interface TrainingSummaryResult {
+  readonly kind: 'training-summary';
+  readonly epochs?: number;
+  readonly project?: string;
+}
+
 /** The job-submission request body. */
 export interface SubmitJobRequest {
   readonly kind: JobKind;

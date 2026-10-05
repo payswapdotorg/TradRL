@@ -31,6 +31,7 @@ import {
   connectionClassOf,
   defaultShellView,
   sectionBadgeOf,
+  SHELL_INTERACTION_CSS,
   type ShellView,
 } from './shell';
 
@@ -317,5 +318,65 @@ describe('shell: the composed model keeps T042 pins (regression floor)', () => {
   it('the Time Machine bar still renders inside the shell (T042 law)', () => {
     const serialized = render(stateAt());
     expect(serialized).toContain('class="timemachine"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W-19: the pricing disclosure (the S5 CFO finding — "zero pricing
+// information") + the R8 interaction supplement (the nav hit-area laws).
+// ---------------------------------------------------------------------------
+
+describe('shell: the Settings pricing disclosure (W-19 — the S5 CFO finding)', () => {
+  it('Settings carries a Pricing card a user can find without external help', () => {
+    const settings = render(stateAt(), { accountView: 'settings' });
+    expect(settings).toContain('data-settings="pricing"');
+    expect(settings).toContain('Pricing');
+  });
+
+  it('the pricing facts are the CURRENT factual state — pilot free, no billing, commercial pricing not published', () => {
+    const settings = render(stateAt(), { accountView: 'settings' });
+    expect(settings).toContain('pilot access');
+    expect(settings).toContain('free');
+    expect(settings).toContain('billing today');
+    expect(settings).toContain('no payment is collected');
+    expect(settings).toContain('commercial pricing');
+    expect(settings).toContain('not published yet');
+  });
+
+  it('the disclosure fabricates NO numbers — no price, no tier, no percentage anywhere in the card', () => {
+    const settings = render(stateAt(), { accountView: 'settings' });
+    const card = settings.slice(settings.indexOf('data-settings="pricing"'), settings.indexOf('data-settings="data export"'));
+    expect(card.length).toBeGreaterThan(0); // the slice found the card (it sits between pricing and data export)
+    // no currency, no per-seat/per-month vocabulary, no digits posing as a price
+    expect(card).not.toMatch(/[$€£]\s*\d/);
+    expect(card).not.toMatch(/\d+\s*(?:USD|EUR|per month|per seat|\/mo|\/user)/i);
+    expect(card).not.toContain('per month');
+  });
+});
+
+describe('shell: the R8 interaction supplement — the nav hit-area laws (W-19, CSS-as-data)', () => {
+  it('the nav paints and hit-tests ABOVE the fixed chrome (brand row, palette affordance, connection zone)', () => {
+    expect(SHELL_INTERACTION_CSS).toContain('.shell-nav { position: relative; z-index: 2; }');
+    expect(SHELL_INTERACTION_CSS).toContain('.connection-zone { position: relative; z-index: 1; flex: none; }');
+    expect(SHELL_INTERACTION_CSS).toContain('.shell-sidebar > .brand-row { position: relative; z-index: 1; }');
+    expect(SHELL_INTERACTION_CSS).toContain('.shell-sidebar > .palette-affordance { position: relative; z-index: 1; }');
+  });
+
+  it('the connection popover can never explode over the nav: its facts stack and its height clamps with its own scroll', () => {
+    // The live-browser diagnosis: the popover's `.fact` rows are 11rem+1fr on
+    // a ~208px tile — a long degradation line wrapped to ~666px tall and the
+    // open tile grew to ~1108px, covering the ENTIRE nav (measured at
+    // 1280×720; a Goal nav click was refused as "covered by
+    // <details.connection-tile>" — the Phase-2 R8 report, 22 friction rows).
+    expect(SHELL_INTERACTION_CSS).toContain('.connection-popover .fact { grid-template-columns: 1fr; gap: 2px; }');
+    expect(SHELL_INTERACTION_CSS).toContain('.connection-popover { max-height: 40vh; overflow-y: auto; }');
+  });
+
+  it('the supplement is additive layering/geometry only — it repaints nothing and moves no charter rule', () => {
+    // No rule may touch paint (color/background/border) or reposition the
+    // charter layout beyond stacking context + the popover's own box.
+    for (const banned of ['color:', 'background:', 'border:', 'display: none', 'position: fixed', 'position: absolute', 'transform:']) {
+      expect(SHELL_INTERACTION_CSS, `the supplement must not carry ${banned}`).not.toContain(banned);
+    }
   });
 });

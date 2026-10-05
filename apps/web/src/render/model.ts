@@ -28,7 +28,7 @@
 // bytes (tests pin it). The DOM projector is a mechanical translation
 // of this tree — no logic of its own.
 
-import type { GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
+import type { CriterionPredicate, GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
 import { withRenderGuard } from '../core/clock';
 import { assertVisible, availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfProject, availabilityOfSubmission, projectToView } from '../core/availability';
 import { assertProjectScope, type WorkspaceScope } from '../core/tenant';
@@ -36,6 +36,7 @@ import { renderDecimal } from '../core/decimals';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { PolicyEnforcementError } from '../core/errors';
 import { renderJobProgress, LAUNCH_STEPS, type JobProgressView, type LaunchStep } from '../core/launch';
+import { formatNumberGrouped } from './numbers';
 import {
   EXECUTION_MODES,
   constraintGrammarExample,
@@ -78,6 +79,7 @@ import {
   labeledSelect,
   noticeCopyOf,
   notificationBell,
+  NOTICE_SENTENCES,
   reviewStep,
   streamCard,
   timeMachineControls,
@@ -102,6 +104,106 @@ function factRows(pairs: readonly (readonly [string, string])[]): VNode[] {
 function visibleAt<T>(record: T, availableAt: number, viewAt: number, datumRef: string): T {
   assertVisible({ datumRef, availableAt }, viewAt);
   return record;
+}
+
+/**
+ * THE PREDICATE PHRASE (§4.5, the R5 fix — W-19): one criterion or
+ * constraint predicate rendered WITH its bound(s) — "equals
+ * 25,000,000", "limit.max 0.2", "limit.range 0.1 to 0.5" — straight
+ * from the record's own predicate, formatted deterministically.
+ * The sections used to render the bare kind ("outcome.capital.budget
+ * equals" — the number existed in the record and never reached the
+ * pixel); a limit without a number is not a limit (M5). Numeric
+ * bounds group thousands via render/numbers.ts (locale-free,
+ * byte-deterministic); string/boolean values render verbatim.
+ */
+export function predicatePhraseOf(predicate: CriterionPredicate): string {
+  if (predicate.kind === 'limit.max' || predicate.kind === 'limit.min') {
+    return `${predicate.kind} ${formatNumberGrouped(predicate.bound)}`;
+  }
+  if (predicate.kind === 'limit.range') {
+    return `${predicate.kind} ${formatNumberGrouped(predicate.min)} to ${formatNumberGrouped(predicate.max)}`;
+  }
+  if (predicate.kind === 'equals' || predicate.kind === 'notEquals') {
+    return `${predicate.kind} ${typeof predicate.value === 'number' ? formatNumberGrouped(predicate.value) : String(predicate.value)}`;
+  }
+  if (predicate.kind === 'oneOf') {
+    return `${predicate.kind} ${predicate.values.join(', ')}`;
+  }
+  return `${predicate.kind} expected ${String(predicate.expected)}`; // flag
+}
+
+// ---------------------------------------------------------------------------
+// The job RESULT projection (§4.5a, the R1 fix — W-19)
+// ---------------------------------------------------------------------------
+
+/** The readable label of a result payload kind (closed vocabulary; an unknown kind renders verbatim). */
+const RESULT_KIND_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  'release-candidate': 'release candidate',
+  'training-summary': 'training summary',
+});
+
+/** The one-sentence summary of a known result kind (the product's own notice copy — never fabricated data). */
+const RESULT_KIND_SENTENCES: Readonly<Record<string, string>> = Object.freeze({
+  'release-candidate': NOTICE_SENTENCES.release_candidate,
+  'training-summary': NOTICE_SENTENCES.training_milestone,
+});
+
+/** The known result fields' render order (closed labels; every OTHER field still renders under its own key). */
+const RESULT_FIELD_LABELS: readonly { readonly key: string; readonly label: string }[] = [
+  { key: 'specId', label: 'spec id' },
+  { key: 'version', label: 'version' },
+  { key: 'epochs', label: 'epochs' },
+  { key: 'title', label: 'title' },
+  { key: 'summary', label: 'summary' },
+  { key: 'project', label: 'project' },
+];
+
+/** Render one result payload value readably (scalars verbatim — numbers grouped; nested structures as JSON). */
+function resultValueOf(value: unknown): string {
+  if (value === null) return 'none';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return formatNumberGrouped(value);
+  if (typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+/**
+ * THE RESULT PROJECTION (§4.5a, the R1 fix — W-19): the completed
+ * job's OWN result payload as a readable RESULT section — the
+ * researcher's deliverable, in the dialog. Null when the job record
+ * carries no result payload (a submitted/running/failed job renders
+ * nothing — the console never fabricates a deliverable). Every pair
+ * is a field the payload ACTUALLY carries, verbatim (L20): the demo
+ * machinery's research completion is { kind: 'release-candidate',
+ * specId, version, project } and every one of those renders; a
+ * richer payload (title, summary, findings, metrics) renders those
+ * too — the projection is total over whatever the job machinery
+ * served. Availability rides the job record's own gate (the result
+ * arrives WITH completedAt; jobSheet's visibleAt covers it — L4).
+ */
+export function jobResultSectionOf(job: JobRecord): DefinitionSection | null {
+  const result = job.result;
+  if (typeof result !== 'object' || result === null) return null;
+  const payload = result as Record<string, unknown>;
+  const entries = Object.entries(payload);
+  if (entries.length === 0) return null;
+  const kind = typeof payload.kind === 'string' ? payload.kind : '';
+  const pairs: (readonly [string, string])[] = [];
+  if (kind.length > 0) pairs.push(['deliverable', RESULT_KIND_LABELS[kind] ?? kind]);
+  const sentence = RESULT_KIND_SENTENCES[kind];
+  if (sentence !== undefined) pairs.push(['summary', sentence]);
+  for (const field of RESULT_FIELD_LABELS) {
+    if (payload[field.key] !== undefined) pairs.push([field.label, resultValueOf(payload[field.key])]);
+  }
+  // The erasable-subset law: constructor type arguments are not in the
+  // published subset — the annotation carries the typing.
+  const known: Set<string> = new Set(['kind', ...RESULT_FIELD_LABELS.map((field) => field.key)]);
+  for (const [key, value] of entries) {
+    if (known.has(key)) continue;
+    pairs.push([key, resultValueOf(value)]);
+  }
+  return { eyebrow: 'RESULT', pairs };
 }
 
 /** The verdict badge of a submission — the gateway's own verdict, verbatim (L20). */
@@ -184,11 +286,22 @@ function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, progres
     eyebrow: 'METRICS',
     pairs: [['elapsed', progress === null || progress.elapsedMs === null ? 'pending' : formatDurationMs(progress.elapsedMs)]],
   };
+  // THE RESULT SECTION (the R1 fix): when the job record carries its
+  // completion payload, the deliverable renders READABLY here — the
+  // research job's release candidate (spec id, version, lineage)
+  // instead of a dialog that proves the job ran while hiding what it
+  // produced (0/15 evaluators could read the deliverable).
+  const result = jobResultSectionOf(job);
   const identity: DefinitionSection = {
     eyebrow: 'IDENTITY',
     pairs: [['job id', job.jobId], ['kind', job.kind], ['project', job.project]],
   };
-  return detailSheet({ sheetId: `job:${job.jobId}`, title: job.jobId, subtitle: `${job.kind} job`, details: [status, metrics, identity] });
+  return detailSheet({
+    sheetId: `job:${job.jobId}`,
+    title: job.jobId,
+    subtitle: `${job.kind} job${result === null ? '' : ' · result available'}`,
+    details: [status, metrics, ...(result === null ? [] : [result]), identity],
+  });
 }
 
 /** Render one org snapshot as an interactive list row. */
@@ -560,13 +673,16 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
             ['required satisfaction', String(state.goal.successCriteria.requiredSatisfaction)],
             ['adversarial required', String(state.goal.evaluation.adversarialRequired)],
           ]),
-          ...state.goal.successCriteria.criteria.map((criterion) => factRow(`criterion ${criterion.id}`, `${criterion.metric} ${criterion.predicate.kind}`)),
+          ...state.goal.successCriteria.criteria.map((criterion) => factRow(`criterion ${criterion.id}`, `${criterion.metric} ${predicatePhraseOf(criterion.predicate)}`)),
         ]));
       }
       if (state.constraintSet !== null) {
         rows.push(v('div', { class: 'card' }, [
           v('div', { class: 'card-title' }, ['Constraints']),
-          ...state.constraintSet.constraints.map((constraint) => factRow(`${constraint.severity} ${constraint.id}`, `${constraint.domain}.${constraint.subject} ${constraint.predicate.kind}`)),
+          // R5: the bound rides the predicate label — a limit without
+          // a number is not a limit (the number always lived in the
+          // record's predicate.bound/value; it reaches the pixel now).
+          ...state.constraintSet.constraints.map((constraint) => factRow(`${constraint.severity} ${constraint.id}`, `${constraint.domain}.${constraint.subject} ${predicatePhraseOf(constraint.predicate)}`)),
         ]));
       }
       if (rows.length === 0) {
@@ -670,7 +786,11 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       if (state.constraintSet !== null) {
         rows.push(v('div', { class: 'card' }, [
           v('div', { class: 'card-title' }, ['Constraint set']),
-          ...state.constraintSet.constraints.map((constraint) => factRow(`${constraint.severity} ${constraint.id}`, `${constraint.domain}.${constraint.subject} ${constraint.predicate.kind}`)),
+          // R5 (the M5 finding, 8/15 personas failed here): every
+          // constraint card renders its NUMERIC bound — the risk
+          // surface showed 'outcome.capital.budget equals' with the
+          // 300,000,000 served by the record but never rendered.
+          ...state.constraintSet.constraints.map((constraint) => factRow(`${constraint.severity} ${constraint.id}`, `${constraint.domain}.${constraint.subject} ${predicatePhraseOf(constraint.predicate)}`)),
         ]));
       }
       const riskPolicies: Map<string, string> = new Map();
@@ -799,7 +919,7 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
             ['Execution mode', form.executionMode],
             ['Preferences', form.preferences.length === 0 ? 'none' : form.preferences],
             ['Constraints', form.constraints.length === 0 ? 'none' : form.constraints],
-            ['Success criteria', draft.successCriteria.map((criterion) => `${criterion.id}: ${criterion.metric} ${criterion.predicate.kind}`).join('; ')],
+            ['Success criteria', draft.successCriteria.map((criterion) => `${criterion.id}: ${criterion.metric} ${predicatePhraseOf(criterion.predicate)}`).join('; ')],
           ]),
           ...(reviewValid
             ? [twoStepConfirm('launch', armed)]

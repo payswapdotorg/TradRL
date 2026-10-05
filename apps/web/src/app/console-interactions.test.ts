@@ -157,6 +157,21 @@ class FakeElement {
   hasClass(name: string): boolean {
     return (this.attributes['class'] ?? '').split(' ').includes(name);
   }
+
+  /** The #id descendant lookup (the R8 supplement's idempotence check reads head.querySelector — W-19). */
+  querySelector(selector: string): FakeElement | null {
+    const idMatch = /^#([A-Za-z0-9_-]+)$/.exec(selector);
+    if (idMatch === null) return null;
+    const seek = (element: FakeElement): FakeElement | null => {
+      for (const child of element.children) {
+        if (child.getAttribute('id') === idMatch[1]) return child;
+        const found = seek(child);
+        if (found !== null) return found;
+      }
+      return null;
+    };
+    return seek(this);
+  }
 }
 
 /**
@@ -171,6 +186,8 @@ class FakeDocument {
   readonly activeElement: FakeElement | null = null;
   /** The harness's focus tracker (the browser's focus semantics — typeField/blurField move it like the real thing). */
   focused: FakeElement | null = null;
+  /** The document head (the R8 supplement's injection target — W-19); a fake element with an id-based querySelector. */
+  readonly head: FakeElement = new FakeElement('head');
 
   createElement(tagName: string): FakeElement {
     const element = new FakeElement(tagName);
@@ -1664,5 +1681,43 @@ describe('executed boot: the REAL no-build loader path', () => {
     expect(countByClass(root, 'onboarding')).toBe(1); // one wizard on the real loader path too
     doc.fire('click', { target: findByData(root, 'data-action', 'onboarding-next') });
     expect(findByData(root, 'data-onboarding', 'step-2')).not.toBeNull(); // the click ACTS
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE R8 INTERACTION SUPPLEMENT INJECTION (W-19) — the nav hit-area
+// geometry laws (SHELL_INTERACTION_CSS, render/shell.ts) reach the
+// browser through the mount's DOM seam, exactly once, and degrade
+// silently when the document carries no head.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: the R8 interaction supplement injection (W-19)', () => {
+  it('mount injects #tradrl-shell-interaction ONCE into the document head, carrying the shell\'s own CSS data', async () => {
+    const { SHELL_INTERACTION_CSS } = await import('../render/shell');
+    const rig = await bootRig();
+    const injected = rig.doc.head.querySelector('#tradrl-shell-interaction');
+    expect(injected).not.toBeNull();
+    expect((injected as FakeElement & { textContent?: string }).textContent).toBe(SHELL_INTERACTION_CSS);
+    // idempotent: a re-mount on the SAME document adds nothing
+    const root2 = new FakeElement('div');
+    rig.handle.mount(root2 as unknown as Parameters<ConsoleHandle['mount']>[0], rig.doc as unknown as Parameters<ConsoleHandle['mount']>[1]);
+    const again = rig.doc.head.querySelector('#tradrl-shell-interaction');
+    expect(again).toBe(injected); // the SAME element — no duplicate style blocks
+  });
+
+  it('a document with NO head still mounts and renders (the supplement is a browser affordance, never a boot dependency)', async () => {
+    const handle = bootConsole({
+      baseUrl: 'http://scripted.invalid',
+      token: 'token-test',
+      scope: { tenantId: 'tenant-a', projectId: 'prj-a' },
+      transport: offlineTransport,
+      instants: { nowMs: () => T0 + 1000 },
+    });
+    const doc = new FakeDocument();
+    (doc as unknown as { head: FakeElement | null }).head = null; // the harness shape without a head
+    const root = new FakeElement('div');
+    expect(() => handle.mount(root as unknown as Parameters<ConsoleHandle['mount']>[0], doc as unknown as Parameters<ConsoleHandle['mount']>[1])).not.toThrow();
+    await handle.refresh();
+    expect(findByData(root, 'data-section', 'goal')).not.toBeNull(); // the console still rendered
   });
 });

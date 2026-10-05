@@ -54,7 +54,7 @@ import {
 import { noticeCopyOf } from '../render/flow';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
 import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission, projectToView } from '../core/availability';
-import { parseSheetRef, type ShellView } from '../render/shell';
+import { parseSheetRef, SHELL_INTERACTION_CSS, type ShellView } from '../render/shell';
 import { renderConsoleModel, homeFresh } from '../render/model';
 import { mountVTree } from '../render/dom';
 
@@ -156,10 +156,15 @@ export interface MountDocument {
   querySelectorAll?(selector: string): Iterable<{ focus(): void } & Partial<{ getAttribute(name: string): string | null; setSelectionRange(start: number, end: number): void }>>;
   /** Optional: the active element (the browser binding provides it). */
   readonly activeElement?: Element | null;
+  /** Optional: the document head (the browser binding provides it) — the R8 interaction supplement's injection target (W-19). */
+  readonly head?: Element | null;
 }
 
 /** The launchpad project id — the workspace's pre-launch scope placeholder. */
 export const LAUNCHPAD_PROJECT_ID = '(launchpad)';
+
+/** A head element's querySelector (the erasable-subset law: function types live in named aliases, never inline in casts). */
+type HeadQuerySelectorOf = (selector: string) => Element | null;
 
 /** Boot the console (every seam injected; DOM-free until mount). */
 export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
@@ -382,6 +387,23 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     let lastToastedNoticeId: string | null = null;
     const host = root as Element & { setAttribute(name: string, value: string): void; classList?: { add(name: string): void } };
     if (host.classList !== undefined) host.classList.add('tradrl-host');
+    // THE R8 INTERACTION SUPPLEMENT (W-19): inject the shell's nav
+    // hit-area geometry laws once at mount (idempotent — a re-mount
+    // finds the existing style and adds nothing). The rules live as
+    // data in render/shell.ts (SHELL_INTERACTION_CSS); this layer owns
+    // the DOM seam only. Degrades silently when the document carries
+    // no head (the test harness) — the geometry supplement is a
+    // browser affordance, never a boot dependency.
+    const head = (document as MountDocument).head;
+    if (head !== null && head !== undefined) {
+      const existing = (head as Element & { querySelector?: HeadQuerySelectorOf }).querySelector?.('#tradrl-shell-interaction');
+      if (existing === null || existing === undefined) {
+        const style = document.createElement('style');
+        style.setAttribute('id', 'tradrl-shell-interaction');
+        (style as Element & { textContent?: string }).textContent = SHELL_INTERACTION_CSS;
+        (head as Element & { appendChild(node: Node): Node }).appendChild(style);
+      }
+    }
     // THE LAUNCH FORM'S PENDING EDITS + THE POINTER GATE (the J3
     // wiring): field edits buffer in the view (the render merges them
     // via core/launch-form.ts, so any re-render keeps the user's

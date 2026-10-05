@@ -17,14 +17,14 @@
 //      the last known world, never a blank.
 
 import { describe, expect, it } from 'vitest';
-import type { JobRecord, OrgStatusSnapshot, OutcomeRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { ConstraintSetStatement, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
 import { systemNowMs } from '../core/clock';
 import { AvailabilityViolationError, CrossTenantRenderError, PolicyEnforcementError, WallClockReadError } from '../core/errors';
 import { assertVisible } from '../core/availability';
 import { openWorkspace, reduceAll, type WorkspaceEvent, type WorkspaceState } from '../core/workspace';
 import { capsuleFromOutcome } from '../core/evidence';
 import { WORKSPACE_SECTIONS } from '../core/sections';
-import { assertVerdictFaithful, renderConsoleModel, serializeConsoleModel, submissionVerdictBadgeOf, type VerdictBadge } from './model';
+import { assertVerdictFaithful, jobResultSectionOf, predicatePhraseOf, renderConsoleModel, serializeConsoleModel, submissionVerdictBadgeOf, type VerdictBadge } from './model';
 import { defaultShellView } from './shell';
 import { serializeVNode } from './vtree';
 
@@ -320,3 +320,153 @@ function viewAtOfState(state: WorkspaceState): number {
     case 'playback': return timeMachine.playback === null ? timeMachine.anchorAt : timeMachine.playback.fromAt + timeMachine.playback.ticks * timeMachine.playback.stepMs;
   }
 }
+
+// ---------------------------------------------------------------------------
+// W-19: the job RESULT section (R1 — the research deliverable reads in
+// the dialog) + the predicate bounds (R5 — a limit without a number is
+// not a limit).
+// ---------------------------------------------------------------------------
+
+/** The demo machinery's research completion payload (deploy/vercel/runtime/demo.ts — the shape exports proved in every Phase-2 download). */
+function completedResearchJob(result: unknown): JobRecord {
+  return {
+    jobId: 'job-r1', kind: 'research', tenant: 'tenant-a', project: 'proj-a',
+    status: 'complete', submittedAt: T0 + 20, completedAt: T0 + 40, result,
+  };
+}
+
+describe('render model: the job RESULT section (§4.5a — the R1 fix, W-19)', () => {
+  it('a completed research job with a release-candidate payload renders a READABLE result section in its dialog', () => {
+    const job = completedResearchJob({ kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' });
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'job-updated', at: T0 + 40, job },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', sheet: { kind: 'job', id: 'job-r1' } }));
+    expect(bytes).toContain('data-def="RESULT"');                       // the section renders at all (RED on the unfixed tree)
+    expect(bytes).toContain('release candidate');                       // the deliverable, readable
+    expect(bytes).toContain('spec-demo-director');                      // the payload's own lineage
+    expect(bytes).toContain('spec id');                                 // ...under its closed label
+    expect(bytes).toContain('Research produced a release candidate worth reviewing.'); // the product's own one-sentence summary
+    expect(bytes).toContain('result available');                        // the sheet subtitle flags the deliverable
+  });
+
+  it('a RICHER payload renders its own fields — the projection is total over what the job machinery served', () => {
+    const job = completedResearchJob({
+      kind: 'release-candidate', specId: 'spec-x', version: 2, project: 'proj-a',
+      title: 'Momentum scout v2', summary: 'Trades the open with a lagged executor.',
+      findings: ['momentum persists 20min', 'venue lag dominates'],
+      metrics: { sharpe: 1.4, maxDrawdown: 0.18 },
+    });
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 40, job },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', sheet: { kind: 'job', id: 'job-r1' } }));
+    expect(bytes).toContain('Momentum scout v2');
+    expect(bytes).toContain('Trades the open with a lagged executor.');
+    expect(bytes).toContain('momentum persists 20min');
+    expect(bytes).toContain('{"sharpe":1.4,"maxDrawdown":0.18}');       // nested structures render as readable JSON
+  });
+
+  it('a job with NO result renders NO result section — nothing is fabricated (a running job proves nothing about a deliverable)', () => {
+    const state = populatedWorkspace(); // the fixture's job-1 is 'running' with no result
+    const viewing = reduceAll(state, [{ kind: 'view-live', at: T0 + 50 }]);
+    const bytes = serializeVNode(renderConsoleModel(viewing, T0 + 50, { ...defaultShellView(viewing), accountView: 'section', sheet: { kind: 'job', id: 'job-1' } }));
+    expect(bytes).not.toContain('data-def="RESULT"');
+    expect(bytes).not.toContain('result available');
+  });
+
+  it('the result rides the job record\'s own availability gate (L4 — no deliverable before its completion instant)', () => {
+    const job = completedResearchJob({ kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' });
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 40, job },
+      { kind: 'view-tminus', at: T0 + 50, tMinusMs: 20_000 }, // viewAt = T0 + 30, before the job's completedAt (T0 + 40)
+    ]);
+    expect(() => serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', sheet: { kind: 'job', id: 'job-r1' } }))).toThrow(AvailabilityViolationError);
+  });
+
+  it('jobResultSectionOf: null for absent/empty payloads, pairs for the rest (the pure projection, directly)', () => {
+    expect(jobResultSectionOf({ jobId: 'j', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'running', submittedAt: T0 })).toBeNull(); // no result field
+    expect(jobResultSectionOf(completedResearchJob(undefined))).toBeNull();
+    expect(jobResultSectionOf(completedResearchJob('a string result'))).toBeNull();
+    expect(jobResultSectionOf(completedResearchJob({}))).toBeNull();    // an empty object carries nothing readable
+    const section = jobResultSectionOf(completedResearchJob({ kind: 'training-summary', epochs: 3, project: 'proj-a' }));
+    expect(section?.eyebrow).toBe('RESULT');
+    expect(section?.pairs).toContainEqual(['epochs', '3']);            // numbers render grouped/deterministic
+    expect(section?.pairs).toContainEqual(['deliverable', 'training summary']);
+  });
+});
+
+describe('render model: constraint and criterion bounds (§4.5 — the R5 fix, W-19)', () => {
+  /** The fixture constraint set: the M5 finding's exact three (a budget equals, a drawdown limit.max, a range). */
+  function constraintSet(): ConstraintSetStatement {
+    return {
+      id: 'cs-demo', version: 1, tenantId: 'tenant-a',
+      constraints: [
+        { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: 300_000_000 }, severity: 'blocking' },
+        { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: 15_000_000 }, severity: 'blocking' },
+        { id: 'c-1', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.2 }, severity: 'blocking' },
+        { id: 'c-2', domain: 'state', subject: 'exposure.band', predicate: { kind: 'limit.range', min: 0.1, max: 0.5 }, severity: 'advisory' },
+      ],
+      createdAt: T0,
+    };
+  }
+
+  /** The fixture goal statement (criteria with numeric bounds). */
+  function goal(): GoalStatement {
+    return {
+      id: 'goal-1', version: 1, tenantId: 'tenant-a',
+      objective: 'Compound the book inside the risk framework.',
+      horizon: { startsAt: T0, endsAt: T0 + 90_000, label: 'Q1' },
+      successCriteria: {
+        criteria: [
+          { id: 'sc-1', metric: 'return.net', predicate: { kind: 'limit.min', bound: 1_250_000 } },
+          { id: 'sc-2', metric: 'venue', predicate: { kind: 'oneOf', values: ['sim-primary', 'demo-feed'] } },
+        ],
+        requiredSatisfaction: 1,
+      },
+      evaluation: { blindRef: 'ev-blind', walkForwardRef: 'ev-wf', regimeRef: 'ev-regime', adversarialRequired: false },
+      createdAt: T0,
+    };
+  }
+
+  it('the RISK section renders every constraint WITH its numeric bound (the number, not the bare predicate label)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'goal-loaded', at: T0 + 5, goal: goal(), constraintSet: constraintSet() },
+      { kind: 'section-selected', at: T0 + 50, section: 'risk' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('outcome.capital.budget equals 300,000,000'); // RED on the unfixed tree: the label rendered without the number
+    expect(bytes).toContain('outcome.risk.budget equals 15,000,000');
+    expect(bytes).toContain('outcome.risk.maxDrawdown limit.max 0.2');    // M5's own drawdown limit
+    expect(bytes).toContain('state.exposure.band limit.range 0.1 to 0.5');
+    expect(bytes).not.toContain('outcome.capital.budget equals<');        // never a dangling label
+  });
+
+  it('the GOAL section renders the criteria and constraints with their bounds too (the same law, every surface)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'goal-loaded', at: T0 + 5, goal: goal(), constraintSet: constraintSet() },
+      { kind: 'section-selected', at: T0 + 50, section: 'goal' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('return.net limit.min 1,250,000');
+    expect(bytes).toContain('venue oneOf sim-primary, demo-feed');
+    expect(bytes).toContain('blocking c-1');
+    expect(bytes).toContain('outcome.risk.maxDrawdown limit.max 0.2');
+  });
+
+  it('predicatePhraseOf: every predicate kind renders its value(s) (the pure phrase, directly)', () => {
+    expect(predicatePhraseOf({ kind: 'limit.max', bound: 0.2 })).toBe('limit.max 0.2');
+    expect(predicatePhraseOf({ kind: 'limit.min', bound: 25_000_000 })).toBe('limit.min 25,000,000');
+    expect(predicatePhraseOf({ kind: 'limit.range', min: 0.1, max: 0.5 })).toBe('limit.range 0.1 to 0.5');
+    expect(predicatePhraseOf({ kind: 'equals', value: 300_000_000 })).toBe('equals 300,000,000');
+    expect(predicatePhraseOf({ kind: 'equals', value: 'demo-feed' })).toBe('equals demo-feed');
+    expect(predicatePhraseOf({ kind: 'notEquals', value: false })).toBe('notEquals false');
+    expect(predicatePhraseOf({ kind: 'oneOf', values: ['a', 'b'] })).toBe('oneOf a, b');
+    expect(predicatePhraseOf({ kind: 'flag', expected: true })).toBe('flag expected true');
+  });
+});
