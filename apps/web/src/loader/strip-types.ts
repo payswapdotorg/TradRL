@@ -1223,7 +1223,7 @@ function cleanBraces(state: StripState, open: number, close: number): void {
   }
 }
 
-/** Count the value specifiers inside a cleaned `{ ... }` list. */
+/** Count the value specifiers inside a cleaned `{ ... }` list (the `type` lookahead stays INSIDE the braces and ignores removals — a removed-name lookahead that escapes the braces would count the `type` keyword itself as a value specifier). */
 function countValueSpecifiers(state: StripState, open: number, close: number): number {
   const tokens = state.tokens;
   let count = 0;
@@ -1231,8 +1231,9 @@ function countValueSpecifiers(state: StripState, open: number, close: number): n
   for (let scan = open + 1; scan < close; scan++) {
     const token = tokens[scan];
     if (token.kind === 'ident' && token.text === 'type') {
-      const after = nextCode(state, scan + 1);
-      if (after !== null && after.kind === 'ident') {
+      let probe = scan + 1;
+      while (probe < close && (tokens[probe].kind === 'ws' || tokens[probe].kind === 'comment')) probe += 1;
+      if (probe < close && tokens[probe].kind === 'ident') {
         pendingType = true;
         continue;
       }

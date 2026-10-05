@@ -261,6 +261,87 @@ describe('loader: the module graph', () => {
   });
 });
 
+describe('loader: THE BOOT-PATH DEFECT CLASSES (T051 follow-up — every class the real browser path exposed, pinned)', () => {
+  it('DIVISION after a plain identifier is never a regex start (the lexer is JS-faithful)', () => {
+    expect(stripped(`const ms = at / 1000;\nconst scaled = offset / 2 / 3;`))
+      .toBe(expectLike(`const ms = at / 1000; const scaled = offset / 2 / 3;`));
+    // …while a regex in expression-start position still lexes as one:
+    expect(stripTypes(`function f() { return /a:b/g; }`)).toContain('/a:b/g');
+  });
+
+  it('numeric separators survive (60_000 is one number, not garbage)', () => {
+    expect(stripped(`const limit = 60_000;\nconst t = at % 60_000;`))
+      .toBe(expectLike(`const limit = 60_000; const t = at % 60_000;`));
+  });
+
+  it('inline type specifiers strip the type keyword AND the name, commas included', () => {
+    expect(stripped(`import { v, type VNode } from './vtree';`))
+      .toBe(expectLike(`import { v } from './vtree';`));
+    expect(stripped(`import { type A, b } from './x';`))
+      .toBe(expectLike(`import { b } from './x';`));
+    expect(stripped(`import { a, type B, c } from './x';`))
+      .toBe(expectLike(`import { a, c } from './x';`));
+    // every specifier type-marked: the whole statement goes
+    expect(stripped(`import { type A, type B } from './x';\nconst keep = 1;`))
+      .toBe(expectLike(`const keep = 1;`));
+  });
+
+  it('DYNAMIC imports are expressions — untouched by the statement machinery, parens balanced', () => {
+    expect(stripped(`const m = await import('./x');`)).toBe(expectLike(`const m = await import('./x');`));
+    expect(stripped(`import('./a').then((mod) => mod.go());`))
+      .toBe(expectLike(`import('./a').then((mod) => mod.go());`));
+    // the cast after a dynamic import strips (the old walk skipped the
+    // whole statement and left the `as` in the output — invalid JS)
+    expect(stripped(`const m = (await import(entry)) as typeof import('./app/console');`))
+      .toBe(expectLike(`const m = (await import(entry));`));
+  });
+
+  it('as-casts with OBJECT types strip (parenthesized member access included)', () => {
+    expect(stripped(`return (body as { data: T }).data;`)).toBe(expectLike(`return (body).data;`));
+    expect(stripped(`const body = response.body as { error?: { code?: string } } | null;`))
+      .toBe(expectLike(`const body = response.body;`));
+  });
+
+  it('return annotations strip at BOTH terminators: `): R {` and `): R =>`', () => {
+    expect(stripped(`function f(): number { return 1; }`)).toBe(expectLike(`function f() { return 1; }`));
+    expect(stripped(`const pick = list.replace(re, (whole: string, lead: string): string => lead);`))
+      .toBe(expectLike(`const pick = list.replace(re, (whole, lead) => lead);`));
+  });
+
+  it('single-level GENERIC annotations strip (bounded: no nested angle brackets)', () => {
+    expect(stripped(`const table: Record<string, string> = {};\nconst later: Promise<unknown> = fetchIt();`))
+      .toBe(expectLike(`const table = {}; const later = fetchIt();`));
+    expect(stripped(`function load(path: string): Promise<void> { return go(path); }`))
+      .toBe(expectLike(`function load(path) { return go(path); }`));
+  });
+
+  it('unary NOT before parens is never a non-null assertion false positive', () => {
+    expect(stripped(`const ok = !(key in obj) && !(list.includes(x));`))
+      .toBe(expectLike(`const ok = !(key in obj) && !(list.includes(x));`));
+  });
+
+  it('function types stay allowed INSIDE named aliases (the subset\'s own remedy)', () => {
+    expect(stripped(`type Fetcher = (cursor: string | undefined) => Promise<Page>;\nconst f: Fetcher = go;`))
+      .toBe(expectLike(`const f = go;`));
+  });
+
+  it('ternary colons in parameter lists are ternaries, never annotations', () => {
+    // The DEFAULT VALUE is code and stays (including its ternary colon —
+    // the colon after `where` strips only the annotation).
+    expect(stripped(`function place(x: number, where: string = flag ? 'a' : 'b'): void { go(x, where); }`))
+      .toBe(expectLike(`function place(x, where = flag ? 'a' : 'b') { go(x, where); }`));
+  });
+
+  it('the import scan covers MULTI-LINE import statements (brace lists span lines)', () => {
+    expect(importSpecifiersOf(`import {\n  reduceWorkspace,\n  type WorkspaceEvent,\n} from './workspace';\nconst x = 1;`))
+      .toEqual(['./workspace']);
+    const modules = { 'a.ts': { path: 'a.ts', code: '', stripped: '', url: 'blob:a' } } as Parameters<typeof rewriteSpecifiers>[2];
+    const rewritten = rewriteSpecifiers(`import {\n  one,\n  two,\n} from './a';`, './main.ts', modules);
+    expect(rewritten).toContain(`from 'blob:a'`);
+    expect(rewritten).toContain(`\n  one,`);
+  });
+});
+
 describe('loader: the SELF-HOSTING equivalence (the shell bootstrap == the full stripper)', () => {
   // The static shell strips the loader file with a ~40-line regex pass
   // before importing it. The contract: that regex output must be
