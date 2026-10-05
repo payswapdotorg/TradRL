@@ -113,7 +113,7 @@ export interface ConsoleHandle {
 
 /** The interaction target of a delegated click (the minimal DOM surface the app layer needs). */
 export interface ClickTarget {
-  closest?(selector: string): { getAttribute(name: string): string | null } | null;
+  closest?(selector: string): { getAttribute(name: string): string | null; readonly tagName: string } | null;
   readonly tagName: string;
 }
 
@@ -359,9 +359,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // targets), the drawer, the theme controls, the refresh action,
     // the inbox read-all button and the Time Machine controls. Every
     // handler is a pure state/view update — the model does the rest.
+    //
+    // THE DELEGATION LAW (the W-10b fix): the navigation branch acts
+    // ONLY on a [data-target] match that is an interactive BUTTON —
+    // the shape of every nav affordance (nav items, brand rows, the
+    // bell, palette items, empty-state actions). A non-button match
+    // (an ancestor state marker, a stray container) falls through to
+    // the action branches instead of swallowing the click: when T051
+    // put data-target on the .tradrl-shell root, every click in the
+    // console — Continue, Skip, theme, refresh, launch steps, export —
+    // was intercepted here as a navigation and returned silently,
+    // before any [data-action] branch could run (the J1 hard block).
     document.addEventListener('click', (event) => {
       const target = event.target?.closest?.('[data-target]');
-      if (target !== null && target !== undefined) {
+      if (target !== null && target !== undefined && target.tagName === 'BUTTON') {
         const id = target.getAttribute('data-target');
         if (id !== null && isShellTarget(id)) {
           if (id === 'home' || id === 'inbox' || id === 'settings') {

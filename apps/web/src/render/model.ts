@@ -45,7 +45,9 @@ import type { WatchEvent } from '../core/watch';
 import { timelineBucketsOf, formatTimeUtc, type TimelineEntry } from '../core/timeline';
 import type { ShellTarget } from '../core/nav';
 import { activeTargetOf, defaultShellView, heroPanel, renderAppShell, settingsPanel, type SheetRef, type ShellView } from './shell';
-import { onboardingPanel as onboardingPanelOf, type OnboardingState } from '../core/onboarding';
+// The onboarding wizard's only render is renderAppShell's §4.13 modal
+// overlay (render/shell.ts) — this model never imports it (the W-10b
+// double-render fix: one wizard, one copy, one place).
 import {
   accordionRow,
   detailSheet,
@@ -759,10 +761,7 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
   return v('section', { class: 'panel launch', 'data-section': 'launch' }, rows);
 }
 
-/** The onboarding wizard renders in place of the main content while it shows (§4.13). */
-function onboardingPanelPlaceholder(onboarding: OnboardingState): VNode {
-  return onboardingPanelOf(onboarding);
-}
+/** The onboarding wizard's single render lives in renderAppShell (§4.13 — the modal overlay); this model never renders it (the W-10b double-render fix). */
 
 /**
  * THE WHOLE-CONSOLE RENDER MODEL: one pure pass at an injected
@@ -780,20 +779,26 @@ function onboardingPanelPlaceholder(onboarding: OnboardingState): VNode {
  * busy/drawer/sheet/palette/onboarding/toast states); the default
  * view reproduces the classic section render. The palette results
  * are injected data (the app layer owns the live query).
+ *
+ * THE ONBOARDING LAW (the W-10b fix): the wizard renders EXACTLY
+ * ONCE — the §4.13 fixed-position modal overlay in renderAppShell,
+ * directly under the shell root. This model renders the main
+ * content NORMALLY behind it (the T051 defect rendered a second,
+ * in-place copy of the wizard instead of the main content — two
+ * stacked overlays, both frozen at step one; the a11y tree read the
+ * wizard twice).
  */
 export function renderConsoleModel(state: WorkspaceState, at: number, view: ShellView = defaultShellView(state), paletteResults: readonly import('../core/palette').PaletteEntry[] = []): VNode {
   return withRenderGuard(() => {
     const viewAt = viewAtOf(state);
     const activeTarget = activeTargetOf(state, view);
-    const main: VNode = view.onboarding !== null && !('completed' in view.onboarding)
-      ? onboardingPanelPlaceholder(view.onboarding)
-      : activeTarget === 'home'
-        ? homePanel(state, viewAt)
-        : activeTarget === 'inbox'
-          ? inboxPanel(state, viewAt)
-          : activeTarget === 'settings'
-            ? settingsPanel(state, view)
-            : sectionPanel(state, viewAt, view);
+    const main: VNode = activeTarget === 'home'
+      ? homePanel(state, viewAt)
+      : activeTarget === 'inbox'
+        ? inboxPanel(state, viewAt)
+        : activeTarget === 'settings'
+          ? settingsPanel(state, view)
+          : sectionPanel(state, viewAt, view);
     const launch = activeTarget === 'inbox' || activeTarget === 'settings' ? null : launchPanel(state, view);
     return renderAppShell(state, at, view, activeTarget, {
       timeMachine: timeMachineBar(state, viewAt),

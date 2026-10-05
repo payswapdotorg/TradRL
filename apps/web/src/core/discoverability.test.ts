@@ -145,9 +145,16 @@ describe('D5 — onboarding (≤3 steps, skippable, never blocks returning users
     // returning users: the boot reads the persisted completion and renders no wizard
     const returning = render(populated(), { accountView: 'home', onboarding: { completed: true } });
     expect(returning).not.toContain('data-onboarding="step-');
-    // a first-run user sees step one
+    // a first-run user sees step one — and the wizard renders EXACTLY
+    // ONCE (the W-10b double-render fix: the §4.13 modal overlay is the
+    // single copy; the in-place twin inside .shell-content is gone, so
+    // the a11y tree reads the wizard once)
     const firstRun = render(populated(), { accountView: 'home', onboarding: initialOnboarding() });
     expect(firstRun).toContain('data-onboarding="step-1"');
+    expect(firstRun.match(/data-onboarding="step-1"/g)?.length ?? 0).toBe(1);
+    expect(firstRun.match(/class="onboarding"/g)?.length ?? 0).toBe(1);
+    // the main content renders normally behind the overlay (Home, not a second wizard)
+    expect(firstRun).toContain('data-section="home"');
   });
 });
 

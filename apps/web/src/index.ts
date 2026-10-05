@@ -137,6 +137,11 @@ export async function bootFromShell(options: {
     // The persisted theme (charter §1: localStorage `tradrl_theme`; the
     // static shell's pre-paint script already applied it to <html> and
     // the app root — this is the boot-time read for the shell view).
+    // The SAME storage seam carries the onboarding completion (§4.13:
+    // localStorage `tradrl_onboarded`) — the entry MUST hand it to the
+    // console or the wizard never persists and returning users see it
+    // on every boot (the W-10b fix: the seam existed but was never
+    // wired here).
     const storage: ThemeStorage | undefined = typeof localStorage !== 'undefined' ? localStorage : undefined;
     const handle = boot.bootConsole({
       baseUrl: apiBaseUrl(config),
@@ -144,6 +149,7 @@ export async function bootFromShell(options: {
       scope: { tenantId: config.tenantId, projectId: config.projectId ?? '' },
       theme: storage === undefined ? 'light' : readStoredTheme(storage),
       ...(storage === undefined ? {} : { storage }),
+      ...(storage === undefined ? {} : { onboardingStorage: storage }),
       simulated: config.simulated ?? false,
       ...(options.transport === undefined ? {} : { transport: options.transport }),
     });

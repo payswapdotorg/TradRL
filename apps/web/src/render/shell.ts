@@ -335,7 +335,21 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
   ]);
 }
 
-/** The composed shell: root wrapper, mobile header, drawer backdrop, sidebar, main content, the open sheet. */
+/**
+ * The composed shell: root wrapper, mobile header, drawer backdrop, sidebar, main content, the open sheet.
+ *
+ * THE DELEGATION LAW (the W-10b fix): the root carries the active
+ * target as `data-active-target` — a STATE MARKER, never the
+ * delegated-navigation vocabulary. `data-target` belongs EXCLUSIVELY
+ * to the interactive affordance buttons (nav items, the brand rows,
+ * the bell, palette items, empty-state actions): app/console.ts's
+ * delegated click handler resolves `closest('[data-target]')` for
+ * navigation, and every element in the console descends from this
+ * root — when T051 put a bare `data-target` on the root, EVERY click
+ * in the console was intercepted as a navigation to the active
+ * target and returned before any [data-action] branch could run (the
+ * J1 hard block: the onboarding wizard was unclickable, silently).
+ */
 export function renderAppShell(
   state: WorkspaceState,
   at: number,
@@ -348,7 +362,7 @@ export function renderAppShell(
     'data-theme': view.theme,
     'data-connection': state.connection,
     'data-rendered-at': String(at),
-    'data-target': activeTarget,
+    'data-active-target': activeTarget,
     'data-drawer': view.drawerOpen ? 'open' : 'closed',
     'data-simulated': view.simulated ? 'true' : 'false',
     'data-sheet': view.sheet === null ? 'closed' : `${view.sheet.kind}:${view.sheet.id}`,
@@ -374,7 +388,11 @@ export function renderAppShell(
     ]),
     // §4.14 the palette overlay (the app layer owns keys + Enter)
     ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: unreadCount(state.inbox) })]),
-    // §4.13 the onboarding wizard (null = not showing)
+    // §4.13 the onboarding wizard — THE ONE COPY: the fixed-position
+    // modal overlay directly under the shell root (render/model.ts
+    // renders the main content normally behind it; it never renders
+    // the wizard — the T051 double render put one copy inside
+    // .shell-content too, and both froze at step one).
     ...(view.onboarding === null ? [] : [onboardingPanel(view.onboarding)]),
     // §4.10 the toast (top-right, ~5s auto-dismiss owned by the app layer)
     ...(view.toast === null ? [] : [toastRecord(view.toast.kind as 'failed_evaluation', view.toast.title, view.toast.sentence)]),
