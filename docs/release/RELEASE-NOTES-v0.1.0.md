@@ -1,21 +1,16 @@
 # Release record — v0.1.0 (the first production release)
 
 The worked example of `docs/release/README.md` §the release record
-format. **Status: pre-record** — the repository-side evidence below is
-measured on the v0.1.0 release candidate (main @ 14357ae + T050, the
-final Work Order); the deployment-side fields (marked `<at cut>`) are
-completed by the operator when the release is cut, each with its exact
-command. Nothing in this record may be edited after the cut except
-appending to "Known issues".
+format. **Status: CUT 2026-10-05T11:15Z** — the release-candidate evidence below was measured on main @ 14357ae + T050 and re-verified at the cut SHA; the deployment-side fields are completed at the cut (the operator's measured values inline). Nothing is edited after the cut except appending to "Known issues".
 
 ## Identity
 
 | Field | Value |
 |---|---|
 | Version | **0.1.0** (root `package.json`; the only version number — the console + the API are one deployable) |
-| Release SHA | `<at cut>` — the merged main after T050's PR is merged (the candidate content = main @ 14357ae + the T050 delivery; `git rev-parse HEAD` on the release checkout) |
-| Date (UTC) | `<at cut>` |
-| Deployment origin | `https://tradrl-console.vercel.app` (the Vercel project `tradrl-console`, one origin, same-origin `/v1` + `/internal`) |
+| Release SHA | **6419c0a06c72ae72eae44307304bf6ac40659eda** (main @ 6419c0a: 14357ae + T050 (PR #35) + the v0.1.0 acceptance fix wave — PRs #36/#37/#38 (J03 adoption / J05+J06 scheduler seam / J08+J09 palette+offline), PR #39 (the J03 view-instant seam), PR #40 (J12 touch targets + main landmark)) |
+| Date (UTC) | **2026-10-05T11:15Z** (the cut) |
+| Deployment origin | **Verified at cut: `https://trrl-console-staging.vercel.app`** (Vercel project `trrl-console-staging`, team `tepa`, deployment `trrl-console-staging-qwbodb9sk` from the cut SHA; same-origin `/v1` + `/internal`; smoke 7/7). The production-name origin `https://tradrl-console.vercel.app` (project `tradrl-console`, team `ekonplacidegmailcoms-projects`) serves the pre-fix deployment `dpl_FUJEcMRetRb3ad4KS2gK4NHnaQya` (main @ 14357ae) — its team's Vercel free-tier daily deployment quota (>100 deploys in the trailing 24h window, exhausted by the D-038→D-041 platform-debugging era + git-integration preview deploys) blocked the redeploy at cut time; an automatic retry daemon redeploys the cut SHA to the production name the moment the window frees (all project env vars identical — both origins serve the same artifact + demo backing) |
 | Deployed backing | **demo** (the default: no `NEON_*`/`UPSTASH_*` key configured — the data routes serve the seeded fixture demo data per-instance; the console's SIMULATED badge is the contractual disclosure) |
 | Program | 52/52 Work Orders merged at this release (T001–T052); `program/graph.json` + `spec/PROJECT-STATE.md` are the machine-checked record |
 
@@ -29,7 +24,7 @@ verify):
 |---|---|
 | `corepack pnpm install --frozen-lockfile` | completes; `pnpm-lock.yaml` shows no committed diff |
 | `corepack pnpm typecheck` | **0 errors** |
-| `corepack pnpm vitest run` (the FULL suite) | **7706 passed + 1 skipped / 529 files** = the merged floor at main @ 14357ae (**7667 passed + 1 skipped / 525 files**, empirically re-derived) + exactly T050's **39 net-new tests / 4 files** (`tests/performance/`: api-plane 11, observability-plane 9, console-payload 5, smoke-tool 14), **zero regressions** (per-file counts compared: no file's count dropped, no previously-green file failed; the single skip is the pre-existing `packages/time-engine/src/knowledge/interop.test.ts` platform-conditional) |
+| `corepack pnpm vitest run` (the FULL suite) | **Re-run at the cut SHA 6419c0a: 7742 passed + 1 skipped / 531 files** (= the a3e2f90 floor 7731+1skip/530 + 3 net-new (PR #39) + 8 net-new (PR #40), zero regressions per-file). Candidate-tree measurement: **7706 passed + 1 skipped / 529 files** = the merged floor at main @ 14357ae (**7667 passed + 1 skipped / 525 files**, empirically re-derived) + exactly T050's **39 net-new tests / 4 files** (`tests/performance/`: api-plane 11, observability-plane 9, console-payload 5, smoke-tool 14), **zero regressions** (per-file counts compared: no file's count dropped, no previously-green file failed; the single skip is the pre-existing `packages/time-engine/src/knowledge/interop.test.ts` platform-conditional) |
 | `corepack pnpm vitest run deploy` | **155 / 155** across 10 files (the prebuilt-output laws: routes === `FUNCTION_MOUNT_PATH`, the `.func` envelope, build determinism, the credential-literal scan) |
 | `corepack pnpm vitest run tests/security` | green (tenant isolation, secrets, export, untrusted-input escalation) |
 | `node scripts/program/check.mjs` | **`Program state valid.`** (51/52 at the candidate's base, frontier [T050]; the merge completes the program 52/52) |
@@ -41,9 +36,9 @@ Phases B–C; the record is complete only when both are green):
 
 | Gate | Result |
 |---|---|
-| The seven-point smoke — `node ops/tooling/smoke.mjs "$BASE" "$TOKEN"` | `<at cut>` — expected **`smoke: 7/7 checks passed`**, exit 0 (the probe is offline-verified: every detector proven to bite; the live verdict is recorded here) |
-| The J1–J12 journey catalog (the agent browser, `spec/UX-DESIGN.md` §6) | `<at cut>` — record per-journey verdicts: J1 onboarding · J2 shell · J3 primary flow · J4 watch · J5 Time Machine · J6 notifications · J7 evidence · J8 palette · J9 teaching states · J10 settings · J11 timeline · J12 responsive/a11y |
-| The security posture (CHECKLIST C2) | `<at cut>` — `/internal/*` closed without the internal credential; no CORS headers on `$BASE`; `tests/security` green |
+| The seven-point smoke — `node ops/tooling/smoke.mjs "$BASE" "$TOKEN"` | **`smoke: 7/7 checks passed`**, exit 0 — measured live at the cut on `https://trrl-console-staging.vercel.app` (deployment qwbodb9sk, cut SHA 6419c0a): api-authn-first 401 · api-meta 200 apiVersion=v1 · same-origin-no-cors · api-projects 200 · api-knowledge 200 · loader-source 200 · console-shell 200 |
+| The J1–J12 journey catalog (the agent browser, `spec/UX-DESIGN.md` §6) | **ALL TWELVE PASS** at the cut (the acceptance rounds on the public origin; full evidence: `/home/z/my-project/phase1-jcatalog-results.md`, screenshots `/tmp/w16-*` + `/tmp/w19-*`): J1 onboarding PASS (wizard 1→3 → Home; skip; reload skips) · J2 shell PASS (14 sections one-click, SIMULATED badges, CONNECTION LIVE) · J3 primary flow PASS (after a 92s boot-pin window: POST /v1/projects 201 → POST /v1/jobs/research 202 → submitted→running→complete at the 500ms beat → "Launch (launched)"; PR #39's re-sample live) · J4 watch PASS (org snapshot + 4 stream cards, zero chain-of-thought) · J5 Time Machine PASS (4 modes; playback +500ms/s; scrubber wired) · J6 notifications PASS (badge, accordions, per-notice Mark read, toast auto-dismiss ~5s + close) · J7 evidence PASS (3 evc capsules + inline from Outcomes/Decisions) · J8 palette PASS (fuzzy query live, empty-match state, palette-alone nav) · J9 teaching states PASS (empty states; UNREACHABLE at boot-block + ErrorState + Try-again recovery; DEGRADED amber mid-session with last-known) · J10 settings PASS (theme persists, real 15.6KB export) · J11 timeline PASS (period buckets, expandable typed rows) · J12 responsive/a11y PASS (measured 390×844: every interactive element ≥44×44 — wizard 35/35, shell 33/33, drawer 34/34, palette 53/53; no horizontal scroll; exactly one `<main>`; drawer keyboard-operable; focus-visible; reduced-motion; desktop 1280 unchanged) |
+| The security posture (CHECKLIST C2) | GREEN at cut: `/internal/usage/tenant-demo` → **401** unauthenticated (the private plane closed); no `access-control-*` header anywhere on the origin (the same-origin law, smoke-verified); `corepack pnpm vitest run tests/security` → **5 files / 40 tests passed** |
 
 ## What shipped (by plane, real component names)
 
@@ -170,3 +165,9 @@ The deployment itself is re-derivable from the SHA: `npx vercel
 --prod` emits the byte-deterministic prebuilt `.vercel/output` (the
 build determinism is test-pinned) — the release artifact IS the
 deployment at the recorded SHA.
+
+## Known issues (appended at cut, 2026-10-05T11:15Z)
+
+- **The vdom renderer landmine (non-fatal, observed live at cut)** — `removeChild` NotFoundError inside `mountVTree` during beat renders (a renderer/DOM race, likely focus/blur DOM movement during form interaction); every affected journey still completed exactly (the renderer re-syncs on the next beat). Follow-up Work Order candidate (renderer hardening); PR #39's per-beat re-sample makes every beat a real render diff, which exposes it.
+- **The production-name origin lag (quota, not code)** — `tradrl-console.vercel.app` serves the pre-fix `dpl_FUJEcMRetRb3ad4KS2gK4NHnaQya` (main @ 14357ae) until the team's Vercel free-tier daily-deploy window frees; an automatic retry daemon (20-minute cadence, Lead-operated) redeploys the cut SHA to the production name on the first successful window. The verified cut origin is `trrl-console-staging.vercel.app` (identical artifact + backing).
+- **Rollback readiness (CHECKLIST D3, walked on paper)** — previous deployments: production name `dpl_FUJEcMRetRb3ad4KS2gK4NHnaQya` (main @ 14357ae); cut origin `trrl-console-staging-lo5e7r84u` (main @ a3e2f90). Rollback = `npx vercel rollback <deployment>` per `ops/runbooks/incident-response.md` §4 (or redeploy the prior SHA from the linked worktree); the demo backing is per-instance in-memory (a cold start re-seeds — no data migration on rollback).
