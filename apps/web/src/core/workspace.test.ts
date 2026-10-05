@@ -170,11 +170,14 @@ describe('workspace: transitions', () => {
     const launchpad = openWorkspace({ tenantId: 'tenant-a', projectId: 'launchpad' }, T0);
     const adopted = reduceWorkspace(launchpad, { kind: 'project-adopted', at: T0 + 1, projectId: 'proj-new' });
     expect(adopted.scope.projectId).toBe('proj-new');
-    // the loaded project record pins the adoption; a DIFFERENT second adoption is refused
+    // the loaded project record PINS the adoption: re-adopting the SAME project is an idempotent no-op
     const withProject = reduceWorkspace(adopted, { kind: 'project-loaded', at: T0 + 2, project: projectRecord({ id: 'proj-new', lifecycle: { projectId: 'proj-new', status: 'draft', acceptanceCriteriaId: null, organizationRef: null } }) });
-    expect(() => reduceWorkspace(withProject, { kind: 'project-adopted', at: T0 + 3, projectId: 'proj-other' })).toThrow(/already adopted/);
-    // re-adopting the SAME project is a no-op (idempotent)
-    expect(() => reduceWorkspace(withProject, { kind: 'project-adopted', at: T0 + 4, projectId: 'proj-new' })).not.toThrow();
+    expect(reduceWorkspace(withProject, { kind: 'project-adopted', at: T0 + 4, projectId: 'proj-new' }).project?.id).toBe('proj-new'); // no record churn
+    expect(reduceWorkspace(withProject, { kind: 'project-adopted', at: T0 + 4, projectId: 'proj-new' }).jobs).toHaveLength(0);
+    // a DIFFERENT adoption supersedes (the launch bridge — see the SUPERSEDES pin: the deployed demo-scope boot launches a new organization)
+    const superseded = reduceWorkspace(withProject, { kind: 'project-adopted', at: T0 + 3, projectId: 'proj-other' });
+    expect(superseded.scope.projectId).toBe('proj-other');
+    expect(superseded.project).toBeNull(); // the superseded project's records left
     // an empty adoption id is refused
     expect(() => reduceWorkspace(adopted, { kind: 'project-adopted', at: T0 + 5, projectId: '' })).toThrow(/project id/);
   });
@@ -218,7 +221,7 @@ describe('workspace: transitions', () => {
     expect(() => reduceWorkspace(adopted, { kind: 'job-updated', at: T0 + 8, job: jobRecord('running') })).toThrow(CrossTenantRenderError);
 
     // the created project + its kickoff job load into the adopted scope (the submit path's own dispatches)
-    let next = reduceWorkspace(adopted, { kind: 'project-loaded', at: T0 + 9, project: projectRecord({ id: 'proj-launched', lifecycle: { projectId: 'proj-launched', status: 'draft', acceptanceCriteriaId: null, organizationRef: null }, lineage: { projectId: 'proj-launched', createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1 } }) });
+    let next = reduceWorkspace(adopted, { kind: 'project-loaded', at: T0 + 9, project: projectRecord({ id: 'proj-launched', lifecycle: { projectId: 'proj-launched', status: 'draft', acceptanceCriteriaId: null, organizationRef: null } }) });
     next = reduceWorkspace(next, { kind: 'job-updated', at: T0 + 10, job: { ...jobRecord('submitted'), project: 'proj-launched' } });
     expect(next.project?.id).toBe('proj-launched');
     expect(next.jobs).toHaveLength(1);

@@ -29,6 +29,7 @@ import type { ConsoleHandle } from './app/console';
 import type { ApiTransport } from './api/transport';
 import { createFetchTransport } from './api/transport';
 import { readStoredTheme, type ThemeStorage } from './core/theme';
+import { browserScheduler } from './core/clock';
 
 /** The console's configuration as the static shell carries it (window.__TRADRL_CONSOLE__). */
 export interface ShellConfig {
@@ -151,6 +152,16 @@ export async function bootFromShell(options: {
       ...(storage === undefined ? {} : { storage }),
       ...(storage === undefined ? {} : { onboardingStorage: storage }),
       simulated: config.simulated ?? false,
+      // THE BROWSER TIMER SEAM (the live J03 finding's second half):
+      // the beat cadence (job polling + playback ticks + the toast
+      // auto-dismiss) is armed ONLY through the injected scheduler — a
+      // boot without one freezes every cadence (the launch progress
+      // card stuck at 'submitted' forever: the async submitted ->
+      // running -> complete animation never rendered on the deployed
+      // console). The browser binding is the setTimeout seam
+      // (core/clock.ts browserScheduler — the only DOM-timer seam, boot
+      // boundary only).
+      scheduler: browserScheduler(),
       ...(options.transport === undefined ? {} : { transport: options.transport }),
     });
     handle.mount(root, documentLike);

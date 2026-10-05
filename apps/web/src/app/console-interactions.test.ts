@@ -832,9 +832,10 @@ describe('executed boot: J3 — the primary flow (the launch entry + the wired f
     expect(elementsOf(rig.root).some((element) => textOf(element) === 'Momentum scout')).toBe(true);
     expect(rig.handle.state().jobs).toHaveLength(1);
     expect(rig.handle.state().jobs[0]?.status).toBe('complete');
-    // Start over resets the launch slice; the workspace STAYS on the adopted project (the launch happened)
-    clickAction(rig, 'launch-reset');
-    expect(rig.handle.state().launch.phase).toBe('idle');
+    // the honest terminal render: the Launch (launched) card + the complete progress; never an error card
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Launch (launched)')).toBe(true);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('error-card'))).toBe(false);
+    // the workspace STAYS on the adopted project (the launch happened; the demo project's world is superseded)
     expect(rig.handle.state().scope.projectId).toBe(demo.createdProjectIds[0]);
   });
 
