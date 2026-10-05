@@ -472,6 +472,40 @@ function postMortemCard(scope: WorkspaceScope, postMortem: PostMortemRecord, vie
   ]);
 }
 
+/**
+ * Render one post-mortem as an OUTCOMES-section card (D-2, the W-24
+ * fix): the section's subtitle promises "Results and post-mortems",
+ * but only the outcome rendered — the post-mortem was reachable solely
+ * through its evidence capsule and the Lessons section. The card
+ * carries the post-mortem's own id, the outcome it ATTACHES TO
+ * (subject.outcomeRecordRef), the happened/gap summary and every
+ * hypothesis finding (class + confidence + note, verbatim — the
+ * console renders what the boundary served, L20). Same scope + L4
+ * availability gates as every sibling card in the section.
+ */
+function outcomePostMortemCard(scope: WorkspaceScope, postMortem: PostMortemRecord, viewAt: number): VNode {
+  assertProjectScope(scope, { tenant: postMortem.lineage.tenant, project: postMortem.lineage.project });
+  visibleAt(postMortem, availabilityOfPostMortem(postMortem), viewAt, postMortem.postMortemId);
+  return v('div', { class: 'card post-mortem', 'data-post-mortem': postMortem.postMortemId }, [
+    v('div', { class: 'card-title' }, [postMortem.postMortemId]),
+    ...factRows([
+      ['outcome', postMortem.subject.outcomeRecordRef],
+      ['outcome class', postMortem.subject.outcomeClass],
+      ['disposition', postMortem.happened.disposition],
+      ['realized outcome', renderDecimal(postMortem.happened.realizedOutcome)],
+      ['realized gap', postMortem.gap.realizedGap ?? 'none'],
+      ['within tolerance', postMortem.gap.withinTolerance === null ? 'unknown' : String(postMortem.gap.withinTolerance)],
+      ['hypotheses', String(postMortem.hypotheses.length)],
+    ]),
+    // the findings: each hypothesis's own class, confidence and note,
+    // verbatim from the served record (an attribution, never a re-read).
+    ...postMortem.hypotheses.map((hypothesis) => factRow(
+      `hypothesis ${hypothesis.class}`,
+      hypothesis.note === null ? `confidence ${hypothesis.confidence}` : `confidence ${hypothesis.confidence} — ${hypothesis.note}`,
+    )),
+  ]);
+}
+
 /** Render one knowledge entry. */
 function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt: number): VNode {
   assertProjectScope(scope, knowledge.record);
@@ -911,15 +945,40 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       ]);
   } else if (selector === 'outcomes') {
       const projected = projectToView(state.outcomes, viewAt, availabilityOfOutcome);
+      // D-2 (the W-24 fix): the post-mortems render in the section its
+      // own subtitle promises them to ("Results and post-mortems") —
+      // projected by their OWN availability gate (availabilityOfPostMortem),
+      // exactly like the sibling sections (Lessons/Evidence) project them.
+      const postMortemProjected = projectToView(state.postMortems, viewAt, availabilityOfPostMortem);
       const cards = projected.map((outcome) => v('div', { class: 'decision-block' }, [
         outcomeCard(scope, outcome, viewAt),
         // J7: the outcome's own evidence capsule renders INLINE (its
         // content-address badge opens the payload + provenance here).
         capsuleInline(capsuleFromOutcome(scope, outcome), viewAt, view.openCapsule),
+        // D-2: the outcome's post-mortems render beneath it — the
+        // card names the outcome it attaches to, so the pairing reads
+        // even when the outcome itself is not visible at this instant;
+        // the post-mortem's own evidence capsule renders INLINE beside
+        // it (the same J7 convention as the outcome's capsule above).
+        ...postMortemProjected
+          .filter((postMortem) => postMortem.subject.outcomeRecordRef === outcome.outcomeId)
+          .map((postMortem) => v('div', { class: 'decision-block' }, [
+            outcomePostMortemCard(scope, postMortem, viewAt),
+            capsuleInline(capsuleFromPostMortem(scope, postMortem), viewAt, view.openCapsule),
+          ])),
       ]));
+      // A post-mortem whose outcome is not visible at this view instant
+      // (or whose outcome is absent from the projection) still renders —
+      // its own card carries the attachment; nothing is dropped silently.
+      const orphanedPostMortems = postMortemProjected
+        .filter((postMortem) => !projected.some((outcome) => outcome.outcomeId === postMortem.subject.outcomeRecordRef));
       return v('section', { class: 'panel', 'data-section': 'outcomes' }, [
         ...cards,
-        ...(projected.length === 0 ? [sectionEmpty('outcomes')] : []),
+        ...orphanedPostMortems.map((postMortem) => v('div', { class: 'decision-block' }, [
+          outcomePostMortemCard(scope, postMortem, viewAt),
+          capsuleInline(capsuleFromPostMortem(scope, postMortem), viewAt, view.openCapsule),
+        ])),
+        ...(projected.length + postMortemProjected.length === 0 ? [sectionEmpty('outcomes')] : []),
       ]);
   } else if (selector === 'lessons') {
       const knowledgeProjected = projectToView(state.knowledge, viewAt, availabilityOfKnowledge);
