@@ -390,6 +390,139 @@ describe('the idempotence law (content-addressed)', () => {
   });
 });
 
+describe('the monotone-instant law (the exhaustion law\'s enabling law)', () => {
+  // RED-FIRST PROOF (recorded 2026-10-05, before the fix): a charge
+  // appended with an instant BEFORE the log's last entry was validated
+  // against only the consumption at or before ITS OWN instant, so two
+  // 25-draws (appended at T0+110 then backdated to T0+100) summed to 50
+  // against a 40 allowance, and entitlementSnapshot then THREW a
+  // TypeError out of its pure `remaining` arithmetic
+  // (unsignedSubtract: 40 < 50 — "a draw-down never goes negative").
+  // The monotone gate refuses the backdated APPEND; replays never append.
+
+  it('a backdated charge that would cross the all-time line is the typed l4_boundary_violation', () => {
+    const ledger = freshLedger();
+    if (!ledger.ok) throw new Error('unreachable');
+    const issued = issueSpend(ledger.value, '100');
+    if (!issued.ok) throw new Error('unreachable');
+    // Amend DOWN to 40 at T0+50 (window covers both charge instants).
+    const amended = amendEntitlementGrantOn(issued.value.state, {
+      priorGrantId: issued.value.record.grantId,
+      projectId: null,
+      terms: { kind: 'spend-allowance', currency: 'usd-cents', amount: '40' },
+      sourceRef: 'plan://operator/test',
+      issuedAt: T0 + 50,
+      effectiveFrom: T0 + 50,
+      effectiveUntil: T0 + 10_000,
+    });
+    if (!amended.ok) throw new Error('unreachable');
+    // Appended first (accepted): 25 at T0+110.
+    const late = charge(amended.value.state, amended.value.record.grantId, '25', T0 + 110);
+    if (!late.ok) throw new Error('unreachable');
+    // The backdated second charge (instant before the log's last entry)
+    // would have been accepted against consumed@T0+100 = 0 — the all-time
+    // sum would then be 50 > 40 and the snapshot would throw.
+    const early = charge(late.value.state, amended.value.record.grantId, '25', T0 + 100);
+    expect(early.ok).toBe(false);
+    if (!early.ok) {
+      expect(early.errors[0].code).toBe('l4_boundary_violation');
+      expect(early.errors[0].message).toContain('predates the ledger\'s last recorded instant');
+    }
+    // The state is unchanged (no append happened).
+    expect(late.value.state.consumptions.size).toBe(1);
+    // The snapshot stays a total pure read: remaining is exact, never negative.
+    const snap = entitlementSnapshot(late.value.state, T0 + 500);
+    if (!snap.ok) throw new Error('unreachable');
+    expect(snap.value.entries[0].consumed).toBe('25');
+    expect(snap.value.entries[0].remaining).toBe('15');
+    expect(verifyEntitlementChain(late.value.state).ok).toBe(true);
+  });
+
+  it('the same law refuses a backdated ISSUE append; a revocation replay stays safe', () => {
+    const ledger = freshLedger();
+    if (!ledger.ok) throw new Error('unreachable');
+    const issued = issueSpend(ledger.value, '100');
+    if (!issued.ok) throw new Error('unreachable');
+    const revoked = revokeEntitlementGrant(issued.value.state, { grantId: issued.value.record.grantId, revokedAt: T0 + 10 });
+    if (!revoked.ok) throw new Error('unreachable');
+    // A new root grant backdated below the revocation's instant is refused
+    // on the append path (its issuedAt T0+5 predates the log's last T0+10).
+    const backdatedIssue = issueSpend(revoked.value.state, '5', null, T0 + 5);
+    expect(backdatedIssue.ok).toBe(false);
+    if (!backdatedIssue.ok) expect(backdatedIssue.errors[0].code).toBe('l4_boundary_violation');
+    // A revocation replay at its ORIGINAL instant never appends — safe.
+    const second = revokeEntitlementGrant(revoked.value.state, { grantId: issued.value.record.grantId, revokedAt: T0 + 10 });
+    expect(second.ok && second.value.replayed).toBe(true);
+  });
+
+  it('an idempotent replay of an OLD charge after later appends stays safe', () => {
+    const ledger = freshLedger();
+    if (!ledger.ok) throw new Error('unreachable');
+    const issued = issueSpend(ledger.value, '100');
+    if (!issued.ok) throw new Error('unreachable');
+    const first = charge(issued.value.state, issued.value.record.grantId, '10', T0 + 1);
+    if (!first.ok) throw new Error('unreachable');
+    const second = charge(first.value.state, issued.value.record.grantId, '10', T0 + 5);
+    if (!second.ok) throw new Error('unreachable');
+    // Re-submitting the FIRST charge (its instant T0+1 predates the log's
+    // last entry T0+5) is a REPLAY, not an append — idempotence holds.
+    const replay = charge(second.value.state, issued.value.record.grantId, '10', T0 + 1);
+    expect(replay.ok && replay.value.replayed).toBe(true);
+    if (replay.ok) {
+      expect(replay.value.state.log).toHaveLength(second.value.state.log.length);
+      expect(replay.value.record.consumptionId).toBe(first.value.record.consumptionId);
+    }
+  });
+
+  it('verifyEntitlementChain: a hand-crafted non-monotone log is the typed chain_mismatch', () => {
+    const ledger = freshLedger();
+    if (!ledger.ok) throw new Error('unreachable');
+    const issued = issueSpend(ledger.value, '100');
+    if (!issued.ok) throw new Error('unreachable');
+    const drawn = charge(issued.value.state, issued.value.record.grantId, '10', T0 + 1);
+    if (!drawn.ok) throw new Error('unreachable');
+    // Rebuild the log in REVERSED order with seq/priorHead/head fully
+    // recomputed (so every per-entry check still passes) — the only leg
+    // that can catch the rewrite is the monotone-instant leg.
+    const entries = drawn.value.state.log;
+    const reversed = [...entries].reverse();
+    const log = reversed.map((entry, index) => {
+      const priorHead = index === 0 ? GENESIS_CHAIN_HEAD : headOfEntry(reversed[index - 1].head);
+      const content = { seq: index, kind: entry.kind, recordId: entry.recordId, recordDigest: entry.recordDigest, at: entry.at, priorHead };
+      return Object.freeze({ ...content, head: chainHeadOf(content) }) as (typeof entries)[number];
+    });
+    function headOfEntry(head: string): string { return head; }
+    const crafted = { ...drawn.value.state, log };
+    const verified = verifyEntitlementChain(crafted);
+    expect(verified.ok).toBe(false);
+    if (!verified.ok) expect(verified.errors[0].code).toBe('chain_mismatch');
+  });
+
+  it('verifyEntitlementChain: a state crafted past the exhaustion line is the typed chain_mismatch', () => {
+    const ledger = freshLedger();
+    if (!ledger.ok) throw new Error('unreachable');
+    const issued = issueSpend(ledger.value, '100', null, T0);
+    if (!issued.ok) throw new Error('unreachable');
+    const drawn = charge(issued.value.state, issued.value.record.grantId, '60', T0 + 1);
+    if (!drawn.ok) throw new Error('unreachable');
+    // Craft: keep the log and records intact, but swap the current version
+    // for a LOWER amount than the all-time consumption — only the
+    // exhaustion-invariant leg can catch it.
+    const lowered = {
+      ...drawn.value.state,
+      current: new Map(drawn.value.state.current).set(issued.value.record.grantId, {
+        ...issued.value.record,
+        version: 2,
+        supersedes: issued.value.record.grantId,
+        terms: { kind: 'spend-allowance' as const, currency: 'usd-cents', amount: '50' },
+      }),
+    };
+    const verified = verifyEntitlementChain(lowered);
+    expect(verified.ok).toBe(false);
+    if (!verified.ok) expect(verified.errors[0].code).toBe('chain_mismatch');
+  });
+});
+
 describe('the chain law (tamper-evident history)', () => {
   it('the whole ledger verifies green after a full lifecycle', () => {
     const ledger = freshLedger();

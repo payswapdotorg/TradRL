@@ -23,6 +23,14 @@
 //   exceeds the chain's CURRENT version's amount (exact decimal
 //   arithmetic; a charge that would cross the line is the typed
 //   `entitlement_exhausted` — L20: enforcement is code).
+// - The monotone-instant law (the exhaustion law's enabling law): an
+//   APPENDED operation's instant never predates the log's last entry's
+//   instant — operation instants are non-decreasing, so the sum the
+//   charge law checks (the consumption at or before the charge instant)
+//   IS the all-time sum, and no later-appended backdated charge can
+//   retroactively break an earlier version's accounting (the typed
+//   `l4_boundary_violation`). Replays never append, so an idempotent
+//   retry of an OLD operation stays safe.
 // - The lifecycle law: a grant chain is issued (version 1) -> amended
 //   (version + 1, supersede-chained) -> revoked (terminal); a revoked
 //   chain never amends (`invalid_transition`); revocation is a LEDGER
@@ -297,6 +305,23 @@ export function verifyEntitlementChain(state: EntitlementLedgerState): Entitleme
     if (stableDigestJson(record) !== entry.recordDigest) {
       return fail('chain_mismatch', `log entry ${index} pins record ${entry.recordId} at digest ${entry.recordDigest} but the retained record digests to ${stableDigestJson(record)} — the record was rewritten`, `log[${index}].recordDigest`);
     }
+    // The monotone-instant leg: the log's instants are non-decreasing
+    // (an entry that back-dates below its predecessor is a rewrite, not
+    // a state this ledger could have produced).
+    if (index > 0 && entry.at < state.log[index - 1].at) {
+      return fail('chain_mismatch', `log entry ${index} carries instant ${entry.at} before its predecessor's ${state.log[index - 1].at} — the ledger's operation instants are monotone; the log was rewritten`, `log[${index}].at`);
+    }
+  }
+  // The exhaustion-invariant leg: every spend chain's ALL-TIME consumption
+  // stays within its current version's amount (the accounting law every
+  // operation enforces at append time; a state that violates it was
+  // crafted, not produced by this ledger).
+  for (const [rootId, current] of state.current.entries()) {
+    if (current.kind !== 'spend-allowance') continue;
+    const consumed = chainConsumedAll(state, rootId);
+    if (signedCompare(consumed, (current.terms as { amount: string }).amount) > 0) {
+      return fail('chain_mismatch', `chain ${rootId}'s all-time consumption (${consumed}) exceeds its current version ${current.grantId}'s allowance (${(current.terms as { amount: string }).amount}) — no operation sequence of this ledger can produce this state`, `current.${rootId}`);
+    }
   }
   return ok(undefined);
 }
@@ -318,6 +343,38 @@ function recordOf(state: EntitlementLedgerState, entry: EntitlementLogEntry): un
     default:
       return undefined;
   }
+}
+
+// ---------------------------------------------------------------------------
+// The monotone-instant gate (the exhaustion law's enabling law)
+// ---------------------------------------------------------------------------
+
+/**
+ * The monotone-instant gate: an operation that would APPEND a log entry
+ * carries an instant at or after the log's last entry's instant. Without
+ * this law a charge appended with a backdated instant would be checked
+ * against only the consumption recorded at or before ITS instant — the
+ * all-time sum could then exceed the current version's allowance and the
+ * point-in-time snapshot's exact `remaining` arithmetic would be
+ * unsound. Checked on the APPEND path only: an idempotent replay of an
+ * already-recorded operation never appends and stays safe.
+ */
+function monotoneGate(state: EntitlementLedgerState, at: number, path: string): EntitlementResult<void> {
+  if (state.log.length === 0) return ok(undefined);
+  const lastAt = state.log[state.log.length - 1].at;
+  if (at < lastAt) {
+    return fail('l4_boundary_violation', `the operation instant (${at}) predates the ledger's last recorded instant (${lastAt}) — operation instants are monotone (an appended operation never back-dates below the log; an idempotent replay of an old operation never appends)`, path);
+  }
+  return ok(undefined);
+}
+
+/** The all-time consumption of a chain (every retained record — the accounting truth the exhaustion invariant checks). */
+function chainConsumedAll(state: EntitlementLedgerState, rootId: EntitlementGrantId): string {
+  let total = '0';
+  for (const record of state.consumptions.values()) {
+    if (record.rootId === rootId) total = signedAdd(total, record.amount);
+  }
+  return total;
 }
 
 // ---------------------------------------------------------------------------
@@ -460,6 +517,8 @@ export function issueEntitlementGrant(
   if (existing !== undefined) {
     return ok({ state, record: existing, replayed: true });
   }
+  const monotone = monotoneGate(state, grant.issuedAt, 'grant.issuedAt');
+  if (!monotone.ok) return monotone;
   const next = withEntry(state, 'grant-issued', grant.grantId, grant, grant.issuedAt, (maps) => {
     maps.grants.set(grant.grantId, grant);
     maps.history.set(grant.grantId, [grant]);
@@ -543,6 +602,8 @@ export function amendEntitlementGrantOn(
   if (existing !== undefined) {
     return ok({ state, record: existing, replayed: true });
   }
+  const gate = monotoneGate(state, grant.issuedAt, 'input.issuedAt');
+  if (!gate.ok) return gate;
   const next = withEntry(state, 'grant-amended', grant.grantId, grant, grant.issuedAt, (maps) => {
     maps.grants.set(grant.grantId, grant);
     maps.history.set(rootId, [...(maps.history.get(rootId) ?? []), grant]);
@@ -588,6 +649,8 @@ export function revokeEntitlementGrant(
   if (current.grantId !== input.grantId) {
     return fail('grant_mismatch', `the named version ${input.grantId} is not the chain's CURRENT version (${current.grantId}) — revoke the current version`, 'grantId');
   }
+  const gate = monotoneGate(state, input.revokedAt, 'revokedAt');
+  if (!gate.ok) return gate;
   const identityContent = { grantId: current.grantId, rootId, tenantId: state.tenantId, revokedAt: input.revokedAt };
   const revocation: GrantRevocation = deepFreeze(deepCloneJson({
     revocationId: deriveEntitlementRevocationId(identityContent),
@@ -674,13 +737,21 @@ export function consumeEntitlement(
   }
   const rootId = rootIdOf(state, grant.grantId) as EntitlementGrantId;
 
-  // Content-addressed replay FIRST (an identical charge never double-draws).
+  // Content-addressed replay FIRST (an identical charge never double-draws;
+  // a replay never appends, so the monotone gate below cannot refuse it).
   const identityContent = { grantId: grant.grantId, rootId, tenantId: state.tenantId, projectId: input.projectId, currency: input.currency, amount: input.amount, cause: input.cause, refs: input.refs, at: input.at };
   const consumptionId = deriveConsumptionRecordId(identityContent);
   const existingConsumption = state.consumptions.get(consumptionId);
   if (existingConsumption !== undefined) {
     return ok({ state, record: existingConsumption, replayed: true });
   }
+
+  // THE MONOTONE GATE: a charge that would append never back-dates below
+  // the log's last instant (the exhaustion law's enabling law — without
+  // it a backdated charge would be checked against only the consumption
+  // at or before ITS instant and the all-time sum could cross the line).
+  const gate = monotoneGate(state, input.at, 'consumption.at');
+  if (!gate.ok) return gate;
 
   // THE WINDOW LAW (L4) + the revocation law.
   const window = grantWindowStatus(grant, input.at as TimestampMs);
