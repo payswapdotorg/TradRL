@@ -37,6 +37,7 @@
 // L8/L12/L20, R41/R43/R46, D-033.
 
 import {
+  bearerTokenOf,
   createApiService,
   fnv1a32Hex,
   isTenantId,
@@ -53,7 +54,8 @@ import {
   type OutcomeLearningPort,
 } from '../../../services/api/src/index';
 import { missingApiEnvKeys, readApiEnv, resolveDeployBacking, DEPLOY_BACKING_VALUES, type ApiDeploymentEnv, type DeployBacking } from './env';
-import { demoMachineryTick, seedDemoBacking, seedDemoWorld, type DemoPorts } from './demo';
+import { demoMachineryTick, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts } from './demo';
+import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization } from './routes';
 
 // ---------------------------------------------------------------------------
 // The typed degraded port stubs (R46 — checkpoint 1)
@@ -122,7 +124,7 @@ export interface DemoBackingHandle {
 }
 
 export type DeploymentComposition =
-  | { readonly ok: true; readonly service: ApiService; readonly backing: DeployBacking; readonly demo: DemoBackingHandle | null }
+  | { readonly ok: true; readonly service: ApiService; readonly backing: DeployBacking; readonly demo: DemoBackingHandle | null; readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization }
   | DeploymentNotConfigured;
 
 /** Compose the boundary service over the deployment environment (pure — no ambient env read, no cache). */
@@ -187,13 +189,24 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
   if (!construction.ok) {
     return { ok: false, code: 'deploy_not_configured', missing: construction.errors.map((error) => `${error.path ?? error.code}: ${error.message}`) };
   }
+  // THE HOST AUTH SEAM (W-8): the host owns the credential registrations
+  // (the secure-boundary act above), so it can authenticate its own
+  // demo-substance read routes (runtime/routes.ts) with the boundary's own
+  // law — a Bearer token that is not the registered developer credential is
+  // rejected; the served records are the credential tenant's own (L12 by
+  // construction). The token never crosses into any error or response.
+  const verifyDeveloperAuthorization: VerifyDeveloperAuthorization = (authorization: string | undefined): DemoSubstanceAuthorization | null => {
+    const presented = bearerTokenOf(authorization);
+    return presented !== null && presented === token ? { tenant, principal } : null;
+  };
   // The demo world seed — ONLY for the un-overridden demo composition
   // (see hasOverrides above). Every seed mutation goes THROUGH the real
   // routes (L20 runs for real — see runtime/demo.ts).
   if (demoPorts === null || hasOverrides) {
-    return { ok: true, service: construction.service, backing, demo: null };
+    return { ok: true, service: construction.service, backing, demo: null, verifyDeveloperAuthorization };
   }
   const seed = seedDemoWorld(construction.service, { tenant, developerToken: token, internalToken }, Date.now());
+  const machinery: DemoMachineryContext = { ports: demoPorts, tenant, developerToken: token, internalToken: internalToken as string };
   return {
     ok: true,
     service: construction.service,
@@ -201,8 +214,9 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     demo: {
       ports: demoPorts,
       orgStatusSeeded: seed.orgStatusSeeded,
-      tick: internalToken === null ? null : (at: number) => demoMachineryTick(construction.service, internalToken as string, at),
+      tick: internalToken === null ? null : (at: number) => demoMachineryTick(construction.service, machinery, at),
     },
+    verifyDeveloperAuthorization,
   };
 }
 
@@ -214,6 +228,7 @@ let cachedEnv: EnvIdentity | null = null;
 let cachedService: ApiService | null = null;
 let cachedDemo: DemoBackingHandle | null = null;
 let cachedBacking: DeployBacking | null = null;
+let cachedVerify: VerifyDeveloperAuthorization | null = null;
 
 interface EnvIdentity {
   readonly source: Readonly<Record<string, string | undefined>>;
@@ -232,8 +247,8 @@ interface EnvIdentity {
 export function getDeploymentService(
   source: Readonly<Record<string, string | undefined>> = process.env,
 ): DeploymentComposition {
-  if (cachedService !== null && cachedEnv !== null && cachedEnv.source === source && cachedBacking !== null) {
-    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo };
+  if (cachedService !== null && cachedEnv !== null && cachedEnv.source === source && cachedBacking !== null && cachedVerify !== null) {
+    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo, verifyDeveloperAuthorization: cachedVerify };
   }
   const composed = composeDeployment(readApiEnv(source));
   if (!composed.ok) return composed;
@@ -241,5 +256,6 @@ export function getDeploymentService(
   cachedService = composed.service;
   cachedDemo = composed.demo;
   cachedBacking = composed.backing;
-  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo };
+  cachedVerify = composed.verifyDeveloperAuthorization;
+  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo, verifyDeveloperAuthorization: composed.verifyDeveloperAuthorization };
 }
