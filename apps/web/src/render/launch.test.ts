@@ -15,6 +15,8 @@
 import { describe, expect, it } from 'vitest';
 import { openWorkspace, reduceAll, type WorkspaceEvent, type WorkspaceState } from '../core/workspace';
 import { LAUNCH_STEPS } from '../core/launch';
+import { capsuleFromOutcome } from '../core/evidence';
+import type { OutcomeRecord } from '../api/contracts';
 import { renderConsoleModel } from './model';
 import { defaultShellView, type ShellView } from './shell';
 import { serializeVNode } from './vtree';
@@ -29,11 +31,13 @@ function draft(): Exclude<WorkspaceState['launch']['draft'], null> {
     horizon: { startsAt: T0, endsAt: T0 + 86_400_000, label: 'one day' },
     successCriteria: [],
     evaluation: { blindRef: 'blind-1', walkForwardRef: 'wf-1', regimeRef: 'regime-1', adversarialRequired: true },
-    constraints: [{ id: 'c1', severity: 'hard', domain: 'risk', subject: 'position', predicate: { kind: 'at-most' } } as never],
+    // The constraint carries the FORM GRAMMAR's own shape (W-10c: the
+    // wizard's constraints field round-trips id:domain:subject:kind:bound).
+    constraints: [{ id: 'c1', severity: 'blocking', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.2 }, description: 'the drawdown ceiling' } as never],
     capitalBudget: '10000.00',
     riskBudget: '250.00',
     markets: ['SPY'],
-    venues: [' venue-x'],
+    venues: ['venue-x'],
     dataSources: ['src-1'],
     executionMode: 'simulation',
     preferences: [{ key: 'rebalance', value: 'daily' }],
@@ -61,7 +65,7 @@ describe('the launch wizard (§4.11 — the primary flow\'s full field set)', ()
     expect([...LAUNCH_STEPS]).toEqual(['goal', 'budget', 'markets', 'world', 'review']);
   });
 
-  it('renders each step\'s labeled fields (labels ABOVE, hints, required marks)', () => {
+  it('renders each step\'s labeled fields (labels ABOVE, hints, required marks; the select for the closed vocabulary)', () => {
     const expected: Record<string, readonly (readonly [string, string])[]> = {
       goal: [['Name', 'name'], ['Objective', 'objective']],
       budget: [['Capital budget', 'capitalBudget'], ['Risk budget', 'riskBudget']],
@@ -77,10 +81,16 @@ describe('the launch wizard (§4.11 — the primary flow\'s full field set)', ()
       for (const [label, name] of labels) {
         expect(bytes, `${step}:${label}`).toContain(`<label class="field-label" for="launch-${name}">${label}`);
         const labelIndex = bytes.indexOf(`>${label}`);
-        const inputIndex = bytes.indexOf('field-input', labelIndex);
-        expect(inputIndex, `${step}:${label}`).toBeGreaterThan(labelIndex); // the label sits ABOVE
+        const controlIndex = bytes.indexOf(`launch-${name}`, labelIndex);
+        expect(controlIndex, `${step}:${label}`).toBeGreaterThan(labelIndex); // the label sits ABOVE
+        expect(bytes, `${step}:${label}`).toContain(`data-launch-field="${name}"`); // the change wiring's vocabulary
       }
     }
+    // the execution mode is the closed-vocabulary SELECT (three options)
+    const world = render(launchAt('world'), { accountView: 'section' });
+    expect(world).toContain('<select class="field-input field-select"');
+    expect((world.match(/<option value=/g) ?? []).length).toBe(3);
+    expect(world).toContain('<option value="simulation" selected="selected">');
   });
 
   it('the review step renders the full summary + the two-step confirm (never a bare confirm())', () => {
@@ -99,6 +109,17 @@ describe('the launch wizard (§4.11 — the primary flow\'s full field set)', ()
     expect(armed).toContain('Are you sure? Launch this organization?');
     expect(armed).toContain('data-action="confirm-cancel-launch"');
     expect(armed).toContain('data-action="confirm-launch"');
+  });
+
+  it('the REVIEW GATE: an invalid draft renders its problems (never the arm button); the valid draft arms', () => {
+    const invalid: WorkspaceState = { ...launchAt('review'), launch: { ...launchAt('review').launch, draft: { ...draft(), capitalBudget: '10.5.0' } } };
+    const blocked = render(invalid, { accountView: 'section' });
+    expect(blocked).toContain('data-review-problems="1"');
+    expect(blocked).toContain('Enter an exact non-negative decimal.');
+    expect(blocked).not.toContain('data-action="confirm-arm-launch"'); // the launch confirm stays unreachable
+    // fixed -> the summary + the arm button return
+    const fixed: WorkspaceState = { ...launchAt('review'), launch: { ...launchAt('review').launch, draft: { ...draft(), capitalBudget: '10000.00' } } };
+    expect(render(fixed, { accountView: 'section' })).toContain('data-action="confirm-arm-launch"');
   });
 
   it('inline validation renders ONLY after the field is touched (labels stay, errors gate)', () => {
@@ -135,7 +156,7 @@ describe('the launch wizard (§4.11 — the primary flow\'s full field set)', ()
 });
 
 describe('the capsule inline open (§4.9)', () => {
-  it('the shell view carries the open capsule; the default renders none', () => {
+  it('the shell view carries the open capsule; the §4.9 surface opens the payload + provenance inline', () => {
     const state = reduceAll(openWorkspace(SCOPE, T0), [
       { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
       { kind: 'outcomes-loaded', at: T0 + 30, records: [{
@@ -152,10 +173,16 @@ describe('the capsule inline open (§4.9)', () => {
       { kind: 'view-live', at: T0 + 50 },
       { kind: 'section-selected', at: T0 + 50, section: 'evidence' },
     ]);
+    const capsule = capsuleFromOutcome(SCOPE, (state.outcomes[0] as unknown) as OutcomeRecord);
     const closed = render(state, { accountView: 'section' });
-    expect(closed).toContain('data-row="capsule:evc:');           // the accordion row renders (the capsule surface)
-    expect(closed).not.toContain('data-capsule-open="evc:');      // closed by default
-    expect(closed.match(/data-row="capsule:evc:/g)?.length ?? 0).toBeGreaterThan(0);
+    expect(closed).toContain(`data-capsule-row="${capsule.capsuleId}"`);   // the §4.9 capsule row renders
+    expect(closed).toContain(`data-capsule-open="${capsule.capsuleId}"`);  // the mono content-address badge
+    expect(closed).not.toContain('capsule-payload');                        // closed by default
+    const opened = render(state, { accountView: 'section', openCapsule: capsule.capsuleId });
+    expect(opened).toContain('capsule-payload');
+    expect(opened).toContain('capsule-mono');
+    expect(opened).toContain('fil-1');                                      // the record's own evidence ref, verbatim
+    expect(opened).toContain('capsule-provenance');
   });
 });
 

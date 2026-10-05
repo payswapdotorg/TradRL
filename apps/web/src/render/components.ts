@@ -393,17 +393,23 @@ export interface EmptyStateProps {
   readonly title: string;
   /** ONE plain reassuring sentence. */
   readonly sentence: string;
-  /** The single primary action: its label + its navigation target (a shell target). */
-  readonly action: { readonly label: string; readonly target: string };
+  /** The single primary action: its label + EITHER a navigation target (the default) or a delegated action id (the J3 launch entry). */
+  readonly action: { readonly label: string; readonly target?: string; readonly action?: string };
 }
 
 /** The EmptyState (§4.12): dashed hairline, centered icon circle, title + ONE sentence + ONE primary action. */
 export function emptyState(props: EmptyStateProps): VNode {
+  // A delegated action (when present) OWNS the button — a nav target
+  // would win the delegated click's first branch and swallow it (the
+  // J3 entry affordance carries data-action, never data-target).
+  const actionAttrs: Record<string, string> = props.action.action === undefined
+    ? { 'data-target': props.action.target ?? 'home' }
+    : { 'data-action': props.action.action };
   return v('div', { class: 'empty-state', 'data-empty': props.title }, [
     v('div', { class: 'empty-circle', 'aria-hidden': 'true' }, [iconOf(props.icon, 'ci ci-20')]),
     v('div', { class: 'empty-title' }, [props.title]),
     v('p', { class: 'empty-sentence' }, [props.sentence]),
-    v('button', { class: 'empty-action', 'data-target': props.action.target, type: 'button' }, [props.action.label]),
+    v('button', { class: 'empty-action', type: 'button', ...actionAttrs }, [props.action.label]),
   ]);
 }
 

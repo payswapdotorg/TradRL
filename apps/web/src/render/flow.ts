@@ -76,6 +76,8 @@ export interface StreamCardProps {
   readonly decision: { readonly kind: 'routed' | 'refused' | 'observed'; readonly ref: string } | null;
   /** The event's instant (the mono readout in the header). */
   readonly at: number;
+  /** The inline-opened evidence ref (§4.9): when one of this card's evidence badges is the opened one, its payload renders inline. */
+  readonly openRef?: string | null;
 }
 
 /** The evidence badge label of a consulted ref (mono, content-address style). */
@@ -97,7 +99,10 @@ export function streamCard(props: StreamCardProps): VNode {
         v('span', { class: 'stream-label' }, ['Evidence']),
         ...(props.evidenceConsulted.length === 0
           ? [v('span', { class: 'stream-none' }, ['none'])]
-          : props.evidenceConsulted.map((entry) => capsuleBadge(entry.kind, entry.ref))),
+          : props.evidenceConsulted.map((entry) => capsuleBadge(entry.kind, entry.ref, props.openRef === `${entry.kind}:${entry.ref}`))),
+        ...(props.openRef === null || props.openRef === undefined || !props.evidenceConsulted.some((entry) => `${entry.kind}:${entry.ref}` === props.openRef)
+          ? []
+          : [capsulePayload(props.openRef, [`ref ${props.openRef}`], 'rendered as a reference — the evidence read family owns its payload (L20)')]),
       ]),
       v('div', { class: 'stream-line' }, [
         v('span', { class: 'stream-label' }, ['Proposal']),
@@ -135,8 +140,8 @@ export function capsuleBadgeLabel(capsuleId: string): string {
 }
 
 /** One inline capsule badge (§4.9): rounded-lg, hairline, mono content address; opens the payload + provenance. */
-export function capsuleBadge(kind: string, ref: string): VNode {
-  return v('button', { class: 'capsule-badge', 'data-capsule': `${kind}:${ref}`, 'data-action': 'capsule-open', 'data-capsule-open': `${kind}:${ref}`, type: 'button', 'aria-label': `Open evidence capsule ${kind}:${ref}`, 'aria-expanded': 'false' }, [
+export function capsuleBadge(kind: string, ref: string, open = false): VNode {
+  return v('button', { class: `capsule-badge${open ? ' open' : ''}`, 'data-capsule': `${kind}:${ref}`, 'data-action': 'capsule-open', 'data-capsule-open': `${kind}:${ref}`, type: 'button', 'aria-label': `Open evidence capsule ${kind}:${ref}`, 'aria-expanded': open ? 'true' : 'false' }, [
     iconOf('box', 'ci ci-14'),
     v('span', { class: 'capsule-address' }, [capsuleBadgeLabel(`${kind}:${ref}`)]),
   ]);
@@ -148,6 +153,38 @@ export function capsulePayload(capsuleId: string, payloadLines: readonly string[
     v('div', { class: 'capsule-address' }, [capsuleId]),
     v('pre', { class: 'capsule-mono' }, [...payloadLines.join('\n')]),
     v('div', { class: 'capsule-provenance' }, [provenance]),
+  ]);
+}
+
+/** The §4.9 evidence capsule surface's props (the Evidence rows + the inline badges' opened state). */
+export interface CapsuleSurfaceProps {
+  /** The capsule's content-addressed id (`evc:<hex>`). */
+  readonly capsuleId: string;
+  /** Which read family the capsule bundles (the subtitle). */
+  readonly sourceKind: string;
+  /** True when this capsule is the opened one (the payload renders inline). */
+  readonly open: boolean;
+  /** The payload's mono lines (the capsule's typed facts + refs — rendered verbatim, never recomputed). */
+  readonly payloadLines: readonly string[];
+  /** The provenance line (§4.9 + R45: the source route + identity + availability). */
+  readonly provenance: string;
+}
+
+/**
+ * THE §4.9 EVIDENCE CAPSULE SURFACE: the inline capsule row — the
+ * monospace content-address badge (the open button) + the source-kind
+ * label; when open, the payload (mono) + the provenance line render
+ * INLINE beneath. Capsules render refs — never recompute (L20): the
+ * payload lines are the bundled record's own typed facts, verbatim.
+ */
+export function capsuleSurface(props: CapsuleSurfaceProps): VNode {
+  const hex = props.capsuleId.startsWith('evc:') ? props.capsuleId.slice('evc:'.length) : props.capsuleId;
+  return v('div', { class: `capsule-row${props.open ? ' open' : ''}`, 'data-capsule-row': props.capsuleId }, [
+    v('div', { class: 'capsule-row-line' }, [
+      capsuleBadge('evc', hex, props.open),
+      v('span', { class: 'capsule-kind' }, [props.sourceKind]),
+    ]),
+    ...(props.open ? [capsulePayload(props.capsuleId, props.payloadLines, props.provenance)] : []),
   ]);
 }
 
@@ -318,6 +355,33 @@ export function labeledInput(options: {
         ...(invalid ? { 'aria-invalid': 'true' } : {}),
         'data-launch-field': options.name,
       }, []),
+      ...(options.hint === undefined ? [] : [v('p', { class: 'field-hint' }, [options.hint])]),
+      ...(options.validation === undefined ? [] : [fieldError(options.validation)]),
+    ]),
+  ];
+}
+
+/** One labeled select (§4.11: the label sits ABOVE the control — the closed-vocabulary fields). */
+export function labeledSelect(options: {
+  readonly label: string;
+  readonly name: string;
+  readonly value: string;
+  readonly choices: readonly (readonly [string, string])[];
+  readonly hint?: string;
+  readonly validation?: FieldValidation;
+  readonly required?: boolean;
+}): VNode[] {
+  const invalid = options.validation?.touched === true && (options.validation?.message.length ?? 0) > 0;
+  return [
+    v('div', { class: `field${invalid ? ' field-invalid' : ''}`, 'data-field': options.name }, [
+      v('label', { class: 'field-label', for: `launch-${options.name}` }, [options.label, ...(options.required === true ? [' *'] : [])]),
+      v('select', {
+        class: 'field-input field-select',
+        id: `launch-${options.name}`,
+        name: options.name,
+        ...(invalid ? { 'aria-invalid': 'true' } : {}),
+        'data-launch-field': options.name,
+      }, options.choices.map(([value, label]) => v('option', { value, ...(value === options.value ? { selected: 'selected' } : {}) }, [label]))),
       ...(options.hint === undefined ? [] : [v('p', { class: 'field-hint' }, [options.hint])]),
       ...(options.validation === undefined ? [] : [fieldError(options.validation)]),
     ]),
