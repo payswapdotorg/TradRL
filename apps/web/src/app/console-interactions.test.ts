@@ -52,7 +52,7 @@ import type { ApiTransport } from '../api/transport';
 import type { InstantSource, TickScheduler } from '../core/clock';
 import { formatInstantUtc } from '../core/format';
 import type { ConsoleHandle } from './console';
-import { bootConsole } from './console';
+import { bootConsole, readStoredScopeProject, SCOPE_STORAGE_KEY } from './console';
 import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
 import type { JobRecord, OutcomeRecord } from '../api/contracts';
@@ -388,10 +388,12 @@ interface Rig {
   readonly scheduler: ScriptedScheduler | null;
 }
 
-/** The per-rig seam overrides (the scheduler + an instant source other than the fixed one). */
+/** The per-rig seam overrides (the scheduler + an instant source other than the fixed one + the scope persistence seam). */
 interface RigOverrides {
   readonly scheduler?: ScriptedScheduler;
   readonly instants?: InstantSource;
+  /** THE SCOPE PERSISTENCE SEAM (R6b, W-22): when passed, the rig's storage carries localStorage `tradrl_scope_project` — the write-through on every scope move + the boot restore. */
+  readonly scopeStorage?: MapStorage;
 }
 
 /** Boot the real console with every seam injected and mount it (DOM-free until here — the architecture's law). The project id defaults to the rig's scoped project; pass '' for the LAUNCHPAD (the shipped shell's own default — the primary flow starts there). */
@@ -410,6 +412,7 @@ async function bootRig(stored: Record<string, string> = {}, transport: ApiTransp
     onboardingStorage: storage,
     simulated: true,
     ...(scheduler === null ? {} : { scheduler }),
+    ...(overrides.scopeStorage === undefined ? {} : { scopeStorage: overrides.scopeStorage }),
   });
   const doc = new FakeDocument();
   const root = new FakeElement('div');
@@ -694,6 +697,7 @@ function launchDemoTransport(): { readonly transport: ApiTransport; readonly pol
     if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Console Test Project'));
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
     if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-a', 'Console Test Project')] }); // the W-22 project-directory read
     if (key === 'POST /v1/projects') {
       const body = request.body as { readonly id: string; readonly name: string };
       createdProjectIds.push(body.id);
@@ -743,6 +747,7 @@ function deployedClockLaunchTransport(): {
     if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Console Test Project', T0)); // the seeded demo: stamped in the PAST (before every session's boot)
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
     if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-a', 'Console Test Project', T0)] }); // the W-22 project-directory read
     if (key === 'POST /v1/projects') {
       const body = request.body as { readonly id: string; readonly name: string; readonly at: number };
       createdProjectIds.push(body.id);
@@ -1506,6 +1511,7 @@ function toggleTransport(): { readonly transport: ApiTransport; block(): void; u
     if (key === 'GET /v1/projects/prj-a') return ok(project);
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
     if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/projects') return ok({ items: [project] }); // the W-22 project-directory read
     return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
   };
   return { transport, block: (): void => { blocked = true; }, unblock: (): void => { blocked = false; } };
@@ -1520,6 +1526,7 @@ function typedFailureTransport(): ApiTransport {
     if (key === 'GET /v1/projects/prj-a') return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'the project does not exist', status: 404 } } };
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
     if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/projects') return ok({ items: [] }); // the W-22 project-directory read: no projects under this rig
     return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
   };
 }
@@ -1799,6 +1806,7 @@ function scopeChangeTransport(): {
     if (key === 'POST /v1/knowledge/query') { reads.knowledgeReads.push(String((request.body as { project: string }).project)); return ok({ items: [] }); }
     if (key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
     if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-a', 'org:seeded'), ...(created === null ? [] : [projectOf(created, null)])] }); // the W-22 project-directory read (the created project joins the directory once it exists — the deployed law)
     if (key === 'POST /v1/projects') { created = (request.body as { id: string }).id; return ok(projectOf(created, null)); } // created WITHOUT an org (the deployed law)
     if (key === 'POST /v1/jobs/research') return ok(jobOf('submitted', (request.body as { projectId: string }).projectId));
     if (key.startsWith('GET /v1/jobs/')) return ok(jobOf('complete', created ?? 'prj-a'));
@@ -1990,18 +1998,28 @@ function demoSubstanceTransport(): { readonly transport: ApiTransport; readonly 
   };
   const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
   const transport: ApiTransport = async (request) => {
-    const path = request.path.split('?')[0] ?? request.path;
+    // the client URL-encodes path segments (org%3Aseeded) — decode before
+    // matching, the seam rig's own law (the transport's keys are plain).
+    const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
     const key = `${request.method} ${path}`;
     if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
     if (key === 'GET /v1/projects/prj-a') return ok(project);
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
-    if (key === 'POST /v1/outcomes/query') return ok({ items: [enrichedOutcome()] });
+    if (key === 'POST /v1/outcomes/query') return ok({ items: (request.body as { project: string }).project === 'prj-a' ? [enrichedOutcome()] : [] }); // the demo project's enriched outcome; a switched-to project serves none (the typed scope assert's own law)
     if (key === 'GET /v1/execution/submissions') {
       blotterReads.count += 1;
       blotterReads.projects.push(decodeURIComponent((request.path.split('?project=')[1] ?? '')));
-      return ok({ items: seededSubmissions() });
+      return ok({ items: request.path.includes('prj-other') ? [] : seededSubmissions() }); // the demo project's blotter; a switched-to project serves none
     }
-    if (key === 'GET /v1/organizations/org:seeded/status') return ok({ organizationRef: 'org:seeded', tenant: 'tenant-a', project: 'prj-a', status: 'active', at: T0, instanceRefs: [] });
+    if (key === 'GET /v1/projects') return ok({ items: [project, { ...project, id: 'prj-other', name: 'The Other Project', lifecycle: { ...project.lifecycle, projectId: 'prj-other' }, lineage: { ...project.lineage, projectId: 'prj-other' } }] }); // the W-22 project-directory read: two readable projects
+    if (key === 'GET /v1/projects/prj-other') return ok({ ...project, id: 'prj-other', name: 'The Other Project', lifecycle: { ...project.lifecycle, projectId: 'prj-other' }, lineage: { ...project.lineage, projectId: 'prj-other' } });
+    if (key === 'GET /v1/organizations/org:seeded/status') {
+      // the status echoes the read's own project (the client's ?project=
+      // query — assertProjectScope's law): the switched-to project's
+      // snapshot must carry THAT project, never the seeded demo's.
+      const scopeProject = decodeURIComponent(request.path.split('?project=')[1] ?? 'prj-a');
+      return ok({ organizationRef: 'org:seeded', tenant: 'tenant-a', project: scopeProject, status: 'active', at: T0, instanceRefs: [] });
+    }
     return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
   };
   return { transport, blotterReads };
@@ -2096,5 +2114,108 @@ describe('executed boot: R3 — the decision projection (named body, rationale, 
     if (refusedStream === undefined) throw new Error('the watch feed rendered no stream card for the refusing gate');
     const refusedTexts = elementsOf(refusedStream).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
     expect(refusedTexts).toContain('risk_limits: refused'); // the refused check renders with its outcome
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R6b + R6c — THE SCOPE SEAMS (the W-22 wave, continued — the
+// architectural blocker's second half): the workspace's project scope
+// PERSISTS (localStorage `tradrl_scope_project` — a reload reopens THE
+// USER'S world, not the env pin's; the 69-friction-row finding: the
+// scope silently reset on every reload and the only way back was a
+// re-launch) and the Settings panel carries a PROJECT SWITCHER fed by
+// the tenant's readable project directory (GET /v1/projects) — a
+// committed choice adopts that project and every section refetches for
+// it through the beat's scope-change refetch (R6a's machinery).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: R6b — the scope persistence (write-through, boot restore, stale fallback)', () => {
+  it('a scope move WRITES THROUGH to the scope storage: the launch adoption persists the created project id (a reload would reopen it)', async () => {
+    const api = scopeChangeTransport();
+    const scopeStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    expect(readStoredScopeProject(scopeStorage)).toBe(null); // nothing persisted at boot — the env pin is not a user choice
+
+    // LAUNCH: the created project is adopted — the write-through fires on the scope move itself
+    await rig.handle.submitLaunch(VALID_DRAFT);
+    const adopted = api.createdProjectId();
+    if (adopted === null) throw new Error('the launch created no project');
+    expect(rig.handle.state().scope.projectId).toBe(adopted);
+    expect(readStoredScopeProject(scopeStorage)).toBe(adopted); // THE WRITE-THROUGH (R6b)
+    expect(scopeStorage.map.get(SCOPE_STORAGE_KEY)).toBe(adopted); // under the documented key
+  });
+
+  it('the boot RESTORES a stored scope that still exists in the tenant directory — the reload reopens the user\'s world, the beat refetches that project\'s records', async () => {
+    const api = demoSubstanceTransport();
+    const scopeStorage = new MapStorage();
+    scopeStorage.map.set(SCOPE_STORAGE_KEY, 'prj-other'); // the user's last world (persisted by the previous session)
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage }); // the env pin says prj-a — the stored scope wins
+
+    // the adoption landed at the boot bundle's directory read: the workspace
+    // now scopes to the RESTORED project, the boot bundle's env-pin reads
+    // were dropped (the superseded scope), and the directory rode along
+    expect(rig.handle.state().scope.projectId).toBe('prj-other');
+    expect(rig.handle.state().project).toBe(null); // the restored world is not read yet — the beat's refetch owns it
+    expect(rig.handle.state().projectDirectory.map((project) => project.id)).toEqual(['prj-a', 'prj-other']); // the switcher's data loaded with the boot bundle
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-other'); // no storage churn — the restored scope IS the stored one
+
+    // the beat's scope-change refetch (R6a's machinery) reads the restored project's whole world
+    await rig.handle.beat();
+    expect(rig.handle.state().project?.id).toBe('prj-other');
+    expect(api.blotterReads.projects).toContain('prj-other'); // the full bundle ran for the restored scope
+    expect(api.blotterReads.projects.every((project) => project === 'prj-a' || project === 'prj-other')).toBe(true); // and nothing else
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout: no cross-scope refusals, no failed reads
+  });
+
+  it('a stored scope that NO LONGER EXISTS upstream is stale — cleared, ignored, and the env pin stays (EXACTLY the pre-W-22 boot behavior)', async () => {
+    const api = demoSubstanceTransport();
+    const scopeStorage = new MapStorage();
+    scopeStorage.map.set(SCOPE_STORAGE_KEY, 'prj-deleted'); // deleted upstream between sessions
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+
+    expect(rig.handle.state().scope.projectId).toBe('prj-a'); // the env pin holds — no adoption for a dead id
+    expect(rig.handle.state().project?.id).toBe('prj-a'); // the boot bundle read the pin's world normally (no reset churn)
+    expect(rig.handle.state().submissions.length).toBe(3); // the pin's own blotter loaded — nothing was dropped
+    expect(scopeStorage.map.get(SCOPE_STORAGE_KEY)).toBe(''); // the stale id is CLEARED (the next scope move rewrites it)
+    expect(readStoredScopeProject(scopeStorage)).toBe(null); // and reads as absent
+    expect(rig.handle.state().degraded).toEqual([]); // the directory read answered — nothing degraded
+  });
+});
+
+describe('executed boot: R6c — the project switcher (Settings, fed by the tenant project directory)', () => {
+  it('the Settings panel renders the switcher with EVERY readable project; a committed choice ADOPTS that project — records reset, the beat refetches the chosen world, and the choice PERSISTS', async () => {
+    const api = demoSubstanceTransport();
+    const scopeStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    expect(rig.handle.state().projectDirectory.map((project) => project.id)).toEqual(['prj-a', 'prj-other']); // the directory read fed the state
+
+    // the Settings panel carries the switcher with BOTH readable projects
+    clickNav(rig, 'settings');
+    const switcher = findByData(rig.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    const options = elementsOf(switcher).filter((element) => element.tagName === 'OPTION');
+    expect(options.map((option) => textOf(option))).toEqual(['prj-a — Console Test Project', 'prj-other — The Other Project']); // the directory IS the list
+    expect(options[0]?.getAttribute('selected')).toBe('selected'); // the current project is the selected option
+
+    // THE COMMIT: the select's change event adopts the chosen project
+    switcher.value = 'prj-other';
+    rig.doc.fire('change', { target: switcher });
+    expect(rig.handle.state().scope.projectId).toBe('prj-other'); // adopted — the same transition a launch rides
+    expect(rig.handle.state().submissions).toEqual([]); // the prior project's records reset (the workspace is ONE project's world)
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-other'); // the choice persists (R6b's write-through)
+
+    // the beat refetches the chosen project's whole world — no reload, ever
+    await rig.handle.beat();
+    expect(rig.handle.state().project?.id).toBe('prj-other');
+    expect(api.blotterReads.projects.filter((project) => project === 'prj-other').length).toBeGreaterThan(0); // the blotter read ran for the chosen scope
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout: the switched-to snapshot carries its own project
+
+    // a re-selection of the CURRENT project is a no-op (no adoption churn, no record reset)
+    const again = findByData(rig.root, 'data-action', 'project-switch');
+    if (again === null) throw new Error('the switcher vanished after the switch');
+    again.value = 'prj-other';
+    rig.doc.fire('change', { target: again });
+    expect(rig.handle.state().scope.projectId).toBe('prj-other');
+    expect(rig.handle.state().project?.id).toBe('prj-other'); // never reset — the workspace kept its loaded world
   });
 });

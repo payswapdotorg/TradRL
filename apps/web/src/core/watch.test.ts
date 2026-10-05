@@ -245,9 +245,11 @@ describe('the W-22 enriched projection (R3): decision substance onto the closed 
     const refusedEvent = watchEventFromSubmission(SCOPE, refusedEnriched);
     expect(refusedEvent.agent).toBe('gate:pre-trade-risk');
     expect(refusedEvent.riskChecks).toEqual([{ dimension: 'risk_limits', outcome: 'refused' }]); // the served checks win
-    const refusedBare = watchEventFromSubmission(SCOPE, refusedSubmission());
+    const refusedBareRecord = refusedSubmission();
+    if (refusedBareRecord.kind !== 'refused') throw new Error('the fixture is not a refused submission');
+    const refusedBare = watchEventFromSubmission(SCOPE, refusedBareRecord);
     expect(refusedBare.agent).toBe(null);
-    expect(refusedBare.riskChecks).toEqual([{ dimension: refusedSubmission().refusal.stage, outcome: 'refused' }]); // the synthetic stage check stays the fallback
+    expect(refusedBare.riskChecks).toEqual([{ dimension: refusedBareRecord.refusal.stage, outcome: 'refused' }]); // the synthetic stage check stays the fallback
   });
 
   it('the enriched fields pass the chain-of-thought firewall: the audit field names are not reasoning-shaped keys (exact-match vocabulary), and the prose never rides the event', () => {

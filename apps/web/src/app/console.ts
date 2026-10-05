@@ -89,6 +89,8 @@ export interface ConsoleBootOptions {
   readonly theme?: ThemeName;
   /** The theme persistence seam (the browser's localStorage in production). */
   readonly storage?: ThemeStorage;
+  /** THE SCOPE PERSISTENCE SEAM (R6b, W-22): the browser's localStorage in production. When injected, the workspace's project id persists on every scope change and a stored scope that still exists in the tenant's project directory is RESTORED at boot (a stale/deleted id falls back to the env pin, exactly the pre-W-22 behavior). */
+  readonly scopeStorage?: { getItem(key: string): string | null; setItem(key: string, value: string): void };
   /** True when the console runs on a fake/demo adapter (the SIMULATED environment badge; §7 anti-deception). */
   readonly simulated?: boolean;
   /** The onboarding storage seam (localStorage `tradrl_onboarded`; returning users skip the wizard — §4.13). */
@@ -163,6 +165,20 @@ export interface MountDocument {
 /** The launchpad project id — the workspace's pre-launch scope placeholder. */
 export const LAUNCHPAD_PROJECT_ID = '(launchpad)';
 
+/** The persisted-scope storage key (R6b, W-22 — localStorage `tradrl_scope_project` in production). */
+export const SCOPE_STORAGE_KEY = 'tradrl_scope_project';
+
+/** Read the persisted workspace project id (null when none is stored). */
+export function readStoredScopeProject(storage: { getItem(key: string): string | null }): string | null {
+  const stored = storage.getItem(SCOPE_STORAGE_KEY);
+  return typeof stored === 'string' && stored.length > 0 ? stored : null;
+}
+
+/** Persist the workspace project id (the scope seam's write-through; an empty value clears it). */
+export function persistScopeProject(storage: { setItem(key: string, value: string): void }, projectId: string): void {
+  storage.setItem(SCOPE_STORAGE_KEY, projectId);
+}
+
 /** A head element's querySelector (the erasable-subset law: function types live in named aliases, never inline in casts). */
 type HeadQuerySelectorOf = (selector: string) => Element | null;
 
@@ -179,7 +195,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   const listeners: WorkspaceListener[] = [];
 
   function dispatch(event: WorkspaceEvent): void {
+    const scopeBefore = state.scope.projectId;
     state = reduceWorkspace(state, event);
+    // THE SCOPE PERSISTENCE WRITE-THROUGH (R6b, W-22): the workspace
+    // moved to another project (a launch adoption, a switcher choice,
+    // a stored-scope restore) — persist the current project id so a
+    // reload reopens THE USER'S world, not the env pin's (the 69-friction-row
+    // finding: reload silently reset the scope to the demo project).
+    // The launchpad placeholder never persists (there is no project yet).
+    if (state.scope.projectId !== scopeBefore && state.scope.projectId !== LAUNCHPAD_PROJECT_ID && options.scopeStorage !== undefined) {
+      persistScopeProject(options.scopeStorage, state.scope.projectId);
+    }
     for (const listener of [...listeners]) listener(state);
   }
 
@@ -249,6 +275,30 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       await read('GET /v1/meta', async () => {
         await client.negotiateVersion();
         dispatch({ kind: 'connection-changed', at: instants.nowMs(), status: 'connected' });
+      });
+      // THE PROJECT DIRECTORY + THE STORED-SCOPE RESTORE (R6b/R6c,
+      // W-22): the tenant's readable projects list once per bundle —
+      // the scope switcher's data (R6c) — and the validation surface
+      // for the persisted scope (R6b): when a stored project id exists
+      // in the directory and differs from the booted scope, the
+      // workspace ADOPTS it (the same reset+switch transition a launch
+      // rides; this bundle's captured-scope reads then drop through
+      // the dispatchIfCurrent guard and the beat refetches for the
+      // adopted scope). A stored id that no longer exists is stale —
+      // cleared and ignored, falling back to the env pin EXACTLY as
+      // the pre-W-22 boot behaved (no stored scope -> no behavior
+      // change at all).
+      await read('GET /v1/projects', async () => {
+        const records = await client.projects.listAll();
+        dispatch({ kind: 'projects-listed', at: instants.nowMs(), records: [...records] });
+        const stored = options.scopeStorage === undefined ? null : readStoredScopeProject(options.scopeStorage);
+        if (stored !== null && stored !== state.scope.projectId) {
+          if (records.some((record) => record.id === stored)) {
+            dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
+          } else if (options.scopeStorage !== undefined) {
+            persistScopeProject(options.scopeStorage, ''); // stale (deleted upstream) — clear it and keep the env pin
+          }
+        }
       });
       const projectId = bundleScope;
       if (projectId === LAUNCHPAD_PROJECT_ID) return;
@@ -561,6 +611,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
       return element.getAttribute('data-action') === 'tm-scrub' ? element : null;
     };
+    /** THE PROJECT SWITCHER'S SELECT (R6c, W-22): the delegated change on [data-action=project-switch] — the committed choice's live value is the project id to adopt. */
+    const switchTargetOf = (target: unknown): FieldEventTarget | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      return element.getAttribute('data-action') === 'project-switch' ? element : null;
+    };
     // THE SCRUB BUFFER (the J5 wiring — the J3 pointer discipline): a
     // drag fires `input` per pointer move; those BUFFER here and never
     // dispatch, because a re-render under the pointer replaces the
@@ -765,6 +821,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } }; // NO render — the buffer IS the live form (merged at render time)
     });
     document.addEventListener('change', (event) => {
+      // THE PROJECT SWITCHER'S COMMIT (R6c, W-22): the select's change
+      // event — the user's committed choice — adopts that project (the
+      // same reset+switch transition a launch rides; the beat's
+      // scope-change refetch then reads the adopted project's whole
+      // world, and the dispatch hook persists the new scope). A
+      // re-selection of the CURRENT project is a no-op.
+      const switcher = switchTargetOf(event.target);
+      if (switcher !== null) {
+        const projectId = typeof switcher.value === 'string' ? switcher.value : '';
+        if (projectId.length > 0 && projectId !== state.scope.projectId) {
+          dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId }); // renders via onState
+        }
+        return;
+      }
       // THE SCRUBBER'S COMMIT (the J5 wiring): the `change` event — the
       // drag's release, or a keyboard arrow's commit — moves the view
       // instant to the scrubbed position (an explicit instant: the
