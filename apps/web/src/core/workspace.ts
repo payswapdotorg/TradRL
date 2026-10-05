@@ -12,10 +12,30 @@
 // history. No DOM, no clock, no transport — the app layer feeds it
 // events (every one stamped with an INJECTED instant), the render
 // layer projects it. Identical event sequences produce byte-
-// identical states (serializeWorkspace pins it); the history chain
-// (FNV-1a over canonical JSON, each entry linked to the prior head)
-// makes the workspace's own past verifiable — tamper with any entry
-// and verifyWorkspaceChain fails.
+// identical states (serializeWorkspace pins it).
+//
+// THE CHAIN (R9a — export integrity, real since chain format v2):
+// every history entry retains the EXACT EVENT it was linked from
+// (`payload`), and the chain is a real SHA-256 hash chain over
+// canonical JSON — the published rules (also embedded verbatim in
+// every export, so anyone holding the file can recompute every
+// digest and every link, and any single-field tamper breaks
+// verification):
+//
+//   digest    = sha256Hex(canonicalJson({ seq, tenantId, projectId,
+//                 payload }))            — the entry's chained record
+//   chainHead = sha256Hex(priorChainHead + digest)
+//                                   — fixed-width 64-hex concatenation
+//   genesis   = 64 zero hex chars (the head before the first entry)
+//
+// (Chain format v1 — the pre-R9a form — linked 8-hex FNV-1a digests
+// of events it did not retain, so its exports could never be
+// re-derived; v2 keeps nothing from it. The state is ephemeral —
+// rebuilt from API reads each boot — so no runtime migration was
+// needed; pre-fix EXPORTS simply do not verify and the verifier says
+// so. Export composition REBUILDS the chain over the exported
+// payloads, so every export produced after this fix verifies
+// end-to-end regardless of runtime history format.)
 //
 // Spec anchors: R36 (project-centric UX), R39, L4 (view-time
 // projection consumes timeMachine.viewAt), L11/L9 (the chain), L12
@@ -35,7 +55,14 @@ import type {
 } from '../api/contracts';
 import { DEFAULT_SECTION, isSectionId, type SectionId } from './sections';
 import { assertProjectScope, isWorkspaceScope, type WorkspaceScope } from './tenant';
-import { fnv1a32Hex, canonicalJson, digestOf } from './digest';
+import { canonicalJson, sha256Hex, sha256Of } from './digest';
+import {
+  capsuleFromKnowledge,
+  capsuleFromOutcome,
+  capsuleFromPostMortem,
+  capsuleFromSubmission,
+  type EvidenceCapsule,
+} from './evidence';
 import {
   advanceAnchor,
   backToLive,
@@ -53,6 +80,7 @@ import {
   markAllNoticesRead,
   markNoticeRead,
   mergeNotices,
+  unreadNotices,
   type InboxState,
   type NoticeReads,
 } from './notices';
@@ -80,14 +108,16 @@ export interface DegradationNote {
 export interface HistoryEntry {
   /** The 1-based sequence. */
   readonly seq: number;
-  /** The injected instant the event was applied at. */
+  /** The injected instant the event was applied at (a mirror of payload.at — verifyWorkspaceChain checks the two agree). */
   readonly at: number;
   readonly kind: string;
   readonly tenantId: string;
   readonly projectId: string;
-  /** The content digest of the event's payload (FNV-1a over canonical JSON). */
+  /** THE EXACT EVENT AS APPLIED — the chain's digest input (retained since chain format v2; this is what makes every digest derivable). */
+  readonly payload: WorkspaceEvent;
+  /** The SHA-256 content digest of the entry's chained record {seq, tenantId, projectId, payload} (canonical JSON, lowercase 64-hex). */
   readonly digest: string;
-  /** The chain head after linking this entry ('00000000' before the first). */
+  /** The chain head after linking this entry (64 zero hex chars before the first). */
   readonly chainHead: string;
 }
 
@@ -177,18 +207,53 @@ export type WorkspaceEvent =
 /** The bounded retention of degradation notes (the newest 20 — the surface stays useful, the history chain keeps everything). */
 const DEGRADED_RETENTION = 20;
 
+// ---------------------------------------------------------------------------
+// THE CHAIN FORMAT (v2 — R9a). Published constants: every export carries
+// them verbatim, and the verifier enforces them, so anyone can recompute.
+// ---------------------------------------------------------------------------
+
+/** The chain's hash algorithm: SHA-256 (FIPS 180-4), over canonical JSON, as lowercase 64-hex. */
+export const CHAIN_ALGORITHM = 'sha-256';
+
+/** The chain format version: 2 (v1 was the pre-R9a 8-hex FNV-1a form — decorative, never derivable). */
+export const CHAIN_FORMAT_VERSION = 2;
+
+/** THE DOCUMENTED GENESIS: the chain head standing before the first entry (64 zero hex chars — the v2 format width). */
+export const CHAIN_GENESIS = '0'.repeat(64);
+
+/** The published digest rule, embedded verbatim in every export. */
+export const CHAIN_DIGEST_RULE = 'digest = sha256Hex(canonicalJson({seq,tenantId,projectId,payload})) as lowercase 64-hex; canonicalJson recursively sorts object keys (apps/web/src/core/digest.ts)';
+
+/** The published link rule, embedded verbatim in every export. */
+export const CHAIN_LINK_RULE = 'chainHead = sha256Hex(previousChainHead + digest) as lowercase 64-hex; plain concatenation of two fixed-width 64-hex strings; the genesis previousChainHead is 64 zero hex chars';
+
+/** The 64-hex shape of every v2 digest and chain head. */
+const HEX_64 = /^[0-9a-f]{64}$/;
+
+/** The digest of one chain entry's record (the published digest rule, in code). */
+function chainDigestOf(seq: number, tenantId: string, projectId: string, payload: unknown): string {
+  return sha256Of({ seq, tenantId, projectId, payload });
+}
+
+/** Link one digest onto the prior head (the published link rule, in code). */
+function chainLinkOf(priorHead: string, digest: string): string {
+  return sha256Hex(priorHead + digest);
+}
+
 /** Link one event onto the history chain (pure). */
 function linkHistory(state: WorkspaceState, event: WorkspaceEvent): readonly HistoryEntry[] {
   const prior = state.history.length === 0 ? null : (state.history[state.history.length - 1] as HistoryEntry);
-  const digest = digestOf(event);
+  const seq = state.history.length + 1;
+  const digest = chainDigestOf(seq, state.scope.tenantId, state.scope.projectId, event);
   const entry: HistoryEntry = {
-    seq: state.history.length + 1,
+    seq,
     at: event.at,
     kind: event.kind,
     tenantId: state.scope.tenantId,
     projectId: state.scope.projectId,
+    payload: event,
     digest,
-    chainHead: fnv1a32Hex(`${prior === null ? '00000000' : prior.chainHead}:${digest}`),
+    chainHead: chainLinkOf(prior === null ? CHAIN_GENESIS : prior.chainHead, digest),
   };
   return [...state.history, entry];
 }
@@ -398,23 +463,41 @@ export function serializeWorkspace(state: WorkspaceState): string {
 }
 
 /**
- * Verify the history chain: every entry's digest recomputes, every
- * chain head links. Pure; the first broken entry is named. The chain
- * is tamper-evident end to end: altering any entry's digest (or any
- * chain head) breaks the link at that entry or the first entry after
- * it.
+ * Verify the history chain (chain format v2): every entry's digest
+ * RECOMPUTES from its retained payload, every chain head links under
+ * the published rules, the envelope mirrors the payload, and the seq
+ * is contiguous. Pure; the first broken entry is named. The chain is
+ * tamper-evident end to end: altering any entry's payload (any field
+ * of the applied event), digest, chain head, seq, scope fields or
+ * envelope breaks verification at that entry or the first entry after
+ * it. A pre-v2 entry (an 8-hex digest, or no retained payload) fails
+ * loudly — the old form was never derivable and is never accepted.
  */
 export function verifyWorkspaceChain(history: readonly HistoryEntry[]): { readonly ok: true } | { readonly ok: false; readonly firstBrokenSeq: number; readonly reason: string } {
-  let priorHead = '00000000';
+  let priorHead = CHAIN_GENESIS;
   for (let index = 0; index < history.length; index++) {
     const entry = history[index] as HistoryEntry;
     if (entry.seq !== index + 1) {
-      return { ok: false, firstBrokenSeq: entry.seq, reason: `entry ${index + 1} carries seq ${entry.seq}` };
+      return { ok: false, firstBrokenSeq: entry.seq, reason: `entry ${index + 1} carries seq ${JSON.stringify(entry.seq)}` };
     }
-    if (!/^[0-9a-f]{8}$/.test(entry.digest)) {
-      return { ok: false, firstBrokenSeq: entry.seq, reason: `entry ${entry.seq}'s digest is not an 8-hex FNV-1a digest` };
+    if (typeof entry.digest !== 'string' || !HEX_64.test(entry.digest)) {
+      return { ok: false, firstBrokenSeq: entry.seq, reason: `entry ${entry.seq}'s digest is not a 64-hex SHA-256 digest (chain format v2)` };
     }
-    const head = fnv1a32Hex(`${priorHead}:${entry.digest}`);
+    if (typeof entry.chainHead !== 'string' || !HEX_64.test(entry.chainHead)) {
+      return { ok: false, firstBrokenSeq: entry.seq, reason: `entry ${entry.seq}'s chain head is not 64-hex (chain format v2)` };
+    }
+    if (typeof entry.payload !== 'object' || entry.payload === null) {
+      return { ok: false, firstBrokenSeq: entry.seq, reason: `entry ${entry.seq} retains no payload — its digest cannot be recomputed (chain format v1 was never derivable)` };
+    }
+    const digest = chainDigestOf(entry.seq, entry.tenantId, entry.projectId, entry.payload);
+    if (digest !== entry.digest) {
+      return { ok: false, firstBrokenSeq: entry.seq, reason: `entry ${entry.seq}'s digest does not match its chained record (seq, scope, payload)` };
+    }
+    const payload = entry.payload as { readonly kind?: unknown; readonly at?: unknown };
+    if (payload.kind !== entry.kind || payload.at !== entry.at) {
+      return { ok: false, firstBrokenSeq: entry.seq, reason: `entry ${entry.seq}'s kind/at envelope does not match its payload` };
+    }
+    const head = chainLinkOf(priorHead, entry.digest);
     if (head !== entry.chainHead) {
       return { ok: false, firstBrokenSeq: entry.seq, reason: `entry ${entry.seq}'s chain head does not link to entry ${index}` };
     }
@@ -447,4 +530,266 @@ export function watchEventsOf(state: WorkspaceState): readonly WatchEvent[] {
 /** The view instant of a state (what the availability projection consumes — the Time Machine's word). */
 export function viewAtOf(state: WorkspaceState): number {
   return viewAtOfTimeMachine(state.timeMachine);
+}
+
+// ---------------------------------------------------------------------------
+// THE WORKSPACE EXPORT (R9b — "download everything" completeness)
+// ---------------------------------------------------------------------------
+//
+// The export document is SELF-DESCRIBING: a manifest of what is
+// included, the full chain-format descriptor (the published rules,
+// verbatim), the rebuilt SHA-256 event chain (every event's payload
+// retained — derivable end to end), and the collections the pre-fix
+// export OMITTED: the evidence capsules, the decision records and
+// the inbox read-state. The composition is PURE and deterministic:
+// identical states compose byte-identical documents.
+//
+// THE HANDOFF SEAM: the app layer's export action (Settings →
+// "Export workspace data") serializes exactly these bytes —
+// serializeWorkspaceExport(state) — so anyone holding the downloaded
+// file can verify it with verifyWorkspaceExport(JSON.parse(bytes)).
+
+/** The export document's format identity. */
+export const EXPORT_FORMAT = 'tradrl-workspace-export';
+/** The export document's format version: 2 (v1 was the bare serializeWorkspace dump — the R9 findings). */
+export const EXPORT_FORMAT_VERSION = 2;
+
+/** The chain descriptor every export carries (the published algorithm, verbatim). */
+export interface ExportChainDescriptor {
+  readonly algorithm: string;
+  readonly version: number;
+  readonly genesis: string;
+  readonly digestRule: string;
+  readonly linkRule: string;
+  readonly entryCount: number;
+  readonly head: string;
+}
+
+/** One chain entry inside an export: the event's full record plus its digest and link (nothing else). */
+export interface ExportChainEntry {
+  readonly seq: number;
+  readonly tenantId: string;
+  readonly projectId: string;
+  /** The exact event as applied (the digest's input — the derivability guarantee). */
+  readonly payload: WorkspaceEvent;
+  readonly digest: string;
+  readonly chainHead: string;
+}
+
+/** The workspace state as exported (everything but the history — the history IS the events chain). */
+export type ExportedWorkspaceState = Omit<WorkspaceState, 'history'>;
+
+/** The manifest of what an export includes (self-describing completeness). */
+export interface ExportManifest {
+  readonly included: readonly string[];
+  readonly counts: Record<string, number>;
+}
+
+/** THE EXPORT DOCUMENT — everything the console knows about the workspace. */
+export interface WorkspaceExportDocument {
+  readonly format: string;
+  readonly formatVersion: number;
+  readonly scope: WorkspaceScope;
+  readonly chain: ExportChainDescriptor;
+  readonly manifest: ExportManifest;
+  readonly workspace: ExportedWorkspaceState;
+  readonly events: readonly ExportChainEntry[];
+  readonly capsules: readonly EvidenceCapsule[];
+  readonly decisions: {
+    /** The seven-lens decision records, exactly as the Decisions section renders them. */
+    readonly watch: readonly WatchEvent[];
+    /** The execution gateway's own routed/refused records (L20 — verbatim, never re-decided). */
+    readonly gateway: readonly GatewaySubmissionRecord[];
+  };
+  readonly readState: {
+    readonly readNoticeIds: readonly string[];
+    readonly unreadNoticeIds: readonly string[];
+  };
+}
+
+/**
+ * Compose the workspace export (pure, deterministic). The chain is
+ * REBUILT over the exact exported events under the published v2
+ * rules — so every export verifies end-to-end regardless of the
+ * runtime history's format (after this change they agree by
+ * construction; the rebuild is the structural guarantee). An entry
+ * that lacks its payload is a loud error, never a fake digest.
+ */
+export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDocument {
+  const events: ExportChainEntry[] = [];
+  let priorHead = CHAIN_GENESIS;
+  for (const entry of state.history) {
+    if (typeof entry.payload !== 'object' || entry.payload === null) {
+      throw new Error(`composeWorkspaceExport: history entry ${entry.seq} retains no payload — the chain cannot be rebuilt honestly`);
+    }
+    const digest = chainDigestOf(entry.seq, entry.tenantId, entry.projectId, entry.payload);
+    const chainHead = chainLinkOf(priorHead, digest);
+    events.push({ seq: entry.seq, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload, digest, chainHead });
+    priorHead = chainHead;
+  }
+
+  // R9b: the evidence capsules — the same content-addressed bundles
+  // the Evidence section renders (one per outcome, post-mortem,
+  // served-knowledge entry and execution submission), in the
+  // section's order. Unprojected: the export is the complete record,
+  // and every capsule carries its own availability instant (L4).
+  const capsules: EvidenceCapsule[] = [
+    ...state.outcomes.map((outcome) => capsuleFromOutcome(state.scope, outcome)),
+    ...state.postMortems.map((postMortem) => capsuleFromPostMortem(state.scope, postMortem)),
+    ...state.knowledge.map((knowledge) => capsuleFromKnowledge(state.scope, knowledge)),
+    ...state.submissions.map((submission) => capsuleFromSubmission(state.scope, submission)),
+  ];
+
+  // R9b: the decisions — the seven-lens watch records (agent,
+  // capability, evidence, proposal, challenge, risk checks, decision)
+  // plus the gateway's own submission records, exactly as the
+  // Decisions section renders them.
+  const decisions = {
+    watch: watchEventsOf(state),
+    gateway: [...state.submissions],
+  };
+
+  // R9b: the read-state — which notices the user has read (the
+  // pre-fix export lost this; the inbox's own fold is inside
+  // `workspace`, and this block makes the read/unread split
+  // first-class and greppable).
+  const readNoticeIds = [...state.inbox.readNoticeIds];
+  const unreadNoticeIds = unreadNotices(state.inbox).map((notice) => notice.noticeId);
+
+  // (the runtime history stays with the state; the export's `events`
+  // block IS the history, rebuilt as the v2 chain)
+  const { history: _retainedHistory, ...workspaceWithoutHistory } = state;
+
+  const manifest: ExportManifest = {
+    included: [
+      'workspace.state',
+      'events.chain',
+      'evidence.capsules',
+      'decisions.watch',
+      'decisions.gateway',
+      'readState',
+    ],
+    counts: {
+      events: events.length,
+      capsules: capsules.length,
+      decisionsWatch: decisions.watch.length,
+      decisionsGateway: decisions.gateway.length,
+      notices: state.inbox.notices.length,
+      readNotices: readNoticeIds.length,
+      unreadNotices: unreadNoticeIds.length,
+    },
+  };
+
+  return {
+    format: EXPORT_FORMAT,
+    formatVersion: EXPORT_FORMAT_VERSION,
+    scope: state.scope,
+    chain: {
+      algorithm: CHAIN_ALGORITHM,
+      version: CHAIN_FORMAT_VERSION,
+      genesis: CHAIN_GENESIS,
+      digestRule: CHAIN_DIGEST_RULE,
+      linkRule: CHAIN_LINK_RULE,
+      entryCount: events.length,
+      head: priorHead,
+    },
+    manifest,
+    workspace: workspaceWithoutHistory,
+    events,
+    capsules,
+    decisions,
+    readState: { readNoticeIds, unreadNoticeIds },
+  };
+}
+
+/** The exported document's bytes (canonical JSON — the determinism pin applies to the export too). */
+export function serializeWorkspaceExport(state: WorkspaceState): string {
+  return canonicalJson(composeWorkspaceExport(state));
+}
+
+/**
+ * Verify an exported document's chain end to end from the file alone:
+ * the format and chain descriptors must carry the published v2
+ * algorithm and genesis, every event's digest must recompute from its
+ * own retained payload under the published digest rule, every link
+ * must recompute from the prior head, the seq must be contiguous,
+ * every entry must belong to the exporting tenant, and the
+ * descriptor's counts and head must match the events. Pure — anyone
+ * with the file and the published rules can run exactly this.
+ */
+export function verifyWorkspaceExport(doc: unknown): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
+  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) {
+    return { ok: false, reason: 'the export is not a JSON object' };
+  }
+  const record = doc as Record<string, unknown>;
+  if (record.format !== EXPORT_FORMAT) {
+    return { ok: false, reason: `the document's format is ${JSON.stringify(record.format)} (expected ${JSON.stringify(EXPORT_FORMAT)})` };
+  }
+  if (record.formatVersion !== EXPORT_FORMAT_VERSION) {
+    return { ok: false, reason: `the document's format version is ${JSON.stringify(record.formatVersion)} (expected ${EXPORT_FORMAT_VERSION})` };
+  }
+  const chain = record.chain;
+  if (typeof chain !== 'object' || chain === null) {
+    return { ok: false, reason: 'the export carries no chain descriptor' };
+  }
+  const chainRecord = chain as Record<string, unknown>;
+  if (chainRecord.algorithm !== CHAIN_ALGORITHM) {
+    return { ok: false, reason: `the chain's algorithm is ${JSON.stringify(chainRecord.algorithm)} (expected ${JSON.stringify(CHAIN_ALGORITHM)})` };
+  }
+  if (chainRecord.version !== CHAIN_FORMAT_VERSION) {
+    return { ok: false, reason: `the chain's format version is ${JSON.stringify(chainRecord.version)} (expected ${CHAIN_FORMAT_VERSION})` };
+  }
+  if (chainRecord.genesis !== CHAIN_GENESIS) {
+    return { ok: false, reason: 'the chain declares a foreign genesis' };
+  }
+  const scope = record.scope;
+  if (typeof scope !== 'object' || scope === null) {
+    return { ok: false, reason: 'the export carries no scope' };
+  }
+  const scopeRecord = scope as Record<string, unknown>;
+  if (typeof scopeRecord.tenantId !== 'string') {
+    return { ok: false, reason: 'the export scope carries no tenant id' };
+  }
+  const events = record.events;
+  if (!Array.isArray(events)) {
+    return { ok: false, reason: 'the export carries no events array' };
+  }
+  let priorHead = CHAIN_GENESIS;
+  for (let index = 0; index < events.length; index++) {
+    const entry = events[index];
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      return { ok: false, reason: `event ${index + 1} is not a JSON object` };
+    }
+    const eventRecord = entry as Record<string, unknown>;
+    if (eventRecord.seq !== index + 1) {
+      return { ok: false, reason: `event ${index + 1} carries seq ${JSON.stringify(eventRecord.seq)}` };
+    }
+    // The tenant is one per workspace (adoptions change the project,
+    // never the tenant) — a foreign-tenant entry is a broken export.
+    if (eventRecord.tenantId !== scopeRecord.tenantId) {
+      return { ok: false, reason: `event ${index + 1} does not belong to the export's tenant` };
+    }
+    if (typeof eventRecord.digest !== 'string' || !HEX_64.test(eventRecord.digest)) {
+      return { ok: false, reason: `event ${index + 1}'s digest is not a 64-hex SHA-256 digest (chain format v2)` };
+    }
+    if (typeof eventRecord.chainHead !== 'string' || !HEX_64.test(eventRecord.chainHead)) {
+      return { ok: false, reason: `event ${index + 1}'s chain head is not 64-hex (chain format v2)` };
+    }
+    const digest = sha256Of({ seq: eventRecord.seq, tenantId: eventRecord.tenantId, projectId: eventRecord.projectId, payload: eventRecord.payload });
+    if (digest !== eventRecord.digest) {
+      return { ok: false, reason: `event ${index + 1}'s digest does not match its chained record (seq, scope, payload)` };
+    }
+    const head = sha256Hex(priorHead + (eventRecord.digest as string));
+    if (head !== eventRecord.chainHead) {
+      return { ok: false, reason: `event ${index + 1}'s chain head does not link to event ${index}` };
+    }
+    priorHead = eventRecord.chainHead;
+  }
+  if (chainRecord.entryCount !== events.length) {
+    return { ok: false, reason: `the chain counts ${JSON.stringify(chainRecord.entryCount)} events but the export carries ${events.length}` };
+  }
+  if (chainRecord.head !== priorHead) {
+    return { ok: false, reason: 'the chain head does not match the last event' };
+  }
+  return { ok: true };
 }

@@ -1,14 +1,17 @@
-// Tests for the content-addressing primitives (canonical JSON + FNV-1a).
+// Tests for the content-addressing primitives (canonical JSON + FNV-1a
+// + SHA-256).
 //
 // Laws pinned here (digest.ts header): "identical inputs -> identical bytes ->
 // identical digests" — pure functions, no ambient state, no randomness, no
-// clock. The console's history chain, evidence capsules and notice ids are
-// content-addressed through here (R38), so determinism is the whole point:
-// the same value must ALWAYS serialize to the same bytes, regardless of key
-// insertion order, across every machine, forever.
+// clock. The console's evidence capsules and notice ids are content-addressed
+// through the FNV-1a form; the workspace's history chain is hashed with
+// sha256Hex (R9a — a real, derivable, verifiable chain), so its determinism
+// is the whole point: the same value must ALWAYS serialize to the same bytes,
+// regardless of key insertion order, across every machine, forever.
 
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { canonicalJson, digestOf, fnv1a32Hex, isJsonValue } from './digest';
+import { canonicalJson, digestOf, fnv1a32Hex, isJsonValue, sha256Hex, sha256Of, utf8BytesOf } from './digest';
 
 describe('digest: FNV-1a 32-bit (the program-wide hash)', () => {
   it('matches the published FNV-1a test vectors', () => {
@@ -103,5 +106,55 @@ describe('digest: the JSON-value guard', () => {
     expect(isJsonValue({ f: () => 1 })).toBe(false);
     expect(isJsonValue(undefined)).toBe(false);
     expect(isJsonValue(Symbol('x'))).toBe(false);
+  });
+});
+
+describe('digest: SHA-256 (the chain\'s hash — R9a)', () => {
+  it('matches the NIST FIPS 180-4 test vectors (the one-block, mid-block and two-block examples)', () => {
+    // FIPS 180-4 example vectors (and the well-known empty-input digest).
+    expect(sha256Hex('')).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+    expect(sha256Hex('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+    expect(sha256Hex('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'))
+      .toBe('248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1');
+    expect(sha256Hex('abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu'))
+      .toBe('cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1');
+  });
+
+  it('is lowercase zero-padded 64-hex always', () => {
+    for (const text of ['', 'x', 'tradrl', 'console/console/console', 'a longer input that crosses the fifty-five byte padding boundary exactly here']) {
+      expect(sha256Hex(text)).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it('agrees byte-for-byte with Node\'s own crypto across the padding boundaries (test-only cross-check)', () => {
+    // Lengths around every 64-byte block boundary and the 55/56/57-byte
+    // padding edges, plus multi-byte UTF-8 and surrogate pairs.
+    const corpus: string[] = [];
+    for (let length = 0; length <= 200; length += 1) corpus.push('a'.repeat(length));
+    corpus.push('héllo wörld — naïve 中文 العربية', 'emoji 🚀🧪 payload', 'surrogate pair 🌀 alone');
+    for (const text of corpus) {
+      const reference = createHash('sha256').update(text, 'utf8').digest('hex');
+      expect(sha256Hex(text)).toBe(reference);
+    }
+  });
+
+  it('encodes UTF-8 exactly (surrogate pairs fold to one code point)', () => {
+    // 'é' is 2 bytes, '中' is 3, '🚀' (a surrogate pair) is 4.
+    expect(Array.from(utf8BytesOf('é'))).toEqual([0xc3, 0xa9]);
+    expect(Array.from(utf8BytesOf('中'))).toEqual([0xe4, 0xb8, 0xad]);
+    expect(Array.from(utf8BytesOf('🚀'))).toEqual([0xf0, 0x9f, 0x9a, 0x80]);
+    expect(utf8BytesOf('中文').length).toBe(6);
+  });
+
+  it('is deterministic and avalanche-sensitive', () => {
+    const first = sha256Hex('{"kind":"job-updated"}');
+    for (let attempt = 0; attempt < 5; attempt += 1) expect(sha256Hex('{"kind":"job-updated"}')).toBe(first);
+    expect(sha256Hex('{"kind":"job-updated"}')).not.toBe(sha256Hex('{"kind":"job-updated!"}'));
+  });
+
+  it('sha256Of digests the canonical form (key order never matters)', () => {
+    expect(sha256Of({ b: 1, a: 2 })).toBe(sha256Of({ a: 2, b: 1 }));
+    expect(sha256Of({ a: 1 })).toBe(sha256Hex(canonicalJson({ a: 1 })));
+    expect(sha256Of({ a: 1 })).not.toBe(sha256Of({ a: 2 }));
   });
 });

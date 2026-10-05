@@ -11,10 +11,28 @@
 //   - section registry completeness (the twelve, selectable, default goal).
 
 import { describe, expect, it } from 'vitest';
-import type { GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
-import { openWorkspace, reduceAll, reduceWorkspace, serializeWorkspace, verifyWorkspaceChain, viewAtOf, type WorkspaceEvent, type WorkspaceState } from './workspace';
+import type { GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import {
+  CHAIN_ALGORITHM,
+  CHAIN_FORMAT_VERSION,
+  CHAIN_GENESIS,
+  composeWorkspaceExport,
+  openWorkspace,
+  reduceAll,
+  reduceWorkspace,
+  serializeWorkspace,
+  serializeWorkspaceExport,
+  verifyWorkspaceChain,
+  verifyWorkspaceExport,
+  viewAtOf,
+  watchEventsOf,
+  type WorkspaceEvent,
+  type WorkspaceState,
+} from './workspace';
 import { WORKSPACE_SECTIONS } from './sections';
 import { CrossTenantRenderError } from './errors';
+import { canonicalJson, sha256Hex, sha256Of } from './digest';
+import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from './evidence';
 
 const SCOPE = { tenantId: 'tenant-a', projectId: 'proj-a' } as const;
 const T0 = 1_700_000_000_000;
@@ -330,7 +348,7 @@ describe('workspace: DETERMINISM (the Work Order pin, demanded)', () => {
 });
 
 describe('workspace: the append-only chain-verified history', () => {
-  it('every event links one entry; seq is 1-based and contiguous; the chain verifies', () => {
+  it('every event links one entry; seq is 1-based and contiguous; the chain verifies; payloads are retained', () => {
     const state = reduceAll(openWorkspace(SCOPE, T0), [
       { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
       { kind: 'org-snapshot', at: T0 + 10, snapshot: orgSnapshot() },
@@ -339,7 +357,9 @@ describe('workspace: the append-only chain-verified history', () => {
     expect(state.history.map((entry) => entry.seq)).toEqual([1, 2, 3]);
     expect(state.history.map((entry) => entry.kind)).toEqual(['connection-changed', 'org-snapshot', 'job-updated']);
     expect(state.history[0]?.tenantId).toBe('tenant-a');
-    expect(state.history[0]?.chainHead).toMatch(/^[0-9a-f]{8}$/);
+    expect(state.history[0]?.chainHead).toMatch(/^[0-9a-f]{64}$/);
+    // THE R9a LAW: every entry retains the exact event it was linked from
+    expect(state.history[0]?.payload).toEqual({ kind: 'connection-changed', at: T0 + 1, status: 'connected' });
     expect(verifyWorkspaceChain(state.history)).toEqual({ ok: true });
   });
 
@@ -350,7 +370,8 @@ describe('workspace: the append-only chain-verified history', () => {
       { kind: 'job-updated', at: T0 + 20, job: jobRecord() },
     ]);
 
-    const tamperedDigest = state.history.map((entry, index) => (index === 1 ? { ...entry, digest: 'deadbeef' } : entry));
+    const wrongDigest = 'f'.repeat(64); // a well-formed 64-hex digest that is NOT entry 2's
+    const tamperedDigest = state.history.map((entry, index) => (index === 1 ? { ...entry, digest: wrongDigest } : entry));
     const result = verifyWorkspaceChain(tamperedDigest);
     expect(result.ok).toBe(false);
     if (result.ok === false) expect(result.firstBrokenSeq).toBe(2);
@@ -363,5 +384,385 @@ describe('workspace: the append-only chain-verified history', () => {
     if (seqResult.ok === false) expect(seqResult.reason).toContain('seq');
 
     expect(verifyWorkspaceChain([])).toEqual({ ok: true });
+  });
+
+  it('a pre-v2 chain entry (the old 8-hex FNV form, no retained payload) is refused loudly, never silently accepted', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+    ]);
+    const honest = state.history[0];
+    if (honest === undefined) throw new Error('fixture: the history must carry one entry');
+    // THE MIGRATION DECISION, pinned: the v1 form (an 8-hex digest over
+    // an event that was NOT retained) is not verifiable and is never
+    // accepted — the honest answer for pre-fix histories and exports.
+    const v1Style = { ...honest, digest: 'deadbeef', payload: undefined } as unknown as typeof honest;
+    const result = verifyWorkspaceChain([v1Style]);
+    expect(result.ok).toBe(false);
+    if (result.ok === false) expect(result.reason).toContain('64-hex');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R9a/R9b — EXPORT INTEGRITY (the chain is real; the export is complete)
+// ---------------------------------------------------------------------------
+
+/** A refused submission (the gateway's hard safety gate, L20). */
+function refusedSubmission(): GatewaySubmissionRecord {
+  return {
+    kind: 'refused',
+    submissionId: 'sub-1',
+    decisionId: null,
+    auditId: 'aud-1',
+    refusal: { stage: 'risk' },
+    refusedAt: T0 + 50,
+  };
+}
+
+/** A routed submission (the gateway's own routed verdict). */
+function routedSubmission(): GatewaySubmissionRecord {
+  return {
+    kind: 'routed',
+    submissionId: 'sub-2',
+    decisionId: 'dec-9',
+    auditId: 'aud-2',
+    requestRef: 'req-2',
+    venue: 'venue-demo',
+    adapterRef: 'ad-1',
+    channelRef: 'ch-1',
+    routedAt: T0 + 51,
+  };
+}
+
+/** A post-mortem record. */
+function postMortemRecord(): PostMortemRecord {
+  return {
+    postMortemId: 'pm-1', ordinal: 1,
+    subject: { outcomeRecordRef: 'out-1', decisionRef: 'dec-1', intentRef: 'int-1', outcomeClass: 'realized-profit' },
+    expected: { expectedQuantity: null, expectedRealized: null, tolerance: '0.25' },
+    happened: { disposition: 'filled', filledQuantity: '10', realizedOutcome: '1.75', feeTotal: '0.02', notionalTotal: '1000.00' },
+    gap: { quantityShortfall: null, realizedGap: '0.25', withinTolerance: true },
+    hypotheses: [{ hypothesisClass: 'regime-shift' }],
+    evidence: [{ kind: 'fill', ref: 'fil-1' }],
+    lineage: { tenant: 'tenant-a', project: 'proj-a', shadowSessionRef: 'ss-1', shadowOutcomeRef: 'so-1', trajectoryRef: null, experiment: null },
+    asOf: T0 + 32, priorChainHead: '00000000',
+  } as unknown as PostMortemRecord;
+}
+
+/** THE RICH FIXTURE: every collection populated, notices folded, one read. */
+function richState(): WorkspaceState {
+  let state = openWorkspace(SCOPE, T0);
+  state = reduceWorkspace(state, { kind: 'connection-changed', at: T0 + 1, status: 'connected' });
+  state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 2, project: projectRecord() });
+  state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 3, goal: goalRecord(), constraintSet: { id: 'cs-1', version: 1, tenantId: 'tenant-a', constraints: [], createdAt: T0 } });
+  state = reduceWorkspace(state, { kind: 'org-snapshot', at: T0 + 10, snapshot: orgSnapshot('active') });
+  state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 20, job: jobRecord('complete') });
+  state = reduceWorkspace(state, { kind: 'outcomes-loaded', at: T0 + 30, records: [outcomeRecord()] });
+  state = reduceWorkspace(state, { kind: 'knowledge-loaded', at: T0 + 31, records: [knowledgeRecord()] });
+  state = reduceWorkspace(state, { kind: 'post-mortems-loaded', at: T0 + 32, records: [postMortemRecord()] });
+  state = reduceWorkspace(state, { kind: 'submission-recorded', at: T0 + 50, submission: refusedSubmission() });
+  state = reduceWorkspace(state, { kind: 'submission-recorded', at: T0 + 51, submission: routedSubmission() });
+  const firstNotice = state.inbox.notices[0];
+  if (firstNotice === undefined) throw new Error('fixture: the fold must have produced notices');
+  state = reduceWorkspace(state, { kind: 'notice-read', at: T0 + 60, noticeId: firstNotice.noticeId });
+  state = reduceWorkspace(state, { kind: 'section-selected', at: T0 + 61, section: 'time-machine' });
+  state = reduceWorkspace(state, { kind: 'view-tminus', at: T0 + 62, tMinusMs: 5_000 });
+  return state;
+}
+
+/** Parse the exported bytes back (the auditor's position: the FILE, nothing else). */
+function exportedDoc(state: WorkspaceState): Record<string, unknown> {
+  return JSON.parse(serializeWorkspaceExport(state)) as Record<string, unknown>;
+}
+
+describe('workspace: the SHA-256 chain (R9a — genesis + linkage under the published rules)', () => {
+  it('every digest and link recomputes from the PUBLISHED rules alone (sha256Of + canonicalJson, no workspace helpers)', () => {
+    const state = richState();
+    let priorHead = CHAIN_GENESIS;
+    for (const entry of state.history) {
+      // The published digest rule, applied independently by this test:
+      const digest = sha256Of({ seq: entry.seq, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload });
+      expect(digest).toBe(entry.digest);
+      // The published link rule, applied independently by this test:
+      const chainHead = sha256Hex(priorHead + digest);
+      expect(chainHead).toBe(entry.chainHead);
+      priorHead = chainHead;
+    }
+  });
+
+  it('the first entry links to the DOCUMENTED GENESIS (64 zero hex chars), not to a placeholder', () => {
+    const state = richState();
+    const first = state.history[0];
+    if (first === undefined) throw new Error('fixture: the history must not be empty');
+    expect(CHAIN_GENESIS).toMatch(/^0{64}$/);
+    expect(first.chainHead).toBe(sha256Hex(CHAIN_GENESIS + first.digest));
+    // and the chain is a chain: entry 2's head depends on entry 1's head
+    const second = state.history[1];
+    if (second === undefined) throw new Error('fixture: the history must carry a second entry');
+    expect(second.chainHead).toBe(sha256Hex((first.chainHead as string) + (second.digest as string)));
+  });
+
+  it('the runtime chain and the export-rebuilt chain AGREE entry for entry (one algorithm, both places)', () => {
+    const state = richState();
+    const doc = composeWorkspaceExport(state);
+    expect(doc.events.length).toBe(state.history.length);
+    for (let index = 0; index < state.history.length; index++) {
+      const runtime = state.history[index];
+      const exported = doc.events[index];
+      if (runtime === undefined || exported === undefined) throw new Error('fixture: histories must align');
+      expect(exported.digest).toBe(runtime.digest);
+      expect(exported.chainHead).toBe(runtime.chainHead);
+      expect(exported.payload).toEqual(runtime.payload);
+    }
+    expect(doc.chain.head).toBe((state.history[state.history.length - 1] as { chainHead: string }).chainHead);
+  });
+
+  it('a payload-less history entry is a LOUD composition error (never a fake digest over nothing)', () => {
+    const state = richState();
+    const broken = { ...(state.history[0] as { seq: number }), tenantId: 'tenant-a', projectId: 'proj-a', at: T0, kind: 'connection-changed', digest: '0'.repeat(64), chainHead: '0'.repeat(64), payload: undefined } as unknown as WorkspaceState['history'][number];
+    const brokenState = { ...state, history: [broken] };
+    expect(() => composeWorkspaceExport(brokenState)).toThrow(/retains no payload/);
+  });
+});
+
+describe('workspace: export derivability + tamper detection (R9a — the file alone is enough)', () => {
+  it('an honest export verifies END TO END from its own bytes', () => {
+    const state = richState();
+    const bytes = serializeWorkspaceExport(state);
+    const parsed = JSON.parse(bytes);
+    expect(verifyWorkspaceExport(parsed)).toEqual({ ok: true });
+  });
+
+  it('an empty workspace exports and verifies (genesis head, zero events)', () => {
+    const state = openWorkspace(SCOPE, T0);
+    const doc = composeWorkspaceExport(state);
+    expect(doc.events).toEqual([]);
+    expect(doc.chain.entryCount).toBe(0);
+    expect(doc.chain.head).toBe(CHAIN_GENESIS);
+    expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state)))).toEqual({ ok: true });
+  });
+
+  it('every digest and link recomputes from the FILE alone (the auditor recomputes with the published rules)', () => {
+    const doc = exportedDoc(richState());
+    const events = doc.events as Array<Record<string, unknown>>;
+    expect(events.length).toBeGreaterThan(3);
+    let priorHead = CHAIN_GENESIS;
+    for (const entry of events) {
+      const digest = sha256Of({ seq: entry.seq, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload });
+      expect(digest).toBe(entry.digest);
+      expect(sha256Hex(priorHead + digest)).toBe(entry.chainHead);
+      priorHead = entry.chainHead as string;
+    }
+    const chain = doc.chain as Record<string, unknown>;
+    expect(chain.head).toBe(priorHead);
+    expect(chain.entryCount).toBe(events.length);
+  });
+
+  it('TAMPERING any field class breaks verification (each class named)', () => {
+    const doc = exportedDoc(richState());
+    const events = doc.events as Array<Record<string, unknown>>;
+    const chain = doc.chain as Record<string, unknown>;
+    const scope = doc.scope as Record<string, unknown>;
+
+    const expectBroken = (tampered: unknown, reasonNeedle: string) => {
+      const result = verifyWorkspaceExport(tampered);
+      expect(result.ok).toBe(false);
+      if (result.ok === false) expect(result.reason).toContain(reasonNeedle);
+    };
+    const clone = (): Record<string, unknown> => JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
+    const eventsOf = (d: Record<string, unknown>): Array<Record<string, unknown>> => d.events as Array<Record<string, unknown>>;
+
+    // payload.at — a timestamp field of the event's payload
+    const atTampered = clone();
+    ((eventsOf(atTampered)[1] as Record<string, unknown>).payload as Record<string, unknown>).at = T0 + 999;
+    expectBroken(atTampered, 'digest does not match');
+
+    // payload.kind — the event-kind field
+    const kindTampered = clone();
+    ((eventsOf(kindTampered)[1] as Record<string, unknown>).payload as Record<string, unknown>).kind = 'launch-completed';
+    expectBroken(kindTampered, 'digest does not match');
+
+    // a nested payload DATA field (the job's own id inside a job-updated event)
+    const dataTampered = clone();
+    for (const entry of eventsOf(dataTampered)) {
+      const payload = entry.payload as Record<string, unknown>;
+      if (payload.kind === 'job-updated') {
+        (payload.job as Record<string, unknown>).jobId = 'job-forged';
+      }
+    }
+    expectBroken(dataTampered, 'digest does not match');
+
+    // entry.seq (continuity) and entry swap (reorder)
+    const seqTampered = clone();
+    (eventsOf(seqTampered)[2] as Record<string, unknown>).seq = 9;
+    expectBroken(seqTampered, 'seq');
+    const swapped = clone();
+    const swappedEvents = eventsOf(swapped);
+    const third = swappedEvents[2] as Record<string, unknown>;
+    swappedEvents[2] = swappedEvents[3] as Record<string, unknown>;
+    swappedEvents[3] = third;
+    expectBroken(swapped, 'seq');
+
+    // entry.tenantId (the export's own tenant) and entry.projectId (inside the digest input)
+    const tenantTampered = clone();
+    (eventsOf(tenantTampered)[1] as Record<string, unknown>).tenantId = 'tenant-b';
+    expectBroken(tenantTampered, 'tenant');
+    const projectTampered = clone();
+    (eventsOf(projectTampered)[1] as Record<string, unknown>).projectId = 'proj-forged';
+    expectBroken(projectTampered, 'digest does not match');
+
+    // digest (well-formed 64-hex but wrong) and chainHead
+    const digestTampered = clone();
+    (eventsOf(digestTampered)[1] as Record<string, unknown>).digest = 'f'.repeat(64);
+    expectBroken(digestTampered, 'does not match');
+    const headTampered = clone();
+    (eventsOf(headTampered)[1] as Record<string, unknown>).chainHead = 'e'.repeat(64);
+    expectBroken(headTampered, 'does not link');
+
+    // entry REMOVAL (last: descriptor counts/head; middle: seq gap)
+    const lastRemoved = clone();
+    eventsOf(lastRemoved).pop();
+    expectBroken(lastRemoved, 'counts');
+    const middleRemoved = clone();
+    eventsOf(middleRemoved).splice(1, 1);
+    expectBroken(middleRemoved, 'seq');
+
+    // the chain descriptor itself
+    const algorithmTampered = clone();
+    ((algorithmTampered.chain as Record<string, unknown>).algorithm as string) = 'fnv-1a';
+    expectBroken(algorithmTampered, 'algorithm');
+    const genesisTampered = clone();
+    (genesisTampered.chain as Record<string, unknown>).genesis = '00000000';
+    expectBroken(genesisTampered, 'genesis');
+    const headFieldTampered = clone();
+    (headFieldTampered.chain as Record<string, unknown>).head = 'd'.repeat(64);
+    expectBroken(headFieldTampered, 'chain head');
+    const countTampered = clone();
+    (countTampered.chain as Record<string, unknown>).entryCount = 1;
+    expectBroken(countTampered, 'counts');
+
+    // the document envelope
+    const formatTampered = clone();
+    formatTampered.format = 'tradrl-workspace';
+    expectBroken(formatTampered, 'format');
+    const versionTampered = clone();
+    versionTampered.formatVersion = 1;
+    expectBroken(versionTampered, 'format version');
+    const scopeTampered = clone();
+    (scopeTampered.scope as Record<string, unknown>).tenantId = 'tenant-b';
+    expectBroken(scopeTampered, 'tenant');
+
+    // and the honest file still verifies after all of that
+    expect(verifyWorkspaceExport(doc)).toEqual({ ok: true });
+    expect(scope.tenantId).toBe('tenant-a'); // (the fixture held)
+    expect(chain.algorithm).toBe('sha-256');
+    expect(events.length).toBe(13);
+  });
+
+  it('a pre-fix v1 export (the old serializeWorkspace dump) does not verify — honestly refused, never faked', () => {
+    // The v1 form: a bare state dump whose history carried 8-hex
+    // digests of events that were never retained. This test pins the
+    // honest boundary: those files cannot be upgraded after the fact.
+    const state = richState();
+    const v1Bytes = serializeWorkspace(state);
+    const v1Doc = JSON.parse(v1Bytes);
+    const result = verifyWorkspaceExport(v1Doc);
+    expect(result.ok).toBe(false);
+    if (result.ok === false) expect(result.reason).toContain('format');
+  });
+});
+
+describe('workspace: export completeness (R9b — capsules, decisions, read-state)', () => {
+  it('the export carries the EVIDENCE CAPSULES (every source family, the Evidence section\'s own derivations)', () => {
+    const state = richState();
+    const doc = composeWorkspaceExport(state);
+    const expected = [
+      capsuleFromOutcome(SCOPE, state.outcomes[0] as OutcomeRecord),
+      capsuleFromPostMortem(SCOPE, state.postMortems[0] as PostMortemRecord),
+      capsuleFromKnowledge(SCOPE, state.knowledge[0] as ServedKnowledge),
+      capsuleFromSubmission(SCOPE, state.submissions[0] as GatewaySubmissionRecord),
+      capsuleFromSubmission(SCOPE, state.submissions[1] as GatewaySubmissionRecord),
+    ];
+    expect(doc.capsules).toEqual(expected);
+    expect(doc.capsules.length).toBe(5); // 1 outcome + 1 post-mortem + 1 knowledge + 2 submissions
+    for (const capsule of doc.capsules) {
+      expect(capsule.capsuleId).toMatch(/^evc:[0-9a-f]{8}$/); // content-addressed, derivable from the capsule's own content
+    }
+  });
+
+  it('the export carries the DECISIONS (the watch records + the gateway\'s own records, exactly as the Decisions section renders)', () => {
+    const state = richState();
+    const doc = composeWorkspaceExport(state);
+    expect(doc.decisions.watch).toEqual(watchEventsOf(state));
+    expect(doc.decisions.watch.length).toBe(7); // 2 org instances + 1 job + 1 outcome + 1 post-mortem + 2 submissions
+    expect(doc.decisions.gateway).toEqual(state.submissions);
+    expect(doc.decisions.gateway.length).toBe(2);
+    // every watch record carries a decision (the seven-lens shape the section renders)
+    for (const event of doc.decisions.watch) {
+      expect(event.decision).not.toBeNull();
+    }
+  });
+
+  it('the export carries the READ-STATE (read + unread notice ids, first-class)', () => {
+    const state = richState();
+    const doc = composeWorkspaceExport(state);
+    expect(state.inbox.notices.length).toBe(2); // organization_compiled + safety_intervention
+    const readNotice = state.inbox.notices[0];
+    const unreadNotice = state.inbox.notices[1];
+    if (readNotice === undefined || unreadNotice === undefined) throw new Error('fixture: two notices required');
+    expect(doc.readState.readNoticeIds).toEqual([readNotice.noticeId]);
+    expect(doc.readState.unreadNoticeIds).toEqual([unreadNotice.noticeId]);
+    expect(doc.workspace.inbox).toEqual(state.inbox); // the inbox itself stays in the state block
+  });
+
+  it('the manifest is self-describing and TRUE (every included block exists; every count matches)', () => {
+    const state = richState();
+    const doc = composeWorkspaceExport(state);
+    expect(doc.manifest.included).toEqual([
+      'workspace.state', 'events.chain', 'evidence.capsules', 'decisions.watch', 'decisions.gateway', 'readState',
+    ]);
+    expect(doc.manifest.counts.events).toBe(doc.events.length);
+    expect(doc.manifest.counts.capsules).toBe(doc.capsules.length);
+    expect(doc.manifest.counts.decisionsWatch).toBe(doc.decisions.watch.length);
+    expect(doc.manifest.counts.decisionsGateway).toBe(doc.decisions.gateway.length);
+    expect(doc.manifest.counts.notices).toBe(state.inbox.notices.length);
+    expect(doc.manifest.counts.readNotices).toBe(doc.readState.readNoticeIds.length);
+    expect(doc.manifest.counts.unreadNotices).toBe(doc.readState.unreadNoticeIds.length);
+    expect(doc.format).toBe('tradrl-workspace-export');
+    expect(doc.formatVersion).toBe(2);
+    expect(doc.chain.algorithm).toBe(CHAIN_ALGORITHM);
+    expect(doc.chain.version).toBe(CHAIN_FORMAT_VERSION);
+    expect(doc.chain.genesis).toBe(CHAIN_GENESIS);
+    expect(doc.chain.digestRule).toContain('sha256Hex(canonicalJson');
+    expect(doc.chain.linkRule).toContain('previousChainHead + digest');
+  });
+
+  it('the workspace block carries EVERYTHING but the history (which IS the events chain)', () => {
+    const state = richState();
+    const doc = composeWorkspaceExport(state);
+    expect((doc.workspace as Record<string, unknown>).history).toBeUndefined();
+    expect(doc.workspace.scope).toEqual(state.scope);
+    expect(doc.workspace.project).toEqual(state.project);
+    expect(doc.workspace.jobs).toEqual(state.jobs);
+    expect(doc.workspace.outcomes).toEqual(state.outcomes);
+    expect(doc.workspace.postMortems).toEqual(state.postMortems);
+    expect(doc.workspace.knowledge).toEqual(state.knowledge);
+    expect(doc.workspace.submissions).toEqual(state.submissions);
+    expect(doc.workspace.timeMachine).toEqual(state.timeMachine);
+    expect(doc.workspace.inbox).toEqual(state.inbox);
+  });
+});
+
+describe('workspace: export DETERMINISM (the law extends to the export bytes)', () => {
+  it('identical states -> byte-identical export documents', () => {
+    const first = serializeWorkspaceExport(richState());
+    const second = serializeWorkspaceExport(richState());
+    expect(second).toBe(first);
+    expect(first.length).toBeGreaterThan(0);
+  });
+
+  it('a different state -> different export bytes (the pin is not vacuous)', () => {
+    const base = serializeWorkspaceExport(richState());
+    const varied = serializeWorkspaceExport(reduceWorkspace(richState(), { kind: 'view-live', at: T0 + 99 }));
+    expect(varied).not.toBe(base);
   });
 });
