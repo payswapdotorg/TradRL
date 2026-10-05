@@ -15,12 +15,24 @@ randomness, zero npm dependencies.
 corepack pnpm vitest run tests/end-to-end-trading   # the colocated suite drives the slice
 ```
 
+The suite is FOUR files, one per law:
+
+| File | The law it enforces |
+|------|----------------------|
+| `slice.test.ts` | THE FULL LOOP: every station's positive evidence + the determinism law (two runs, one digest AND byte-identical canonical-JSON report streams) |
+| `negative-paths.test.ts` | the typed refusals: constraint primacy, the quorum escalation, the L4 research gate, every gateway denial (duplicate/limits/mode/kill-switch/expired-grant) with ZERO seam calls, the cross-tenant fail-closed run, the mode-honesty law |
+| `broken-links.test.ts` | every pipeline stage consumes its predecessor's REAL records (each seam deliberately broken — a forged quartet, an unavailable print, a fabricated event, a foreign state, a mangled intent, the director's decision as authority — and the downstream stage refuses with its own typed error) |
+| `lineage.test.ts` | L15: the outcome records trace back to the goal through their REAL intents, the audit records carry the goal, the order lifecycles cite the gateway approval + the director decision, and the L16 clock separation holds |
+
 The whole loop is one call — `runReferenceSlice()` (`src/run.ts`): it assembles
 every station in order and folds the day into ONE deterministic report (the
 byte-stable `reportDigest` is the determinism anchor; the suite runs the slice
-twice and pins the equality). Every station is also independently drivable
-through the exports of `src/index.ts` — the suite's per-station tests and the
-negative paths use exactly those.
+and pins the equality). The report carries a first-class `lineage` block — the
+L15 chain (goal -> director decision -> strategy runs -> intents -> gateway
+audit records -> order lifecycles -> realized outcome records). Every station
+is also independently drivable through the exports of `src/index.ts` — the
+suite's per-station tests, the broken-link proofs and the negative paths use
+exactly those.
 
 ## The scope (one market day, every instant a literal)
 
@@ -88,6 +100,15 @@ scripted transports ──► T037/T038 adapter sessions ──► canonical eve
 | 7 | Shadow trading + realized outcomes | `services/shadow-trading` (T030) | the paper lane paper-executes the same intents against the reactive world under the SAME hard controls; every decision lands in the chain-verified outcome log — T033's input surface |
 
 ## What is REAL and what is SIMULATED (the honest table)
+
+**The composition law (D-003/D-004):** the example carries NO `package.json` —
+zero workspace edges, zero lockfile impact — and composes the merged packages'
+code through relative source imports (the `services/execution-gateway`/T040
+precedent for frozen-surface composition), while every CONSUMED shape rides a
+structural mirror or an injected port (`MarketEventMirror`, `StrategyIntentMirror`,
+T027's `EngineDriver`, T030's `ReactiveWorldPort`/`TimeMachinePort`); the
+colocated suite's static imports of the REAL packages are the drift trip wires,
+and the broken-link proofs make every seam's content-dependence loud.
 
 **REAL — the platform code the slice drives, unchanged:**
 
@@ -217,7 +238,10 @@ happen in this slice, with full physics lineage).
 | `src/control-stack.ts` | the shared hard controls (the REAL T019 policy + T020 risk policy + kill switches) both outbound lanes consume |
 | `src/gateway.ts` | STATION 6 — the REAL chokepoint: authority stack, gate/risk facts, the submission plan (positives + negatives) |
 | `src/execution-body.ts` | STATION 5 — the REAL order lifecycles + gateway requests + fill reconciliation |
-| `src/shadow.ts` | STATION 7 — the REAL shadow session + the realized-outcome fold + the negatives |
-| `src/run.ts` | THE WHOLE LOOP — `runReferenceSlice()` and the `SliceReport` |
+| `src/shadow.ts` | STATION 7 — the REAL shadow session + the realized-outcome fold + the negatives + the session-builder injection seam |
+| `src/run.ts` | THE WHOLE LOOP — `runReferenceSlice()` and the `SliceReport` (the `lineage` block included) |
 | `src/index.ts` | the public surface (typed exports) |
-| `../../tests/end-to-end-trading/` | the colocated suite: the full loop, per-station positives, every negative path |
+| `../../tests/end-to-end-trading/slice.test.ts` | the full loop + per-station positives + determinism (digest AND byte-identity) |
+| `../../tests/end-to-end-trading/negative-paths.test.ts` | every typed refusal + the no-bypass law (ZERO seam calls) |
+| `../../tests/end-to-end-trading/broken-links.test.ts` | the seam-consumption proofs (each stage consumes its predecessor's REAL records) |
+| `../../tests/end-to-end-trading/lineage.test.ts` | the L15 goal-lineage walk + the L16 clock separation |

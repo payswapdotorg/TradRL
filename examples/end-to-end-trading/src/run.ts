@@ -116,7 +116,16 @@ export interface SliceReport {
     /** The live lane: every audit record -> its intent -> its goal binding. */
     readonly liveAuditIntents: readonly { readonly auditId: string; readonly intentRef: string; readonly goalId: string }[];
     /** The order lane: every lifecycle's genesis record -> the gateway decision + the director decision + the intent. */
-    readonly orderDecisions: readonly { readonly lifecycleId: string; readonly decisionRef: string; readonly directorDecisionRef: string | null; readonly intentRef: string }[];
+    readonly orderDecisions: readonly {
+      readonly lifecycleId: string;
+      readonly decisionRef: string;
+      readonly directorDecisionRef: string | null;
+      readonly intentRef: string;
+      /** The order-level clock (L16 — DISTINCT from the strategic decision instant). */
+      readonly orderClock: number;
+      /** The cited decision's strategic instant (the L4/L16 boundary reference). */
+      readonly decisionAsOf: number;
+    }[];
   };
   /** The byte-stable digest of the whole report (the determinism anchor). */
   readonly reportDigest: string;
@@ -192,6 +201,8 @@ export async function runReferenceSlice(): Promise<SliceReport> {
         decisionRef: genesis.decisionRef,
         directorDecisionRef: genesis.directorDecisionRef,
         intentRef: genesis.intentRef,
+        orderClock: genesis.orderClock as number,
+        decisionAsOf: genesis.decisionAsOf as number,
       };
     }),
   };

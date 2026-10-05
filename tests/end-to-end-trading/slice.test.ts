@@ -30,7 +30,7 @@ import {
 } from '../../examples/end-to-end-trading/src/index';
 import { isStrategyIntentMirror } from '../../packages/execution-policy/src/index';
 import { isObservationWindow, isStrategyRun } from '../../packages/trading-strategy/src/index';
-import { isReactiveFillMirror, isReactiveWorldPort } from '../../services/shadow-trading/src/index';
+import { canonicalJson, isReactiveFillMirror, isReactiveWorldPort } from '../../services/shadow-trading/src/index';
 
 describe('T048 the reference slice — the whole loop', () => {
   let report: Awaited<ReturnType<typeof runReferenceSlice>>;
@@ -50,6 +50,14 @@ describe('T048 the reference slice — the whole loop', () => {
     expect(second.director.decisionId).toBe(report.director.decisionId);
     expect(second.strategy.runId).toBe(report.strategy.runId);
     expect(second.strategy.step2RunId).toBe(report.strategy.step2RunId);
+  });
+
+  it('is deterministic the STRONG way: the two runs serialize to BYTE-IDENTICAL report streams', async () => {
+    const second = await runReferenceSlice();
+    const firstBytes = canonicalJson(report as never);
+    const secondBytes = canonicalJson(second as never);
+    expect(secondBytes.length).toBe(firstBytes.length);
+    expect(secondBytes).toBe(firstBytes); // full canonical-JSON byte equality, every station's evidence
   });
 
   // --- STATION 1: market data in (the REAL adapter sessions) -----------------
