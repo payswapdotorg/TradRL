@@ -65,11 +65,21 @@ describe('shell: the .tradrl-shell root (§1/§2)', () => {
     expect(serialized).not.toContain('data-theme="light"');
   });
 
-  it('carries the connection, render instant and target on the root (T042 pins preserved)', () => {
+  it('carries the connection, render instant and ACTIVE TARGET on the root (T042 pins preserved; the W-10b delegation fix)', () => {
     const serialized = render(stateAt([{ kind: 'connection-changed', at: T0 + 2, status: 'connected' }]));
     expect(serialized).toContain('data-connection="connected"');
     expect(serialized).toContain('data-rendered-at="1700000000040"');
-    expect(serialized).toContain('data-target="goal"'); // the default view: the selected section
+    // THE W-10b DELEGATION LAW: the root's active-target STATE MARKER is
+    // `data-active-target` — the root must NEVER carry a bare `data-target`
+    // (the delegated-navigation vocabulary of the affordance buttons):
+    // app/console.ts resolves `closest('[data-target]')` for navigation, and
+    // every element descends from the root — a root `data-target`
+    // intercepted EVERY click as a navigation and returned before any
+    // [data-action] branch could run (the J1 hard block: the onboarding
+    // wizard was unclickable, silently, with zero console errors).
+    expect(serialized).toContain('data-active-target="goal"'); // the default view: the selected section
+    const rootTag = serialized.match(/<div class="tradrl-shell console"[^>]*>/)?.[0] ?? '';
+    expect(rootTag).not.toContain('data-target=');
   });
 
   it('the shell view is pure data: identical (state, at, view) -> identical bytes', () => {
