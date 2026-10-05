@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/capability-provider",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The provider-neutral capability-provider interface (Work Order T045): the typed contract through which EXTERNAL capability providers (human experts, specialist firms, T046 arena adapters, T047 marketplace vendors) plug their capabilities into the platform — provider declarations (offered capability contracts in T017's language, MEASURED evidence per L16a, never profession labels), engagement envelopes (capability request -> provider quote -> engagement -> deliverable, with the verification contract frozen at request time so goalposts never move), the deliverable + verification contracts (typed outcome coverage, verdict = code not judgment, L20), the L18 local-import path (a verified capability artifact becomes a T017-consumable imported-artifact SkillRecord draft), and the T041 async-job projection (request envelopes ride the public API's jobs surface opaquely). Zero runtime dependencies; append-only chain-verified exchange ledger; no ambient clock; no ambient randomness — every id is content-addressed.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
