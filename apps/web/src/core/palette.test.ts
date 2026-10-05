@@ -181,6 +181,29 @@ describe('palette: the overlay + the affordance (§4.14)', () => {
     expect(bytes).toContain('Search');
     expect(bytes).toContain('⌘K');
   });
+
+  it('a no-match query renders the §4.12 teaching shape inside the dialog — NEVER a blank region (D3): the icon circle, the title, ONE sentence, exactly ONE Clear search action', () => {
+    const bytes = render(paletteOverlay({ query: 'zzzz', results: [], selected: 0, unread: 0 }));
+    expect(bytes).toContain('class="palette-empty"');
+    expect(bytes).toContain('role="status"');
+    expect(bytes).toContain('class="empty-circle"'); // the icon
+    expect(bytes).toContain('class="empty-title"');
+    expect(bytes).toContain('No matches');
+    expect(bytes).toContain('class="empty-sentence"');
+    expect(bytes).toContain('zzzz'); // the sentence names the query
+    expect(bytes).toContain('data-action="palette-clear"'); // the ONE action
+    expect(bytes).toContain('Clear search');
+    expect(bytes).not.toContain('palette-item'); // no stale rows beside the empty state
+  });
+
+  it('the overlay\'s input carries the live query as its value (the re-projected tree keeps the typed text — the W-14c query wiring)', () => {
+    const index = paletteIndex(populatedWorkspace(), capsulesOf);
+    const ranked = rankPalette(index, 'settings');
+    expect(ranked.some((entry) => entry.ref === 'nav:settings')).toBe(true);
+    const bytes = render(paletteOverlay({ query: 'settings', results: ranked, selected: 0, unread: 0 }));
+    expect(bytes).toContain('value="settings"'); // the input's value is the query
+    expect(bytes).toContain('data-palette-ref="nav:settings"'); // the ranked result renders
+  });
 });
 
 describe('onboarding: §4.13 — the three steps (charter copy, verbatim)', () => {
