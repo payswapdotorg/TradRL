@@ -17,12 +17,12 @@
 //      the last known world, never a blank.
 
 import { describe, expect, it } from 'vitest';
-import type { ConstraintSetStatement, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { ConstraintSetStatement, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
 import { systemNowMs } from '../core/clock';
 import { AvailabilityViolationError, CrossTenantRenderError, PolicyEnforcementError, WallClockReadError } from '../core/errors';
 import { assertVisible } from '../core/availability';
 import { openWorkspace, reduceAll, type WorkspaceEvent, type WorkspaceState } from '../core/workspace';
-import { capsuleFromOutcome } from '../core/evidence';
+import { capsuleFromOutcome, capsuleFromPostMortem } from '../core/evidence';
 import { WORKSPACE_SECTIONS } from '../core/sections';
 import { assertVerdictFaithful, jobResultSectionOf, predicatePhraseOf, renderConsoleModel, serializeConsoleModel, submissionVerdictBadgeOf, type VerdictBadge } from './model';
 import { defaultShellView } from './shell';
@@ -73,6 +73,23 @@ function knowledge(): ServedKnowledge {
     },
     status: 'active', supersededBy: null,
   } as unknown as ServedKnowledge;
+}
+
+/** The fixture post-mortem: attached to the fixture outcome (out-1), the demo seed's own shape (pmr:demo0001 -> out:demo0001). */
+function postMortem(): PostMortemRecord {
+  return {
+    postMortemId: 'pmr-1', ordinal: 1,
+    subject: { outcomeRecordRef: 'out-1', decisionRef: 'dec-1', intentRef: 'int-1', outcomeClass: 'adverse_gap' },
+    expected: { expectedQuantity: '10', expectedRealized: '1.5', tolerance: '0.25' },
+    happened: { disposition: 'filled', filledQuantity: '10', realizedOutcome: '1.75', feeTotal: '0.02', notionalTotal: '1000.00' },
+    gap: { quantityShortfall: null, realizedGap: '0.25', withinTolerance: false },
+    hypotheses: [
+      { class: 'decision', confidence: '0.8', detail: { dimension: 'timing' }, evidence: [{ kind: 'decision', ref: 'dec-1' }], note: 'the rebalance window was missed by the simulated venue lag' },
+    ],
+    evidence: [{ kind: 'shadow_outcome', ref: 'swo-1' }, { kind: 'shadow_session', ref: 'shs-1' }],
+    lineage: { tenant: 'tenant-a', project: 'proj-a', shadowSessionRef: 'shs-1', shadowOutcomeRef: 'swo-1', trajectoryRef: null, experiment: null },
+    asOf: T0 + 32, priorChainHead: '00000000',
+  };
 }
 
 /** A richly-populated workspace: project, org, job, outcome, knowledge, a degraded read. */
@@ -468,5 +485,101 @@ describe('render model: constraint and criterion bounds (§4.5 — the R5 fix, W
     expect(predicatePhraseOf({ kind: 'notEquals', value: false })).toBe('notEquals false');
     expect(predicatePhraseOf({ kind: 'oneOf', values: ['a', 'b'] })).toBe('oneOf a, b');
     expect(predicatePhraseOf({ kind: 'flag', expected: true })).toBe('flag expected true');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-2 (the W-24 fix): the post-mortems render in the OUTCOMES section.
+// The section's subtitle promises "Results and post-mortems", but only
+// the outcome rendered — the seeded post-mortem was reachable solely
+// via its evidence capsule and the Lessons section (4/6 Phase-2
+// personas partialed the "Review outcomes + post-mortems" project on it).
+// ---------------------------------------------------------------------------
+
+describe('render model: the OUTCOMES post-mortem cards (D-2 — the W-24 fix)', () => {
+  /** The Outcomes section of a workspace carrying the fixture outcome AND its post-mortem. */
+  function outcomesSectionBytes(extraEvents: readonly WorkspaceEvent[] = []): string {
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'post-mortems-loaded', at: T0 + 32, records: [postMortem()] },
+      ...extraEvents,
+      { kind: 'section-selected', at: T0 + 50, section: 'outcomes' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    return serializeConsoleModel(state, T0 + 50);
+  }
+
+  it('renders BOTH the outcome and its post-mortem in the Outcomes section (the subtitle\'s own promise)', () => {
+    const bytes = outcomesSectionBytes();
+    // the outcome still renders, decimals verbatim (unchanged)
+    expect(bytes).toContain('out-1');
+    expect(bytes).toContain('1000.00');
+    // the post-mortem renders in THIS section — RED on the unfixed tree (only Lessons/Evidence carried it)
+    expect(bytes).toContain('data-post-mortem="pmr-1"');                 // its own id, on its own card
+    expect(bytes).toContain('<span class="fact-label">outcome</span><span class="fact-value">out-1</span>'); // the outcome it attaches to
+    expect(bytes).toContain('adverse_gap');                              // the outcome class it records
+    expect(bytes).toContain('within tolerance');                         // the summary fields
+    expect(bytes).toContain('the rebalance window was missed by the simulated venue lag'); // the FINDING (hypothesis note, verbatim)
+    expect(bytes).toContain('confidence 0.8');                           // the hypothesis's confidence, verbatim decimal
+    // and the post-mortem's evidence capsule rides inline beside it (the J7 convention)
+    const capsule = capsuleFromPostMortem(SCOPE, postMortem());
+    expect(bytes).toContain(`data-capsule-row="${capsule.capsuleId}"`);
+  });
+
+  it('a workspace with NO post-mortems renders the Outcomes section exactly as before (the additive-only law)', () => {
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'section-selected', at: T0 + 50, section: 'outcomes' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('out-1');                          // the outcome renders
+    expect(bytes).not.toContain('No outcomes at this view instant'); // the section is not empty
+    expect(bytes).not.toContain('data-post-mortem');           // no post-mortem cards are fabricated
+  });
+
+  it('the empty state still teaches when there are NEITHER outcomes NOR post-mortems', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'section-selected', at: T0 + 50, section: 'outcomes' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('No outcomes at this view instant');
+    expect(bytes).not.toContain('data-post-mortem');
+  });
+
+  it('a post-mortem whose outcome is not in the projection still renders — its card names the attachment (nothing dropped silently)', () => {
+    // a workspace carrying ONLY the post-mortem (the outcome records never loaded)
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'post-mortems-loaded', at: T0 + 32, records: [postMortem()] },
+      { kind: 'section-selected', at: T0 + 50, section: 'outcomes' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-post-mortem="pmr-1"');
+    expect(bytes).toContain('<span class="fact-label">outcome</span><span class="fact-value">out-1</span>');
+    expect(bytes).not.toContain('No outcomes at this view instant'); // the section carries the post-mortem — not empty
+  });
+
+  it('the post-mortem respects the view-instant availability projection (L4 — nothing knowable before its asOf)', () => {
+    // view at T0+31: the outcome (asOf T0+30) is knowable, the post-mortem (asOf T0+32) is NOT
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'post-mortems-loaded', at: T0 + 32, records: [postMortem()] },
+      { kind: 'section-selected', at: T0 + 50, section: 'outcomes' },
+      { kind: 'view-tminus', at: T0 + 50, tMinusMs: 19 }, // viewAt = (T0 + 50) - 19 = T0 + 31
+    ]);
+    expect(viewAtOfState(state)).toBe(T0 + 31);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('out-1');                  // the outcome renders (knowable at T0+31)
+    expect(bytes).not.toContain('pmr-1');              // the post-mortem does NOT (it is in the state, past the view instant)
+    expect(bytes).not.toContain('data-post-mortem');
+    expect(bytes).not.toContain('the rebalance window was missed by the simulated venue lag');
+  });
+
+  it('L12 (defense in depth): a foreign-tenant post-mortem reaching the Outcomes render is the typed CrossTenantRenderError', () => {
+    const anchored = reduceAll(populatedWorkspace(), [
+      { kind: 'post-mortems-loaded', at: T0 + 32, records: [postMortem()] },
+      { kind: 'view-live', at: T0 + 60 },
+    ]);
+    const foreign = { ...anchored, postMortems: [{ ...postMortem(), lineage: { ...postMortem().lineage, tenant: 'tenant-b' } }] } as WorkspaceState;
+    expect(() => serializeConsoleModel({ ...foreign, selectedSection: 'outcomes' } as WorkspaceState, T0 + 60)).toThrow(CrossTenantRenderError);
   });
 });
