@@ -300,59 +300,6 @@
 }
 @media (min-width: 768px) { .drawer-backdrop { display: none !important; } }
 
-/* ---------------------------------------------------------------------------
-   §6 J12 THE TOUCH-TARGET FLOOR (the W-17b fix): at mobile widths
-   (<768px — the same breakpoint the drawer/header rule uses) every
-   interactive surface measures >= 44px in BOTH dimensions. The charter
-   defers to the platform standard here; its compact desktop paddings
-   (§2 nav py-2.5 px-3, the 36px ghost icon button) are law and stay
-   verbatim — the floor lives ONLY in this media query, so the desktop
-   layout is pixel-identical. Hit-area expansion, not a redesign: the
-   minimums stretch the element BOX (the painted pill/border grows
-   with it, the visual hierarchy is intact), and the previously INLINE
-   (`all: unset`) buttons get a flex/grid box at these widths because
-   min-height/min-width are inert on non-replaced inline boxes.
-   --------------------------------------------------------------------------- */
-@media (max-width: 767px) {
-  /* The drawer nav items (measured 37px tall) + the connection tile toggle. */
-  .nav-item { min-height: 44px; }
-  .connection-summary { min-height: 44px; }
-  /* The flex-box fix for the `all: unset` inline buttons: Retry
-     connection / export / guided-intro, the hero CTA, the inbox
-     toggles, the teaching-state actions, the two-step confirm pair,
-     the segmented controls (theme + launch steps), the Time Machine
-     mode + playback buttons, the wizard's Skip. */
-  .connection-retry, .hero-cta, .inbox-read-all, .row-action.notice-read-toggle,
-  .empty-action, .error-retry, .confirm-arm, .confirm-cancel, .confirm-go,
-  .tm-button, .segment, .tm-mode-btn, .onboarding-skip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 44px;
-    min-height: 44px;
-  }
-  /* The ghost icon-only buttons (Refresh, sheet close) — 36px by default. */
-  .icon-button { min-width: 44px; min-height: 44px; }
-  /* The styled scrubber: the whole range input is the touch surface. */
-  .tm-scrubber { min-height: 44px; }
-  /* The toast's manual dismiss — a grid box centers the × in the 44px square. */
-  .toast-close { display: grid; place-items: center; min-width: 44px; min-height: 44px; }
-  /* The inline evidence capsule chips + the palette surfaces. */
-  .capsule-badge { min-height: 44px; }
-  .palette-affordance { min-height: 44px; }
-  .palette-input { min-height: 44px; }
-  .palette-item { min-height: 44px; }
-  /* Labels-above form inputs + selects. */
-  .field-input { min-height: 44px; }
-  /* The interactive list rows + the accordion/timeline summaries. */
-  .list-row { min-height: 44px; }
-  details.list-row > summary { min-height: 44px; }
-  .timeline-row > summary { min-height: 44px; }
-  .error-technical > summary { display: flex; align-items: center; min-height: 44px; }
-  /* The wizard's Continue CTA (48px by charter — the floor pins it). */
-  .onboarding-cta { min-height: 44px; }
-}
-
 @keyframes tradrl-fade { from { opacity: 0; } to { opacity: 1; } }
 
 /* ---------------------------------------------------------------------------
@@ -1263,3 +1210,67 @@ details.list-row > summary::-webkit-details-marker { display: none; }
 .onboarding-dot.done { opacity: 0.75; }
 .onboarding-dot.active { width: 24px; height: 6px; background: var(--sidebar-primary); opacity: 1; }
 .onboarding-hidden { display: none; }
+
+/* ---------------------------------------------------------------------------
+   §6 J12 THE TOUCH-TARGET FLOOR (the W-17b fix, placement corrected by
+   W-18b): at mobile widths (<768px — the same breakpoint the drawer/
+   header rule uses) every interactive surface measures >= 44px in BOTH
+   dimensions. The charter defers to the platform standard here; its
+   compact desktop paddings (§2 nav py-2.5 px-3, the 36px ghost icon
+   button) are law and stay verbatim — the floor lives ONLY in this
+   media query, so the desktop layout is pixel-identical. Hit-area
+   expansion, not a redesign: the minimums stretch the element BOX (the
+   painted pill/border grows with it, the visual hierarchy is intact),
+   and the previously INLINE (`all: unset`) buttons get a flex/grid box
+   at these widths because min-height/min-width are inert on
+   non-replaced inline boxes.
+
+   THE ORDER LAW (why this block is the LAST thing in the file): `all`
+   is a shorthand that implicitly resets EVERY property — min-height,
+   min-width, display included. A base rule carrying `all: unset` at
+   the same specificity beats a floor rule that appears EARLIER in the
+   file, media query or not. W-17b first placed this block mid-file
+   (before the §4 base rules), and the live browser silently kept the
+   29–34px controls while every CSS-as-data test stayed green; the
+   block must come after every `all: unset` rule — pinned by
+   touch-targets.test.ts ("no `all: unset` after the floor block").
+   --------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  /* The drawer nav items (measured 37px tall) + the connection tile toggle. */
+  .nav-item { min-height: 44px; }
+  .connection-summary { min-height: 44px; }
+  /* The flex-box fix for the `all: unset` inline buttons: Retry
+     connection / export / guided-intro, the hero CTA, the inbox
+     toggles, the teaching-state actions, the two-step confirm pair,
+     the segmented controls (theme + launch steps), the Time Machine
+     mode + playback buttons, the wizard's Skip. */
+  .connection-retry, .hero-cta, .inbox-read-all, .row-action.notice-read-toggle,
+  .empty-action, .error-retry, .confirm-arm, .confirm-cancel, .confirm-go,
+  .tm-button, .segment, .tm-mode-btn, .onboarding-skip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* The ghost icon-only buttons (Refresh, sheet close) — 36px by default. */
+  .icon-button { min-width: 44px; min-height: 44px; }
+  /* The styled scrubber: the whole range input is the touch surface. */
+  .tm-scrubber { min-height: 44px; }
+  /* The toast's manual dismiss — a grid box centers the × in the 44px square. */
+  .toast-close { display: grid; place-items: center; min-width: 44px; min-height: 44px; }
+  /* The inline evidence capsule chips + the palette surfaces. */
+  .capsule-badge { min-height: 44px; }
+  .palette-affordance { min-height: 44px; }
+  .palette-input { min-height: 44px; }
+  .palette-item { min-height: 44px; }
+  /* Labels-above form inputs + selects. */
+  .field-input { min-height: 44px; }
+  /* The interactive list rows + the accordion/timeline summaries. */
+  .list-row { min-height: 44px; }
+  details.list-row > summary { min-height: 44px; }
+  .timeline-row > summary { min-height: 44px; }
+  .error-technical > summary { display: flex; align-items: center; min-height: 44px; }
+  /* The wizard's Continue CTA (48px by charter — the floor pins it). */
+  .onboarding-cta { min-height: 44px; }
+}

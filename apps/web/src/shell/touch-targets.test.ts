@@ -177,6 +177,25 @@ describe('touch targets: the 44px floor at mobile widths (J12)', () => {
     expect(technical.length).toBeGreaterThan(0);
     expect(technical.some((rule) => rule.body.includes('align-items: center'))).toBe(true);
   });
+
+  it('the floor block is ordered AFTER every `all: unset` rule (the cascade law — the W-18b correction)', () => {
+    // `all` is a shorthand that implicitly resets EVERY property —
+    // min-height, min-width, display included. A base rule carrying
+    // `all: unset` at the same specificity beats a floor rule placed
+    // EARLIER in the file, media query or not: W-17b's mid-file
+    // placement kept the tm buttons at 29-34px in the live browser
+    // while every CSS-as-data assertion here stayed green. The floor
+    // block must be the LAST media query in the file, with NO
+    // `all: unset` rule after it.
+    // The check runs on the COMMENT-STRIPPED stylesheet: the floor
+    // block's own header documents the trap in prose ("all: unset"),
+    // and comments never participate in the cascade.
+    const strippedCss = SHELL_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+    const floorStart = strippedCss.lastIndexOf('@media (max-width: 767px)');
+    expect(floorStart).toBeGreaterThan(-1);
+    expect(strippedCss.indexOf('all: unset', floorStart), 'no `all: unset` rule may follow the floor block').toBe(-1);
+    expect(strippedCss.indexOf('@media', floorStart + 1), 'the floor block is the last media query').toBe(-1);
+  });
 });
 
 describe('touch targets: the floor is mobile-scoped (the desktop law is untouched)', () => {
