@@ -6,3 +6,4 @@ packages:
   - bodies/*
   - research/*
   - examples/*
+  - benchmarks/*
