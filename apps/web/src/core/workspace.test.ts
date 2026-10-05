@@ -179,6 +179,57 @@ describe('workspace: transitions', () => {
     expect(() => reduceWorkspace(adopted, { kind: 'project-adopted', at: T0 + 5, projectId: '' })).toThrow(/project id/);
   });
 
+  it('project-adopted SUPERSEDES a loaded project (the demo-boot launch — the deployed shell boots scoped to a real project, the launch adopts the created one)', () => {
+    // THE LIVE J03 FINDING (W-12a, the production catalog): the deployed
+    // shell boots scoped to prj-demo-console (TRADRL_CONSOLE_PROJECT_ID)
+    // and the boot read cadence LOADS it; the launch's POST /v1/projects
+    // 201 then adopts the CREATED project — the old law refused exactly
+    // that ("the workspace already adopted project …; adopting … is a
+    // typed input error") and the primary journey died at the error
+    // card. The new law: the launch bridge adopts the created project
+    // wherever the workspace was — the prior project's records LEAVE
+    // the sections (the workspace is one project's world, R36/L12; the
+    // append-only chain keeps everything).
+    let state = openWorkspace({ tenantId: 'tenant-a', projectId: 'proj-a' }, T0);
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 1, project: projectRecord({ lifecycle: { projectId: 'proj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:demo' } }) });
+    state = reduceWorkspace(state, { kind: 'org-snapshot', at: T0 + 2, snapshot: orgSnapshot() });
+    state = reduceWorkspace(state, { kind: 'outcomes-loaded', at: T0 + 3, records: [outcomeRecord()] });
+    state = reduceWorkspace(state, { kind: 'knowledge-loaded', at: T0 + 4, records: [knowledgeRecord()] });
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 5, job: jobRecord('complete') });
+    expect(state.project?.id).toBe('proj-a'); // the deployed boot's loaded world
+
+    const adopted = reduceWorkspace(state, { kind: 'project-adopted', at: T0 + 6, projectId: 'proj-launched' });
+    expect(adopted.scope.projectId).toBe('proj-launched'); // the workspace FOLLOWS the launch
+    expect(adopted.project).toBeNull();                    // the prior project's records left the sections…
+    expect(adopted.goal).toBeNull();
+    expect(adopted.constraintSet).toBeNull();
+    expect(adopted.orgSnapshots).toHaveLength(0);
+    expect(adopted.outcomes).toHaveLength(0);
+    expect(adopted.knowledge).toHaveLength(0);
+    expect(adopted.jobs).toHaveLength(0);
+    expect(adopted.postMortems).toHaveLength(0);
+    expect(adopted.submissions).toHaveLength(0);
+    expect(adopted.history.length).toBe(state.history.length + 1); // the append-only chain keeps everything
+    expect(adopted.launch).toEqual(state.launch);                  // the launch slice survives its own adoption
+    expect(adopted.inbox.notices.length).toBe(state.inbox.notices.length); // the session's folded notices stay (append-only history, never un-happened)
+
+    // …and the L12 gate now treats the PRIOR project's records as foreign (a typed error, never a re-ingest)
+    expect(() => reduceWorkspace(adopted, { kind: 'project-loaded', at: T0 + 7, project: projectRecord({ lifecycle: { projectId: 'proj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:demo' } }) })).toThrow(CrossTenantRenderError);
+    expect(() => reduceWorkspace(adopted, { kind: 'job-updated', at: T0 + 8, job: jobRecord('running') })).toThrow(CrossTenantRenderError);
+
+    // the created project + its kickoff job load into the adopted scope (the submit path's own dispatches)
+    let next = reduceWorkspace(adopted, { kind: 'project-loaded', at: T0 + 9, project: projectRecord({ id: 'proj-launched', lifecycle: { projectId: 'proj-launched', status: 'draft', acceptanceCriteriaId: null, organizationRef: null }, lineage: { projectId: 'proj-launched', createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1 } }) });
+    next = reduceWorkspace(next, { kind: 'job-updated', at: T0 + 10, job: { ...jobRecord('submitted'), project: 'proj-launched' } });
+    expect(next.project?.id).toBe('proj-launched');
+    expect(next.jobs).toHaveLength(1);
+    expect(next.jobs[0]?.status).toBe('submitted');
+
+    // re-adopting the NOW-LOADED created project is idempotent (no record churn)
+    const reAdopted = reduceWorkspace(next, { kind: 'project-adopted', at: T0 + 11, projectId: 'proj-launched' });
+    expect(reAdopted.project?.id).toBe('proj-launched');
+    expect(reAdopted.jobs).toHaveLength(1);
+  });
+
   it('launch events drive the launch slice (draft -> submitted -> progress -> completed)', () => {
     let state = openWorkspace(SCOPE, T0);
     state = reduceWorkspace(state, { kind: 'launch-draft-started', at: T0 + 1, draft: { name: 'x' } as never });
