@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/research-public-evaluation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The public-evidence publication layer (Work Order T049, research/): the platform's PUBLIC evaluation format — content-addressed, provenance-carrying (L9: suite, evaluator, split plan, material source, search binding, subject artifact addresses), point-in-time (L4: as_of bound to the evidence instant), tenant-scoped (L12) published evaluation records compiled from the benchmark machinery's measurement records. The PUBLICATION GATE owns what gets published and what NEVER does: chain-of-thought and tenant data are refused by closed key-vocabulary scans over operator attachments AND the compiled record (fail-closed, typed); claims are DERIVED from the measurement (never caller-supplied) and restricted to the suite's public axes. Every published claim carries its RE-VERIFICATION RECIPE — the complete input manifest (content addresses) plus the expected measurement id and byte digest — and reverifyPublishedRecord re-runs the benchmark machinery over the retained sources and refuses on any byte divergence (a published benchmark result is re-runnable to the same bytes). The publication log is append-only and chain-verified (L11): one point-in-time claim per (suite, subject, as-of); identical bytes replay; different bytes for the same claim key are refused (duplicate_publication).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
