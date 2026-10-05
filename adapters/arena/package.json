@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/adapter-arena",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Arena human-expertise capability-provider adapter: declared source descriptor (category human), the declared Arena capability catalog in T045's measured-evidence language, documented Arena wire schemas (catalog, quotes, deliveries), mapping tables with declared instant policies, the L17 optional-path outbound routing (a platform capability request translated onto the documented Arena wire frame), the inbound guard transport (schema validation, dedup, verification-contract pinning, payload digest pinning), the session lifecycle over an injected transport port, declarative rate quotas and the T041 job projection (spec/ADAPTERS.md Human expertise, Work Order T046). Zero runtime dependencies; Arena wire semantics live here and nowhere else (L2/L13); Arena is OPTIONAL — the native learning loop works without it (L1/L17).",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
