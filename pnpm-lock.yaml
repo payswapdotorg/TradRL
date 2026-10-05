@@ -5,6 +5,8 @@ settings:
   excludeLinksFromLockfile: false
 
 importers:
+  adapters/arena: {}
+
   packages/capability-provider: {}
 
   services/autonomous-learning:

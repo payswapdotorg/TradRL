@@ -1223,12 +1223,14 @@
       "write_surface": [
         "adapters/arena/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T046-arena-adapter",
-      "pr": null,
-      "merged_sha": null,
+      "pr": 30,
+      "merged_sha": "0a96429d17c8e3139bcf4909f14791e32b9d3b3c",
       "evidence": [
-        "D-044 wave-35 dispatch from main 2e6db7f (deps merged; frozen write surface per WORK-ITEMS; W-8a)"
+        "PR #30 squash-merged (worker W-8a, audit-then-complete of the dead session's 40-file WIP; own 88/88 (8 files); full at branch 7257+1skip/502 = floor 7169+1skip/494 +88/+8, zero regressions; typecheck 0)",
+        "The adapter implements the consumption side of T045's capability-provider interface; the interop headline: adapter-minted envelopes drive the REAL T045 exchange end-to-end (declare -> request -> quote -> engage -> deliver -> verify -> the L18 import), ids byte-identical between mirror and REAL mints + the REAL jobs-route ride + the REAL T017 createSkillRecord acceptance",
+        "Five real dead-session defects fixed (the suite that never collected: session.test used fixtureQuote without import \u2014 19 tests had never run; hand-cast quoteIds forking the announced engagement's content-addressed id; the neutrality trip-wires lacked the canonical-overlap filter; routing.test conflated two failure axes; a scripted send-failure ordinal off by one)"
       ],
       "depends": [
         "T041",
