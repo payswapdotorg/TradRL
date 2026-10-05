@@ -1223,11 +1223,13 @@
       "write_surface": [
         "adapters/arena/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T046-arena-adapter",
       "pr": null,
       "merged_sha": null,
-      "evidence": [],
+      "evidence": [
+        "D-044 wave-35 dispatch from main 2e6db7f (deps merged; frozen write surface per WORK-ITEMS; W-8a)"
+      ],
       "depends": [
         "T041",
         "T045"
@@ -1245,11 +1247,13 @@
         "services/marketplace/",
         "packages/entitlements/"
       ],
-      "status": "blocked",
-      "branch": null,
+      "status": "in_progress",
+      "branch": "work/T047-marketplace",
       "pr": null,
       "merged_sha": null,
-      "evidence": [],
+      "evidence": [
+        "D-044 wave-35 dispatch from main 2e6db7f (deps merged; frozen write surface per WORK-ITEMS; W-8b)"
+      ],
       "depends": [
         "T017",
         "T034",
@@ -1273,12 +1277,15 @@
         "examples/end-to-end-trading/",
         "tests/end-to-end-trading/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T048-e2e-reference",
-      "pr": null,
-      "merged_sha": null,
+      "pr": 28,
+      "merged_sha": "2e6db7f36d42d28a61b846cce6d22d2933084d7d",
       "evidence": [
-        "D-027 wave-27 dispatch from main 1a34b8a; deps T018+T024+T025+T027+T030+T037+T038+T040 all merged; two root-glob lines granted (pnpm-workspace examples/*, tsconfig examples/*/src)"
+        "PR #28 squash-merged (worker W-5a, audit-then-complete of both dead attempts \u2014 attempt 2 a strict refinement of attempt 1, nothing unique lost; own 47/47 (4 files: slice 21, negative-paths 11, broken-links 8, lineage 7); full 6994+1skip/484 at branch = floor+47, zero regressions; typecheck 0)",
+        "The three work-order-mandated test families the dead session never wrote, now delivered: broken-links (forged quartet refused at world load, L4 window guard invalid_state, fabricated event, lineage_gap, content-derived decision identity, shadow invalid_type fail-closed); lineage (outcome->intent->goal-e2e-slice walk, orderClock > decisionAsOf L16, tenant on every record L12); determinism (two runs -> one digest + byte-identical canonical JSON) + SliceReport.lineage + buildSliceShadowSession seam + gateway audit-trail carrier",
+        "Root exception applied exactly as granted (pnpm-workspace.yaml - examples/*; tsconfig include); the example ships no package.json (zero lockfile impact; packet's package.json shape superseded \u2014 tests import via relative paths, D-003/D-004 holds)",
+        "Typed errors named: duplicate_decision, policy_gate, shadow_mode, authority_grant (expired grant, Default-Deny), intent_validation, decision_not_approved, research_from_the_future, quorum-unmet, constraint_refused, tenant_mismatch, fidelity_claim_dishonest"
       ],
       "depends": [
         "T018",
@@ -1304,11 +1311,13 @@
         "benchmarks/",
         "research/public-evaluation/"
       ],
-      "status": "blocked",
+      "status": "ready",
       "branch": null,
       "pr": null,
       "merged_sha": null,
-      "evidence": [],
+      "evidence": [
+        "D-044: ready (deps T028/T032/T035/T048 all merged); holds for the next free lane (max-3 with the Lead's W-7b boot-path fix)"
+      ],
       "depends": [
         "T028",
         "T032",
