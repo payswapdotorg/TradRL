@@ -159,4 +159,34 @@ describe('boot path: the FULL apps/web source graph through the REAL loadModuleG
     const app = (await loadModuleGraph('./src/app/console.ts', diskBindings())) as Record<string, unknown>;
     expect(typeof app.bootConsole).toBe('function');
   });
+
+  it('the app sources carry NO call-site or constructor type arguments (they survive stripping as comparison garbage and throw at runtime)', () => {
+    // The erasable subset allows generics on DECLARATIONS only. A call-site
+    // `request<Page<X>>(...)` or a constructor `new Map<K, V>()` is NOT
+    // erased by the stripper — it survives as `request < Page < X >> (...)`,
+    // which is valid JS (comparisons) and therefore passes every compile
+    // pin, then throws ReferenceError at RUNTIME. The real-browser proof
+    // exposed exactly this class (the `Page is not defined` degradation);
+    // this pin scans the STRIPPED output (type-land is already gone there)
+    // so any survivor is real runtime garbage.
+    // `name<Type>(` / `name<Outer<Inner>>(` — an identifier, an angle-bracket
+    // type-argument shape (UpperCamelCase type names per the house style, no
+    // operators inside — comparison chains like `a < b && c > d(e)` cannot
+    // match), then the call paren. The closing `>` MUST be allowed before the
+    // paren (the obvious first draft `name<[^<>()\n]*\(` excludes it and can
+    // never match anything — a false green this pin only survived because of).
+    const callSiteGeneric = /\b[A-Za-z_$][A-Za-z0-9_$]*\s*<\s*[A-Z][A-Za-z0-9_$]*[A-Za-z0-9_$<>,.\s]*>\s*\(/;
+    const newGenericType = /\bnew\s+[A-Za-z_$][A-Za-z0-9_$]*\s*<\s*[A-Z]/;
+    for (const module of allSourceModules()) {
+      const stripped = stripTypes(readFileSync(join(APPS_WEB, module), 'utf8'));
+      for (const line of stripped.split('\n')) {
+        if (callSiteGeneric.test(line)) {
+          expect.fail(`${module} (stripped): call-site type argument survived: ${line.trim()}`);
+        }
+        if (newGenericType.test(line)) {
+          expect.fail(`${module} (stripped): constructor type argument survived: ${line.trim()}`);
+        }
+      }
+    }
+  });
 });
