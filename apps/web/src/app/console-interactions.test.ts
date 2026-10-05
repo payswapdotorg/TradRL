@@ -56,7 +56,7 @@ import { bootConsole } from './console';
 import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
 import type { JobRecord, OutcomeRecord } from '../api/contracts';
-import { viewAtOf } from '../core/workspace';
+import { verifyWorkspaceExport, viewAtOf } from '../core/workspace';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -604,7 +604,7 @@ describe('executed boot: the delegated action layer', () => {
     expect(countByData(rig.root, 'data-unread', '1')).toBe(0); // the badge is gone
   });
 
-  it('export-workspace builds the data: download anchor and clicks it', async () => {
+  it('export-workspace builds the data: download anchor, clicks it, and carries the R9 v2 CHAIN export (W-21 seam)', async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' });
     clickNav(rig, 'settings');
     const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
@@ -614,9 +614,25 @@ describe('executed boot: the delegated action layer', () => {
     const anchors = rig.doc.created.filter((element) => element.tagName === 'A');
     expect(anchors.length).toBe(anchorsBefore + 1); // one anchor was created
     const anchor = anchors[anchors.length - 1] as FakeElement;
-    expect(anchor.getAttribute('href')).toMatch(/^data:application\/json;charset=utf-8,/);
+    const href = anchor.getAttribute('href') ?? '';
+    expect(href).toMatch(/^data:application\/json;charset=utf-8,/);
     expect(anchor.getAttribute('download')).toBe('tradrl-workspace-prj-a.json');
     expect(anchor.clickCount).toBe(1); // the download fired
+    // W-21: the download's payload is the R9 v2 CHAIN export (sha-256,
+    // self-describing, complete), not the old v1 workspace dump
+    const prefix = 'data:application/json;charset=utf-8,';
+    const doc: unknown = JSON.parse(decodeURIComponent(href.slice(prefix.length)));
+    const record = doc as Record<string, unknown>;
+    expect(record.format).toBe('tradrl-workspace-export');
+    expect(record.formatVersion).toBe(2);
+    const chain = record.chain as Record<string, unknown>;
+    expect(chain.algorithm).toBe('sha-256');
+    expect(chain.version).toBe(2);
+    const manifest = record.manifest as Record<string, unknown>;
+    expect(Array.isArray(manifest.included)).toBe(true);
+    expect(manifest.included).toContain('evidence.capsules'); // the completeness promise, declared
+    // ...and the emitted bytes verify end-to-end with core's own file-alone verifier
+    expect(verifyWorkspaceExport(doc)).toEqual({ ok: true });
   });
 
   it('the primary flow branches: launch-step-* navigates, confirm-arm-launch arms, confirm-launch submits (draft seeded via the sanctioned dispatch path)', async () => {
