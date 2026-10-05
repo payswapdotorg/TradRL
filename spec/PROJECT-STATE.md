@@ -5,7 +5,7 @@
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
 | Program phase | wave-37: T050 production reliability/performance/release MERGED via PR #35 (W-11b audit-then-complete of the dead W-11; floor re-derived empirically: 7706+1skip/529 = 7667+1skip/525 +39/+4 exactly, zero regressions) — THE 52-TASK PROGRAM IS COMPLETE (52/52). Live J-catalog on the 07:24 UTC production deploy (dpl_FUJEcMRetRb3ad4KS2gK4NHnaQya, main @ 14357ae): J01/J02/J04/J07/J10/J11 PASS; J03/J05/J06/J08/J09 RED with root causes pinned (launch workspace-adoption typed error; the scheduler seam never injected at browser boot; toast close/read-toggle unwired; palette input unwired; the offline connection state unreachable); J12 pending. Fix wave W-14a/b/c dispatching (T051-surface follow-ups, the PR #32/#34 precedent); then the v0.1.0 release cut (redeploy + smoke 7/7 + full J-catalog + the release record) |
-| Current authorized Work Order | none — the program is complete (52/52); T051-surface fix wave authorized: W-14a (J03 launch adoption), W-14b (J05/J06 scheduler seam + toast + read toggle), W-14c (J08 palette input + J09 offline state) — apps/web only, the PR #32/#34 precedent |
+| Current authorized Work Order | none — the program is complete (52/52); the console follow-up fix wave is authorized (W-15a the launch adoption fix, W-15b the scheduler seam + toast + read-toggle fixes, W-15c the palette input + offline-state fixes) — apps/web console surface only, the established follow-up precedent |
 | Active workers | 3 |
 | In-flight | W-14a/W-14b/W-14c (apps/web fix wave, parallel, disjoint); then Lead: merge + redeploy + full J1-J12 re-run + fill RELEASE-NOTES-v0.1.0.md <at cut> fields (D-052) |
 | Blocked | none |
