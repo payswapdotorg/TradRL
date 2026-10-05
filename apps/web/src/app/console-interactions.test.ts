@@ -67,6 +67,7 @@ const T0 = 1_700_000_000_000;
 /** A text node (the projector's only other product). */
 class FakeText {
   readonly nodeType = 3 as const;
+  parent: FakeElement | null = null;
   constructor(readonly text: string) {}
 }
 
