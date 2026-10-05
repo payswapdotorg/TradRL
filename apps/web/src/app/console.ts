@@ -143,6 +143,8 @@ export interface FieldEventTarget extends ClickTarget {
 /** A delegated launch-field event (the J3 wiring): input/change/focusout on [data-launch-field] inputs. */
 export interface DelegatedFieldEvent {
   readonly target: FieldEventTarget | null;
+  /** The element the focus is moving TO (focusout only; null when the focus leaves to nothing — the browser binding provides it). */
+  readonly relatedTarget?: unknown;
 }
 
 /** The minimal document surface the mount needs (DOM APIs only). */
@@ -354,6 +356,25 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       if (view.touchedFields.includes(field)) return;
       view = { ...view, touchedFields: [...view.touchedFields, field] };
     };
+    /** The focus-restore key of an element the browser was moving focus TO (its delegated-vocabulary identity), null when it carries none. */
+    const focusKeyOf = (element: unknown): { readonly attr: string; readonly value: string } | null => {
+      const candidate = element as FieldEventTarget | null | undefined;
+      if (candidate === null || candidate === undefined || typeof candidate.getAttribute !== 'function') return null;
+      for (const attr of ['data-launch-field', 'data-action', 'data-target']) {
+        const value = candidate.getAttribute(attr);
+        if (value !== null) return { attr, value };
+      }
+      return null;
+    };
+    /** Re-focus the re-projected node matching a focus key (the tree was rebuilt under a pending focus move — best effort). */
+    const restoreFocusByKey = (key: { readonly attr: string; readonly value: string } | null): void => {
+      if (key === null || document.querySelectorAll === undefined) return;
+      for (const candidate of document.querySelectorAll(`[${key.attr}="${key.value}"]`)) {
+        const element = candidate as { focus(): void };
+        element.focus();
+        return;
+      }
+    };
     const render = (): void => {
       // The drawer state ALSO lands on the persistent host element so
       // the slide transition survives between renders (the projected
@@ -474,17 +495,40 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     document.addEventListener('change', (event) => {
       const entry = launchFieldOf(event.target);
       if (entry === null) return;
+      // Buffer ONLY — never a flush here: the browser fires `change`
+      // on the field being LEFT (before focusout) whenever its value
+      // changed, and an immediate flush would re-render UNDER the
+      // pending focus move, stranding the destination input on a
+      // detached node (the lost-second-field defect — the same class
+      // the focusout guard below closes). The flush belongs to the
+      // focusout (which sees where the focus is going) or to the next
+      // action click; a select committed by keyboard commits at the
+      // same places.
       view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } };
-      if (!pointerDown) flushLaunchEdits(); // a select committed by keyboard (no click in flight) flushes at once
     });
     document.addEventListener('focusout', (event) => {
       const entry = launchFieldOf(event.target);
       if (entry === null) return;
       view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } };
       touchLaunchField(entry.field); // §4.11: inline validation renders after blur
-      if (!pointerDown) {
-        flushLaunchEdits(); // a tab-blur commits + renders now; a click-blur defers to the click's own flush
+      // A focus move WITHIN the form (Tab between fields, a
+      // programmatic focus into the next input) must NOT re-render:
+      // the full re-projection replaces the input mid-focus-move,
+      // stranding the browser's pending focus on a detached node —
+      // the next field would go dead and every edit typed into it
+      // would land on a detached node, silently lost (the
+      // lost-second-field defect, proven live in the browser proof:
+      // objective/riskBudget/venues all dropped). The flush + the
+      // §4.11 validation render happen when the focus LEAVES the
+      // form (and on the next action — the click's own flush).
+      const related = (event as Partial<{ readonly relatedTarget: unknown }>).relatedTarget;
+      const relatedElement = related as FieldEventTarget | null | undefined;
+      const relatedIsLaunchField = relatedElement !== null && relatedElement !== undefined && typeof relatedElement.getAttribute === 'function' && relatedElement.getAttribute('data-launch-field') !== null;
+      if (!pointerDown && !relatedIsLaunchField) {
+        const key = focusKeyOf(related);
+        flushLaunchEdits(); // a blur out of the form commits + renders now; a click-blur defers to the click's own flush
         render();
+        restoreFocusByKey(key); // the tree was rebuilt under the pending focus move
       }
     });
 

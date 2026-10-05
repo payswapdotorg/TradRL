@@ -165,6 +165,8 @@ class FakeDocument {
   /** Every element ever created (the export-workspace anchor is found here). */
   readonly created: FakeElement[] = [];
   readonly activeElement: FakeElement | null = null;
+  /** The harness's focus tracker (the browser's focus semantics — typeField/blurField move it like the real thing). */
+  focused: FakeElement | null = null;
 
   createElement(tagName: string): FakeElement {
     const element = new FakeElement(tagName);
@@ -183,7 +185,7 @@ class FakeDocument {
   }
 
   /** Dispatch one event to every listener of its type (the browser's capture order is irrelevant: one console). */
-  fire(type: string, event: { target: FakeElement | null; key?: string; ctrlKey?: boolean; metaKey?: boolean }): void {
+  fire(type: string, event: { target: FakeElement | null; relatedTarget?: FakeElement | null; key?: string; ctrlKey?: boolean; metaKey?: boolean }): void {
     for (const listener of [...(this.listeners.get(type) ?? [])]) listener(event as unknown as Record<string, unknown>);
   }
 
@@ -363,19 +365,25 @@ function clickNav(rig: Rig, target: string): void {
   click(rig, item);
 }
 
-/** Type into a launch field (the browser's input event; the live value rides the DOM property). */
+/** Type into a launch field (the browser's semantics: the focus MOVES into the field first — a focusout fires on the previously focused launch field with relatedTarget = this field — then the input event; the live value rides the DOM property). */
 function typeField(rig: Rig, field: string, value: string): void {
   const input = findByData(rig.root, 'data-launch-field', field);
   if (input === null) throw new Error(`no launch field ${field} in the current tree`);
+  const prior = rig.doc.focused;
+  if (prior !== null && prior.getAttribute('data-launch-field') !== null) {
+    rig.doc.fire('focusout', { target: prior, relatedTarget: input }); // the inter-field focus move (never a re-render — the form stays live)
+  }
+  rig.doc.focused = input;
   input.value = value;
   rig.doc.fire('input', { target: input });
 }
 
-/** Blur a launch field (the browser's focusout event — §4.11's inline-validation trigger). */
+/** Blur a launch field (the browser's focusout with the focus leaving the form — §4.11's inline-validation trigger). */
 function blurField(rig: Rig, field: string): void {
   const input = findByData(rig.root, 'data-launch-field', field);
   if (input === null) throw new Error(`no launch field ${field} in the current tree`);
-  rig.doc.fire('focusout', { target: input });
+  rig.doc.focused = null;
+  rig.doc.fire('focusout', { target: input, relatedTarget: null });
 }
 
 /** Click the first [data-action] affordance of the current tree. */
@@ -703,6 +711,33 @@ describe('executed boot: J3 — the primary flow (the launch entry + the wired f
     expect(rig.handle.state().launch.draft).toBeNull();
     expect(findByData(rig.root, 'data-launch-idle', 'true')).not.toBeNull();
     expect(findByData(rig.root, 'data-action', 'launch-start')).not.toBeNull();
+  });
+
+  it('an inter-field focus move never re-renders (the lost-second-field defect, proven live in a real browser): every typed edit survives', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    // THE DEFECT (found by the real-browser proof): typing into the
+    // SECOND field of a step moves the browser's focus into it — a
+    // focusout fires on the first field. A flush+re-render on that
+    // move re-projects the tree UNDER the pending focus: the browser
+    // strands its focus on a detached node and every keystroke into
+    // the new field lands on a dead node, silently lost (objective /
+    // riskBudget / venues all dropped). The fix: a focus move whose
+    // relatedTarget is another launch field NEVER re-renders.
+    const objectiveNode = findByData(rig.root, 'data-launch-field', 'objective');
+    if (objectiveNode === null) throw new Error('the objective field is missing before typing');
+    typeField(rig, 'name', 'Momentum scout'); // focuses name
+    typeField(rig, 'objective', 'Find and keep an edge.'); // the inter-field move: focusout(name, relatedTarget: objective)
+    expect(elementsOf(rig.root)).toContain(objectiveNode); // the SAME live node — no re-projection under the focus move
+    expect(rig.handle.state().launch.draft?.name).toBe(''); // nothing flushed yet — the buffer is the live form
+    // a blur OUT of the form (relatedTarget null) still commits + renders (§4.11):
+    typeField(rig, 'name', 'Momentum scout 2');
+    blurField(rig, 'name');
+    expect(rig.handle.state().launch.draft?.name).toBe('Momentum scout 2');
+    clickAction(rig, 'launch-step-review');
+    expect(rig.handle.state().launch.draft?.name).toBe('Momentum scout 2'); // BOTH edits carried
+    expect(rig.handle.state().launch.draft?.objective).toBe('Find and keep an edge.');
   });
 
   it('the async progress renders submitted -> running -> complete through the poll cadence (the launchpad boots the primary flow, the demo backing animates it)', async () => {
