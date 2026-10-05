@@ -5,6 +5,8 @@ settings:
   excludeLinksFromLockfile: false
 
 importers:
+  packages/capability-provider: {}
+
   services/autonomous-learning:
     dependencies: {}
 

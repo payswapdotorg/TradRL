@@ -1,1400 +1,1404 @@
 {
- "schema_version": 1,
- "program": "TradRL",
- "updated_at": "2026-10-05T01:15:00Z",
- "policies": {
-  "max_concurrent_work_orders": 3,
-  "allowed_statuses": [
-   "blocked",
-   "ready",
-   "in_progress",
-   "in_review",
-   "merged"
+  "schema_version": 1,
+  "program": "TradRL",
+  "updated_at": "2026-10-05T01:15:00Z",
+  "policies": {
+    "max_concurrent_work_orders": 3,
+    "allowed_statuses": [
+      "blocked",
+      "ready",
+      "in_progress",
+      "in_review",
+      "merged"
+    ],
+    "merge_method": "squash",
+    "branch_prefix": "work/"
+  },
+  "items": [
+    {
+      "id": "T001",
+      "title": "Repository foundation, governance, CI, test harness, package boundaries",
+      "deps": [],
+      "write_surface": [
+        "root",
+        "apps/",
+        "packages/",
+        "services/",
+        "adapters/",
+        "scripts/",
+        ".github/"
+      ],
+      "status": "merged",
+      "branch": "work/T001-repository-foundation",
+      "pr": 1,
+      "merged_sha": "c0e4e47ae4898e341448a0aade939202ca24aa25",
+      "evidence": [
+        "PR #1 squash-merged at c0e4e47ae4898e341448a0aade939202ca24aa25 (dispatch base 7e4a24d, head 53ecec2)",
+        "GitHub Actions run 36301049674 (ci): success \u2014 typecheck, vitest 19/19, program:check valid, governance passed",
+        "Local verification: pnpm verify green before push (tsc clean, 19/19 tests, program state valid, governance passed)"
+      ]
+    },
+    {
+      "id": "T002",
+      "title": "Canonical domain contracts",
+      "deps": [
+        "T001"
+      ],
+      "write_surface": [
+        "packages/domain-core/",
+        "contracts/domain/"
+      ],
+      "status": "merged",
+      "branch": "work/T002-domain-contracts",
+      "pr": 2,
+      "merged_sha": "4b6bd2595d",
+      "evidence": [
+        "PR #2 squash-merged at 4b6bd2595d (base 8ccab08, head f0b0783); CI success",
+        "Tech Lead verification in isolated worktree at f0b0783: tsc clean, 133/133 tests, program valid, governance passed; write surface compliant (packages/domain-core/, contracts/domain/ only)",
+        "14 domain concepts with executable ConstraintSet evaluator (fail-closed), branded ids, 11 machine-validated contract docs"
+      ],
+      "depends": [
+        "T001"
+      ]
+    },
+    {
+      "id": "T003",
+      "title": "Agent Body/substrate/possession/instance and substrate capability registry contracts",
+      "deps": [
+        "T001"
+      ],
+      "write_surface": [
+        "packages/agent-body/",
+        "contracts/agent/"
+      ],
+      "status": "merged",
+      "branch": "work/T003-agent-body",
+      "pr": 3,
+      "merged_sha": "866a4ac4ee",
+      "evidence": [
+        "PR #3 squash-merged at 866a4ac4ee (base 8ccab08, head a17b8b7); CI success",
+        "Tech Lead verification in isolated worktree at a17b8b7: tsc clean, 172/172 tests, program valid, governance passed; write surface compliant (packages/agent-body/, contracts/agent/ only)",
+        "Possession law + compatibility verdicts + immutable certified versions + lineage acyclicity; contracts/agent state machines documented"
+      ],
+      "depends": [
+        "T001"
+      ]
+    },
+    {
+      "id": "T004",
+      "title": "Market event/data/time contracts",
+      "deps": [
+        "T001"
+      ],
+      "write_surface": [
+        "packages/market-protocol/",
+        "packages/time-engine/",
+        "contracts/market/"
+      ],
+      "status": "merged",
+      "branch": "work/T004-market-protocol",
+      "pr": 4,
+      "merged_sha": "257aff2391",
+      "evidence": [
+        "PR #4 squash-merged at 257aff2391 (base 8ccab08, head 9e22123); CI success",
+        "Tech Lead verification in isolated worktree at 9e22123: tsc clean, 163/163 tests, program valid, governance passed; write surface compliant; lockfile untouched",
+        "Worker final report received and reconciled against branch (base 8ccab08, head 9e22123, 51 files +5431/-20); 5 spec interpretations ratified as D-003",
+        "L4 firewall: future-dated events withheld until available_time (ms-exact); leakageCheck catches 1ms-early observations; synthetic events permanently distinguishable"
+      ],
+      "depends": [
+        "T001"
+      ]
+    },
+    {
+      "id": "T005",
+      "title": "Environment protocol/runner",
+      "deps": [
+        "T002",
+        "T004"
+      ],
+      "write_surface": [
+        "packages/environment-protocol/",
+        "services/environment-runner/",
+        "contracts/environment/"
+      ],
+      "status": "merged",
+      "branch": "work/T005-environment-protocol",
+      "pr": 5,
+      "merged_sha": "e254e3d",
+      "evidence": [
+        "merge: T005 (recovered...) commit e254e3d on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #5 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ],
+      "depends": [
+        "T002",
+        "T004"
+      ]
+    },
+    {
+      "id": "T006",
+      "title": "Agent OS kernel/runtime",
+      "deps": [
+        "T003"
+      ],
+      "write_surface": [
+        "packages/agent-os/",
+        "services/agent-runtime/"
+      ],
+      "status": "merged",
+      "branch": "work/T006-agent-os",
+      "pr": 6,
+      "merged_sha": "d9196e3",
+      "evidence": [
+        "merge: T006 (recovered...) commit d9196e3 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #6 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ],
+      "depends": [
+        "T003"
+      ]
+    },
+    {
+      "id": "T007",
+      "title": "Goal/constraint/project control plane",
+      "deps": [
+        "T002",
+        "T003"
+      ],
+      "write_surface": [
+        "packages/control-domain/",
+        "services/control-plane/"
+      ],
+      "status": "merged",
+      "branch": "work/T007-control-plane",
+      "pr": 7,
+      "merged_sha": "30551bb",
+      "evidence": [
+        "merge: T007 (recovered...) commit 30551bb on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #7 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ],
+      "depends": [
+        "T002",
+        "T003"
+      ]
+    },
+    {
+      "id": "T008",
+      "title": "Data ingestion/event store/provenance",
+      "deps": [
+        "T004"
+      ],
+      "write_surface": [
+        "services/data-ingestion/",
+        "services/event-store/",
+        "packages/provenance/"
+      ],
+      "status": "merged",
+      "branch": "work/T008",
+      "pr": 8,
+      "merged_sha": "e1c1427",
+      "evidence": [
+        "merge: T008 (recovered...) commit e1c1427 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #8 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ],
+      "depends": [
+        "T004"
+      ]
+    },
+    {
+      "id": "T009",
+      "title": "Historical replay World",
+      "deps": [
+        "T004",
+        "T005"
+      ],
+      "write_surface": [
+        "packages/market-world/",
+        "services/market-world/replay/"
+      ],
+      "status": "merged",
+      "branch": "work/T009",
+      "pr": 9,
+      "merged_sha": "9f03c97",
+      "evidence": [
+        "merge: T009 (recovered...) commit 9f03c97 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #9 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ],
+      "depends": [
+        "T004",
+        "T005"
+      ]
+    },
+    {
+      "id": "T010",
+      "title": "Exchange/order-book simulation",
+      "deps": [
+        "T004",
+        "T009"
+      ],
+      "write_surface": [
+        "packages/exchange-sim/",
+        "services/market-world/exchange/"
+      ],
+      "status": "merged",
+      "branch": "work/T010",
+      "pr": 10,
+      "merged_sha": "b7457f4",
+      "evidence": [
+        "merge: T010 (recovered...) commit b7457f4 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #10 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ],
+      "depends": [
+        "T004",
+        "T009"
+      ]
+    },
+    {
+      "id": "T011",
+      "title": "Trajectory/experiment protocol",
+      "deps": [
+        "T002",
+        "T005",
+        "T006"
+      ],
+      "write_surface": [
+        "packages/trajectory/",
+        "packages/experiments/",
+        "contracts/learning/"
+      ],
+      "status": "merged",
+      "branch": "work/T011",
+      "pr": 11,
+      "merged_sha": "de20b70",
+      "evidence": [
+        "merge: T011 (recovered...) commit de20b70 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #11 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ],
+      "depends": [
+        "T002",
+        "T005",
+        "T006"
+      ]
+    },
+    {
+      "id": "T012",
+      "title": "Evaluation/verification",
+      "deps": [
+        "T002",
+        "T011"
+      ],
+      "write_surface": [
+        "packages/evaluation/",
+        "packages/verification/",
+        "contracts/evaluation/"
+      ],
+      "status": "merged",
+      "branch": "work/T012-recovered",
+      "pr": 12,
+      "merged_sha": "c3ce70a",
+      "evidence": [
+        "merge: T012 (batch-replay recovery) \u2014 work/T012-recovered replayed from batches/T012live.json (39 Write paths + Edits), integrated on recover/13-50 at merge 834f4ac, suites green at c3ce70a",
+        "Pod gates (T012's own tree): 590/590 tests, typecheck/program/governance PASS (worker report in batch store)",
+        "Local verification on recover/13-50 @ c3ce70a: pnpm typecheck clean; packages/evaluation + packages/verification 158/158 PASS after integration-seam fixes (vendored mirrors aligned to recovered sibling shapes; contract-law test alignments documented per contracts/evaluation/*.md)"
+      ],
+      "depends": [
+        "T002",
+        "T011"
+      ]
+    },
+    {
+      "id": "T013",
+      "title": "RL interface/trainer bridge",
+      "deps": [
+        "T009",
+        "T010",
+        "T011",
+        "T012"
+      ],
+      "write_surface": [
+        "packages/rl-protocol/",
+        "services/learning/rl/"
+      ],
+      "status": "merged",
+      "branch": "work/T013-rl-bridge",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD-after-merge",
+      "evidence": [
+        "delivery https://tmpfiles.org/wiAkwK0g8INh/t013-delivery.tar.gz sha 56672303de77bb639996b3a92840f88e5dd7000bd1f2ba3f6fb1cbb049484583",
+        "worker HEAD 466ba8fe9b596b145a7a8738d3c3ad39e5f423b0; gate typecheck PASS | test 1649/1650 | program PASS | governance PASS",
+        "integration on main-line: typecheck 0, vitest 1782 passed/0 failed/1 skipped (+89: 65 rl-protocol + 24 services/learning), program valid, governance pass",
+        "stall-recovery lineage: original turn wedged 35 min at 0 blocks; kick relay turn delivered end-to-end"
+      ],
+      "depends": [
+        "T009",
+        "T010",
+        "T011",
+        "T012"
+      ]
+    },
+    {
+      "id": "T014",
+      "title": "Distributed episode generation",
+      "deps": [
+        "T005",
+        "T011",
+        "T013"
+      ],
+      "write_surface": [
+        "services/learning/compute/",
+        "packages/compute/"
+      ],
+      "status": "merged",
+      "branch": "work/T014-episode-compute",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "844cd37ba651ad15151f72abd4df6bd5bb1777dd",
+      "evidence": [
+        "delivery https://tmpfiles.org/wlAQw7ykQoky/t014-delivery.tar.gz sha bb4a1a20b23aed4a53014afad882d9769397b6e7adf9212df5ff3dfb8050b7e0 (backup URL wPAGwFyMRHYu, same sha \u2014 original turn + kick relay both posted)",
+        "worker HEAD d3119124a4e750486db8341ecbc941c5654b33fa; gate typecheck PASS | test 1879/1880 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 2299 passed/0 failed/1 skipped (+97), program valid, governance pass; services/learning/src/index.ts edit verified purely additive"
+      ],
+      "depends": [
+        "T005",
+        "T011",
+        "T013"
+      ]
+    },
+    {
+      "id": "T015",
+      "title": "Curriculum/self-play/adversarial populations",
+      "deps": [
+        "T011",
+        "T012",
+        "T013",
+        "T014"
+      ],
+      "write_surface": [
+        "services/learning/curriculum/",
+        "services/learning/populations/"
+      ],
+      "status": "merged",
+      "branch": "work/T015-curriculum-populations",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "97c5ad786db2b071404c61364cb92f7b83dca627",
+      "evidence": [
+        "delivery https://tmpfiles.org/wjAMwItl2PFs/t015-delivery.tar.gz sha 185ab7ae90e037cb034a29e3a910d92e9b72857cb004e6162c2540fc946fbeea",
+        "worker HEAD a1e20aa3872c505fc005b4395882cbdd957ac89e; gate typecheck PASS | test 2436/2437 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 2572 passed/0 failed/1 skipped (+137), program valid, governance pass"
+      ],
+      "depends": [
+        "T011",
+        "T012",
+        "T013",
+        "T014"
+      ]
+    },
+    {
+      "id": "T016",
+      "title": "Organization compiler/team search + substrate capability registry contracts",
+      "deps": [
+        "T006",
+        "T007",
+        "T012"
+      ],
+      "write_surface": [
+        "packages/organization/",
+        "services/organization-compiler/",
+        "contracts/agent/capability-registry.md",
+        "packages/agent-body/src/capability-registry.ts",
+        "packages/agent-body/src/capability-registry.test.ts"
+      ],
+      "status": "merged",
+      "branch": "work/T016-organization-compiler",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "ff2a9d242f56c8a0af9468805e0f2f6d0b3e8d45",
+      "evidence": [
+        "delivery https://tmpfiles.org/w9A4wFyMLc6v/t016-delivery.tar.gz sha b95f8d3da335c4d79bf43dec5e21b0215c141eaeb89ef92f91192b12858e9fd1",
+        "worker HEAD f8046691738c39c915505aba4d595b57bb2de54a; gate typecheck PASS | test 1768/1769 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 1990 passed/0 failed/1 skipped (+207), program valid, governance pass",
+        "registry absorption verified: capability-registry.ts self-contained (no sibling imports), README+index.ts edits purely additive"
+      ],
+      "depends": [
+        "T006",
+        "T007",
+        "T012"
+      ]
+    },
+    {
+      "id": "T017",
+      "title": "Skill extraction/body forge",
+      "deps": [
+        "T003",
+        "T011",
+        "T012",
+        "T015",
+        "T016"
+      ],
+      "write_surface": [
+        "packages/skills/",
+        "services/body-forge/"
+      ],
+      "status": "merged",
+      "branch": "work/T017-skills-body-forge",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "71c41e502ea14da190d85572701bb3e2bb139802",
+      "evidence": [
+        "delivery https://tmpfiles.org/wfAtwlXg29sU/t017-delivery.tar.gz sha f3318ae70022d632f2eb4e27fc8434613a72c858002f122972aa94a0be30300f",
+        "worker HEAD c746400b1419156fd807d07d39ab12b84b3244e6; gate typecheck PASS | test 3089/3090 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 3215 passed/0 failed/1 skipped (+188), program valid, governance pass"
+      ],
+      "depends": [
+        "T003",
+        "T011",
+        "T012",
+        "T015",
+        "T016"
+      ]
+    },
+    {
+      "id": "T018",
+      "title": "Portfolio strategy domain",
+      "deps": [
+        "T007",
+        "T010",
+        "T012",
+        "T013",
+        "T016"
+      ],
+      "write_surface": [
+        "packages/trading-strategy/",
+        "services/strategy/"
+      ],
+      "status": "merged",
+      "branch": "work/T018-portfolio-strategy",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "939a6f0ea05b1036db5ed20b10e90a5cc6265deb",
+      "evidence": [
+        "delivery https://tmpfiles.org/w8AmwSt7TP0k/t018-delivery.tar.gz sha 6eae740f9f74abfd6b4d6eb4007f1231951469370ad5b3dbc64222ab67724f73",
+        "worker HEAD d230c0fce952d13041f2228b83158abbf9520e9b; gate typecheck PASS | test 2338/2339 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 2435 passed/0 failed/1 skipped (+136), program valid, governance pass"
+      ],
+      "depends": [
+        "T007",
+        "T010",
+        "T012",
+        "T013",
+        "T016"
+      ]
+    },
+    {
+      "id": "T019",
+      "title": "Execution policy/simulation",
+      "deps": [
+        "T010",
+        "T013",
+        "T018"
+      ],
+      "write_surface": [
+        "packages/execution-policy/",
+        "services/execution-sim/"
+      ],
+      "status": "merged",
+      "branch": "work/T019-execution-policy",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "0d4735e03edd3920a6b4b22b1e49f0fa094c3bfb",
+      "evidence": [
+        "delivery https://tmpfiles.org/wAAwwkXT7Ty6/t019-delivery.tar.gz sha bcb32787b86fb76691621496392702e11d3f2da7be77046b8427e48c4ad83f02",
+        "worker HEAD 4806a69602f76d784fd28a5b0c8ddefe927512c2; gate typecheck PASS | test 2561/2562 (+126) | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 3027 passed/0 failed/1 skipped (+126), program valid, governance pass"
+      ],
+      "depends": [
+        "T010",
+        "T013",
+        "T018"
+      ]
+    },
+    {
+      "id": "T020",
+      "title": "Risk policy engine",
+      "deps": [
+        "T007",
+        "T019"
+      ],
+      "write_surface": [
+        "packages/risk/",
+        "services/risk/"
+      ],
+      "status": "merged",
+      "branch": "work/T020-risk-engine",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "653043be5f645c67004fd7c603fb6e18a3c68d13",
+      "evidence": [
+        "delivery https://tmpfiles.org/w1AYwmaoXYsp/t020-delivery.tar.gz sha 88521d0c9851be38f98e6051897fad0f2064089f1ed88955252450e233cb2aa0",
+        "worker HEAD 1afb69211dbbfbc2ea7204af755aefe29079e00e; gate pnpm verify EXIT 0 \u2014 3191 passed/1 skipped (+164)",
+        "integration: typecheck 0, vitest 3731 passed/0 failed/1 skipped (+164), program valid, governance pass",
+        "recovery note: the 413-block turn wedged at a platform Bash-tool freeze (worker's echo probes documented it); kick #3 turn finished services/risk + repaired 13 pre-existing library test errors; golden numbers verified against engine output (digest ee066390)"
+      ],
+      "depends": [
+        "T007",
+        "T019"
+      ]
+    },
+    {
+      "id": "T021",
+      "title": "Sentiment/event research body",
+      "deps": [
+        "T003",
+        "T008",
+        "T012",
+        "T017"
+      ],
+      "write_surface": [
+        "bodies/sentiment-researcher/",
+        "services/research/sentiment/"
+      ],
+      "status": "merged",
+      "branch": "work/T021-sentiment-body",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "0f87e281b21fab6da550c9f00523400a5211aa66",
+      "evidence": [
+        "delivery https://tmpfiles.org/wFADwSaWM6Yr/t021-delivery.tar.gz sha e982e7c111afc65ca2a8c2ee1e2458cf3cd8c5d8244a80bd014a368504728da4",
+        "worker HEAD 0be2b63b57fd025d2d753d2c26a90e8ec4bb4f4d; gate typecheck PASS | test 3327/3328 | program PASS | governance PASS (per-package bodies gate 134/134 \u2014 bodies/* outside root globs on its base)",
+        "integration: Lead root reconciliation (pnpm-workspace + tsconfig + vitest now cover bodies/*), typecheck 0, vitest 3461/0/1 (+171), program valid, governance pass"
+      ],
+      "depends": [
+        "T003",
+        "T008",
+        "T012",
+        "T017"
+      ]
+    },
+    {
+      "id": "T022",
+      "title": "Market-regime research body",
+      "deps": [
+        "T003",
+        "T009",
+        "T012",
+        "T017"
+      ],
+      "write_surface": [
+        "bodies/regime-researcher/",
+        "services/research/regime/"
+      ],
+      "status": "merged",
+      "branch": "work/T022-regime-body",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "c83c022863dbb2a356234eb24f8f4387ad7e4959",
+      "evidence": [
+        "delivery https://tmpfiles.org/wRA3wXvyIrW0/t022-delivery.tar.gz sha 772c8c8fd7565c0f622c2e08768243acbead702afcb96c3d4abf9f65a3f92fb2",
+        "worker HEAD 9b6f6b2531947687975b0eb35c41672841917c41; gate typecheck PASS | test 3775/3776 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 3939/0/1 (+208), program valid, governance pass"
+      ],
+      "depends": [
+        "T003",
+        "T009",
+        "T012",
+        "T017"
+      ]
+    },
+    {
+      "id": "T023",
+      "title": "Fundamental/cross-market research",
+      "deps": [
+        "T003",
+        "T008",
+        "T012",
+        "T017"
+      ],
+      "write_surface": [
+        "bodies/fundamental-researcher/",
+        "bodies/cross-market-researcher/"
+      ],
+      "status": "merged",
+      "branch": "work/T023-fundamental-crossmarket",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "551583bad27b5d40398938353c5dc364fb2ba14c",
+      "evidence": [
+        "delivery https://tmpfiles.org/wLA8wBYa2aSt/t023-delivery.tar.gz sha 39fdec793c7eb6b662a71e4596726af90349437b0e61bea24a0c4b1019c43324",
+        "worker HEAD df8ebce3dc0407b8a2ebcb8ede4b5216626b29fb; gate typecheck PASS | test 4335/4336 (+396) | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 4584/0/1 (+396), program valid, governance pass"
+      ],
+      "depends": [
+        "T003",
+        "T008",
+        "T012",
+        "T017"
+      ]
+    },
+    {
+      "id": "T024",
+      "title": "Trading Director body",
+      "deps": [
+        "T003",
+        "T016",
+        "T017",
+        "T018",
+        "T021",
+        "T022",
+        "T023"
+      ],
+      "write_surface": [
+        "bodies/trading-director/"
+      ],
+      "status": "merged",
+      "branch": "work/T024-trading-director",
+      "pr": "PR #6 (CI green; Lead worktree gates)",
+      "merged_sha": "0d9c3f4512ebaad62ddc2b848b6a44b3583b12a9",
+      "evidence": [
+        "worker HEAD e38784a0950adf7551a5f7ce013c82d4324dc8af (2 checkpoints: 675ae87, e38784a); delivery chat c7c1fcda report harvested",
+        "Lead worktree gates: typecheck PASS | vitest 4803 passed + 1 skipped (324 files, +219) | program PASS | governance PASS; surface compliant (bodies/trading-director only, 14 files ~10.2K lines)",
+        "CI run ci@e38784a success; PR #6 squash-merged as 0d9c3f4",
+        "ratification flag: sibling bodies compareDecimal zero-branch inversion (0 vs 0.02 returns 1) \u2014 T024 mirror fixed locally; sibling fix queued for Lead decision"
+      ],
+      "depends": [
+        "T003",
+        "T016",
+        "T017",
+        "T018",
+        "T021",
+        "T022",
+        "T023"
+      ]
+    },
+    {
+      "id": "T025",
+      "title": "Execution body",
+      "deps": [
+        "T003",
+        "T017",
+        "T019",
+        "T020"
+      ],
+      "write_surface": [
+        "bodies/execution/"
+      ],
+      "status": "merged",
+      "branch": "work/T025-execution-body",
+      "pr": "PR #8 (CI green; Lead merge-result gates)",
+      "merged_sha": "916d65fff6323dd24db0911a78891494761973d8",
+      "evidence": [
+        "worker HEAD 7a87fbc (2 checkpoints: fe5525f package+tests, 7a87fbc evidence-placement laws); delivery chat 9b8e83e2 (marker server-confirmed; 1.49MB batches; 55-min run)",
+        "Lead merge-result gates (branch+main): typecheck PASS | vitest 5177 passed + 1 skipped (+140) | program PASS | governance PASS; surface compliant (bodies/execution only)",
+        "CI ci@7a87fbc success; PR #8 squash-merged as 916d65f",
+        "verify-as-merge-result lesson: branch base 41a6242 was mid-update (graph-before-state); merge-result verification is the correct Lead gate"
+      ],
+      "depends": [
+        "T003",
+        "T017",
+        "T019",
+        "T020"
+      ]
+    },
+    {
+      "id": "T026",
+      "title": "Point-in-time knowledge firewall",
+      "deps": [
+        "T004",
+        "T008",
+        "T009"
+      ],
+      "write_surface": [
+        "packages/time-engine/",
+        "services/knowledge-firewall/"
+      ],
+      "status": "merged",
+      "branch": "work/T026",
+      "pr": 26,
+      "merged_sha": "ce0fc57",
+      "evidence": [
+        "merge: T026 (recovered...) commit ce0fc57 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #26 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ],
+      "depends": [
+        "T004",
+        "T008",
+        "T009"
+      ]
+    },
+    {
+      "id": "T027",
+      "title": "Reactive market simulation",
+      "deps": [
+        "T009",
+        "T010",
+        "T013",
+        "T015",
+        "T026"
+      ],
+      "write_surface": [
+        "services/market-world/reactive/"
+      ],
+      "status": "merged",
+      "branch": "work/T027-reactive-market",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "451072cab502a83783da6d146813708e2604c407",
+      "evidence": [
+        "delivery https://tmpfiles.org/wgA3wrX3k9S2/t027-delivery.tar.gz sha a292e269677d421e5fd3bbcb25e6e607d69df1da84b784d52415fa2c293880e9",
+        "worker HEAD e4f368da153b6cd559da02ecabfe654545974066; gate typecheck PASS | test 2976/2977 | program PASS | governance PASS",
+        "integration on post-T017 main: typecheck 0, vitest 3290 passed/0 failed/1 skipped (+75), program valid, governance pass"
+      ],
+      "depends": [
+        "T009",
+        "T010",
+        "T013",
+        "T015",
+        "T026"
+      ]
+    },
+    {
+      "id": "T028",
+      "title": "Generative/counterfactual population",
+      "deps": [
+        "T010",
+        "T015",
+        "T026"
+      ],
+      "write_surface": [
+        "services/market-world/generative/",
+        "research/market-generation/"
+      ],
+      "status": "merged",
+      "branch": "work/T028-generative-population",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "TBD",
+      "evidence": [
+        "delivery https://tmpfiles.org/wTA1wwjsrfNe/t028-delivery.tar.gz sha 4f497e36f1921976403f520b841e23174c0591569a0187acd757b705934d586c",
+        "worker HEAD 5bdd22f6f9b983d7feba30fff38180c21ea976b6; gate typecheck PASS | test 3396/3397 | program PASS | governance PASS",
+        "integration on post-T021 main: typecheck 0, vitest 3567/0/1 (+106), program valid, governance pass; index.ts 85 additive re-export lines verified"
+      ],
+      "depends": [
+        "T010",
+        "T015",
+        "T026"
+      ]
+    },
+    {
+      "id": "T029",
+      "title": "Rolling near-real-time Time Machine",
+      "deps": [
+        "T008",
+        "T026"
+      ],
+      "write_surface": [
+        "services/time-machine/"
+      ],
+      "status": "merged",
+      "branch": "work/T029",
+      "pr": 29,
+      "merged_sha": "e106667",
+      "evidence": [
+        "merge: T029 (recovered...) commit e106667 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #29 merge lost locally; work reconstructed from batch stores)",
+        "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
+      ],
+      "depends": [
+        "T008",
+        "T026"
+      ]
+    },
+    {
+      "id": "T030",
+      "title": "Shadow trading",
+      "deps": [
+        "T019",
+        "T020",
+        "T027",
+        "T029"
+      ],
+      "write_surface": [
+        "services/shadow-trading/"
+      ],
+      "status": "merged",
+      "branch": "work/T030-shadow-trading",
+      "pr": "PR #9 (CI green; Lead merge-result gates)",
+      "merged_sha": "cc364c67af7e0d6a36bf39bf5cddd397648426c8",
+      "evidence": [
+        "wave-18 original dispatch died in wipe #12 @ e5c2647; D-024 re-entry (wave-26) completed it",
+        "re-entry worker audited the 3 predecessor checkpoints and closed the gap: audit-close commit 4fa99f8 \"pin the laws the tests did not enforce\"",
+        "Lead merge-result gates (branch 8c378f1-base + main b21c97f): typecheck PASS | vitest 350 files / 5262 passed + 1 skipped | program PASS | governance PASS; surface compliant (services/shadow-trading only)",
+        "CI ci@4fa99f89 success; PR #9 squash-merged as cc364c6"
+      ],
+      "depends": [
+        "T019",
+        "T020",
+        "T027",
+        "T029"
+      ]
+    },
+    {
+      "id": "T031",
+      "title": "Backtest-overfitting/search integrity",
+      "deps": [
+        "T011",
+        "T012",
+        "T028"
+      ],
+      "write_surface": [
+        "research/evaluation-integrity/",
+        "packages/search-lineage/"
+      ],
+      "status": "merged",
+      "branch": "work/T031-search-integrity",
+      "pr": "PR #11 (CI green; Lead merge-result gates)",
+      "merged_sha": "87e30fd276a435ed5f98708e424ddde308bde160",
+      "evidence": [
+        "D-022 authorization; wipe #12 killed the first vehicle pre-admission; D-024 fresh dispatch (wave-26) ran 2026-09-30 23:15 -> 2026-10-01 00:28 UTC",
+        "worker head 2a00228 (2 commits: packages/search-lineage search record + research/evaluation-integrity service tree + the three granted root-glob lines)",
+        "Lead merge-result gates (branch b604e49-base + main 803cf1c): typecheck PASS | vitest 5608 passed + 1 skipped | program PASS | governance PASS; surface compliant (research/evaluation-integrity + packages/search-lineage + exactly the three D-025-recorded root files)",
+        "CI ci@2a00228 success; PR #11 squash-merged as 87e30fd"
+      ],
+      "depends": [
+        "T011",
+        "T012",
+        "T028"
+      ]
+    },
+    {
+      "id": "T032",
+      "title": "Walk-forward/regime/holdout suite",
+      "deps": [
+        "T009",
+        "T011",
+        "T012",
+        "T028",
+        "T031"
+      ],
+      "write_surface": [
+        "research/benchmarks/",
+        "packages/evaluation-splits/"
+      ],
+      "status": "merged",
+      "branch": "work/T032-walkforward-suite",
+      "pr": 15,
+      "merged_sha": "ce3d5b865d91eb0658250e94395616b13804c3fb",
+      "evidence": [
+        "D-028 wave-28 dispatch (base b29837b); deps T009+T011+T012+T028+T031 merged; surfaces packages/evaluation-splits + research/benchmarks; zero root exceptions",
+        "D-029 merge ce3d5b8 via PR #15 (squash): evaluation-splits 61/61 + research-benchmarks 89/89 own tests; Lead merge-result gates GREEN vs main 9d13e4c (merge clean; 6150 passed + 1 skip / 420 files; program valid; governance passed; CI green); frozen surfaces verified; zero-dep law; lockfile untouched",
+        "Integrity: embargo_violation, holdout_leakage, holdout_in_search, ladder_violation (unseen multi-regime holdout >=2 regimes incl >=1 unseen), evidence_conflated/live_claim_on_simulation, tenant_mismatch (L12), chain_mismatch (append-only ledgers), plan/result/manifest dedupe + binding laws; determinism double-pinned (byte-identical plans, results, logs, manifests)"
+      ],
+      "depends": [
+        "T009",
+        "T011",
+        "T012",
+        "T028",
+        "T031"
+      ]
+    },
+    {
+      "id": "T033",
+      "title": "Outcome/post-mortem learning",
+      "deps": [
+        "T011",
+        "T030"
+      ],
+      "write_surface": [
+        "services/outcome-learning/",
+        "packages/outcomes/"
+      ],
+      "status": "merged",
+      "branch": "work/T033-outcome-learning",
+      "pr": "PR #12 (CI green; Lead merge-result gates)",
+      "merged_sha": "4f8312c6aa146068e192b0ba4485b2454a8db9a0",
+      "evidence": [
+        "D-027 wave-27 dispatch (base 803cf1c); stale-queue recovery: 15h non-admission broken 2026-10-02 03:18 UTC by fresh-send probe doctrine (Lead re-dispatch tab 33FDF020)",
+        "worker head aab82a05 \u2014 packages/outcomes (OutcomeRecord/PostMortemRecord, closed vocabularies, chain-verified append-only logs, T035 evaluation hooks) + services/outcome-learning (T030 mirror ingestion, expected-vs-realized reconcile, attribution drafts, retention, tenant/project query surface); 87/87 own tests",
+        "Lead merge-result gates GREEN (378 files, 5695 passed + 1 skip); squash 4f8312c via PR #12 (CI run 36963247199 success); completion server-confirmed in batch store \u2014 agent finished in cloud sandbox after browser tab was lost mid-run"
+      ],
+      "depends": [
+        "T011",
+        "T030"
+      ]
+    },
+    {
+      "id": "T034",
+      "title": "Firm Brain",
+      "deps": [
+        "T007",
+        "T011",
+        "T033"
+      ],
+      "write_surface": [
+        "packages/firm-memory/",
+        "services/firm-memory/"
+      ],
+      "status": "merged",
+      "branch": "work/T034-firm-brain",
+      "pr": 14,
+      "merged_sha": "94fcdb4a06a46644e4b51b0d125709328439fad0",
+      "evidence": [
+        "D-028 wave-28 dispatch (base b29837b); unblocked by T033 merge 4f8312c; deps T007+T011+T033 merged; zero root exceptions",
+        "D-029 merge 94fcdb4 via PR #14 (squash): packages/firm-memory 75/75 + services/firm-memory 55/55 own tests; Lead merge-result gates GREEN (typecheck 0, vitest 6000 passed + 1 skip / 407 files, program valid, governance passed, CI green); frozen surfaces verified (zero files outside the two trees; zero-dep law; lockfile untouched)",
+        "Integrity: cross_tenant_access/tenant_mismatch (L12/R25), chain_mismatch + log rewrites (hash-chained memory), l4_boundary_violation (PIT serving), contradiction_detected (typed register, never silent), duplicate_evidence, closed vocabularies, decimal/confidence exactness, lineage_gap; determinism double-pinned (golden digests + REAL-stack double-run)"
+      ],
+      "depends": [
+        "T007",
+        "T011",
+        "T033"
+      ]
+    },
+    {
+      "id": "T035",
+      "title": "Continuous autonomous improvement",
+      "deps": [
+        "T015",
+        "T017",
+        "T030",
+        "T031",
+        "T033",
+        "T034"
+      ],
+      "write_surface": [
+        "services/autonomous-learning/"
+      ],
+      "status": "merged",
+      "branch": "work/T035-autonomous-improvement",
+      "pr": 26,
+      "merged_sha": "85b7c8a4fa73d4302309b46dece12f9553b4152a",
+      "evidence": [
+        "PR #26 squash-merged (T035 continuous autonomous improvement; 71 own tests; full suite 6947+1skip; zero regressions; typecheck 0; program valid; lockfile importer parity by the Lead)"
+      ],
+      "depends": [
+        "T015",
+        "T017",
+        "T030",
+        "T031",
+        "T033",
+        "T034"
+      ]
+    },
+    {
+      "id": "T036",
+      "title": "Provider-neutral adapter SDK",
+      "deps": [
+        "T004",
+        "T008"
+      ],
+      "write_surface": [
+        "packages/provider-sdk/"
+      ],
+      "status": "merged",
+      "branch": "work/T036-provider-sdk",
+      "pr": "delivery-tarball (tmpfiles protocol, no PR \u2014 lead-verified integration)",
+      "merged_sha": "55df36b",
+      "evidence": [
+        "delivery https://tmpfiles.org/wsAgwK0lgQ4q/t036-delivery.tar.gz sha e61611d30229c9f001e96cfbfcd3ca9deb9280efe5a9465981e8b48d53d7088e",
+        "worker HEAD 07430179a400f89a90af2ec216352e3b02157c0b; gate typecheck PASS | test 563/563 | program PASS | governance PASS",
+        "integration at 55df36b on main-line: typecheck 0, vitest 1693 passed/0 failed/1 skipped (+133), program valid, governance pass",
+        "zombie-turn recovery: wave-7 turn froze at block 102; two kicks + workspace release revived the lane (turn 55d62415, 140 blocks)"
+      ],
+      "depends": [
+        "T004",
+        "T008"
+      ]
+    },
+    {
+      "id": "T037",
+      "title": "Binance/Coinbase adapters",
+      "deps": [
+        "T036"
+      ],
+      "write_surface": [
+        "adapters/binance/",
+        "adapters/coinbase/"
+      ],
+      "status": "merged",
+      "branch": "work/T037-exchange-adapters",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "55df36b5c01a4fe0ccafd8abbfc587dd1c91ea75",
+      "evidence": [
+        "delivery https://tmpfiles.org/wYAtwE7r8ArF/t037-delivery.tar.gz sha fc7b06b4581903ca6d8a1ec1582cb8a3377b8ee15ceb96c9ae980825c347a57f",
+        "worker HEAD 3252771d3323f0367d9fb6d3c2a6d92c6f40f977; gate typecheck PASS | test 1905/1906 | program PASS | governance PASS (per-package configs on its branch)",
+        "integration: Lead root-glob reconciliation (tsconfig+vitest now cover adapters/*), typecheck 0, vitest 2202 passed/0 failed/1 skipped (+212), program valid, governance pass"
+      ],
+      "depends": [
+        "T036"
+      ]
+    },
+    {
+      "id": "T038",
+      "title": "Equities/index/news/alternative-data adapters",
+      "deps": [
+        "T036"
+      ],
+      "write_surface": [
+        "adapters/equities/",
+        "adapters/news/",
+        "adapters/alternative-data/"
+      ],
+      "status": "merged",
+      "branch": "work/T038-data-adapters",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "ed29233d8c620ea91329bef3595318e49bec1bc6",
+      "evidence": [
+        "delivery https://tmpfiles.org/wGALw2tTQn68/t038-delivery.tar.gz sha 5ab43afbd15bbfb2f17da6ce65be3fc3224ac2b05318ae5cc6212a7942ee68cb",
+        "worker HEAD 6c543056843b6ee658d0b7b58d900bea389b9347; gate typecheck PASS | test 2531/2532 | program PASS | governance PASS",
+        "integration on main-line (base ff2a9d2 with T015): typecheck 0, vitest 2901 passed/0 failed/1 skipped (+329), program valid, governance pass"
+      ],
+      "depends": [
+        "T036"
+      ]
+    },
+    {
+      "id": "T039",
+      "title": "Broker/OMS/EMS adapters",
+      "deps": [
+        "T019",
+        "T036"
+      ],
+      "write_surface": [
+        "adapters/brokers/",
+        "adapters/oms-ems/"
+      ],
+      "status": "merged",
+      "branch": "work/T039-broker-adapters",
+      "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
+      "merged_sha": "3decb728e8e9b8de8d38e1c36f3707de0196fccf",
+      "evidence": [
+        "delivery https://tmpfiles.org/wCARwWvLEwaq/t039-delivery.tar.gz sha ee3e0cc5eef4b363927e7895db10c788af03901950589d99a8678b8451d610e5",
+        "worker HEAD 8f61a2c225991db90a54f18bedf491bbb86f08c5; gate typecheck PASS | test 3816/3817 | program PASS | governance PASS",
+        "integration: typecheck 0, vitest 4188/0/1 (+249), program valid, governance pass; L8 approval-gating proven against the REAL T019 gate fixtures"
+      ],
+      "depends": [
+        "T019",
+        "T036"
+      ]
+    },
+    {
+      "id": "T040",
+      "title": "Execution gateway/policy enforcement",
+      "deps": [
+        "T019",
+        "T020",
+        "T039"
+      ],
+      "write_surface": [
+        "services/execution-gateway/",
+        "packages/execution-authority/"
+      ],
+      "status": "merged",
+      "branch": "work/T040-execution-gateway",
+      "pr": "PR #7 (CI green; Lead worktree gates)",
+      "merged_sha": "7502cbdd467ea78af5d57b812ed4bdd5bcd975aa",
+      "evidence": [
+        "worker HEAD 40cf4b18 (3 checkpoints: c77bb02, 5ec5986, 40cf4b1); delivery chat 18e20f26 (marker server-confirmed; 1.39MB batches)",
+        "Lead worktree gates: typecheck PASS | vitest 4737 passed + 1 skipped (+153) | program PASS | governance PASS; surface compliant (services/execution-gateway + packages/execution-authority)",
+        "CI run ci@40cf4b18 success; PR #7 squash-merged as 7502cbd",
+        "L8 last-mile: 13-stage gateway pipeline (gate\u2192risk\u2192authority\u2192entitlement\u2192rate\u2192kill-switch\u2192translate\u2192audit) with REAL T019/T020/T039 integration; execution authority stays outside the model (invariant 6)"
+      ],
+      "depends": [
+        "T019",
+        "T020",
+        "T039"
+      ]
+    },
+    {
+      "id": "T041",
+      "title": "Public/private API/SDK",
+      "deps": [
+        "T007",
+        "T034",
+        "T040"
+      ],
+      "write_surface": [
+        "packages/sdk/",
+        "services/api/"
+      ],
+      "status": "merged",
+      "branch": "work/T041-api-sdk",
+      "pr": 16,
+      "merged_sha": "38fe7c7d3039956710aa06834756a354bf5981c6",
+      "evidence": [
+        "D-029 wave-29 dispatch (base 9d13e4c); deps T007+T034+T040 merged; surfaces services/api + packages/sdk; zero root exceptions",
+        "D-031 incident + recovery: dispatch token redacted in transport (Lead env-sourcing error) \u2014 worker completed all 45 files locally (3 checkpoints) but push 401d; continue-cure re-supplied the credential, push verified, full report delivered. No work redone",
+        "D-032 merge 38fe7c7 via PR #16 (squash): services/api 92/92 (pipeline, isolation, L8 execution, idempotency, metering/audit, contracts+golden determinism, interop trip-wires vs REAL T007/T033/T034/T040/T043/T044) + packages/sdk 59/59; Lead merge-result gates GREEN vs main (merge clean; 6301 passed + 1 skip / 433 files; program valid; governance passed; CI green after base governance fix b23b1d5)"
+      ],
+      "depends": [
+        "T007",
+        "T034",
+        "T040"
+      ]
+    },
+    {
+      "id": "T042",
+      "title": "Web project console",
+      "deps": [
+        "T041"
+      ],
+      "write_surface": [
+        "apps/web/"
+      ],
+      "status": "merged",
+      "branch": "work/T042-web-console",
+      "pr": 17,
+      "merged_sha": "ba6773ef06c40db3cf35584fad280588839d822e",
+      "evidence": [
+        "PR #17 squash-merged at ba6773ef06c40db3cf35584fad280588839d822e (base 3730361, worker head 7abc0d0, checkpoints e960347/c723374/02b9821/7abc0d0)",
+        "GitHub Actions run 37223648930 (verify): success \u2014 typecheck, 6567 passed + 1 skipped (6568), program:check valid, governance passed",
+        "Lead merge-result gates GREEN vs main fb59c03 (worktree 1c120e6): typecheck 0 errors; vitest 6567 passed + 1 skipped (452 files); program:check valid; governance passed; write surface compliant (apps/web/** + two granted root include lines; lockfile importer-sync only)",
+        "Worker completion report (W-1a..W-1d local chain, D-034): 266 own tests / 19 files incl. the typed-error laws (ChainOfThoughtExposureError, AvailabilityViolationError, CrossTenantRenderError, WallClockReadError, PolicyEnforcementError), notice-fold + workspace byte-determinism, SDK interop trip-wires driving the real fixture service, and the self-hosting no-build loader"
+      ],
+      "depends": [
+        "T041"
+      ]
+    },
+    {
+      "id": "T043",
+      "title": "Observability/audit/operations",
+      "deps": [
+        "T040"
+      ],
+      "write_surface": [
+        "packages/observability/",
+        "services/observability/",
+        "services/audit/"
+      ],
+      "status": "merged",
+      "branch": "work/T043-observability-audit",
+      "pr": "PR #10 (CI green; Lead merge-result gates)",
+      "merged_sha": "7f75f5051ff8174075cb171cb2997d07d08ddf00",
+      "evidence": [
+        "post-D-023 dispatch died in wipe #12 @ 25c3625; D-024 re-entry (wave-26) completed it",
+        "re-entry worker closed all audit gaps in one final commit 5038f34: seam-scope default-deny CLOSED at the emission gate (7 collector negatives), completed query surface (8 filter tests), replayPlatformAuditTrail, frozen vocabularies with typed closed-ness errors, e2e chain proof over a REAL T040 record (+32 tests)",
+        "Lead merge-result gates (branch b604e49-base + main b21c97f): typecheck PASS | vitest 5318 passed + 1 skipped | program PASS | governance PASS; surface compliant (packages/observability + services/observability + services/audit only)",
+        "CI ci@5038f34 success; PR #10 squash-merged as 7f75f50"
+      ],
+      "depends": [
+        "T040"
+      ]
+    },
+    {
+      "id": "T044",
+      "title": "Security/tenancy/secrets/isolation",
+      "deps": [
+        "T005",
+        "T040"
+      ],
+      "write_surface": [
+        "packages/security/",
+        "services/security/",
+        "tests/security/"
+      ],
+      "status": "merged",
+      "branch": "work/T044-security-tenancy",
+      "pr": "PR #13 (CI green; Lead merge-result gates)",
+      "merged_sha": "53483c0174f0d8127ebb8a6f2e76b815e9c13ff8",
+      "evidence": [
+        "D-026/D-027 wave-27 authorization (base 803cf1c); stale-queue recovery re-dispatch 2026-10-02 03:21 UTC (tab CA44A6E3); deps T005+T040 merged",
+        "worker head 44eea1a (3 checkpoints: packages/security contracts -> services/security enforcement -> tests/security integration suites incl. cross-tenant/untrusted-escalation coverage)",
+        "Lead merge-result gates GREEN (5870 passed + 1 skip); squash 53483c0 via PR #13 (CI success); completion server-confirmed in batch store"
+      ],
+      "depends": [
+        "T005",
+        "T040"
+      ]
+    },
+    {
+      "id": "T045",
+      "title": "Capability-provider interface",
+      "deps": [
+        "T017",
+        "T041"
+      ],
+      "write_surface": [
+        "packages/capability-provider/"
+      ],
+      "status": "merged",
+      "branch": "work/T045-capability-provider",
+      "pr": 27,
+      "merged_sha": "8676842ae37fd3db532360d905c8845c8b2f5431",
+      "evidence": [
+        "PR #27 squash-merged (worker W-6a, audit-then-complete of the dead session's 23-file WIP; own 175/175 tests / 10 files; full 7122+1skip/490 = floor 6947+1skip/480 +175/+10, zero regressions; typecheck 0)",
+        "Five real audit defects fixed the dead session never caught: stableDigest non-UTF-8 FNV divergence from the program-wide fold; isOpaqueRefString control-char exclusion gap vs the REAL T017 lane; quote-minter shape checks too weak (rewritten to the full law); request/deliverable validators froze the CALLER's draft (clone-then-freeze now); deriveIdempotencyKeyMirror duplicated fold (delegates to primitives); + withdrawEngagement content-addressed replay",
+        "Frozen surface verified: PR diff = the 23 packages/capability-provider files exactly; lockfile importer parity serialized by the Lead (importers-only-additive, this commit)"
+      ],
+      "depends": [
+        "T017",
+        "T041"
+      ]
+    },
+    {
+      "id": "T046",
+      "title": "Arena provider adapter",
+      "deps": [
+        "T041",
+        "T045"
+      ],
+      "write_surface": [
+        "adapters/arena/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": [],
+      "depends": [
+        "T041",
+        "T045"
+      ]
+    },
+    {
+      "id": "T047",
+      "title": "Commercial capability marketplace",
+      "deps": [
+        "T017",
+        "T034",
+        "T041"
+      ],
+      "write_surface": [
+        "services/marketplace/",
+        "packages/entitlements/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": [],
+      "depends": [
+        "T017",
+        "T034",
+        "T041"
+      ]
+    },
+    {
+      "id": "T048",
+      "title": "Reference end-to-end trading slice",
+      "deps": [
+        "T018",
+        "T024",
+        "T025",
+        "T027",
+        "T030",
+        "T037",
+        "T038",
+        "T040"
+      ],
+      "write_surface": [
+        "examples/end-to-end-trading/",
+        "tests/end-to-end-trading/"
+      ],
+      "status": "in_progress",
+      "branch": "work/T048-e2e-reference",
+      "pr": null,
+      "merged_sha": null,
+      "evidence": [
+        "D-027 wave-27 dispatch from main 1a34b8a; deps T018+T024+T025+T027+T030+T037+T038+T040 all merged; two root-glob lines granted (pnpm-workspace examples/*, tsconfig examples/*/src)"
+      ],
+      "depends": [
+        "T018",
+        "T024",
+        "T025",
+        "T027",
+        "T030",
+        "T037",
+        "T038",
+        "T040"
+      ]
+    },
+    {
+      "id": "T049",
+      "title": "Benchmark/evidence publication",
+      "deps": [
+        "T028",
+        "T032",
+        "T035",
+        "T048"
+      ],
+      "write_surface": [
+        "benchmarks/",
+        "research/public-evaluation/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": [],
+      "depends": [
+        "T028",
+        "T032",
+        "T035",
+        "T048"
+      ]
+    },
+    {
+      "id": "T050",
+      "title": "Production reliability/performance/release",
+      "deps": [
+        "T035",
+        "T042",
+        "T043",
+        "T044",
+        "T047",
+        "T048",
+        "T049",
+        "T052"
+      ],
+      "write_surface": [
+        "ops/",
+        "docs/release/",
+        "tests/performance/"
+      ],
+      "status": "blocked",
+      "branch": null,
+      "pr": null,
+      "merged_sha": null,
+      "evidence": [],
+      "depends": [
+        "T035",
+        "T042",
+        "T043",
+        "T044",
+        "T047",
+        "T048",
+        "T049"
+      ]
+    },
+    {
+      "id": "T051",
+      "title": "Console UX conformance and discoverability overhaul",
+      "deps": [
+        "T042"
+      ],
+      "write_surface": [
+        "apps/web/"
+      ],
+      "status": "merged",
+      "branch": "work/T051-ux-conformance",
+      "pr": 18,
+      "merged_sha": "730739aab0bbb3a763938d712c22ae156c34adbd",
+      "evidence": [
+        "PR #18 squash-merged at 730739aab0bbb3a763938d712c22ae156c34adbd (base dea4044, worker head dbe8e2a, checkpoints 12f4b72/5850a15/f99d371/4cbcd52/dbe8e2a)",
+        "GitHub Actions run 37228441838 (verify): success",
+        "Lead merge-result gates GREEN vs main dea4044 (worktree cc85bb0): typecheck 0 errors; vitest 6721 passed + 1 skipped (457 files); program:check valid; governance passed; write surface compliant (apps/web/** only)",
+        "Worker completion report (W-2a..W-2e local chain, D-034): 154 new tests; all seven discoverability-law clauses pinned (D1-D7); the 266-test T042 regression floor green verbatim; honest limitations recorded (FLIP slide, TM scrubber drag, Geist fonts optional)"
+      ]
+    },
+    {
+      "id": "T052",
+      "title": "Public free-tier deployment",
+      "deps": [
+        "T051"
+      ],
+      "write_surface": [
+        "deploy/"
+      ],
+      "status": "merged",
+      "branch": "work/T052-public-deployment",
+      "pr": 19,
+      "merged_sha": "18ba4435da515f6e3991f8415fd4f27791921932",
+      "evidence": [
+        "PR #19 squash-merged at 18ba4435da515f6e3991f8415fd4f27791921932 (base c0ef616, worker head ab40095, checkpoints 29b84ce/90629c1/c5ea40d/ab40095)",
+        "GitHub Actions run 37232016551 (verify): success",
+        "Lead merge-result gates GREEN vs main c0ef616 (worktree 8aed3e8): typecheck 0 errors; vitest full-suite green (135s run; branch-identical tree worker-verified 6845 passed + 1 skipped / 472 files); program:check valid; governance passed; write surface compliant (deploy/** + the two granted root include lines only)",
+        "Worker completion report (W-3a..W-3e local chain, D-034): 124 deploy tests (vercel 37, neon+upstash 35, r2+resend+apify 38, contract+wire 14); SigV4/Neon/Upstash/Resend/Apify determinism vectors; L12 negative probes at every store + the composition layer; R46 degradation at every layer; the sync-port hydration seam documented as the honest limitation"
+      ]
+    }
   ],
-  "merge_method": "squash",
-  "branch_prefix": "work/"
- },
- "items": [
-  {
-   "id": "T001",
-   "title": "Repository foundation, governance, CI, test harness, package boundaries",
-   "deps": [],
-   "write_surface": [
-    "root",
-    "apps/",
-    "packages/",
-    "services/",
-    "adapters/",
-    "scripts/",
-    ".github/"
-   ],
-   "status": "merged",
-   "branch": "work/T001-repository-foundation",
-   "pr": 1,
-   "merged_sha": "c0e4e47ae4898e341448a0aade939202ca24aa25",
-   "evidence": [
-    "PR #1 squash-merged at c0e4e47ae4898e341448a0aade939202ca24aa25 (dispatch base 7e4a24d, head 53ecec2)",
-    "GitHub Actions run 36301049674 (ci): success \u2014 typecheck, vitest 19/19, program:check valid, governance passed",
-    "Local verification: pnpm verify green before push (tsc clean, 19/19 tests, program state valid, governance passed)"
-   ]
-  },
-  {
-   "id": "T002",
-   "title": "Canonical domain contracts",
-   "deps": [
-    "T001"
-   ],
-   "write_surface": [
-    "packages/domain-core/",
-    "contracts/domain/"
-   ],
-   "status": "merged",
-   "branch": "work/T002-domain-contracts",
-   "pr": 2,
-   "merged_sha": "4b6bd2595d",
-   "evidence": [
-    "PR #2 squash-merged at 4b6bd2595d (base 8ccab08, head f0b0783); CI success",
-    "Tech Lead verification in isolated worktree at f0b0783: tsc clean, 133/133 tests, program valid, governance passed; write surface compliant (packages/domain-core/, contracts/domain/ only)",
-    "14 domain concepts with executable ConstraintSet evaluator (fail-closed), branded ids, 11 machine-validated contract docs"
-   ],
-   "depends": [
-    "T001"
-   ]
-  },
-  {
-   "id": "T003",
-   "title": "Agent Body/substrate/possession/instance and substrate capability registry contracts",
-   "deps": [
-    "T001"
-   ],
-   "write_surface": [
-    "packages/agent-body/",
-    "contracts/agent/"
-   ],
-   "status": "merged",
-   "branch": "work/T003-agent-body",
-   "pr": 3,
-   "merged_sha": "866a4ac4ee",
-   "evidence": [
-    "PR #3 squash-merged at 866a4ac4ee (base 8ccab08, head a17b8b7); CI success",
-    "Tech Lead verification in isolated worktree at a17b8b7: tsc clean, 172/172 tests, program valid, governance passed; write surface compliant (packages/agent-body/, contracts/agent/ only)",
-    "Possession law + compatibility verdicts + immutable certified versions + lineage acyclicity; contracts/agent state machines documented"
-   ],
-   "depends": [
-    "T001"
-   ]
-  },
-  {
-   "id": "T004",
-   "title": "Market event/data/time contracts",
-   "deps": [
-    "T001"
-   ],
-   "write_surface": [
-    "packages/market-protocol/",
-    "packages/time-engine/",
-    "contracts/market/"
-   ],
-   "status": "merged",
-   "branch": "work/T004-market-protocol",
-   "pr": 4,
-   "merged_sha": "257aff2391",
-   "evidence": [
-    "PR #4 squash-merged at 257aff2391 (base 8ccab08, head 9e22123); CI success",
-    "Tech Lead verification in isolated worktree at 9e22123: tsc clean, 163/163 tests, program valid, governance passed; write surface compliant; lockfile untouched",
-    "Worker final report received and reconciled against branch (base 8ccab08, head 9e22123, 51 files +5431/-20); 5 spec interpretations ratified as D-003",
-    "L4 firewall: future-dated events withheld until available_time (ms-exact); leakageCheck catches 1ms-early observations; synthetic events permanently distinguishable"
-   ],
-   "depends": [
-    "T001"
-   ]
-  },
-  {
-   "id": "T005",
-   "title": "Environment protocol/runner",
-   "deps": [
-    "T002",
-    "T004"
-   ],
-   "write_surface": [
-    "packages/environment-protocol/",
-    "services/environment-runner/",
-    "contracts/environment/"
-   ],
-   "status": "merged",
-   "branch": "work/T005-environment-protocol",
-   "pr": 5,
-   "merged_sha": "e254e3d",
-   "evidence": [
-    "merge: T005 (recovered...) commit e254e3d on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #5 merge lost locally; work reconstructed from batch stores)",
-    "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
-   ],
-   "depends": [
-    "T002",
-    "T004"
-   ]
-  },
-  {
-   "id": "T006",
-   "title": "Agent OS kernel/runtime",
-   "deps": [
-    "T003"
-   ],
-   "write_surface": [
-    "packages/agent-os/",
-    "services/agent-runtime/"
-   ],
-   "status": "merged",
-   "branch": "work/T006-agent-os",
-   "pr": 6,
-   "merged_sha": "d9196e3",
-   "evidence": [
-    "merge: T006 (recovered...) commit d9196e3 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #6 merge lost locally; work reconstructed from batch stores)",
-    "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
-   ],
-   "depends": [
-    "T003"
-   ]
-  },
-  {
-   "id": "T007",
-   "title": "Goal/constraint/project control plane",
-   "deps": [
-    "T002",
-    "T003"
-   ],
-   "write_surface": [
-    "packages/control-domain/",
-    "services/control-plane/"
-   ],
-   "status": "merged",
-   "branch": "work/T007-control-plane",
-   "pr": 7,
-   "merged_sha": "30551bb",
-   "evidence": [
-    "merge: T007 (recovered...) commit 30551bb on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #7 merge lost locally; work reconstructed from batch stores)",
-    "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
-   ],
-   "depends": [
-    "T002",
-    "T003"
-   ]
-  },
-  {
-   "id": "T008",
-   "title": "Data ingestion/event store/provenance",
-   "deps": [
-    "T004"
-   ],
-   "write_surface": [
-    "services/data-ingestion/",
-    "services/event-store/",
-    "packages/provenance/"
-   ],
-   "status": "merged",
-   "branch": "work/T008",
-   "pr": 8,
-   "merged_sha": "e1c1427",
-   "evidence": [
-    "merge: T008 (recovered...) commit e1c1427 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #8 merge lost locally; work reconstructed from batch stores)",
-    "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
-   ],
-   "depends": [
-    "T004"
-   ]
-  },
-  {
-   "id": "T009",
-   "title": "Historical replay World",
-   "deps": [
-    "T004",
-    "T005"
-   ],
-   "write_surface": [
-    "packages/market-world/",
-    "services/market-world/replay/"
-   ],
-   "status": "merged",
-   "branch": "work/T009",
-   "pr": 9,
-   "merged_sha": "9f03c97",
-   "evidence": [
-    "merge: T009 (recovered...) commit 9f03c97 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #9 merge lost locally; work reconstructed from batch stores)",
-    "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
-   ],
-   "depends": [
-    "T004",
-    "T005"
-   ]
-  },
-  {
-   "id": "T010",
-   "title": "Exchange/order-book simulation",
-   "deps": [
-    "T004",
-    "T009"
-   ],
-   "write_surface": [
-    "packages/exchange-sim/",
-    "services/market-world/exchange/"
-   ],
-   "status": "merged",
-   "branch": "work/T010",
-   "pr": 10,
-   "merged_sha": "b7457f4",
-   "evidence": [
-    "merge: T010 (recovered...) commit b7457f4 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #10 merge lost locally; work reconstructed from batch stores)",
-    "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
-   ],
-   "depends": [
-    "T004",
-    "T009"
-   ]
-  },
-  {
-   "id": "T011",
-   "title": "Trajectory/experiment protocol",
-   "deps": [
-    "T002",
-    "T005",
-    "T006"
-   ],
-   "write_surface": [
-    "packages/trajectory/",
-    "packages/experiments/",
-    "contracts/learning/"
-   ],
-   "status": "merged",
-   "branch": "work/T011",
-   "pr": 11,
-   "merged_sha": "de20b70",
-   "evidence": [
-    "merge: T011 (recovered...) commit de20b70 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #11 merge lost locally; work reconstructed from batch stores)",
-    "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
-   ],
-   "depends": [
-    "T002",
-    "T005",
-    "T006"
-   ]
-  },
-  {
-   "id": "T012",
-   "title": "Evaluation/verification",
-   "deps": [
-    "T002",
-    "T011"
-   ],
-   "write_surface": [
-    "packages/evaluation/",
-    "packages/verification/",
-    "contracts/evaluation/"
-   ],
-   "status": "merged",
-   "branch": "work/T012-recovered",
-   "pr": 12,
-   "merged_sha": "c3ce70a",
-   "evidence": [
-    "merge: T012 (batch-replay recovery) \u2014 work/T012-recovered replayed from batches/T012live.json (39 Write paths + Edits), integrated on recover/13-50 at merge 834f4ac, suites green at c3ce70a",
-    "Pod gates (T012's own tree): 590/590 tests, typecheck/program/governance PASS (worker report in batch store)",
-    "Local verification on recover/13-50 @ c3ce70a: pnpm typecheck clean; packages/evaluation + packages/verification 158/158 PASS after integration-seam fixes (vendored mirrors aligned to recovered sibling shapes; contract-law test alignments documented per contracts/evaluation/*.md)"
-   ],
-   "depends": [
-    "T002",
-    "T011"
-   ]
-  },
-  {
-   "id": "T013",
-   "title": "RL interface/trainer bridge",
-   "deps": [
-    "T009",
-    "T010",
-    "T011",
-    "T012"
-   ],
-   "write_surface": [
-    "packages/rl-protocol/",
-    "services/learning/rl/"
-   ],
-   "status": "merged",
-   "branch": "work/T013-rl-bridge",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "TBD-after-merge",
-   "evidence": [
-    "delivery https://tmpfiles.org/wiAkwK0g8INh/t013-delivery.tar.gz sha 56672303de77bb639996b3a92840f88e5dd7000bd1f2ba3f6fb1cbb049484583",
-    "worker HEAD 466ba8fe9b596b145a7a8738d3c3ad39e5f423b0; gate typecheck PASS | test 1649/1650 | program PASS | governance PASS",
-    "integration on main-line: typecheck 0, vitest 1782 passed/0 failed/1 skipped (+89: 65 rl-protocol + 24 services/learning), program valid, governance pass",
-    "stall-recovery lineage: original turn wedged 35 min at 0 blocks; kick relay turn delivered end-to-end"
-   ],
-   "depends": [
-    "T009",
-    "T010",
-    "T011",
-    "T012"
-   ]
-  },
-  {
-   "id": "T014",
-   "title": "Distributed episode generation",
-   "deps": [
-    "T005",
-    "T011",
-    "T013"
-   ],
-   "write_surface": [
-    "services/learning/compute/",
-    "packages/compute/"
-   ],
-   "status": "merged",
-   "branch": "work/T014-episode-compute",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "844cd37ba651ad15151f72abd4df6bd5bb1777dd",
-   "evidence": [
-    "delivery https://tmpfiles.org/wlAQw7ykQoky/t014-delivery.tar.gz sha bb4a1a20b23aed4a53014afad882d9769397b6e7adf9212df5ff3dfb8050b7e0 (backup URL wPAGwFyMRHYu, same sha \u2014 original turn + kick relay both posted)",
-    "worker HEAD d3119124a4e750486db8341ecbc941c5654b33fa; gate typecheck PASS | test 1879/1880 | program PASS | governance PASS",
-    "integration: typecheck 0, vitest 2299 passed/0 failed/1 skipped (+97), program valid, governance pass; services/learning/src/index.ts edit verified purely additive"
-   ],
-   "depends": [
-    "T005",
-    "T011",
-    "T013"
-   ]
-  },
-  {
-   "id": "T015",
-   "title": "Curriculum/self-play/adversarial populations",
-   "deps": [
-    "T011",
-    "T012",
-    "T013",
-    "T014"
-   ],
-   "write_surface": [
-    "services/learning/curriculum/",
-    "services/learning/populations/"
-   ],
-   "status": "merged",
-   "branch": "work/T015-curriculum-populations",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "97c5ad786db2b071404c61364cb92f7b83dca627",
-   "evidence": [
-    "delivery https://tmpfiles.org/wjAMwItl2PFs/t015-delivery.tar.gz sha 185ab7ae90e037cb034a29e3a910d92e9b72857cb004e6162c2540fc946fbeea",
-    "worker HEAD a1e20aa3872c505fc005b4395882cbdd957ac89e; gate typecheck PASS | test 2436/2437 | program PASS | governance PASS",
-    "integration: typecheck 0, vitest 2572 passed/0 failed/1 skipped (+137), program valid, governance pass"
-   ],
-   "depends": [
-    "T011",
-    "T012",
-    "T013",
-    "T014"
-   ]
-  },
-  {
-   "id": "T016",
-   "title": "Organization compiler/team search + substrate capability registry contracts",
-   "deps": [
-    "T006",
-    "T007",
-    "T012"
-   ],
-   "write_surface": [
-    "packages/organization/",
-    "services/organization-compiler/",
-    "contracts/agent/capability-registry.md",
-    "packages/agent-body/src/capability-registry.ts",
-    "packages/agent-body/src/capability-registry.test.ts"
-   ],
-   "status": "merged",
-   "branch": "work/T016-organization-compiler",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "ff2a9d242f56c8a0af9468805e0f2f6d0b3e8d45",
-   "evidence": [
-    "delivery https://tmpfiles.org/w9A4wFyMLc6v/t016-delivery.tar.gz sha b95f8d3da335c4d79bf43dec5e21b0215c141eaeb89ef92f91192b12858e9fd1",
-    "worker HEAD f8046691738c39c915505aba4d595b57bb2de54a; gate typecheck PASS | test 1768/1769 | program PASS | governance PASS",
-    "integration: typecheck 0, vitest 1990 passed/0 failed/1 skipped (+207), program valid, governance pass",
-    "registry absorption verified: capability-registry.ts self-contained (no sibling imports), README+index.ts edits purely additive"
-   ],
-   "depends": [
-    "T006",
-    "T007",
-    "T012"
-   ]
-  },
-  {
-   "id": "T017",
-   "title": "Skill extraction/body forge",
-   "deps": [
-    "T003",
-    "T011",
-    "T012",
-    "T015",
-    "T016"
-   ],
-   "write_surface": [
-    "packages/skills/",
-    "services/body-forge/"
-   ],
-   "status": "merged",
-   "branch": "work/T017-skills-body-forge",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "71c41e502ea14da190d85572701bb3e2bb139802",
-   "evidence": [
-    "delivery https://tmpfiles.org/wfAtwlXg29sU/t017-delivery.tar.gz sha f3318ae70022d632f2eb4e27fc8434613a72c858002f122972aa94a0be30300f",
-    "worker HEAD c746400b1419156fd807d07d39ab12b84b3244e6; gate typecheck PASS | test 3089/3090 | program PASS | governance PASS",
-    "integration: typecheck 0, vitest 3215 passed/0 failed/1 skipped (+188), program valid, governance pass"
-   ],
-   "depends": [
-    "T003",
-    "T011",
-    "T012",
-    "T015",
-    "T016"
-   ]
-  },
-  {
-   "id": "T018",
-   "title": "Portfolio strategy domain",
-   "deps": [
-    "T007",
-    "T010",
-    "T012",
-    "T013",
-    "T016"
-   ],
-   "write_surface": [
-    "packages/trading-strategy/",
-    "services/strategy/"
-   ],
-   "status": "merged",
-   "branch": "work/T018-portfolio-strategy",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "939a6f0ea05b1036db5ed20b10e90a5cc6265deb",
-   "evidence": [
-    "delivery https://tmpfiles.org/w8AmwSt7TP0k/t018-delivery.tar.gz sha 6eae740f9f74abfd6b4d6eb4007f1231951469370ad5b3dbc64222ab67724f73",
-    "worker HEAD d230c0fce952d13041f2228b83158abbf9520e9b; gate typecheck PASS | test 2338/2339 | program PASS | governance PASS",
-    "integration: typecheck 0, vitest 2435 passed/0 failed/1 skipped (+136), program valid, governance pass"
-   ],
-   "depends": [
-    "T007",
-    "T010",
-    "T012",
-    "T013",
-    "T016"
-   ]
-  },
-  {
-   "id": "T019",
-   "title": "Execution policy/simulation",
-   "deps": [
-    "T010",
-    "T013",
-    "T018"
-   ],
-   "write_surface": [
-    "packages/execution-policy/",
-    "services/execution-sim/"
-   ],
-   "status": "merged",
-   "branch": "work/T019-execution-policy",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "0d4735e03edd3920a6b4b22b1e49f0fa094c3bfb",
-   "evidence": [
-    "delivery https://tmpfiles.org/wAAwwkXT7Ty6/t019-delivery.tar.gz sha bcb32787b86fb76691621496392702e11d3f2da7be77046b8427e48c4ad83f02",
-    "worker HEAD 4806a69602f76d784fd28a5b0c8ddefe927512c2; gate typecheck PASS | test 2561/2562 (+126) | program PASS | governance PASS",
-    "integration: typecheck 0, vitest 3027 passed/0 failed/1 skipped (+126), program valid, governance pass"
-   ],
-   "depends": [
-    "T010",
-    "T013",
-    "T018"
-   ]
-  },
-  {
-   "id": "T020",
-   "title": "Risk policy engine",
-   "deps": [
-    "T007",
-    "T019"
-   ],
-   "write_surface": [
-    "packages/risk/",
-    "services/risk/"
-   ],
-   "status": "merged",
-   "branch": "work/T020-risk-engine",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "653043be5f645c67004fd7c603fb6e18a3c68d13",
-   "evidence": [
-    "delivery https://tmpfiles.org/w1AYwmaoXYsp/t020-delivery.tar.gz sha 88521d0c9851be38f98e6051897fad0f2064089f1ed88955252450e233cb2aa0",
-    "worker HEAD 1afb69211dbbfbc2ea7204af755aefe29079e00e; gate pnpm verify EXIT 0 \u2014 3191 passed/1 skipped (+164)",
-    "integration: typecheck 0, vitest 3731 passed/0 failed/1 skipped (+164), program valid, governance pass",
-    "recovery note: the 413-block turn wedged at a platform Bash-tool freeze (worker's echo probes documented it); kick #3 turn finished services/risk + repaired 13 pre-existing library test errors; golden numbers verified against engine output (digest ee066390)"
-   ],
-   "depends": [
-    "T007",
-    "T019"
-   ]
-  },
-  {
-   "id": "T021",
-   "title": "Sentiment/event research body",
-   "deps": [
-    "T003",
-    "T008",
-    "T012",
-    "T017"
-   ],
-   "write_surface": [
-    "bodies/sentiment-researcher/",
-    "services/research/sentiment/"
-   ],
-   "status": "merged",
-   "branch": "work/T021-sentiment-body",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "0f87e281b21fab6da550c9f00523400a5211aa66",
-   "evidence": [
-    "delivery https://tmpfiles.org/wFADwSaWM6Yr/t021-delivery.tar.gz sha e982e7c111afc65ca2a8c2ee1e2458cf3cd8c5d8244a80bd014a368504728da4",
-    "worker HEAD 0be2b63b57fd025d2d753d2c26a90e8ec4bb4f4d; gate typecheck PASS | test 3327/3328 | program PASS | governance PASS (per-package bodies gate 134/134 \u2014 bodies/* outside root globs on its base)",
-    "integration: Lead root reconciliation (pnpm-workspace + tsconfig + vitest now cover bodies/*), typecheck 0, vitest 3461/0/1 (+171), program valid, governance pass"
-   ],
-   "depends": [
-    "T003",
-    "T008",
-    "T012",
-    "T017"
-   ]
-  },
-  {
-   "id": "T022",
-   "title": "Market-regime research body",
-   "deps": [
-    "T003",
-    "T009",
-    "T012",
-    "T017"
-   ],
-   "write_surface": [
-    "bodies/regime-researcher/",
-    "services/research/regime/"
-   ],
-   "status": "merged",
-   "branch": "work/T022-regime-body",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "c83c022863dbb2a356234eb24f8f4387ad7e4959",
-   "evidence": [
-    "delivery https://tmpfiles.org/wRA3wXvyIrW0/t022-delivery.tar.gz sha 772c8c8fd7565c0f622c2e08768243acbead702afcb96c3d4abf9f65a3f92fb2",
-    "worker HEAD 9b6f6b2531947687975b0eb35c41672841917c41; gate typecheck PASS | test 3775/3776 | program PASS | governance PASS",
-    "integration: typecheck 0, vitest 3939/0/1 (+208), program valid, governance pass"
-   ],
-   "depends": [
-    "T003",
-    "T009",
-    "T012",
-    "T017"
-   ]
-  },
-  {
-   "id": "T023",
-   "title": "Fundamental/cross-market research",
-   "deps": [
-    "T003",
-    "T008",
-    "T012",
-    "T017"
-   ],
-   "write_surface": [
-    "bodies/fundamental-researcher/",
-    "bodies/cross-market-researcher/"
-   ],
-   "status": "merged",
-   "branch": "work/T023-fundamental-crossmarket",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "551583bad27b5d40398938353c5dc364fb2ba14c",
-   "evidence": [
-    "delivery https://tmpfiles.org/wLA8wBYa2aSt/t023-delivery.tar.gz sha 39fdec793c7eb6b662a71e4596726af90349437b0e61bea24a0c4b1019c43324",
-    "worker HEAD df8ebce3dc0407b8a2ebcb8ede4b5216626b29fb; gate typecheck PASS | test 4335/4336 (+396) | program PASS | governance PASS",
-    "integration: typecheck 0, vitest 4584/0/1 (+396), program valid, governance pass"
-   ],
-   "depends": [
-    "T003",
-    "T008",
-    "T012",
-    "T017"
-   ]
-  },
-  {
-   "id": "T024",
-   "title": "Trading Director body",
-   "deps": [
-    "T003",
-    "T016",
-    "T017",
-    "T018",
-    "T021",
-    "T022",
-    "T023"
-   ],
-   "write_surface": [
-    "bodies/trading-director/"
-   ],
-   "status": "merged",
-   "branch": "work/T024-trading-director",
-   "pr": "PR #6 (CI green; Lead worktree gates)",
-   "merged_sha": "0d9c3f4512ebaad62ddc2b848b6a44b3583b12a9",
-   "evidence": [
-    "worker HEAD e38784a0950adf7551a5f7ce013c82d4324dc8af (2 checkpoints: 675ae87, e38784a); delivery chat c7c1fcda report harvested",
-    "Lead worktree gates: typecheck PASS | vitest 4803 passed + 1 skipped (324 files, +219) | program PASS | governance PASS; surface compliant (bodies/trading-director only, 14 files ~10.2K lines)",
-    "CI run ci@e38784a success; PR #6 squash-merged as 0d9c3f4",
-    "ratification flag: sibling bodies compareDecimal zero-branch inversion (0 vs 0.02 returns 1) \u2014 T024 mirror fixed locally; sibling fix queued for Lead decision"
-   ],
-   "depends": [
-    "T003",
-    "T016",
-    "T017",
-    "T018",
-    "T021",
-    "T022",
-    "T023"
-   ]
-  },
-  {
-   "id": "T025",
-   "title": "Execution body",
-   "deps": [
-    "T003",
-    "T017",
-    "T019",
-    "T020"
-   ],
-   "write_surface": [
-    "bodies/execution/"
-   ],
-   "status": "merged",
-   "branch": "work/T025-execution-body",
-   "pr": "PR #8 (CI green; Lead merge-result gates)",
-   "merged_sha": "916d65fff6323dd24db0911a78891494761973d8",
-   "evidence": [
-    "worker HEAD 7a87fbc (2 checkpoints: fe5525f package+tests, 7a87fbc evidence-placement laws); delivery chat 9b8e83e2 (marker server-confirmed; 1.49MB batches; 55-min run)",
-    "Lead merge-result gates (branch+main): typecheck PASS | vitest 5177 passed + 1 skipped (+140) | program PASS | governance PASS; surface compliant (bodies/execution only)",
-    "CI ci@7a87fbc success; PR #8 squash-merged as 916d65f",
-    "verify-as-merge-result lesson: branch base 41a6242 was mid-update (graph-before-state); merge-result verification is the correct Lead gate"
-   ],
-   "depends": [
-    "T003",
-    "T017",
-    "T019",
-    "T020"
-   ]
-  },
-  {
-   "id": "T026",
-   "title": "Point-in-time knowledge firewall",
-   "deps": [
-    "T004",
-    "T008",
-    "T009"
-   ],
-   "write_surface": [
-    "packages/time-engine/",
-    "services/knowledge-firewall/"
-   ],
-   "status": "merged",
-   "branch": "work/T026",
-   "pr": 26,
-   "merged_sha": "ce0fc57",
-   "evidence": [
-    "merge: T026 (recovered...) commit ce0fc57 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #26 merge lost locally; work reconstructed from batch stores)",
-    "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
-   ],
-   "depends": [
-    "T004",
-    "T008",
-    "T009"
-   ]
-  },
-  {
-   "id": "T027",
-   "title": "Reactive market simulation",
-   "deps": [
-    "T009",
-    "T010",
-    "T013",
-    "T015",
-    "T026"
-   ],
-   "write_surface": [
-    "services/market-world/reactive/"
-   ],
-   "status": "merged",
-   "branch": "work/T027-reactive-market",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "451072cab502a83783da6d146813708e2604c407",
-   "evidence": [
-    "delivery https://tmpfiles.org/wgA3wrX3k9S2/t027-delivery.tar.gz sha a292e269677d421e5fd3bbcb25e6e607d69df1da84b784d52415fa2c293880e9",
-    "worker HEAD e4f368da153b6cd559da02ecabfe654545974066; gate typecheck PASS | test 2976/2977 | program PASS | governance PASS",
-    "integration on post-T017 main: typecheck 0, vitest 3290 passed/0 failed/1 skipped (+75), program valid, governance pass"
-   ],
-   "depends": [
-    "T009",
-    "T010",
-    "T013",
-    "T015",
-    "T026"
-   ]
-  },
-  {
-   "id": "T028",
-   "title": "Generative/counterfactual population",
-   "deps": [
-    "T010",
-    "T015",
-    "T026"
-   ],
-   "write_surface": [
-    "services/market-world/generative/",
-    "research/market-generation/"
-   ],
-   "status": "merged",
-   "branch": "work/T028-generative-population",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "TBD",
-   "evidence": [
-    "delivery https://tmpfiles.org/wTA1wwjsrfNe/t028-delivery.tar.gz sha 4f497e36f1921976403f520b841e23174c0591569a0187acd757b705934d586c",
-    "worker HEAD 5bdd22f6f9b983d7feba30fff38180c21ea976b6; gate typecheck PASS | test 3396/3397 | program PASS | governance PASS",
-    "integration on post-T021 main: typecheck 0, vitest 3567/0/1 (+106), program valid, governance pass; index.ts 85 additive re-export lines verified"
-   ],
-   "depends": [
-    "T010",
-    "T015",
-    "T026"
-   ]
-  },
-  {
-   "id": "T029",
-   "title": "Rolling near-real-time Time Machine",
-   "deps": [
-    "T008",
-    "T026"
-   ],
-   "write_surface": [
-    "services/time-machine/"
-   ],
-   "status": "merged",
-   "branch": "work/T029",
-   "pr": 29,
-   "merged_sha": "e106667",
-   "evidence": [
-    "merge: T029 (recovered...) commit e106667 on branch recover/13-50 \u2014 batch-replay recovery after sandbox reset (original PR #29 merge lost locally; work reconstructed from batch stores)",
-    "Local verification on recover/13-50 @ 987b1e3: pnpm typecheck clean (0 errors); vitest 1319 passed / 74 failed / 1 skipped (failures are cross-version behavioral mismatches under triage)"
-   ],
-   "depends": [
-    "T008",
-    "T026"
-   ]
-  },
-  {
-   "id": "T030",
-   "title": "Shadow trading",
-   "deps": [
-    "T019",
-    "T020",
-    "T027",
-    "T029"
-   ],
-   "write_surface": [
-    "services/shadow-trading/"
-   ],
-   "status": "merged",
-   "branch": "work/T030-shadow-trading",
-   "pr": "PR #9 (CI green; Lead merge-result gates)",
-   "merged_sha": "cc364c67af7e0d6a36bf39bf5cddd397648426c8",
-   "evidence": [
-    "wave-18 original dispatch died in wipe #12 @ e5c2647; D-024 re-entry (wave-26) completed it",
-    "re-entry worker audited the 3 predecessor checkpoints and closed the gap: audit-close commit 4fa99f8 \"pin the laws the tests did not enforce\"",
-    "Lead merge-result gates (branch 8c378f1-base + main b21c97f): typecheck PASS | vitest 350 files / 5262 passed + 1 skipped | program PASS | governance PASS; surface compliant (services/shadow-trading only)",
-    "CI ci@4fa99f89 success; PR #9 squash-merged as cc364c6"
-   ],
-   "depends": [
-    "T019",
-    "T020",
-    "T027",
-    "T029"
-   ]
-  },
-  {
-   "id": "T031",
-   "title": "Backtest-overfitting/search integrity",
-   "deps": [
-    "T011",
-    "T012",
-    "T028"
-   ],
-   "write_surface": [
-    "research/evaluation-integrity/",
-    "packages/search-lineage/"
-   ],
-   "status": "merged",
-   "branch": "work/T031-search-integrity",
-   "pr": "PR #11 (CI green; Lead merge-result gates)",
-   "merged_sha": "87e30fd276a435ed5f98708e424ddde308bde160",
-   "evidence": [
-    "D-022 authorization; wipe #12 killed the first vehicle pre-admission; D-024 fresh dispatch (wave-26) ran 2026-09-30 23:15 -> 2026-10-01 00:28 UTC",
-    "worker head 2a00228 (2 commits: packages/search-lineage search record + research/evaluation-integrity service tree + the three granted root-glob lines)",
-    "Lead merge-result gates (branch b604e49-base + main 803cf1c): typecheck PASS | vitest 5608 passed + 1 skipped | program PASS | governance PASS; surface compliant (research/evaluation-integrity + packages/search-lineage + exactly the three D-025-recorded root files)",
-    "CI ci@2a00228 success; PR #11 squash-merged as 87e30fd"
-   ],
-   "depends": [
-    "T011",
-    "T012",
-    "T028"
-   ]
-  },
-  {
-   "id": "T032",
-   "title": "Walk-forward/regime/holdout suite",
-   "deps": [
-    "T009",
-    "T011",
-    "T012",
-    "T028",
-    "T031"
-   ],
-   "write_surface": [
-    "research/benchmarks/",
-    "packages/evaluation-splits/"
-   ],
-   "status": "merged",
-   "branch": "work/T032-walkforward-suite",
-   "pr": 15,
-   "merged_sha": "ce3d5b865d91eb0658250e94395616b13804c3fb",
-   "evidence": [
-    "D-028 wave-28 dispatch (base b29837b); deps T009+T011+T012+T028+T031 merged; surfaces packages/evaluation-splits + research/benchmarks; zero root exceptions",
-    "D-029 merge ce3d5b8 via PR #15 (squash): evaluation-splits 61/61 + research-benchmarks 89/89 own tests; Lead merge-result gates GREEN vs main 9d13e4c (merge clean; 6150 passed + 1 skip / 420 files; program valid; governance passed; CI green); frozen surfaces verified; zero-dep law; lockfile untouched",
-    "Integrity: embargo_violation, holdout_leakage, holdout_in_search, ladder_violation (unseen multi-regime holdout >=2 regimes incl >=1 unseen), evidence_conflated/live_claim_on_simulation, tenant_mismatch (L12), chain_mismatch (append-only ledgers), plan/result/manifest dedupe + binding laws; determinism double-pinned (byte-identical plans, results, logs, manifests)"
-   ],
-   "depends": [
-    "T009",
-    "T011",
-    "T012",
-    "T028",
-    "T031"
-   ]
-  },
-  {
-   "id": "T033",
-   "title": "Outcome/post-mortem learning",
-   "deps": [
-    "T011",
-    "T030"
-   ],
-   "write_surface": [
-    "services/outcome-learning/",
-    "packages/outcomes/"
-   ],
-   "status": "merged",
-   "branch": "work/T033-outcome-learning",
-   "pr": "PR #12 (CI green; Lead merge-result gates)",
-   "merged_sha": "4f8312c6aa146068e192b0ba4485b2454a8db9a0",
-   "evidence": [
-    "D-027 wave-27 dispatch (base 803cf1c); stale-queue recovery: 15h non-admission broken 2026-10-02 03:18 UTC by fresh-send probe doctrine (Lead re-dispatch tab 33FDF020)",
-    "worker head aab82a05 \u2014 packages/outcomes (OutcomeRecord/PostMortemRecord, closed vocabularies, chain-verified append-only logs, T035 evaluation hooks) + services/outcome-learning (T030 mirror ingestion, expected-vs-realized reconcile, attribution drafts, retention, tenant/project query surface); 87/87 own tests",
-    "Lead merge-result gates GREEN (378 files, 5695 passed + 1 skip); squash 4f8312c via PR #12 (CI run 36963247199 success); completion server-confirmed in batch store \u2014 agent finished in cloud sandbox after browser tab was lost mid-run"
-   ],
-   "depends": [
-    "T011",
-    "T030"
-   ]
-  },
-  {
-   "id": "T034",
-   "title": "Firm Brain",
-   "deps": [
-    "T007",
-    "T011",
-    "T033"
-   ],
-   "write_surface": [
-    "packages/firm-memory/",
-    "services/firm-memory/"
-   ],
-   "status": "merged",
-   "branch": "work/T034-firm-brain",
-   "pr": 14,
-   "merged_sha": "94fcdb4a06a46644e4b51b0d125709328439fad0",
-   "evidence": [
-    "D-028 wave-28 dispatch (base b29837b); unblocked by T033 merge 4f8312c; deps T007+T011+T033 merged; zero root exceptions",
-    "D-029 merge 94fcdb4 via PR #14 (squash): packages/firm-memory 75/75 + services/firm-memory 55/55 own tests; Lead merge-result gates GREEN (typecheck 0, vitest 6000 passed + 1 skip / 407 files, program valid, governance passed, CI green); frozen surfaces verified (zero files outside the two trees; zero-dep law; lockfile untouched)",
-    "Integrity: cross_tenant_access/tenant_mismatch (L12/R25), chain_mismatch + log rewrites (hash-chained memory), l4_boundary_violation (PIT serving), contradiction_detected (typed register, never silent), duplicate_evidence, closed vocabularies, decimal/confidence exactness, lineage_gap; determinism double-pinned (golden digests + REAL-stack double-run)"
-   ],
-   "depends": [
-    "T007",
-    "T011",
-    "T033"
-   ]
-  },
-  {
-   "id": "T035",
-   "title": "Continuous autonomous improvement",
-   "deps": [
-    "T015",
-    "T017",
-    "T030",
-    "T031",
-    "T033",
-    "T034"
-   ],
-   "write_surface": [
-    "services/autonomous-learning/"
-   ],
-   "status": "merged",
-   "branch": "work/T035-autonomous-improvement",
-   "pr": 26,
-   "merged_sha": "85b7c8a4fa73d4302309b46dece12f9553b4152a",
-   "evidence": [
-    "PR #26 squash-merged (T035 continuous autonomous improvement; 71 own tests; full suite 6947+1skip; zero regressions; typecheck 0; program valid; lockfile importer parity by the Lead)"
-   ],
-   "depends": [
-    "T015",
-    "T017",
-    "T030",
-    "T031",
-    "T033",
-    "T034"
-   ]
-  },
-  {
-   "id": "T036",
-   "title": "Provider-neutral adapter SDK",
-   "deps": [
-    "T004",
-    "T008"
-   ],
-   "write_surface": [
-    "packages/provider-sdk/"
-   ],
-   "status": "merged",
-   "branch": "work/T036-provider-sdk",
-   "pr": "delivery-tarball (tmpfiles protocol, no PR \u2014 lead-verified integration)",
-   "merged_sha": "55df36b",
-   "evidence": [
-    "delivery https://tmpfiles.org/wsAgwK0lgQ4q/t036-delivery.tar.gz sha e61611d30229c9f001e96cfbfcd3ca9deb9280efe5a9465981e8b48d53d7088e",
-    "worker HEAD 07430179a400f89a90af2ec216352e3b02157c0b; gate typecheck PASS | test 563/563 | program PASS | governance PASS",
-    "integration at 55df36b on main-line: typecheck 0, vitest 1693 passed/0 failed/1 skipped (+133), program valid, governance pass",
-    "zombie-turn recovery: wave-7 turn froze at block 102; two kicks + workspace release revived the lane (turn 55d62415, 140 blocks)"
-   ],
-   "depends": [
-    "T004",
-    "T008"
-   ]
-  },
-  {
-   "id": "T037",
-   "title": "Binance/Coinbase adapters",
-   "deps": [
-    "T036"
-   ],
-   "write_surface": [
-    "adapters/binance/",
-    "adapters/coinbase/"
-   ],
-   "status": "merged",
-   "branch": "work/T037-exchange-adapters",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "55df36b5c01a4fe0ccafd8abbfc587dd1c91ea75",
-   "evidence": [
-    "delivery https://tmpfiles.org/wYAtwE7r8ArF/t037-delivery.tar.gz sha fc7b06b4581903ca6d8a1ec1582cb8a3377b8ee15ceb96c9ae980825c347a57f",
-    "worker HEAD 3252771d3323f0367d9fb6d3c2a6d92c6f40f977; gate typecheck PASS | test 1905/1906 | program PASS | governance PASS (per-package configs on its branch)",
-    "integration: Lead root-glob reconciliation (tsconfig+vitest now cover adapters/*), typecheck 0, vitest 2202 passed/0 failed/1 skipped (+212), program valid, governance pass"
-   ],
-   "depends": [
-    "T036"
-   ]
-  },
-  {
-   "id": "T038",
-   "title": "Equities/index/news/alternative-data adapters",
-   "deps": [
-    "T036"
-   ],
-   "write_surface": [
-    "adapters/equities/",
-    "adapters/news/",
-    "adapters/alternative-data/"
-   ],
-   "status": "merged",
-   "branch": "work/T038-data-adapters",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "ed29233d8c620ea91329bef3595318e49bec1bc6",
-   "evidence": [
-    "delivery https://tmpfiles.org/wGALw2tTQn68/t038-delivery.tar.gz sha 5ab43afbd15bbfb2f17da6ce65be3fc3224ac2b05318ae5cc6212a7942ee68cb",
-    "worker HEAD 6c543056843b6ee658d0b7b58d900bea389b9347; gate typecheck PASS | test 2531/2532 | program PASS | governance PASS",
-    "integration on main-line (base ff2a9d2 with T015): typecheck 0, vitest 2901 passed/0 failed/1 skipped (+329), program valid, governance pass"
-   ],
-   "depends": [
-    "T036"
-   ]
-  },
-  {
-   "id": "T039",
-   "title": "Broker/OMS/EMS adapters",
-   "deps": [
-    "T019",
-    "T036"
-   ],
-   "write_surface": [
-    "adapters/brokers/",
-    "adapters/oms-ems/"
-   ],
-   "status": "merged",
-   "branch": "work/T039-broker-adapters",
-   "pr": "delivery-tarball (tmpfiles protocol, lead-verified integration)",
-   "merged_sha": "3decb728e8e9b8de8d38e1c36f3707de0196fccf",
-   "evidence": [
-    "delivery https://tmpfiles.org/wCARwWvLEwaq/t039-delivery.tar.gz sha ee3e0cc5eef4b363927e7895db10c788af03901950589d99a8678b8451d610e5",
-    "worker HEAD 8f61a2c225991db90a54f18bedf491bbb86f08c5; gate typecheck PASS | test 3816/3817 | program PASS | governance PASS",
-    "integration: typecheck 0, vitest 4188/0/1 (+249), program valid, governance pass; L8 approval-gating proven against the REAL T019 gate fixtures"
-   ],
-   "depends": [
-    "T019",
-    "T036"
-   ]
-  },
-  {
-   "id": "T040",
-   "title": "Execution gateway/policy enforcement",
-   "deps": [
-    "T019",
-    "T020",
-    "T039"
-   ],
-   "write_surface": [
-    "services/execution-gateway/",
-    "packages/execution-authority/"
-   ],
-   "status": "merged",
-   "branch": "work/T040-execution-gateway",
-   "pr": "PR #7 (CI green; Lead worktree gates)",
-   "merged_sha": "7502cbdd467ea78af5d57b812ed4bdd5bcd975aa",
-   "evidence": [
-    "worker HEAD 40cf4b18 (3 checkpoints: c77bb02, 5ec5986, 40cf4b1); delivery chat 18e20f26 (marker server-confirmed; 1.39MB batches)",
-    "Lead worktree gates: typecheck PASS | vitest 4737 passed + 1 skipped (+153) | program PASS | governance PASS; surface compliant (services/execution-gateway + packages/execution-authority)",
-    "CI run ci@40cf4b18 success; PR #7 squash-merged as 7502cbd",
-    "L8 last-mile: 13-stage gateway pipeline (gate\u2192risk\u2192authority\u2192entitlement\u2192rate\u2192kill-switch\u2192translate\u2192audit) with REAL T019/T020/T039 integration; execution authority stays outside the model (invariant 6)"
-   ],
-   "depends": [
-    "T019",
-    "T020",
-    "T039"
-   ]
-  },
-  {
-   "id": "T041",
-   "title": "Public/private API/SDK",
-   "deps": [
-    "T007",
-    "T034",
-    "T040"
-   ],
-   "write_surface": [
-    "packages/sdk/",
-    "services/api/"
-   ],
-   "status": "merged",
-   "branch": "work/T041-api-sdk",
-   "pr": 16,
-   "merged_sha": "38fe7c7d3039956710aa06834756a354bf5981c6",
-   "evidence": [
-    "D-029 wave-29 dispatch (base 9d13e4c); deps T007+T034+T040 merged; surfaces services/api + packages/sdk; zero root exceptions",
-    "D-031 incident + recovery: dispatch token redacted in transport (Lead env-sourcing error) \u2014 worker completed all 45 files locally (3 checkpoints) but push 401d; continue-cure re-supplied the credential, push verified, full report delivered. No work redone",
-    "D-032 merge 38fe7c7 via PR #16 (squash): services/api 92/92 (pipeline, isolation, L8 execution, idempotency, metering/audit, contracts+golden determinism, interop trip-wires vs REAL T007/T033/T034/T040/T043/T044) + packages/sdk 59/59; Lead merge-result gates GREEN vs main (merge clean; 6301 passed + 1 skip / 433 files; program valid; governance passed; CI green after base governance fix b23b1d5)"
-   ],
-   "depends": [
-    "T007",
-    "T034",
-    "T040"
-   ]
-  },
-  {
-   "id": "T042",
-   "title": "Web project console",
-   "deps": [
-    "T041"
-   ],
-   "write_surface": [
-    "apps/web/"
-   ],
-   "status": "merged",
-   "branch": "work/T042-web-console",
-   "pr": 17,
-   "merged_sha": "ba6773ef06c40db3cf35584fad280588839d822e",
-   "evidence": [
-    "PR #17 squash-merged at ba6773ef06c40db3cf35584fad280588839d822e (base 3730361, worker head 7abc0d0, checkpoints e960347/c723374/02b9821/7abc0d0)",
-    "GitHub Actions run 37223648930 (verify): success \u2014 typecheck, 6567 passed + 1 skipped (6568), program:check valid, governance passed",
-    "Lead merge-result gates GREEN vs main fb59c03 (worktree 1c120e6): typecheck 0 errors; vitest 6567 passed + 1 skipped (452 files); program:check valid; governance passed; write surface compliant (apps/web/** + two granted root include lines; lockfile importer-sync only)",
-    "Worker completion report (W-1a..W-1d local chain, D-034): 266 own tests / 19 files incl. the typed-error laws (ChainOfThoughtExposureError, AvailabilityViolationError, CrossTenantRenderError, WallClockReadError, PolicyEnforcementError), notice-fold + workspace byte-determinism, SDK interop trip-wires driving the real fixture service, and the self-hosting no-build loader"
-   ],
-   "depends": [
-    "T041"
-   ]
-  },
-  {
-   "id": "T043",
-   "title": "Observability/audit/operations",
-   "deps": [
-    "T040"
-   ],
-   "write_surface": [
-    "packages/observability/",
-    "services/observability/",
-    "services/audit/"
-   ],
-   "status": "merged",
-   "branch": "work/T043-observability-audit",
-   "pr": "PR #10 (CI green; Lead merge-result gates)",
-   "merged_sha": "7f75f5051ff8174075cb171cb2997d07d08ddf00",
-   "evidence": [
-    "post-D-023 dispatch died in wipe #12 @ 25c3625; D-024 re-entry (wave-26) completed it",
-    "re-entry worker closed all audit gaps in one final commit 5038f34: seam-scope default-deny CLOSED at the emission gate (7 collector negatives), completed query surface (8 filter tests), replayPlatformAuditTrail, frozen vocabularies with typed closed-ness errors, e2e chain proof over a REAL T040 record (+32 tests)",
-    "Lead merge-result gates (branch b604e49-base + main b21c97f): typecheck PASS | vitest 5318 passed + 1 skipped | program PASS | governance PASS; surface compliant (packages/observability + services/observability + services/audit only)",
-    "CI ci@5038f34 success; PR #10 squash-merged as 7f75f50"
-   ],
-   "depends": [
-    "T040"
-   ]
-  },
-  {
-   "id": "T044",
-   "title": "Security/tenancy/secrets/isolation",
-   "deps": [
-    "T005",
-    "T040"
-   ],
-   "write_surface": [
-    "packages/security/",
-    "services/security/",
-    "tests/security/"
-   ],
-   "status": "merged",
-   "branch": "work/T044-security-tenancy",
-   "pr": "PR #13 (CI green; Lead merge-result gates)",
-   "merged_sha": "53483c0174f0d8127ebb8a6f2e76b815e9c13ff8",
-   "evidence": [
-    "D-026/D-027 wave-27 authorization (base 803cf1c); stale-queue recovery re-dispatch 2026-10-02 03:21 UTC (tab CA44A6E3); deps T005+T040 merged",
-    "worker head 44eea1a (3 checkpoints: packages/security contracts -> services/security enforcement -> tests/security integration suites incl. cross-tenant/untrusted-escalation coverage)",
-    "Lead merge-result gates GREEN (5870 passed + 1 skip); squash 53483c0 via PR #13 (CI success); completion server-confirmed in batch store"
-   ],
-   "depends": [
-    "T005",
-    "T040"
-   ]
-  },
-  {
-   "id": "T045",
-   "title": "Capability-provider interface",
-   "deps": [
-    "T017",
-    "T041"
-   ],
-   "write_surface": [
-    "packages/capability-provider/"
-   ],
-   "status": "blocked",
-   "branch": null,
-   "pr": null,
-   "merged_sha": null,
-   "evidence": [],
-   "depends": [
-    "T017",
-    "T041"
-   ]
-  },
-  {
-   "id": "T046",
-   "title": "Arena provider adapter",
-   "deps": [
-    "T041",
-    "T045"
-   ],
-   "write_surface": [
-    "adapters/arena/"
-   ],
-   "status": "blocked",
-   "branch": null,
-   "pr": null,
-   "merged_sha": null,
-   "evidence": [],
-   "depends": [
-    "T041",
-    "T045"
-   ]
-  },
-  {
-   "id": "T047",
-   "title": "Commercial capability marketplace",
-   "deps": [
-    "T017",
-    "T034",
-    "T041"
-   ],
-   "write_surface": [
-    "services/marketplace/",
-    "packages/entitlements/"
-   ],
-   "status": "blocked",
-   "branch": null,
-   "pr": null,
-   "merged_sha": null,
-   "evidence": [],
-   "depends": [
-    "T017",
-    "T034",
-    "T041"
-   ]
-  },
-  {
-   "id": "T048",
-   "title": "Reference end-to-end trading slice",
-   "deps": [
-    "T018",
-    "T024",
-    "T025",
-    "T027",
-    "T030",
-    "T037",
-    "T038",
-    "T040"
-   ],
-   "write_surface": [
-    "examples/end-to-end-trading/",
-    "tests/end-to-end-trading/"
-   ],
-   "status": "in_progress",
-   "branch": "work/T048-e2e-reference",
-   "pr": null,
-   "merged_sha": null,
-   "evidence": [
-    "D-027 wave-27 dispatch from main 1a34b8a; deps T018+T024+T025+T027+T030+T037+T038+T040 all merged; two root-glob lines granted (pnpm-workspace examples/*, tsconfig examples/*/src)"
-   ],
-   "depends": [
-    "T018",
-    "T024",
-    "T025",
-    "T027",
-    "T030",
-    "T037",
-    "T038",
-    "T040"
-   ]
-  },
-  {
-   "id": "T049",
-   "title": "Benchmark/evidence publication",
-   "deps": [
-    "T028",
-    "T032",
-    "T035",
-    "T048"
-   ],
-   "write_surface": [
-    "benchmarks/",
-    "research/public-evaluation/"
-   ],
-   "status": "blocked",
-   "branch": null,
-   "pr": null,
-   "merged_sha": null,
-   "evidence": [],
-   "depends": [
-    "T028",
-    "T032",
-    "T035",
-    "T048"
-   ]
-  },
-  {
-   "id": "T050",
-   "title": "Production reliability/performance/release",
-   "deps": [
-    "T035",
-    "T042",
-    "T043",
-    "T044",
-    "T047",
-    "T048",
-    "T049",
-    "T052"
-   ],
-   "write_surface": [
-    "ops/",
-    "docs/release/",
-    "tests/performance/"
-   ],
-   "status": "blocked",
-   "branch": null,
-   "pr": null,
-   "merged_sha": null,
-   "evidence": [],
-   "depends": [
-    "T035",
-    "T042",
-    "T043",
-    "T044",
-    "T047",
-    "T048",
-    "T049"
-   ]
-  },
-  {
-   "id": "T051",
-   "title": "Console UX conformance and discoverability overhaul",
-   "deps": [
-    "T042"
-   ],
-   "write_surface": [
-    "apps/web/"
-   ],
-   "status": "merged",
-   "branch": "work/T051-ux-conformance",
-   "pr": 18,
-   "merged_sha": "730739aab0bbb3a763938d712c22ae156c34adbd",
-   "evidence": [
-    "PR #18 squash-merged at 730739aab0bbb3a763938d712c22ae156c34adbd (base dea4044, worker head dbe8e2a, checkpoints 12f4b72/5850a15/f99d371/4cbcd52/dbe8e2a)",
-    "GitHub Actions run 37228441838 (verify): success",
-    "Lead merge-result gates GREEN vs main dea4044 (worktree cc85bb0): typecheck 0 errors; vitest 6721 passed + 1 skipped (457 files); program:check valid; governance passed; write surface compliant (apps/web/** only)",
-    "Worker completion report (W-2a..W-2e local chain, D-034): 154 new tests; all seven discoverability-law clauses pinned (D1-D7); the 266-test T042 regression floor green verbatim; honest limitations recorded (FLIP slide, TM scrubber drag, Geist fonts optional)"
-   ]
-  },
-  {
-   "id": "T052",
-   "title": "Public free-tier deployment",
-   "deps": [
-    "T051"
-   ],
-   "write_surface": [
-    "deploy/"
-   ],
-   "status": "merged",
-   "branch": "work/T052-public-deployment",
-   "pr": 19,
-   "merged_sha": "18ba4435da515f6e3991f8415fd4f27791921932",
-   "evidence": [
-    "PR #19 squash-merged at 18ba4435da515f6e3991f8415fd4f27791921932 (base c0ef616, worker head ab40095, checkpoints 29b84ce/90629c1/c5ea40d/ab40095)",
-    "GitHub Actions run 37232016551 (verify): success",
-    "Lead merge-result gates GREEN vs main c0ef616 (worktree 8aed3e8): typecheck 0 errors; vitest full-suite green (135s run; branch-identical tree worker-verified 6845 passed + 1 skipped / 472 files); program:check valid; governance passed; write surface compliant (deploy/** + the two granted root include lines only)",
-    "Worker completion report (W-3a..W-3e local chain, D-034): 124 deploy tests (vercel 37, neon+upstash 35, r2+resend+apify 38, contract+wire 14); SigV4/Neon/Upstash/Resend/Apify determinism vectors; L12 negative probes at every store + the composition layer; R46 degradation at every layer; the sync-port hydration seam documented as the honest limitation"
-   ]
+  "dispatch": {
+    "wave": 28,
+    "base_sha": "803cf1c",
+    "active": [
+      "T032",
+      "T034",
+      "T048"
+    ],
+    "dispatched_at": "2026-10-01T00:45:00Z",
+    "note": "37/50 merged; wave-27 full: T033+T044 (from 803cf1c) + T048 (from 1a34b8a)"
   }
- ],
- "dispatch": {
-  "wave": 28,
-  "base_sha": "803cf1c",
-  "active": [
-   "T032",
-   "T034",
-   "T048"
-  ],
-  "dispatched_at": "2026-10-01T00:45:00Z",
-  "note": "37/50 merged; wave-27 full: T033+T044 (from 803cf1c) + T048 (from 1a34b8a)"
- }
 }
