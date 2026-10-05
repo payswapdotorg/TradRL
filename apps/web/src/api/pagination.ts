@@ -23,6 +23,9 @@ export function countOf<T>(page: Page<T>): number {
   return page.items.length;
 }
 
+/** One page fetch of the looping-cursor walk (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
+export type PageFetcher<T> = (cursor: string | undefined) => Promise<Page<T>>;
+
 /**
  * Walk every page of a listing, collecting items, until the last page
  * or the max-pages guard fires. The fetcher receives the previous
@@ -31,7 +34,7 @@ export function countOf<T>(page: Page<T>): number {
  * spin the console).
  */
 export async function collectAll<T>(
-  fetchPage: (cursor: string | undefined) => Promise<Page<T>>,
+  fetchPage: PageFetcher<T>,
   options: { readonly maxPages?: number } = {},
 ): Promise<readonly T[]> {
   const maxPages = options.maxPages ?? 100;

@@ -98,7 +98,10 @@ export function availabilityOfSubmission(record: GatewaySubmissionRecord): numbe
  * instant. Pure; order-preserving (the boundary's ordering is the
  * console's ordering — determinism).
  */
-export function projectToView<T>(records: readonly T[], viewAt: number, availabilityOf: (record: T) => number): readonly T[] {
+/** The availability instant of one record (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
+export type AvailabilityOf<T> = (record: T) => number;
+
+export function projectToView<T>(records: readonly T[], viewAt: number, availabilityOf: AvailabilityOf<T>): readonly T[] {
   return records.filter((record) => availabilityOf(record) <= viewAt);
 }
 

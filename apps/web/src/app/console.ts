@@ -56,6 +56,9 @@ import { parseSheetRef, type ShellView } from '../render/shell';
 import { renderConsoleModel } from '../render/model';
 import { mountVTree } from '../render/dom';
 
+/** One workspace-state listener (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
+export type WorkspaceListener = (next: WorkspaceState) => void;
+
 /** The boot bundle — every seam INJECTED (transport, instants, scheduler, mounts). */
 export interface ConsoleBootOptions {
   /** The API base URL (the browser transport adapter's target). */
@@ -144,7 +147,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   const beatMs = options.beatMs ?? 1000;
 
   let state: WorkspaceState = openWorkspace(scope, instants.nowMs());
-  const listeners: ((next: WorkspaceState) => void)[] = [];
+  const listeners: WorkspaceListener[] = [];
 
   function dispatch(event: WorkspaceEvent): void {
     state = reduceWorkspace(state, event);

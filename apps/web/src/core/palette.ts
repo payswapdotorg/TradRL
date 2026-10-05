@@ -42,7 +42,10 @@ const KIND_ORDER: readonly PaletteEntry['kind'][] = ['NAVIGATION', 'PROJECT', 'J
  * navigation targets (D4's 100% coverage), the project, the jobs, the
  * notices and the evidence capsules.
  */
-export function paletteIndex(state: WorkspaceState, capsulesOf: (state: WorkspaceState) => readonly EvidenceCapsule[]): readonly PaletteEntry[] {
+/** The evidence-capsule view of a state (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
+export type CapsulesOf = (state: WorkspaceState) => readonly EvidenceCapsule[];
+
+export function paletteIndex(state: WorkspaceState, capsulesOf: CapsulesOf): readonly PaletteEntry[] {
   const entries: PaletteEntry[] = SHELL_TARGETS.map((target) => {
     const group = NAV_GROUPS.find((candidate) => candidate.label !== undefined && candidate.targets.includes(target));
     return {

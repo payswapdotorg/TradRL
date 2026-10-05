@@ -44,17 +44,11 @@ export interface ShellConfig {
   readonly simulated?: boolean;
 }
 
-/** The global the static shell sets before loading the entry (declared, never trusted). */
-declare global {
-  // eslint-disable-next-line no-var
-  var __TRADRL_CONSOLE__: ShellConfig | undefined;
-}
-
 /** The static shell's root element id (index.html's #tradrl-console). */
 export const CONSOLE_ROOT_ID = 'tradrl-console';
 
 /** Read the shell's configuration (the injected global; defaults apply after). */
-export function readShellConfig(globalLike: { __TRADRL_CONSOLE__?: ShellConfig } = globalThis): ShellConfig {
+export function readShellConfig(globalLike: { __TRADRL_CONSOLE__?: ShellConfig } = globalThis as { __TRADRL_CONSOLE__?: ShellConfig }): ShellConfig {
   return globalLike.__TRADRL_CONSOLE__ ?? {};
 }
 

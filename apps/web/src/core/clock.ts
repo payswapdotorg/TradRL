@@ -53,7 +53,10 @@ let renderDepth = 0;
  * render is the injected `at`, the record instants, and nothing
  * else). Re-entrant (nested guards keep the outer pass armed).
  */
-export function withRenderGuard<T>(pass: () => T): T {
+/** One render/model pass under guard (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
+export type RenderPass<T> = () => T;
+
+export function withRenderGuard<T>(pass: RenderPass<T>): T {
   renderDepth += 1;
   try {
     return pass();

@@ -86,7 +86,10 @@ export function createFetchTransport(baseUrl: string, fetchLike?: FetchLike): Ap
     try {
       response = await doFetch(url, { method: request.method, headers, ...(body === undefined ? {} : { body }) });
     } catch (cause) {
-      throw new TransportUnavailableError(`the console's transport failed to reach ${url}: ${(cause as Error)?.message ?? String(cause)}`, cause);
+      // The cast lives OUTSIDE the template interpolation (the erasable-subset law:
+      // no type syntax inside template-literal interpolations — hoist first).
+      const causeError = cause as Error;
+      throw new TransportUnavailableError(`the console's transport failed to reach ${url}: ${causeError?.message ?? String(cause)}`, cause);
     }
     const responseHeaders: Record<string, string> = {};
     for (const name of ['x-request-id', 'retry-after-ms', 'x-idempotent-replay', 'x-api-version']) {

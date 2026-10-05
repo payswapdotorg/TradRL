@@ -77,6 +77,9 @@ export interface ConsequentialOptions {
 // The client
 // ---------------------------------------------------------------------------
 
+/** The lifecycle-transition envelope (the erasable-subset law: no inline object types at call-site generic arguments). */
+export type ProjectLifecycleTransitionResult = { readonly record: ProjectRecord; readonly effects: readonly unknown[] };
+
 /** The typed client over the boundary's public plane (the console's mirror of the SDK's resource surface). */
 export interface ConsoleClient {
   /** `GET /v1/meta` — the version + capability surface (also the negotiation call). */
@@ -95,7 +98,7 @@ export interface ConsoleClient {
     /** `GET /v1/projects/:projectId` — read one project. */
     get(projectId: string): Promise<ProjectRecord>;
     /** `POST /v1/projects/:projectId/lifecycle` — apply a lifecycle event. */
-    transition(projectId: string, event: ProjectLifecycleEvent, at: number, options?: ConsequentialOptions): Promise<{ readonly record: ProjectRecord; readonly effects: readonly unknown[] }>;
+    transition(projectId: string, event: ProjectLifecycleEvent, at: number, options?: ConsequentialOptions): Promise<ProjectLifecycleTransitionResult>;
     /** `POST /v1/projects/:projectId/organization` — bind an organization. */
     bindOrganization(projectId: string, organizationRef: string, at: number, options?: ConsequentialOptions): Promise<ProjectRecord>;
   };
@@ -264,7 +267,7 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
         return request<ProjectRecord>('GET', `/v1/projects/${encodeURIComponent(projectId)}`);
       },
       async transition(projectId, event, at, options) {
-        return request<{ record: ProjectRecord; effects: readonly unknown[] }>('POST', `/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, { body: { event, at }, idempotencyKey: keyFor('projects.lifecycle', [projectId, event, at], options) });
+        return request<ProjectLifecycleTransitionResult>('POST', `/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, { body: { event, at }, idempotencyKey: keyFor('projects.lifecycle', [projectId, event, at], options) });
       },
       async bindOrganization(projectId, organizationRef, at, options) {
         return request<ProjectRecord>('POST', `/v1/projects/${encodeURIComponent(projectId)}/organization`, { body: { organizationRef, at }, idempotencyKey: keyFor('projects.bindOrganization', [projectId, organizationRef, at], options) });
