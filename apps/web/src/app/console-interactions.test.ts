@@ -1987,9 +1987,42 @@ function seededSubmissions(): Record<string, unknown>[] {
   ];
 }
 
-/** The demo-substance transport: the deployed backing's read surface for the seeded demo project (project, empty knowledge/post-mortems, the enriched outcome, the seeded blotter). */
-function demoSubstanceTransport(): { readonly transport: ApiTransport; readonly blotterReads: { count: number; projects: string[] } } {
+/** The demo project's seeded goal + constraint set — the LIVE goal route's field-for-field served shape (GET /v1/projects/prj-demo-console/goal on the production origin, the D-1 verification): the GoalStatement/ConstraintSetStatement contracts exactly as the wire carries them, no mapping. Served for the demo project ONLY (the host route's own law — every other project answers the typed 404). */
+function seededGoalBundle(): Record<string, unknown> {
+  return {
+    goal: {
+      id: 'goal-tradrl-demo', version: 1, tenantId: 'tenant-a',
+      objective: 'Operate the TradRL demo organization inside its declared risk envelope with committee-grade evidence on every step',
+      horizon: { startsAt: T0 - 90 * 24 * 3_600_000, endsAt: T0 + 90 * 24 * 3_600_000, label: 'the demo evaluation window' },
+      successCriteria: {
+        criteria: [
+          { id: 'c-return', metric: 'returns.sharpe', predicate: { kind: 'limit.min', bound: 1 }, description: 'risk-adjusted return' },
+          { id: 'c-drawdown', metric: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.15 }, description: 'bounded drawdown' },
+          { id: 'c-costs', metric: 'costs.bps', predicate: { kind: 'limit.max', bound: 25 }, description: 'execution cost ceiling' },
+        ],
+        requiredSatisfaction: 0.6666666666666666,
+      },
+      evaluation: { blindRef: 'blind:v1', walkForwardRef: 'wf:v1', regimeRef: 'regime:v1', adversarialRequired: true },
+      createdAt: T0, description: 'the seeded demo goal of the TradRL console',
+    },
+    constraintSet: {
+      id: 'cs-tradrl-demo', version: 1, tenantId: 'tenant-a', name: 'the TradRL demo constraint set',
+      constraints: [
+        { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: 250000 }, severity: 'blocking', description: 'the demo capital budget' },
+        { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: 25000 }, severity: 'blocking', description: 'the demo risk budget' },
+        { id: 'k-position', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 2 }, severity: 'blocking', description: 'gross exposure cap (the seeded intents cite this proof)' },
+        { id: 'k-turnover', domain: 'action', subject: 'costs.dailyTurnover', predicate: { kind: 'limit.max', bound: 500 }, severity: 'advisory', description: 'daily turnover ceiling' },
+        { id: 'k-drawdown', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.15 }, severity: 'blocking', description: 'drawdown hard limit' },
+      ],
+      createdAt: T0,
+    },
+  };
+}
+
+/** The demo-substance transport: the deployed backing's read surface for the seeded demo project (project, goal + constraint set, empty knowledge/post-mortems, the enriched outcome, the seeded blotter). */
+function demoSubstanceTransport(): { readonly transport: ApiTransport; readonly blotterReads: { count: number; projects: string[] }; readonly goalReads: { count: number; projects: string[] } } {
   const blotterReads = { count: 0, projects: [] as string[] };
+  const goalReads = { count: 0, projects: [] as string[] };
   const project = {
     id: 'prj-a', tenantId: 'tenant-a', name: 'Console Test Project', executionMode: 'simulation',
     lifecycle: { projectId: 'prj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:seeded' },
@@ -2004,6 +2037,17 @@ function demoSubstanceTransport(): { readonly transport: ApiTransport; readonly 
     const key = `${request.method} ${path}`;
     if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
     if (key === 'GET /v1/projects/prj-a') return ok(project);
+    if (path.startsWith('/v1/projects/') && path.endsWith('/goal')) {
+      // THE D-1 GOAL ROUTE (the host-owned W-8 demo-substance read): every
+      // goal request rides the wire and lands in the network log's own
+      // record (goalReads counts REQUESTS, any project); the seeded
+      // records — the LIVE wire shape — are SERVED for prj-a ONLY (the
+      // deployed backing's DEMO_PROJECT_ID-only law; a switched-to
+      // project falls through to the typed 404 below).
+      goalReads.count += 1;
+      goalReads.projects.push(decodeURIComponent(request.path.split('?project=')[1] ?? ''));
+      if (path === '/v1/projects/prj-a/goal') return ok(seededGoalBundle());
+    }
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
     if (key === 'POST /v1/outcomes/query') return ok({ items: (request.body as { project: string }).project === 'prj-a' ? [enrichedOutcome()] : [] }); // the demo project's enriched outcome; a switched-to project serves none (the typed scope assert's own law)
     if (key === 'GET /v1/execution/submissions') {
@@ -2022,7 +2066,22 @@ function demoSubstanceTransport(): { readonly transport: ApiTransport; readonly 
     }
     return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
   };
-  return { transport, blotterReads };
+  return { transport, blotterReads, goalReads };
+}
+
+/** A transport wrapper that answers the goal route with the typed 404 (the non-demo backing's own law — every project without a host-seeded goal) and delegates everything else to the wrapped backing: the D-1 honest-degradation rig. Counts its own intercepted goal reads (the fetch provably rode the wire before the host refused it). */
+function goalMissingTransport(inner: ApiTransport): { readonly transport: ApiTransport; readonly goalReads: { count: number; projects: string[] } } {
+  const goalReads = { count: 0, projects: [] as string[] };
+  const transport: ApiTransport = async (request) => {
+    const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+    if (request.method === 'GET' && path.startsWith('/v1/projects/') && path.endsWith('/goal')) {
+      goalReads.count += 1;
+      goalReads.projects.push(decodeURIComponent(request.path.split('?project=')[1] ?? ''));
+      return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no seeded goal statement exists at this host (the goal read serves the demo project\'s seeded goal)', status: 404 } } };
+    }
+    return inner(request);
+  };
+  return { transport, goalReads };
 }
 
 describe('executed boot: R2 — the execution blotter read (the seeded submissions render)', () => {
@@ -2217,5 +2276,129 @@ describe('executed boot: R6c — the project switcher (Settings, fed by the tena
     rig.doc.fire('change', { target: again });
     expect(rig.handle.state().scope.projectId).toBe('prj-other');
     expect(rig.handle.state().project?.id).toBe('prj-other'); // never reset — the workspace kept its loaded world
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-1 — THE GOAL BOOT SEAM (the W-23 fix). The Lead's live J-catalog
+// re-run on production found the console never fetches the goal/
+// constraint-set for an adopted or booted project: `goal-loaded` fired
+// ONLY inside the launch submit path (from the launch DRAFT), so after
+// any page reload or project switch state.goal/state.constraintSet
+// stayed null — the Goal section lost its "Goal statement" card and
+// the Risk section its "Constraint set" card (the R5 numeric-bounds
+// render included) for every session that didn't just launch. The API
+// route serves both records (GET /v1/projects/:id/goal — verified
+// live: `{ data: { goal: …, constraintSet: … } }`, field-for-field the
+// contract types); the boot bundle's network log simply never carried
+// the fetch. The fix is the fetch wiring: the read rides the boot
+// bundle AND the beat's scope-change refetch (the W-22 machinery),
+// degrading SILENTLY on the host-owned route's typed 404 (the honest
+// pre-fix absence — the route is demo-backing-only).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-1 — the goal boot seam (the goal/constraint-set fetch wires into boot + the scope refetch)', () => {
+  it('the boot bundle READS GET /v1/projects/:id/goal?project=:id and dispatches goal-loaded: the Goal section renders its "Goal statement" card and the Risk section its "Constraint set" card WITH the numeric bounds (R5 visible without a launch)', async () => {
+    const api = demoSubstanceTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    // the boot network log now carries the goal fetch (the Lead's live finding: it never did)
+    expect(api.goalReads.count).toBeGreaterThan(0);
+    expect(api.goalReads.projects.every((project) => project === 'prj-a')).toBe(true); // scoped to the workspace project
+    // the served records entered the state through the existing reducer event
+    expect(rig.handle.state().goal?.id).toBe('goal-tradrl-demo');
+    expect(rig.handle.state().goal?.objective).toBe('Operate the TradRL demo organization inside its declared risk envelope with committee-grade evidence on every step');
+    expect(rig.handle.state().constraintSet?.id).toBe('cs-tradrl-demo');
+    expect(rig.handle.state().constraintSet?.constraints).toHaveLength(5);
+
+    // the Goal section renders the project card + the "Goal statement" card (no launch ever ran)
+    clickNav(rig, 'goal');
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Goal statement')).toBe(true);
+    const goalTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(goalTexts).toContain('Operate the TradRL demo organization inside its declared risk envelope'); // the objective renders
+    expect(goalTexts).toContain('criterion c-return'); // the structured criteria render
+    expect(goalTexts).toContain('returns.sharpe limit.min 1'); // WITH the numeric bound (R5's predicate phrase)
+    expect(goalTexts).toContain('Constraints'); // the Constraints card rides the Goal section too
+
+    // the Risk section renders its "Constraint set" card with every numeric bound
+    clickNav(rig, 'risk');
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Constraint set')).toBe(true);
+    const riskTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(riskTexts).toContain('blocking k-position'); // the constraint the seeded intents cite
+    expect(riskTexts).toContain('state.position.grossExposure limit.max 2'); // the NUMERIC bound renders (R5: a limit without a number is not a limit)
+    expect(riskTexts).toContain('outcome.capital.budget equals 250,000'); // equals-value constraints render their number
+    expect(riskTexts).toContain('advisory k-turnover');
+
+    // a re-refresh is idempotent (the reducer's goal-loaded sets, never appends)
+    await rig.handle.refresh();
+    expect(rig.handle.state().goal?.id).toBe('goal-tradrl-demo');
+    expect(rig.handle.state().constraintSet?.constraints).toHaveLength(5);
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+  });
+
+  it('a typed 404 from the goal route leaves the state EXACTLY as today: no crash, no fabricated goal, no degradation note — the honest pre-fix absence (the route is host-owned demo-backing-only)', async () => {
+    const api = demoSubstanceTransport();
+    const missing = goalMissingTransport(api.transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, missing.transport, 'prj-a');
+    // the fetch FIRED (the seam is wired — the request rode the wire) and the host answered the typed 404
+    expect(missing.goalReads.count).toBeGreaterThan(0);
+    expect(missing.goalReads.projects.every((project) => project === 'prj-a')).toBe(true); // scoped like every sibling read
+    expect(api.goalReads.count).toBe(0); // the wrapper answered before the fixture could serve — the demo backing never saw the request
+    expect(rig.handle.state().goal).toBe(null); // no fabricated goal
+    expect(rig.handle.state().constraintSet).toBe(null); // no fabricated constraint set
+    expect(rig.handle.state().degraded).toEqual([]); // SILENT: no degraded-read note for the host-owned route
+    expect(rig.handle.state().connection).toBe('connected'); // the typed 404 is an ANSWER, never the offline flip
+    // the bundle kept moving past the silent skip: the project + the blotter loaded normally
+    expect(rig.handle.state().project?.id).toBe('prj-a');
+    expect(rig.handle.state().submissions.length).toBe(3);
+
+    // the Goal section renders its honest absence (the project card alone — no "Goal statement" card), the Risk section no "Constraint set" card
+    clickNav(rig, 'goal');
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Goal statement')).toBe(false);
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Constraints')).toBe(false);
+    clickNav(rig, 'risk');
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Constraint set')).toBe(false);
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Risk policies (outcome lineage)')).toBe(true); // the section still renders its own surface
+
+    // the beat re-runs the silent skip without ever crashing or degrading
+    await rig.handle.beat();
+    expect(rig.handle.state().goal).toBe(null);
+    expect(rig.handle.state().degraded).toEqual([]);
+  });
+
+  it('a scope switch REFETCHES the goal for the adopted project: the read fires for the newly adopted scope, a project without a seeded goal degrades to the honest absence, and a project WITH one loads it without any reload', async () => {
+    const api = demoSubstanceTransport();
+    const scopeStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    expect(rig.handle.state().goal?.id).toBe('goal-tradrl-demo'); // the boot scope's goal loaded
+
+    // THE SWITCH (R6c's machinery): the committed choice adopts prj-other
+    clickNav(rig, 'settings');
+    const switcher = findByData(rig.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    switcher.value = 'prj-other';
+    rig.doc.fire('change', { target: switcher });
+    expect(rig.handle.state().scope.projectId).toBe('prj-other');
+    expect(rig.handle.state().goal).toBe(null); // the adoption reset the prior project's goal (the workspace is ONE project's world)
+
+    // the beat's scope-change refetch reads the ADOPTED project's goal — the W-22 machinery carries the goal read too
+    await rig.handle.beat();
+    expect(api.goalReads.projects.filter((project) => project === 'prj-other').length).toBeGreaterThan(0); // the goal read ran for the adopted scope
+    expect(rig.handle.state().goal).toBe(null); // prj-other has no seeded goal — the typed 404 degraded SILENTLY (no fabricated goal, no note)
+    expect(rig.handle.state().degraded).toEqual([]);
+
+    // switch BACK: the adopted scope HAS a seeded goal — it loads WITHOUT any reload
+    clickNav(rig, 'settings');
+    const back = findByData(rig.root, 'data-action', 'project-switch');
+    if (back === null) throw new Error('the switcher vanished after the switch');
+    back.value = 'prj-a';
+    rig.doc.fire('change', { target: back });
+    expect(rig.handle.state().goal).toBe(null); // reset by the adoption — the refetch owns the reload
+    await rig.handle.beat();
+    expect(api.goalReads.projects.filter((project) => project === 'prj-a').length).toBeGreaterThan(1); // the goal read re-ran for the re-adopted scope
+    expect(rig.handle.state().goal?.id).toBe('goal-tradrl-demo'); // the seeded goal is BACK, no reload anywhere
+    expect(rig.handle.state().constraintSet?.id).toBe('cs-tradrl-demo');
+    clickNav(rig, 'goal');
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Goal statement')).toBe(true); // the card renders again
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
   });
 });

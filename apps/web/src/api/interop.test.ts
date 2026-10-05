@@ -174,7 +174,16 @@ describe('trip-wire: the client method surface + route table (literal)', () => {
   it("exposes exactly the SDK resource families and methods", () => {
     const client = createConsoleClient({ transport: async () => ({ status: 200, headers: {}, body: { data: {} } }), token: 't' });
     expect(Object.keys(client).sort()).toEqual(['execution', 'jobs', 'knowledge', 'meta', 'negotiateVersion', 'organizations', 'outcomes', 'projects']);
-    expect(Object.keys(client.projects).sort()).toEqual(['bindOrganization', 'create', 'get', 'list', 'listAll', 'transition']);
+    // THE W-23 AMENDMENT (documented drift, not silent): the projects
+    // family carries ONE method the frozen SDK does not — `goal`, the
+    // HOST-OWNED goal read (GET /v1/projects/:projectId/goal, the W-8
+    // demo-substance route served from the deployed backing BEFORE the
+    // boundary wrap; the route exists nowhere in the frozen route
+    // table, so the SDK has no mirror of it). The console's goal-boot
+    // read (D-1: the goal/constraint-set fetch at boot + on every
+    // scope-change refetch) needs it; every other member stays
+    // SDK-identical.
+    expect(Object.keys(client.projects).sort()).toEqual(['bindOrganization', 'create', 'get', 'goal', 'list', 'listAll', 'transition']);
     expect(Object.keys(client.jobs).sort()).toEqual(['get', 'submitLearning', 'submitResearch']);
     expect(Object.keys(client.knowledge)).toEqual(['query']);
     expect(Object.keys(client.outcomes).sort()).toEqual(['postMortems', 'query']);
@@ -265,6 +274,35 @@ describe('client: the injected transport drives every request (negotiation, enve
     const list = requests.find((request) => request.path.includes('/v1/projects?'));
     expect(list?.path).toBe('/v1/projects?cursor=cur-1&limit=50');
     expect(list?.headers['idempotency-key']).toBeUndefined();
+  });
+
+  it('the projects.goal read (the W-23 goal-boot seam): GET /v1/projects/:id/goal?project=:id, bearer + no idempotency header, the envelope unwraps to the { goal, constraintSet } bundle', async () => {
+    // The wire shape pinned here is the LIVE production origin's own
+    // (GET /v1/projects/prj-demo-console/goal serves `{ data: { goal:
+    // GoalStatement, constraintSet: ConstraintSetStatement } }` — the
+    // D-1 verification); the contract types need no field mapping.
+    const { transport, requests } = scriptedTransport({
+      'GET /v1/meta': () => ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] }),
+      'GET /v1/projects/prj-1/goal': () => ok({ goal: { id: 'goal-1', tenantId: 'tenant-a' }, constraintSet: { id: 'cs-1', tenantId: 'tenant-a' } }),
+    });
+    const client = createConsoleClient({ transport, token: 'tok-1' });
+    const bundle = await client.projects.goal('prj-1');
+    expect(bundle.goal.id).toBe('goal-1');
+    expect(bundle.constraintSet.id).toBe('cs-1');
+    const goal = requests.find((request) => request.path.includes('/goal'));
+    expect(goal?.method).toBe('GET');
+    expect(goal?.path).toBe('/v1/projects/prj-1/goal?project=prj-1'); // the project-scoped query rides the path (the demo-substance routes' own law)
+    expect(goal?.headers.authorization).toBe('Bearer tok-1');
+    expect(goal?.headers['idempotency-key']).toBeUndefined(); // a read, never a consequential call
+  });
+
+  it('the projects.goal read surfaces the typed 404 (the host-owned route answers not_found for every project without a seeded goal — the caller degrades honestly on it)', async () => {
+    const { transport } = scriptedTransport({
+      'GET /v1/meta': () => ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] }),
+      'GET /v1/projects/prj-launched/goal': () => ({ status: 404, headers: {}, body: { requestId: 'req-g', error: { code: 'not_found', message: 'no seeded goal statement exists for "prj-launched" at this host', status: 404 } } }),
+    });
+    const client = createConsoleClient({ transport, token: 'tok-1' });
+    await expect(client.projects.goal('prj-launched')).rejects.toMatchObject({ name: 'NotFoundError', code: 'not_found', status: 404 });
   });
 
   it('the error envelope translates to the typed hierarchy (the boundary\'s own codes)', async () => {

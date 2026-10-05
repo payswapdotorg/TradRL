@@ -80,6 +80,22 @@ export interface ConsequentialOptions {
 /** The lifecycle-transition envelope (the erasable-subset law: no inline object types at call-site generic arguments). */
 export type ProjectLifecycleTransitionResult = { readonly record: ProjectRecord; readonly effects: readonly unknown[] };
 
+/**
+ * The goal-route bundle (the W-23 goal-boot read): the project's goal
+ * statement + its constraint set, exactly as the host-owned route
+ * serves them — `{ data: { goal: GoalStatement, constraintSet: ConstraintSetStatement } }`,
+ * field-for-field the T007 contract shapes (verified against the live
+ * production origin; no field mapping needed — the wire IS the
+ * contract). The erasable-subset law: no inline object types at
+ * call-site generic arguments.
+ */
+export interface ProjectGoalBundle {
+  /** The project's goal statement (the T007 shape behind the boundary). */
+  readonly goal: GoalStatement;
+  /** The project's constraint-set statement (the T007 shape behind the boundary). */
+  readonly constraintSet: ConstraintSetStatement;
+}
+
 /** The typed client over the boundary's public plane (the console's mirror of the SDK's resource surface). */
 export interface ConsoleClient {
   /** `GET /v1/meta` — the version + capability surface (also the negotiation call). */
@@ -97,6 +113,8 @@ export interface ConsoleClient {
     listAll(params?: { readonly limit?: number }): Promise<readonly ProjectRecord[]>;
     /** `GET /v1/projects/:projectId` — read one project. */
     get(projectId: string): Promise<ProjectRecord>;
+    /** `GET /v1/projects/:projectId/goal?project=:projectId` — the project's goal + constraint set (the HOST-OWNED W-8 demo-substance route: the seeded records are served from the demo backing BEFORE the boundary wrap, so the frozen SDK surface does not carry it — the mirror extends the family for the console's own read; interop.test.ts documents the amendment. The route serves only projects with a host-seeded goal and answers a typed 404 elsewhere — the caller degrades honestly on it). */
+    goal(projectId: string): Promise<ProjectGoalBundle>;
     /** `POST /v1/projects/:projectId/lifecycle` — apply a lifecycle event. */
     transition(projectId: string, event: ProjectLifecycleEvent, at: number, options?: ConsequentialOptions): Promise<ProjectLifecycleTransitionResult>;
     /** `POST /v1/projects/:projectId/organization` — bind an organization. */
@@ -270,6 +288,15 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
       },
       async get(projectId) {
         return request('GET', `/v1/projects/${encodeURIComponent(projectId)}`) as Promise<ProjectRecord>;
+      },
+      async goal(projectId) {
+        // The route is project-scoped twice over: the path carries the
+        // project id and the read repeats it as the `?project=` query
+        // (the demo-substance routes' own law — the sibling blotter read
+        // and the org-status read carry the same query). The served body
+        // is the { goal, constraintSet } bundle, already the contract
+        // shapes — the envelope parse is the whole translation.
+        return request('GET', withQuery(`/v1/projects/${encodeURIComponent(projectId)}/goal`, { project: projectId })) as Promise<ProjectGoalBundle>;
       },
       async transition(projectId, event, at, options) {
         return request('POST', `/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, { body: { event, at }, idempotencyKey: keyFor('projects.lifecycle', [projectId, event, at], options) }) as Promise<ProjectLifecycleTransitionResult>;
