@@ -56,6 +56,7 @@ import { bootConsole } from './console';
 import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
 import type { JobRecord, OutcomeRecord } from '../api/contracts';
+import { viewAtOf } from '../core/workspace';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -677,6 +678,57 @@ function launchDemoTransport(): { readonly transport: ApiTransport; readonly pol
   return { transport, polls, createdProjectIds };
 }
 
+/** A scripted transport shaped like the DEPLOYED backing's clock laws (the W-17a J03 pin): the created project's availability is stamped from the REQUEST's submitted `at` (services/api's own law — the fixtures backing stamps createdAt/updatedAt from input.at, which is the client's launch instant), and the kickoff job animates per poll with server-side observed instants. The PRIOR rigs stamped the created project at T0 — forever in the PAST of the rig's instant source — which is exactly why the local J03 proofs stayed green while the live origin failed deterministically. */
+function deployedClockLaunchTransport(): {
+  readonly transport: ApiTransport;
+  readonly polls: { count: number };
+  readonly createdProjectIds: string[];
+  readonly researchSubmits: string[];
+  /** The submitted `at` of the create request (the created project's availability instant). */
+  createAt: number | null;
+} {
+  const polls = { count: 0 };
+  const createdProjectIds: string[] = [];
+  const researchSubmits: string[] = [];
+  const state: { createAt: number | null } = { createAt: null };
+  const jobOf = (status: 'submitted' | 'running' | 'complete', project: string, at: number): JobRecord => ({
+    jobId: 'job-launch-1', kind: 'research', tenant: 'tenant-a', project, status,
+    submittedAt: at,
+    ...(status === 'complete' ? { completedAt: at + 40 } : {}),
+  });
+  const projectOf = (id: string, name: string, at: number): Record<string, unknown> => ({
+    id, tenantId: 'tenant-a', name, executionMode: 'simulation',
+    lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+    lineage: { projectId: id, createdAt: at, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: at, updatedAt: at, // THE DEPLOYED LAW: availability = the submitted `at` (fixtures.ts: createdAt/updatedAt from input.at)
+  });
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+  const transport: ApiTransport = async (request) => {
+    const key = `${request.method} ${request.path.split('?')[0]}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Console Test Project', T0)); // the seeded demo: stamped in the PAST (before every session's boot)
+    if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'POST /v1/projects') {
+      const body = request.body as { readonly id: string; readonly name: string; readonly at: number };
+      createdProjectIds.push(body.id);
+      state.createAt = body.at;
+      return ok(projectOf(body.id, body.name, body.at)); // availability = the client's launch instant (always AFTER the boot anchor)
+    }
+    if (key === 'POST /v1/jobs/research') {
+      const body = request.body as { readonly projectId: string };
+      researchSubmits.push(body.projectId);
+      return ok(jobOf('submitted', body.projectId, (state.createAt ?? T0) + 15)); // the server observes its own instant at handling (a small skew after the create)
+    }
+    if (key.startsWith('GET /v1/jobs/')) {
+      polls.count += 1;
+      const base = (state.createAt ?? T0) + 15;
+      return ok(polls.count === 1 ? jobOf('running', createdProjectIds[0] ?? 'prj-a', base) : jobOf('complete', createdProjectIds[0] ?? 'prj-a', base + polls.count * 25));
+    }
+    return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
+  };
+  return { transport, polls, createdProjectIds, researchSubmits, get createAt() { return state.createAt; } };
+}
+
 describe('executed boot: J3 — the primary flow (the launch entry + the wired form)', () => {
   it('the HOME HERO carries the primary flow\'s CTA (the discovery law: the entry is visible from Home, the natural starting point)', async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' });
@@ -901,6 +953,121 @@ describe('executed boot: J3 — the primary flow (the launch entry + the wired f
     clickAction(rig, 'launch-step-review'); // budgets + lists never filled -> invalid
     expect(findByData(rig.root, 'data-review-problems', '5')).not.toBeNull(); // capital + risk budgets + the three lists (name/objective/horizon/mode are valid)
     expect(findByData(rig.root, 'data-action', 'confirm-arm-launch')).toBeNull(); // never the arm button
+  });
+});
+
+// ---------------------------------------------------------------------------
+// J03's VIEW-INSTANT/AVAILABILITY SEAM (the W-17a fix — the v0.1.0 release
+// blocker). The W-16 release acceptance measured the live defect: the LIVE
+// view instant is PINNED at the boot instant (the readout stayed at the boot
+// time for 4+ minutes while wall-clock advanced), while the created
+// project's availability is stamped at the launch's submitted `at` — always
+// after boot — so the Goal section's L4 render gate threw the typed
+// AvailabilityViolationError at every launch ("Launch (failed)"; no
+// POST /v1/jobs/research ever fired; submitted -> running -> complete never
+// rendered). The prior rigs could never catch it: their transports stamped
+// the created project at T0 (eternally in the past of the pinned anchor)
+// and their fixed instant sources never moved between boot and launch. The
+// pins below run the DEPLOYED clock shape: an instant source that advances
+// like the real clock, and a backing that stamps availability from the
+// submitted `at`.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: J03 — the view-instant/availability seam (the W-17a fix)', () => {
+  it('the LIVE view instant follows the observed now on the BEAT cadence (the W-16 live finding: the readout pinned at boot for 4+ minutes while wall-clock advanced)', async () => {
+    const scheduler = new ScriptedScheduler();
+    let nowMs = T0;
+    const instants: InstantSource = { nowMs: () => (nowMs += 50) }; // the deployed reality: the clock advances between every observation
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler, instants });
+    const bootAnchor = rig.handle.state().timeMachine.anchorAt;
+    expect(bootAnchor).toBeGreaterThan(T0); // the rig's premise: the anchor was observed AFTER boot reads
+
+    // 4 minutes of wall-clock pass with NO user Time Machine interaction
+    // (the W-16 observation window) — then the beats fire.
+    nowMs = T0 + 240_000;
+    for (let beat = 0; beat < 3; beat += 1) {
+      expect(scheduler.fireNext(), `beat ${beat + 1} was scheduled`).toBe(true);
+      await settle();
+    }
+
+    // THE LIVE VIEW INSTANT TRACKS NOW: the anchor followed the observed
+    // instant (LIVE mode renders the world as of NOW — the design's own
+    // law, core/timemachine.ts advanceAnchor: "the app observes a fresh
+    // injected instant"). RED pre-fix: the anchor stays at bootAnchor.
+    const viewAt = viewAtOf(rig.handle.state());
+    expect(viewAt).toBeGreaterThan(bootAnchor);
+    expect(viewAt).toBeGreaterThanOrEqual(T0 + 240_000);
+    // and the mono readout renders the tracked instant (not the boot instant)
+    const readout = elementsOf(rig.root).find((element) => element.hasClass('tm-readout'));
+    if (readout === undefined) throw new Error('the mono readout is missing');
+    expect(textOf(readout)).toBe(formatInstantUtc(viewAt));
+  });
+
+  it('the FULL deployed-shape journey: boot scoped to the demo project, minutes pass, launch -> the created project RENDERS (no L4 typed error), the kickoff job fires and submitted -> running -> complete animates', async () => {
+    // THE VERBATIM LIVE RED (W-16's release acceptance, J03): the guided
+    // spec, review, arm and confirm all work; POST /v1/projects returns
+    // 201; the adoption supersedes — and then every launch terminated
+    // "Launch (failed)" with "the datum prj-… (available at <launch at>)
+    // cannot be rendered at view time <boot instant> — rendering a fact
+    // before its availability instant is a typed error (L4)". The pinned
+    // anchor made the just-created project eternally post-view-time.
+    const demo = deployedClockLaunchTransport();
+    const scheduler = new ScriptedScheduler();
+    let nowMs = T0;
+    const instants: InstantSource = { nowMs: () => (nowMs += 50) };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, demo.transport, 'prj-a', { scheduler, instants });
+    expect(rig.handle.state().project?.id).toBe('prj-a'); // the demo project's world loaded at boot (the deployed reality)
+
+    // the user takes minutes on the guided spec (the W-16 repro: fresh
+    // load -> wait -> the wizard) — the clock runs far past every
+    // availability instant the launch will stamp.
+    nowMs = T0 + 240_000;
+
+    clickNav(rig, 'goal'); // the W-16 journey's section — the render that threw live (its card carries the created project)
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-review');
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch');
+    await settle();
+
+    // NO L4 typed error: the launch seam re-observed now at the created
+    // record's arrival, so the view instant allows rendering the
+    // just-created project. RED pre-fix: phase 'failed', the error carries
+    // the verbatim live AvailabilityViolationError, and NO kickoff job was
+    // ever submitted (the submit path aborted at the render throw).
+    expect(rig.handle.state().launch.phase).toBe('launching');
+    expect(rig.handle.state().launch.error).toBeNull();
+    expect(demo.createdProjectIds.length).toBe(1);                     // POST /v1/projects created the project (201)
+    expect(rig.handle.state().scope.projectId).toBe(demo.createdProjectIds[0]); // the launch ADOPTED it (superseding the demo)
+    expect(demo.researchSubmits).toEqual([demo.createdProjectIds[0]]); // the kickoff job FIRED (the live finding: it never did)
+    expect(findByData(rig.root, 'data-launch-phase', 'submitted')).not.toBeNull(); // the progress surface renders
+    expect(elementsOf(rig.root).some((element) => element.hasClass('error-card'))).toBe(false);
+    // the Goal section renders the just-created project AT THE LIVE VIEW INSTANT (the L4 gate passes)
+    expect(rig.handle.state().project?.id).toBe(demo.createdProjectIds[0]);
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Momentum scout')).toBe(true);
+
+    // the beats animate the async progress to completion (the launch's
+    // own submitted -> running -> complete)
+    expect(scheduler.fireNext()).toBe(true); // beat 1 -> poll 1 -> running
+    await settle();
+    expect(findByData(rig.root, 'data-launch-phase', 'running')).not.toBeNull();
+    expect(scheduler.fireNext()).toBe(true); // beat 2 -> poll 2 -> complete
+    await settle();
+    expect(rig.handle.state().launch.phase).toBe('launched');
+    expect(findByData(rig.root, 'data-launch-phase', 'complete')).not.toBeNull();
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Launch (launched)')).toBe(true);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('error-card'))).toBe(false);
+    // the anchor kept tracking now through the beats (the view instant never froze again)
+    expect(viewAtOf(rig.handle.state())).toBeGreaterThan(T0 + 240_000);
   });
 });
 

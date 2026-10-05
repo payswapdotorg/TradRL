@@ -233,6 +233,44 @@ describe('workspace: transitions', () => {
     expect(reAdopted.jobs).toHaveLength(1);
   });
 
+  it('anchor-advanced follows the observed now WITHOUT leaving the mode (the W-17a seam: the beat/launch cadence re-observes the live anchor — the v0.1.0 J03 release blocker)', () => {
+    // THE LIVE FINDING (W-16's release acceptance): the LIVE view
+    // instant stayed pinned at the BOOT instant for 4+ minutes while
+    // wall-clock advanced — the console never re-observed the anchor
+    // after boot (advanceAnchor only ran on the user's Time Machine
+    // clicks), so every datum that became available after boot was
+    // post-view-time and the L4 projection refused it (every launch
+    // ended "Launch (failed)" on the typed AvailabilityViolationError).
+    // The fix's event: the app observes a fresh injected instant on
+    // the beat/launch cadence and the anchor follows it — the pure
+    // machine's own transition, dispatched from the app layer.
+    const opened = openWorkspace(SCOPE, T0);
+    expect(viewAtOf(opened)).toBe(T0); // live at the boot anchor — the pin's premise
+
+    const advanced = reduceWorkspace(opened, { kind: 'anchor-advanced', at: T0 + 240_000 }); // 4 minutes pass, the beat observes now
+    expect(advanced.timeMachine.mode).toBe('live');  // the transition never leaves the mode
+    expect(viewAtOf(advanced)).toBe(T0 + 240_000);   // LIVE renders the world as of NOW
+
+    // the T-x offset rides the fresh anchor ("x before now" stays true as now advances)
+    const tminus = reduceWorkspace(opened, { kind: 'view-tminus', at: T0 + 240_000, tMinusMs: 60_000 });
+    const tminusAdvanced = reduceWorkspace(tminus, { kind: 'anchor-advanced', at: T0 + 300_000 });
+    expect(tminusAdvanced.timeMachine.mode).toBe('t-minus');
+    expect(viewAtOf(tminusAdvanced)).toBe(T0 + 240_000); // (T0 + 300_000) - 60_000
+
+    // playback's ceiling RISES with the anchor: a tick that would have
+    // passed the boot anchor passes the fresh one (the pure machine's
+    // "never past the anchor" law is unchanged — the anchor itself moved)
+    let playback = reduceWorkspace(opened, { kind: 'playback-start', at: T0, fromAt: T0 - 500, stepMs: 500 });
+    playback = reduceWorkspace(playback, { kind: 'playback-tick', at: T0 }); // view = T0 (the boot anchor — the ceiling)
+    expect(() => reduceWorkspace(playback, { kind: 'playback-tick', at: T0 })).toThrow(/after the anchor/); // the old ceiling holds
+    const raised = reduceWorkspace(playback, { kind: 'anchor-advanced', at: T0 + 1_000 });
+    const ticked = reduceWorkspace(raised, { kind: 'playback-tick', at: T0 + 1_000 }); // the raised ceiling lets the next step pass
+    expect(viewAtOf(ticked)).toBe(T0 + 500);
+
+    // the event chains onto the history like every event (append-only)
+    expect(advanced.history.length).toBe(opened.history.length + 1);
+  });
+
   it('launch events drive the launch slice (draft -> submitted -> progress -> completed)', () => {
     let state = openWorkspace(SCOPE, T0);
     state = reduceWorkspace(state, { kind: 'launch-draft-started', at: T0 + 1, draft: { name: 'x' } as never });

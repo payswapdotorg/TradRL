@@ -261,6 +261,31 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   }
 
   async function beat(): Promise<void> {
+    // THE LIVE VIEW INSTANT FOLLOWS THE OBSERVED NOW (the W-17a fix —
+    // the v0.1.0 release blocker). W-16's release acceptance measured
+    // it live: the LIVE readout stayed pinned at the BOOT instant for
+    // 4+ minutes while wall-clock advanced — the console never
+    // re-observed the live anchor after boot (advanceAnchor only ran
+    // on the user's Time Machine clicks), so every datum that became
+    // available after boot (the just-created project, the kickoff job)
+    // was post-view-time and the L4 projection's typed error killed
+    // the primary flow at every launch ("Launch (failed)"; no
+    // POST /v1/jobs/research ever fired; submitted -> running ->
+    // complete never rendered). The beat is the scheduler boundary —
+    // the one seam core/clock.ts sanctions for observing the system
+    // instant — so each beat re-samples now from the injected source
+    // and moves the anchor forward (timemachine.ts's own law: "the app
+    // observes a fresh injected instant"). In LIVE mode the view IS
+    // the anchor (§4.8 "Viewing the live world…"); a T-x offset rides
+    // the fresh anchor ("x before now" stays true as now advances);
+    // playback's ceiling rises with it (a tick still never passes the
+    // anchor — the guard below). Monotonic by construction: a beat
+    // whose observed instant is not past the current anchor dispatches
+    // nothing (the anchor never regresses).
+    const observed = instants.nowMs();
+    if (observed > state.timeMachine.anchorAt) {
+      dispatch({ kind: 'anchor-advanced', at: observed });
+    }
     // §4.8 controlled playback: the beat advances armed playback ONE
     // controlled step — but never past the anchor. A tick beyond it is
     // the pure machine's typed input error (the view instant may never
@@ -301,6 +326,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     };
     try {
       const project = await client.projects.create(toCreateProjectInput(draft, ids, scope.tenantId, at));
+      // THE LAUNCH SEAM (the W-17a fix's second half): the created
+      // record's availability is the boundary's stamp of the SUBMITTED
+      // `at` (the deployed backing stamps createdAt/updatedAt from the
+      // request's at — services/api's own law), which is strictly after
+      // the boot instant and can be up to a beat ahead of the last
+      // anchor re-sample. The record has ARRIVED — re-observe now from
+      // the same injected source that stamped the submit, so the view
+      // instant is at the record's availability by construction and
+      // the adoption + render below paint the just-created project
+      // immediately (no L4 trip at the Goal section's render gate, no
+      // dependence on the beat cadence's timing).
+      const arrived = instants.nowMs();
+      if (arrived > state.timeMachine.anchorAt) {
+        dispatch({ kind: 'anchor-advanced', at: arrived });
+      }
       dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: project.id });
       dispatch({ kind: 'project-loaded', at: instants.nowMs(), project });
       const goal = toCreateProjectInput(draft, ids, scope.tenantId, at).goal;
