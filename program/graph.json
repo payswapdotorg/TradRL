@@ -1249,12 +1249,14 @@
         "services/marketplace/",
         "packages/entitlements/"
       ],
-      "status": "in_progress",
+      "status": "merged",
       "branch": "work/T047-marketplace",
-      "pr": null,
-      "merged_sha": null,
+      "pr": 31,
+      "merged_sha": "a8e6c76075464064a0f2cfe6dac579d9cff99c9f",
       "evidence": [
-        "D-044 wave-35 dispatch from main 2e6db7f (deps merged; frozen write surface per WORK-ITEMS; W-8b)"
+        "PR #31 squash-merged (worker W-8b; own 190/190 (15 files: entitlements 100, marketplace 90); full at branch 7359+1skip/509 = floor 7169+1skip/494 +190/+15, zero regressions; typecheck 0)",
+        "The consideration contract (T047's core ownership of what T045 left opaque): fixed-fee | usage-metered, exact canonical-decimal money, budget + listing-price negotiation laws; listings (offer-snapshot, versioned, terminal retirement) + deterministic point-in-time discovery + the evidence-cited commission minter; the purchase lifecycle's commercial half with the payment gate (verified engagements charge the spend allowance; rejected/withdrawn never charge); verified capability-artifacts mint artifact licenses naming the same cpa: ref the REAL T045 import carries (byte-pinned)",
+        "packages/entitlements: typed allowances, chain-verified ledger, PIT snapshot, R41 usage enforcement (end-to-end against the REAL UsageLedger); four real dead-session defects fixed red-first (the exhaustion-law hole \u2014 backdated appends overdrew; the L12 hole \u2014 settlePurchase could bill a foreign tenant; label-smuggled declarations typed label_as_evidence; the retirement chain keyed wrong \u2014 every retired catalog failed chain verification)"
       ],
       "depends": [
         "T017",

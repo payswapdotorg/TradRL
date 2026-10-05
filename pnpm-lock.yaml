@@ -5,6 +5,10 @@ settings:
   excludeLinksFromLockfile: false
 
 importers:
+  services/marketplace: {}
+
+  packages/entitlements: {}
+
   adapters/arena: {}
 
   packages/capability-provider: {}
