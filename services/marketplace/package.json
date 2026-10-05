@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/marketplace-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The commercial capability marketplace service (Work Order T047): the layer where capability offerings are listed, discovered, engaged commercially and consumed under entitlements. Publishes provider offers as marketplace listings (offer snapshots + typed pricing — a later declaration supersession never rewrites what was listed), discovers them deterministically, commissions T045-shaped capability requests from recorded capability gaps with the offered consideration, and runs the engagement lifecycle's commercial half: purchases bind (listing, request, quote) under the budget law (the quote's counter-consideration never exceeds the platform's offered budget nor the listing's price — same commercial language, same currency), settle only on TERMINAL engagements (verified charges the tenant's spend allowance through the entitlements ledger — exact decimals; rejected and withdrawn never charge), and verified capability-artifacts mint the artifact-license entitlements that license the local L18 import. Zero runtime dependencies; mirrors, never imports (D-003/D-004); no ambient clock, no ambient randomness — injected instants and content-addressed ids only.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
