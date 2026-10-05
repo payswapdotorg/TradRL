@@ -154,6 +154,44 @@ export function rankPalette(index: readonly PaletteEntry[], query: string): read
   return ordered;
 }
 
+/** The palette's search glyph (the empty state's icon — hand-authored like the shell's other line marks). */
+function searchGlyph(): VNode {
+  return v('svg', {
+    class: 'ci ci-20',
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    'stroke-width': '1.75',
+    'stroke-linecap': 'round',
+    'stroke-linejoin': 'round',
+    'aria-hidden': 'true',
+    focusable: 'false',
+  }, [
+    v('circle', { cx: '10.75', cy: '10.75', r: '6.25' }, []),
+    v('path', { d: 'M15.5 15.5 20.25 20.25' }, []),
+  ]);
+}
+
+/**
+ * The palette's no-matches state (§4.12's EmptyState law inside the
+ * dialog — D3: NEVER a blank region): the icon circle, the title, ONE
+ * plain sentence naming the query, exactly ONE primary action (Clear
+ * search — it restores the palette's opened state). The empty query
+ * can never land here (it matches every entry), so the state is
+ * reachable only through a query that matched nothing.
+ */
+function paletteEmpty(query: string): VNode {
+  const trimmed = query.trim();
+  return v('div', { class: 'palette-empty', 'data-palette-empty': trimmed, role: 'status' }, [
+    v('div', { class: 'empty-circle', 'aria-hidden': 'true' }, [searchGlyph()]),
+    v('div', { class: 'empty-title' }, ['No matches']),
+    v('p', { class: 'empty-sentence' }, [trimmed.length === 0
+      ? 'Nothing matches — try a different search.'
+      : `Nothing matches “${trimmed}” — try a different search.`]),
+    v('button', { class: 'empty-action', 'data-action': 'palette-clear', type: 'button' }, ['Clear search']),
+  ]);
+}
+
 /** The palette overlay (§4.14): the input, the grouped results with type badges, the keyboard affordances. */
 export function paletteOverlay(options: {
   readonly query: string;
@@ -183,7 +221,9 @@ export function paletteOverlay(options: {
         'data-palette-input': 'true',
         autocomplete: 'off',
       }, []),
-      v('div', { class: 'palette-results', role: 'listbox', 'aria-label': 'Results' }, groups.map((group) => v('div', { class: 'palette-group' }, [
+      v('div', { class: 'palette-results', role: 'listbox', 'aria-label': 'Results' }, options.results.length === 0
+        ? [paletteEmpty(options.query)] // the §4.12 teaching shape — never a blank region
+        : groups.map((group) => v('div', { class: 'palette-group' }, [
         v('div', { class: 'palette-group-label' }, [group.kind]),
         ...group.entries.map(({ entry, position: entryPosition }) => v('button', {
           class: `palette-item${options.selected === entryPosition ? ' selected' : ''}`,

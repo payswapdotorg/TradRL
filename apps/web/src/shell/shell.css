@@ -1067,6 +1067,16 @@ details.list-row > summary::-webkit-details-marker { display: none; }
   border-bottom: 1px solid var(--border);
 }
 .palette-results { overflow-y: auto; padding: 8px; display: grid; gap: 2px; align-content: start; }
+.palette-empty {
+  /* §4.12's teaching shape inside the dialog (D3 — never a blank region):
+     the icon circle + title + ONE sentence + ONE action, on the shared
+     empty-* classes; the palette's own vertical rhythm. */
+  padding: 28px 24px;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+}
 .palette-group { display: grid; gap: 2px; }
 .palette-group-label {
   font-size: 0.625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em;

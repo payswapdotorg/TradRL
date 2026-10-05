@@ -55,7 +55,7 @@ import { noticeCopyOf } from '../render/flow';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
 import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission, projectToView } from '../core/availability';
 import { parseSheetRef, type ShellView } from '../render/shell';
-import { renderConsoleModel } from '../render/model';
+import { renderConsoleModel, homeFresh } from '../render/model';
 import { mountVTree } from '../render/dom';
 
 /** One workspace-state listener (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
@@ -193,6 +193,22 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     } catch (error) {
       const family = (error as ApiConsoleError)?.family ?? 'unavailable';
       dispatch({ kind: 'degraded-read', at: instants.nowMs(), route, family, message: (error as Error)?.message ?? String(error) });
+      // THE J09 TRIAGE (the W-14c fix): a TRANSPORT-level failure (the
+      // unavailable family — a blocked network, a refused connection, a
+      // 503) while the workspace knows NOTHING (render/model.ts's own
+      // Home freshness gate) is the API being UNREACHABLE, not a
+      // degraded read: dispatch the offline state so the rose
+      // UNREACHABLE connection block + Home's ErrorState ("The console
+      // could not reach the API.", role=alert) with its Try again pill
+      // render — the catalog's J9 surface, previously unreachable in a
+      // real browser (a failed read mapped to 'degraded' unconditionally
+      // and 'offline' was state-machine+test-only). A failure WITH the
+      // last known world present stays DEGRADED (amber) — the proven
+      // graceful path; a typed API error (the API ANSWERED) is never
+      // offline — the family gate.
+      if (family === 'unavailable' && homeFresh(state)) {
+        dispatch({ kind: 'connection-changed', at: instants.nowMs(), status: 'offline' });
+      }
     }
   }
 
@@ -330,6 +346,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const value = typeof element.value === 'string' ? element.value : '';
       return { field: name, value };
     };
+    /** Read the palette query of an event target (null when the target is not the palette input; the live value rides the DOM property). */
+    const paletteQueryOf = (target: unknown): string | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      if (element.getAttribute('data-palette-input') === null) return null;
+      return typeof element.value === 'string' ? element.value : '';
+    };
     /** Commit the buffered field edits into the state machine (one launch-draft-edited per flush; unabsorbed grammars stay buffered). */
     const flushLaunchEdits = (): void => {
       const entries = Object.entries(view.launchEdits);
@@ -375,6 +398,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
     };
+    /** Focus the palette's input (the dialog's entry point — opening the palette and Clear search both leave typing ready; §4.14's keyboard-first journey). */
+    const focusPaletteInput = (): void => {
+      if (document.querySelectorAll === undefined) return;
+      for (const candidate of document.querySelectorAll('[data-palette-input]')) {
+        (candidate as { focus(): void }).focus();
+        return;
+      }
+    };
     const render = (): void => {
       // The drawer state ALSO lands on the persistent host element so
       // the slide transition survives between renders (the projected
@@ -384,9 +415,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // rebuilt per state change, which replaces a focused launch
       // input mid-typing (a poll beat, a notice toast) — capture the
       // focused field (+ caret) and restore it on the new node so
-      // typing never breaks.
+      // typing never breaks. The PALETTE INPUT carries the same
+      // preservation (the W-14c query wiring re-renders on every
+      // keystroke — without the restore, one typed letter would blur
+      // the input and the next keystroke would land on a detached
+      // node: the lost-second-field defect class, on the palette).
       let focusedField: string | null = null;
       let focusedSelection: { readonly start: number; readonly end: number } | null = null;
+      let focusedPaletteInput = false;
+      let focusedPaletteSelection: { readonly start: number; readonly end: number } | null = null;
       const active = document.activeElement as (FieldEventTarget & Partial<{ selectionStart: number | null; selectionEnd: number | null }>) | null | undefined;
       if (active !== null && active !== undefined && typeof active.getAttribute === 'function') {
         const name = active.getAttribute('data-launch-field');
@@ -394,6 +431,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           focusedField = name;
           if (typeof (active as { readonly selectionStart?: number | null }).selectionStart === 'number' && typeof (active as { readonly selectionEnd?: number | null }).selectionEnd === 'number') {
             focusedSelection = { start: (active as { readonly selectionStart: number }).selectionStart, end: (active as { readonly selectionEnd: number }).selectionEnd };
+          }
+        } else if (active.getAttribute('data-palette-input') !== null) {
+          focusedPaletteInput = true;
+          if (typeof (active as { readonly selectionStart?: number | null }).selectionStart === 'number' && typeof (active as { readonly selectionEnd?: number | null }).selectionEnd === 'number') {
+            focusedPaletteSelection = { start: (active as { readonly selectionStart: number }).selectionStart, end: (active as { readonly selectionEnd: number }).selectionEnd };
           }
         }
       }
@@ -406,6 +448,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             if (focusedSelection !== null && element.setSelectionRange !== undefined) element.setSelectionRange(focusedSelection.start, focusedSelection.end);
             break;
           }
+        }
+      }
+      if (focusedPaletteInput && document.querySelectorAll !== undefined) {
+        for (const candidate of document.querySelectorAll('[data-palette-input]')) {
+          const element = candidate as { focus(): void; setSelectionRange?(start: number, end: number): void };
+          element.focus();
+          if (focusedPaletteSelection !== null && element.setSelectionRange !== undefined) element.setSelectionRange(focusedPaletteSelection.start, focusedPaletteSelection.end);
+          break;
         }
       }
     };
@@ -488,6 +538,23 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       pointerDown = true;
     });
     document.addEventListener('input', (event) => {
+      // §4.14 THE PALETTE QUERY (the W-14c fix — the J8 dead-input
+      // defect): typing in [data-palette-input] feeds view.palette.query
+      // and re-renders the ranked results through the PURE machinery
+      // (core/palette.ts's fuzzyScore/rankPalette via refreshPalette —
+      // never duplicated here); the selection resets to the top result
+      // (the query changed the list; the old index is meaningless). The
+      // render's focus preservation keeps the caret in the input across
+      // the full re-projection.
+      const query = paletteQueryOf(event.target);
+      if (query !== null) {
+        if (view.palette !== null && view.palette.query !== query) {
+          view = { ...view, palette: { ...view.palette, query, selected: 0 } };
+          refreshPalette();
+          render();
+        }
+        return;
+      }
       const entry = launchFieldOf(event.target);
       if (entry === null) return;
       view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } }; // NO render — the buffer IS the live form (merged at render time)
@@ -562,6 +629,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       if (target !== null && target !== undefined && target.tagName === 'BUTTON') {
         const id = target.getAttribute('data-target');
         if (id !== null && isShellTarget(id)) {
+          // §4.14: selecting a palette result (a click on a palette
+          // item, the only [data-target] reachable while the modal
+          // overlay is open) navigates AND closes the dialog — the
+          // same behavior as Enter.
+          if (view.palette !== null) {
+            view = { ...view, palette: null };
+            refreshPalette();
+          }
           if (id === 'home' || id === 'inbox' || id === 'settings') {
             view = { ...view, accountView: id, drawerOpen: false };
             render();
@@ -610,10 +685,22 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           view = { ...view, palette: { query: '', selected: 0 } };
           refreshPalette();
           render();
+          focusPaletteInput(); // the keyboard-first journey: Ctrl+K / the affordance -> type immediately
         }
         if (kind === 'palette-close') {
           view = { ...view, palette: null };
           render();
+        }
+        // §4.12/§4.14 the palette's empty-state action: Clear search
+        // restores the palette's opened state (the full grouped list)
+        // and hands the focus back to the input.
+        if (kind === 'palette-clear') {
+          if (view.palette !== null) {
+            view = { ...view, palette: { ...view.palette, query: '', selected: 0 } };
+            refreshPalette();
+            render();
+            focusPaletteInput();
+          }
         }
         // §4.13 the onboarding wizard (completion persists; returning users never see it)
         if (kind === 'onboarding-next' || kind === 'onboarding-skip') {
@@ -728,6 +815,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         view = { ...view, palette: view.palette === null ? { query: '', selected: 0 } : null };
         refreshPalette();
         render();
+        if (view.palette !== null) focusPaletteInput(); // the keyboard-first journey: Ctrl+K -> type immediately
         return;
       }
       if (key === 'Escape') {

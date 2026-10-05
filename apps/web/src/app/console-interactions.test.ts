@@ -881,6 +881,226 @@ describe('executed boot: J7 — the evidence capsules (§4.9 open/close)', () =>
 });
 
 // ---------------------------------------------------------------------------
+// J8 — the command palette QUERY (the W-14c fix: the dead input wiring).
+// The live catalog finding: the palette opens, the entries render grouped
+// with type badges and Enter navigates — but TYPING NEVER FILTERS (no
+// input-event wiring exists for [data-palette-input]; the pure
+// fuzzyScore/rankPalette machinery in core/palette.ts was only ever fed
+// the never-changing empty query). These tests pin the WIRING through
+// the executed boot: the input event must feed view.palette.query and
+// re-render the ranked results through the EXISTING pure machinery.
+// ---------------------------------------------------------------------------
+
+/** Type a query into the palette's input (the browser's semantics: the live value rides the DOM property, then the input event fires — the same event the delegated listener receives). */
+function typePaletteQuery(rig: Rig, query: string): void {
+  const input = findByData(rig.root, 'data-palette-input', 'true');
+  if (input === null) throw new Error('the palette input is not in the current tree');
+  input.value = query;
+  rig.doc.fire('input', { target: input });
+}
+
+describe('executed boot: J8 — the command palette query (the dead input wiring)', () => {
+  it('typing in the palette input FILTERS + RANKS the results through the pure machinery (the input event feeds the query)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickAction(rig, 'palette-open');
+    expect(countByClass(rig.root, 'palette-item')).toBe(15); // the opened state: every navigation target (the offline transport loads no entities)
+
+    typePaletteQuery(rig, 'risk'); // the exact live repro: type anything -> the list must change
+    expect(countByClass(rig.root, 'palette-item')).toBe(2); // the subsequence matches survive: risk (the tight run) + experiments (the scattered r-i-s-k)
+    const item = elementsOf(rig.root).find((element) => element.hasClass('palette-item'));
+    if (item === undefined) throw new Error('the filtered palette renders no item');
+    expect(item.getAttribute('data-palette-ref')).toBe('nav:risk'); // best-first inside the group: the tight prefix run outranks the scattered match
+    expect(item.getAttribute('data-target')).toBe('risk');
+
+    // the re-projected input keeps the typed query as its value (the tree is rebuilt per render)
+    const input = findByData(rig.root, 'data-palette-input', 'true');
+    if (input === null) throw new Error('the palette input vanished mid-query');
+    expect(input.getAttribute('value')).toBe('risk');
+
+    // every keystroke re-ranks live: a letter no haystack carries empties the list
+    typePaletteQuery(rig, 'risky');
+    expect(countByClass(rig.root, 'palette-item')).toBe(0);
+  });
+
+  it('the no-match state renders the §4.12 teaching shape (icon + title + ONE sentence + ONE action) and Clear search restores the full list', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickAction(rig, 'palette-open');
+    typePaletteQuery(rig, 'zzzz');
+    const empty = elementsOf(rig.root).find((element) => element.hasClass('palette-empty'));
+    if (empty === undefined) throw new Error('a no-match query renders no empty state (a blank region — the D3 law)');
+    expect(empty.getAttribute('role')).toBe('status');
+    expect(elementsOf(rig.root).some((element) => element.hasClass('empty-circle'))).toBe(true); // the icon
+    expect(elementsOf(rig.root).some((element) => element.hasClass('empty-title') && textOf(element) === 'No matches')).toBe(true);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('empty-sentence') && textOf(element).includes('zzzz'))).toBe(true); // the sentence names the query
+    const clear = elementsOf(rig.root).find((element) => element.hasClass('empty-action'));
+    if (clear === undefined) throw new Error('the palette empty state renders no action');
+    expect(textOf(clear)).toBe('Clear search');
+    expect(clear.getAttribute('data-action')).toBe('palette-clear');
+    click(rig, clear);
+    expect(countByClass(rig.root, 'palette-item')).toBe(15); // the full list is back
+    const input = findByData(rig.root, 'data-palette-input', 'true');
+    if (input === null) throw new Error('the palette input vanished');
+    expect(input.getAttribute('value')).toBe('');
+  });
+
+  it('the query reaches the ENTITY entries (the evidence capsules) — the palette filters every kind it covers, not just navigation', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    rig.handle.dispatch({ kind: 'outcomes-loaded', at: T0 + 30, records: [outcomeRecord()] }); // the sanctioned write path
+    clickAction(rig, 'palette-open');
+    expect(countByClass(rig.root, 'palette-item')).toBe(16); // 15 navigation + the outcome capsule
+    typePaletteQuery(rig, 'evc:');
+    const items = elementsOf(rig.root).filter((element) => element.hasClass('palette-item'));
+    expect(items.length).toBe(1);
+    expect((items[0] as FakeElement).getAttribute('data-palette-ref')?.startsWith('capsule:evc:')).toBe(true);
+    expect((items[0] as FakeElement).getAttribute('data-target')).toBe('evidence');
+  });
+
+  it('keyboard select on a FILTERED query: Enter opens the top result and closes the palette', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickAction(rig, 'palette-open');
+    typePaletteQuery(rig, 'time');
+    rig.doc.fire('keydown', { target: null, key: 'Enter' });
+    expect(findByData(rig.root, 'data-section', 'time-machine')).not.toBeNull(); // navigated to the filtered target
+    expect(shellOf(rig.root).getAttribute('data-active-target')).toBe('time-machine');
+    expect(elementsOf(rig.root).some((element) => element.hasClass('palette-backdrop'))).toBe(false); // the palette closed
+  });
+
+  it('clicking a palette result navigates AND closes the dialog (the modal selection law — the same behavior as Enter)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickAction(rig, 'palette-open');
+    typePaletteQuery(rig, 'settings');
+    const item = elementsOf(rig.root).find((element) => element.hasClass('palette-item'));
+    if (item === undefined) throw new Error('no filtered item to click');
+    click(rig, item);
+    expect(findByData(rig.root, 'data-settings', 'theme')).not.toBeNull(); // Settings opened
+    expect(elementsOf(rig.root).some((element) => element.hasClass('palette-backdrop'))).toBe(false); // the dialog closed
+  });
+});
+
+// ---------------------------------------------------------------------------
+// J9 — the OFFLINE state (the W-14c fix: the never-dispatched 'offline').
+// The live catalog finding: blocking the API renders DEGRADED (amber),
+// never the catalog's UNREACHABLE surface — console.ts's only
+// connection-changed dispatch carries 'connected'; a failed read maps to
+// degraded-read ('degraded') unconditionally, so 'offline' (the rose
+// UNREACHABLE block + Home's ErrorState with its Try again pill) was
+// state-machine+test-only. THE TRIAGE: a TRANSPORT-level failure (the
+// unavailable family) while the workspace knows NOTHING is the API
+// being UNREACHABLE; a failure with the last known world present stays
+// DEGRADED (the proven graceful path, guarded below).
+// ---------------------------------------------------------------------------
+
+/** A toggleable transport (J9's offline -> recovery -> degraded cycle): every call fails while blocked; while open, the meta negotiation + the prj-a reads succeed with honest shapes (an active project, empty pages). */
+function toggleTransport(): { readonly transport: ApiTransport; block(): void; unblock(): void } {
+  let blocked = true;
+  const project = {
+    id: 'prj-a', tenantId: 'tenant-a', name: 'Console Test Project', executionMode: 'simulation',
+    lifecycle: { projectId: 'prj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+    lineage: { projectId: 'prj-a', createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  };
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+  const transport: ApiTransport = async (request) => {
+    if (blocked) throw new Error('offline: the scripted transport rejects every read');
+    const key = `${request.method} ${request.path.split('?')[0]}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects/prj-a') return ok(project);
+    if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
+  };
+  return { transport, block: (): void => { blocked = true; }, unblock: (): void => { blocked = false; } };
+}
+
+/** A transport where the API ANSWERS but the project read returns a typed not_found: the API is reachable — never the offline surface. */
+function typedFailureTransport(): ApiTransport {
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+  return async (request) => {
+    const key = `${request.method} ${request.path.split('?')[0]}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects/prj-a') return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'the project does not exist', status: 404 } } };
+    if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
+  };
+}
+
+/** The connection block's state label (LIVE / DEGRADED / UNREACHABLE / CONNECTING — the label is the contract, never color alone). */
+function connectionLabelOf(rig: Rig): string {
+  const label = elementsOf(rig.root).find((element) => element.hasClass('conn-state-label'));
+  if (label === undefined) throw new Error('the connection block renders no state label');
+  return textOf(label);
+}
+
+describe('executed boot: J9 — the offline state (the boot/initial-read total failure)', () => {
+  it('a total transport failure with NOTHING known renders the OFFLINE surface: the UNREACHABLE connection block + Home\'s ErrorState with its Try again pill — and Try again RECOVERS', async () => {
+    const api = toggleTransport(); // starts BLOCKED: every read fails at the transport level
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport);
+
+    // the offline surface (§1.3 + §4.12): the rose UNREACHABLE block + the Home ErrorState
+    expect(rig.handle.state().connection).toBe('offline');
+    expect(connectionLabelOf(rig)).toBe('UNREACHABLE');
+    expect(elementsOf(rig.root).some((element) => element.hasClass('connection-offline'))).toBe(true);
+    const alert = elementsOf(rig.root).find((element) => element.hasClass('error-state'));
+    if (alert === undefined) throw new Error('Home renders no ErrorState while offline with nothing known');
+    expect(alert.getAttribute('role')).toBe('alert');
+    expect(elementsOf(rig.root).some((element) => element.hasClass('error-sentence') && textOf(element) === 'The console could not reach the API.')).toBe(true);
+    const retry = elementsOf(rig.root).find((element) => element.hasClass('error-retry'));
+    if (retry === undefined) throw new Error('the ErrorState renders no Try again pill');
+    expect(retry.getAttribute('data-action')).toBe('refresh');
+    // the degraded notes still record the failure (the popover's degradation row + the technical details)
+    expect(rig.handle.state().degraded.length).toBeGreaterThan(0);
+
+    // RECOVERY: unblock the transport + Try again -> LIVE + the world loads + the ErrorState is gone
+    api.unblock();
+    click(rig, retry);
+    await settle();
+    await settle();
+    expect(rig.handle.state().connection).toBe('connected');
+    expect(connectionLabelOf(rig)).toBe('LIVE');
+    expect(rig.handle.state().project?.id).toBe('prj-a');
+    expect(elementsOf(rig.root).some((element) => element.hasClass('error-state'))).toBe(false);
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'prj-a')).toBe(true); // the loaded world renders (the organization card's Project detail)
+  });
+
+  it('the DEGRADED path (the proven graceful path, guarded): a failure WITH the last known world stays amber + renders the world — never offline — and still recovers', async () => {
+    const api = toggleTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport);
+    api.unblock(); // recover the boot: the world loads
+    click(rig, elementsOf(rig.root).find((element) => element.hasClass('error-retry')) as FakeElement);
+    await settle();
+    await settle();
+    expect(rig.handle.state().connection).toBe('connected');
+    expect(rig.handle.state().project?.id).toBe('prj-a');
+
+    // the API goes away WITH the world known -> DEGRADED (amber) + the last known world
+    api.block();
+    click(rig, findByData(rig.root, 'data-action', 'refresh') as FakeElement); // the connection popover's Retry connection
+    await settle();
+    await settle();
+    expect(rig.handle.state().connection).toBe('degraded');
+    expect(connectionLabelOf(rig)).toBe('DEGRADED');
+    expect(rig.handle.state().project?.id).toBe('prj-a'); // the last known world survives in the state
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'prj-a')).toBe(true); // ...and on the surface (the organization card's Project detail)
+    expect(elementsOf(rig.root).some((element) => element.hasClass('error-state'))).toBe(false); // never the offline ErrorState with data known
+
+    // and the recovery still works (Try again -> LIVE)
+    api.unblock();
+    click(rig, findByData(rig.root, 'data-action', 'refresh') as FakeElement);
+    await settle();
+    await settle();
+    expect(rig.handle.state().connection).toBe('connected');
+    expect(connectionLabelOf(rig)).toBe('LIVE');
+  });
+
+  it('the FAMILY GATE: a typed API error (the API ANSWERS) with nothing known is DEGRADED, never the offline surface', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, typedFailureTransport());
+    expect(rig.handle.state().connection).toBe('degraded'); // the API responded — it is not unreachable
+    expect(connectionLabelOf(rig)).toBe('DEGRADED');
+    expect(elementsOf(rig.root).some((element) => element.hasClass('connection-offline'))).toBe(false);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('error-state'))).toBe(false); // no ErrorState: the API is reachable
+  });
+});
+
+// ---------------------------------------------------------------------------
 // THE REAL-LOADER PIN — the same interactions execute through the
 // module graph the browser actually boots (strip-types + data: URLs).
 // ---------------------------------------------------------------------------

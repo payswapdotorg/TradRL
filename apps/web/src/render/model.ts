@@ -413,6 +413,19 @@ function noticeSeverityOf(kind: string): 'info' | 'warn' | 'error' {
 }
 
 /**
+ * The Home teaching-state freshness gate (§4.12, exported for the app
+ * layer's J9 triage): true while the workspace knows NOTHING yet (no
+ * project, no jobs, no outcomes) — the loading skeleton renders while
+ * connecting, the ErrorState renders when offline. app/console.ts's
+ * read cadence consults the SAME gate when deciding whether a
+ * transport-level failure means the API is UNREACHABLE (nothing to
+ * show) rather than degraded (the last known world still renders).
+ */
+export function homeFresh(state: WorkspaceState): boolean {
+  return state.project === null && state.jobs.length === 0 && state.outcomes.length === 0;
+}
+
+/**
  * THE HOME PANEL (§3: the hero IS the page) — the overview surface:
  * the hero, the KPI tiles (§4.1), the rich stat card (§4.2) and the
  * activity timeline (§4.6, from the notice fold — projected by
@@ -422,7 +435,7 @@ function noticeSeverityOf(kind: string): 'info' | 'warn' | 'error' {
  * known, and a quiet hint when there is no activity yet.
  */
 function homePanel(state: WorkspaceState, viewAt: number): VNode {
-  const fresh = state.project === null && state.jobs.length === 0 && state.outcomes.length === 0;
+  const fresh = homeFresh(state);
   // THE HERO'S LAUNCH AFFORDANCE (the J3 entry, Home shape): the
   // primary flow's own CTA when nothing is running; a resume hint
   // while the wizard is open (the wizard renders in the launch panel
