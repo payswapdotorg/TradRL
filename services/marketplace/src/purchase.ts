@@ -463,6 +463,13 @@ export function settlePurchase(
 ): MarketplaceResult<SettlementOperationResult> {
   const instant = requireInstant(input.settledAt, 'settledAt');
   if (!instant.ok) return instant;
+  // THE LEDGER-SCOPE GATE (L12): the settlement draws THE PURCHASING
+  // TENANT's spend allowance and mints ITS license — a supplied
+  // entitlements ledger of a foreign tenant is the typed refusal (the
+  // charge must never bill another tenant's allowance).
+  if (entitlementState.tenantId !== marketplaceState.tenantId) {
+    return fail('cross_tenant_access', `the settlement draws the marketplace of tenant "${marketplaceState.tenantId}" but the supplied entitlements ledger belongs to tenant "${entitlementState.tenantId}" — the charge and the license stay inside the purchasing tenant's ledger (L12)`, 'entitlements');
+  }
   const purchase = marketplaceState.purchases.get(input.purchaseId);
   if (purchase === undefined) {
     return fail('purchase_unknown', `the purchase ${input.purchaseId} is not in this marketplace`, 'purchaseId');
