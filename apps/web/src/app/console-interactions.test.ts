@@ -693,6 +693,7 @@ function launchDemoTransport(): { readonly transport: ApiTransport; readonly pol
     if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
     if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Console Test Project'));
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
     if (key === 'POST /v1/projects') {
       const body = request.body as { readonly id: string; readonly name: string };
       createdProjectIds.push(body.id);
@@ -741,6 +742,7 @@ function deployedClockLaunchTransport(): {
     if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
     if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Console Test Project', T0)); // the seeded demo: stamped in the PAST (before every session's boot)
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
     if (key === 'POST /v1/projects') {
       const body = request.body as { readonly id: string; readonly name: string; readonly at: number };
       createdProjectIds.push(body.id);
@@ -1503,6 +1505,7 @@ function toggleTransport(): { readonly transport: ApiTransport; block(): void; u
     if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
     if (key === 'GET /v1/projects/prj-a') return ok(project);
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
     return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
   };
   return { transport, block: (): void => { blocked = true; }, unblock: (): void => { blocked = false; } };
@@ -1516,6 +1519,7 @@ function typedFailureTransport(): ApiTransport {
     if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
     if (key === 'GET /v1/projects/prj-a') return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'the project does not exist', status: 404 } } };
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
     return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
   };
 }
@@ -1794,6 +1798,7 @@ function scopeChangeTransport(): {
     }
     if (key === 'POST /v1/knowledge/query') { reads.knowledgeReads.push(String((request.body as { project: string }).project)); return ok({ items: [] }); }
     if (key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
     if (key === 'POST /v1/projects') { created = (request.body as { id: string }).id; return ok(projectOf(created, null)); } // created WITHOUT an org (the deployed law)
     if (key === 'POST /v1/jobs/research') return ok(jobOf('submitted', (request.body as { projectId: string }).projectId));
     if (key.startsWith('GET /v1/jobs/')) return ok(jobOf('complete', created ?? 'prj-a'));
@@ -1851,10 +1856,10 @@ describe('executed boot: R6a — the scope-change refetch (launch -> the adopted
   it('a stale mid-flight read for the SUPERSEDED scope is DROPPED, never dispatched into the adopted workspace (the typed cross-scope guard stays upstream of the reducer)', async () => {
     const api = scopeChangeTransport();
     // a transport whose prj-a project read is SLOW: the launch adoption lands while the boot bundle's project read is still in flight
-    let releaseProjectRead: (() => void) | null = null;
+    const gate: { release: (() => void) | null } = { release: null };
     const slow: ApiTransport = async (request) => {
       const key = `${request.method} ${request.path.split('?')[0]}`;
-      if (key === 'GET /v1/projects/prj-a') await new Promise<void>((resolve) => { releaseProjectRead = resolve; });
+      if (key === 'GET /v1/projects/prj-a') await new Promise<void>((resolve) => { gate.release = resolve; });
       return api.transport(request);
     };
     const handle = bootConsole({
@@ -1879,8 +1884,8 @@ describe('executed boot: R6a — the scope-change refetch (launch -> the adopted
     expect(handle.state().scope.projectId).toBe(api.createdProjectId()); // the adoption landed while the prj-a read was in flight
 
     // release the stale read: its dispatch (and every later prj-a dispatch in that bundle) must be DROPPED
-    if (releaseProjectRead === null) throw new Error('the slow prj-a read never parked');
-    releaseProjectRead();
+    if (gate.release === null) throw new Error('the slow prj-a read never parked');
+    (gate.release as () => void)();
     await booting;
     await launching;
     // the stale prj-a project record never entered the adopted workspace...
@@ -1891,5 +1896,205 @@ describe('executed boot: R6a — the scope-change refetch (launch -> the adopted
     // the beat then reads the adopted scope cleanly (the bundleScope mark kept it "unfetched")
     await handle.beat();
     expect(handle.state().project?.id).toBe(api.createdProjectId());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R2 + R3 — THE SERVED-SUBSTANCE SEAMS (the W-22 wave): the backing
+// serves the execution blotter (GET /v1/execution/submissions — the
+// W-8 host route) and the decision-substance fields on the outcome
+// records (named deciding body, audit rationale, risk checks,
+// resolvable evidence refs). The console never READ the blotter (the
+// Execution section rendered the watch-only submissions — empty
+// forever), and never PROJECTED the decision substance (the decision
+// cards read 'unknown / unspecified', 'RISK CHECKS: none', dead
+// evidence chips). These journeys pin both seams against the LIVE
+// served shape (probed on the deployed origin, W-8 wave).
+// ---------------------------------------------------------------------------
+
+/** The demo-substance fixture: the enriched outcome record (the decision substance) as the deployed backing serves it — the same field-for-field shape the live route serves, instants moved inside the rig's frozen view window. */
+function enrichedOutcome(): Record<string, unknown> {
+  return {
+    outcomeId: 'out:demo0001', ordinal: 1, tenant: 'tenant-a', project: 'prj-a',
+    decision: { decisionRef: 'xd:demo0001', intentRef: 'si:demo0001', disposition: 'filled' },
+    outcomeClass: 'adverse_gap',
+    expectation: { expectedQuantity: '0.75', expectedRealized: '45.5', tolerance: '0.05', declaredBy: 'spec-demo-director' },
+    realization: { filledQuantity: '0.75', realizedOutcome: '-12.5', feeTotal: '0.02', notionalTotal: '45750.375', unrealizedAtDecision: '0' },
+    deviation: { quantityShortfall: '0', realizedGap: '-12.5', withinTolerance: false },
+    evidence: [{ kind: 'shadow_outcome', ref: 'swo:demo0001' }, { kind: 'shadow_session', ref: 'shs:demo0001' }, { kind: 'decision', ref: 'xd:demo0001' }],
+    decisionBody: 'desk:tradrl-demo-execution',
+    decisionRationale: 'The desk approved the 0.75 BTC-USD rebalance on a 0.07 weight drift against the 0.25 target; the realized fill landed -12.5 against the 45.5 expectation (tolerance 0.05).',
+    riskChecks: [
+      { dimension: 'kill_switch', outcome: 'pass' }, { dimension: 'identity', outcome: 'pass' }, { dimension: 'authorization', outcome: 'pass' },
+      { dimension: 'limits', outcome: 'pass' }, { dimension: 'venue_permissions', outcome: 'pass' }, { dimension: 'rate_limits', outcome: 'pass' }, { dimension: 'credentials', outcome: 'pass' },
+    ],
+    lineage: {
+      shadow: {
+        sessionId: 'shs:demo0001', fidelity: { mode: 'shadow', fill_origin: 'simulated' },
+        executionPolicy: { policyId: 'xp-demo', version: 1 }, riskPolicy: { policyId: 'rp-demo', version: 1 },
+        configDigests: { worldConfigHash: 'demo-world-0001', engineConfigHash: 'demo-engine-0001', dataset: 'demo-dataset-v1' },
+        run: { runId: 'run-demo-0001', episodeId: 'ep-demo-0001' }, cursor: { cursorId: 'cur-demo-0001', position: 1 },
+        seed: 'demo-seed-0001', tenant: 'tenant-a', project: 'prj-a',
+      },
+      shadowOutcomeRef: 'swo:demo0001', shadowOutcomeOrdinal: 1, shadowAsOf: T0, decisionStreamPosition: 1, trajectoryRef: null, experiment: null,
+    },
+    asOf: T0 + 100, priorChainHead: '00000000',
+  };
+}
+
+/** The seeded execution blotter: 2 routed rows + 1 refused row, the live route's field-for-field shape (order leg, fill economics, deciding body, rationale, risk checks, evidence refs). */
+function seededSubmissions(): Record<string, unknown>[] {
+  const checks = ['kill_switch', 'identity', 'authorization', 'limits', 'venue_permissions', 'rate_limits', 'credentials'].map((dimension) => ({ dimension, outcome: 'pass' }));
+  return [
+    {
+      kind: 'routed', submissionId: 'xgs:2bae8608', decisionId: 'xd:demo0001', auditId: 'xga:demo0001', requestRef: 'gor:demo0001',
+      venue: 'BROKER-FIX', adapterRef: 'adapter:demo-broker', channelRef: 'chan:demo-main', routedAt: T0 + 120,
+      order: { clientOrderId: 'ord-demo-0001', instrumentId: 'BTC-USD', venueId: 'BROKER-FIX', side: 'buy', kind: 'limit', quantity: '0.75', price: '61000.50', timeInForce: 'gtc', createdAt: '2024-07-03T09:46:40.000Z' },
+      fill: { state: 'filled', quantity: '0.75', price: '61000.50', notional: '45750.375', fee: '0.02', filledAt: T0 + 130 },
+      decisionBody: 'desk:tradrl-demo-execution',
+      decisionRationale: 'Rebalance drift on BTC-USD reached 0.07 against the 0.25 target weight.',
+      riskChecks: checks,
+      evidence: [{ kind: 'shadow_outcome', ref: 'swo:demo0001' }, { kind: 'shadow_session', ref: 'shs:demo0001' }, { kind: 'outcome', ref: 'out:demo0001' }],
+    },
+    {
+      kind: 'routed', submissionId: 'xgs:e8f99935', decisionId: 'xd:demo0002', auditId: 'xga:demo0002', requestRef: 'gor:demo0002',
+      venue: 'BROKER-FIX', adapterRef: 'adapter:demo-broker', channelRef: 'chan:demo-main', routedAt: T0 + 220,
+      order: { clientOrderId: 'ord-demo-0002', instrumentId: 'ETH-USD', venueId: 'BROKER-FIX', side: 'sell', kind: 'limit', quantity: '6.0', price: '3412.10', timeInForce: 'gtc', createdAt: '2024-07-03T09:47:40.000Z' },
+      fill: { state: 'filled', quantity: '6.0', price: '3412.10', notional: '20472.60', fee: '0.03', filledAt: T0 + 230 },
+      decisionBody: 'desk:tradrl-demo-execution',
+      decisionRationale: 'Trim the ETH-USD overweight after the session adverse gap.',
+      riskChecks: checks,
+      evidence: [{ kind: 'shadow_session', ref: 'shs:demo0001' }, { kind: 'outcome', ref: 'out:demo0001' }],
+    },
+    {
+      kind: 'refused', submissionId: 'xgs:95d66c4e', decisionId: null, auditId: 'xga:demo0003',
+      refusal: { stage: 'risk_limits', evaluationId: 'rev:demo0003', refusals: [{ constraintId: 'k-position', domain: 'state', subject: 'position.grossExposure', severity: 'blocking', predicate: { kind: 'limit.max', bound: 2 }, observed: '2.4' }] },
+      refusedAt: T0 + 320,
+      order: { clientOrderId: 'ord-demo-0003', instrumentId: 'BTC-USD', venueId: 'BROKER-FIX', side: 'buy', kind: 'limit', quantity: '0.9', price: '61000.50', timeInForce: 'gtc', createdAt: '2024-07-03T09:48:40.000Z' },
+      decisionBody: 'gate:pre-trade-risk',
+      decisionRationale: 'The order was refused at the risk-limits stage: projected gross exposure 2.4 exceeds the blocking limit.max bound 2.',
+      riskChecks: [{ dimension: 'risk_limits', outcome: 'refused' }],
+      evidence: [{ kind: 'gateway-audit', ref: 'xga:demo0003' }],
+    },
+  ];
+}
+
+/** The demo-substance transport: the deployed backing's read surface for the seeded demo project (project, empty knowledge/post-mortems, the enriched outcome, the seeded blotter). */
+function demoSubstanceTransport(): { readonly transport: ApiTransport; readonly blotterReads: { count: number; projects: string[] } } {
+  const blotterReads = { count: 0, projects: [] as string[] };
+  const project = {
+    id: 'prj-a', tenantId: 'tenant-a', name: 'Console Test Project', executionMode: 'simulation',
+    lifecycle: { projectId: 'prj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:seeded' },
+    lineage: { projectId: 'prj-a', createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  };
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+  const transport: ApiTransport = async (request) => {
+    const path = request.path.split('?')[0] ?? request.path;
+    const key = `${request.method} ${path}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects/prj-a') return ok(project);
+    if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'POST /v1/outcomes/query') return ok({ items: [enrichedOutcome()] });
+    if (key === 'GET /v1/execution/submissions') {
+      blotterReads.count += 1;
+      blotterReads.projects.push(decodeURIComponent((request.path.split('?project=')[1] ?? '')));
+      return ok({ items: seededSubmissions() });
+    }
+    if (key === 'GET /v1/organizations/org:seeded/status') return ok({ organizationRef: 'org:seeded', tenant: 'tenant-a', project: 'prj-a', status: 'active', at: T0, instanceRefs: [] });
+    return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
+  };
+  return { transport, blotterReads };
+}
+
+describe('executed boot: R2 — the execution blotter read (the seeded submissions render)', () => {
+  it('the boot bundle READS GET /v1/execution/submissions?project=<scope> and the Execution section renders the rows WITH SUBSTANCE (order id, instrument, side, notional, fee, state, refusal detail)', async () => {
+    const api = demoSubstanceTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    expect(api.blotterReads.count).toBeGreaterThan(0); // the read fired (the R2 seam: it never did before)
+    expect(api.blotterReads.projects.every((project) => project === 'prj-a')).toBe(true); // scoped to the workspace project
+    expect(rig.handle.state().submissions.length).toBe(3); // all three seeded rows entered the state (deduped by submissionId)
+    expect(rig.handle.state().submissions.map((submission) => submission.submissionId).sort()).toEqual(['xgs:2bae8608', 'xgs:95d66c4e', 'xgs:e8f99935']);
+
+    // the Execution section renders each row with its substance
+    clickNav(rig, 'execution');
+    const firstCard = elementsOf(rig.root).find((element) => element.hasClass('card') && element.hasClass('verdict-routed'));
+    if (firstCard === undefined) throw new Error('the Execution section rendered no routed submission card');
+    const texts = (card: FakeElement): string[] => elementsOf(card).map((element) => textOf(element)).filter((text) => text.length > 0);
+    const firstTexts = texts(firstCard).join(' | ');
+    expect(firstTexts).toContain('xgs:2bae8608'); // the submission id
+    expect(firstTexts).toContain('ord-demo-0001'); // the client order id
+    expect(firstTexts).toContain('BTC-USD'); // the instrument
+    expect(firstTexts).toContain('buy'); // the side
+    expect(firstTexts).toContain('notional 45750.375'); // the fill notional
+    expect(firstTexts).toContain('fee 0.02'); // the fill fee
+    expect(firstTexts).toContain('filled'); // the fill state
+    expect(firstTexts).toContain('desk:tradrl-demo-execution'); // the named deciding body
+
+    // the REFUSED row renders the refusal's own substance (the constraint, the bound, the observed value)
+    const refusedCard = elementsOf(rig.root).find((element) => element.hasClass('card') && element.hasClass('verdict-refused'));
+    if (refusedCard === undefined) throw new Error('the Execution section rendered no refused submission card');
+    const refusedTexts = texts(refusedCard).join(' | ');
+    expect(refusedTexts).toContain('refused');
+    expect(refusedTexts).toContain('stage risk_limits');
+    expect(refusedTexts).toContain('position.grossExposure limit.max bound 2, observed 2.4');
+    expect(refusedTexts).toContain('gate:pre-trade-risk'); // the refusing body is named too
+
+    // a re-refresh does not duplicate the rows (the submissionId dedup)
+    await rig.handle.refresh();
+    expect(rig.handle.state().submissions.length).toBe(3);
+  });
+});
+
+describe('executed boot: R3 — the decision projection (named body, rationale, risk checks, working evidence chips)', () => {
+  it('the Decisions section renders the decision DETAIL CARD: a NAMED deciding body (never unknown), the audit rationale prose, the risk checks with outcomes, and evidence chips that OPEN their resolution inline', async () => {
+    const api = demoSubstanceTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'decisions');
+    const decisionCard = findByData(rig.root, 'data-decision', 'xd:demo0001');
+    if (decisionCard === null) throw new Error('the Decisions section rendered no decision card for the enriched outcome');
+    const texts = elementsOf(decisionCard).map((element) => textOf(element)).filter((text) => text.length > 0);
+    const joined = texts.join(' | ');
+    expect(joined).toContain('desk:tradrl-demo-execution'); // the NAMED deciding body
+    expect(joined).not.toContain('unknown'); // never the unknown placeholder on the decision card
+    expect(joined).toContain('The desk approved the 0.75 BTC-USD rebalance'); // the rationale prose renders
+    expect(joined).toContain('kill_switch: pass'); // the risk checks render with their outcomes
+    expect(joined).toContain('credentials: pass');
+    expect(joined).toContain('filled'); // the disposition
+    // the evidence chips exist for every served ref
+    for (const ref of ['shadow_outcome:swo:demo0001', 'shadow_session:shs:demo0001', 'decision:xd:demo0001']) {
+      const chip = findByData(rig.root, 'data-capsule-open', ref);
+      if (chip === null) throw new Error(`the decision card renders no evidence chip for ${ref}`);
+    }
+
+    // the chips WORK: clicking one opens the inline payload with the record's own resolution
+    const decisionChip = findByData(rig.root, 'data-capsule-open', 'decision:xd:demo0001') as FakeElement;
+    click(rig, decisionChip);
+    const payload = findByData(rig.root, 'data-capsule-open', 'decision:xd:demo0001');
+    if (payload === null) throw new Error('the opened chip rendered no inline payload');
+    const payloadTexts = elementsOf(rig.root).filter((element) => element.hasClass('capsule-payload')).map((element) => elementsOf(element).map((child) => textOf(child)).join(' ')).join(' | ');
+    expect(payloadTexts).toContain('the deciding record — body desk:tradrl-demo-execution, disposition filled'); // the resolution is the record's own
+
+    // the outcome's OWN capsule chip rides the card too (the §4.9 working chip: full payload + provenance)
+    const outcomeCapsule = elementsOf(decisionCard).find((element) => element.hasClass('capsule-badge') && textOf(elementsOf(element).find((child) => child.hasClass('capsule-address')) ?? element).includes('evc:'));
+    expect(outcomeCapsule).toBeDefined();
+  });
+
+  it('the watch feed projects the enriched fields onto the STREAM cards: the named deciding body is the acting agent (not unknown) and the gateway risk checks render with their outcomes', async () => {
+    const api = demoSubstanceTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'decisions');
+    const streamCardOf = (agent: string): FakeElement | undefined => elementsOf(rig.root).find((element) => element.hasClass('stream-card') && element.getAttribute('data-stream') === agent);
+    // the outcome-derived stream card: the deciding body is the agent
+    const outcomeStream = streamCardOf('desk:tradrl-demo-execution');
+    if (outcomeStream === undefined) throw new Error('the watch feed rendered no stream card for the named deciding body');
+    const outcomeTexts = elementsOf(outcomeStream).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(outcomeTexts).toContain('kill_switch: pass'); // the outcome's own risk checks render
+    expect(outcomeTexts).not.toContain('unknown'); // never the unknown agent
+    // the submission-derived stream cards: the refusing gate is named too
+    const refusedStream = streamCardOf('gate:pre-trade-risk');
+    if (refusedStream === undefined) throw new Error('the watch feed rendered no stream card for the refusing gate');
+    const refusedTexts = elementsOf(refusedStream).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(refusedTexts).toContain('risk_limits: refused'); // the refused check renders with its outcome
   });
 });

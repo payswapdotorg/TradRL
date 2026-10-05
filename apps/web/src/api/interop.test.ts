@@ -178,7 +178,14 @@ describe('trip-wire: the client method surface + route table (literal)', () => {
     expect(Object.keys(client.jobs).sort()).toEqual(['get', 'submitLearning', 'submitResearch']);
     expect(Object.keys(client.knowledge)).toEqual(['query']);
     expect(Object.keys(client.outcomes).sort()).toEqual(['postMortems', 'query']);
-    expect(Object.keys(client.execution)).toEqual(['submitRequest']);
+    // THE W-22 AMENDMENT (documented drift, not silent): the execution
+    // family carries ONE method the frozen SDK does not — `submissions`,
+    // the HOST-OWNED blotter read (GET /v1/execution/submissions, the
+    // W-8 demo-substance route served from the deployed backing BEFORE
+    // the boundary wrap; the route exists nowhere in the frozen route
+    // table, so the SDK has no mirror of it). The console's blotter
+    // read needs it; every other family stays member-identical.
+    expect(Object.keys(client.execution).sort()).toEqual(['submissions', 'submitRequest']);
     expect(Object.keys(client.organizations)).toEqual(['status']);
   });
 });

@@ -190,6 +190,15 @@ export function watchEventFromJob(scope: WorkspaceScope, job: JobRecord): WatchE
  * renders the verdict, it never re-decides it), and the decision
  * lens carries the gateway's own kind. The refusal's opaque payload
  * passes the firewall: a reasoning-shaped key refuses the ingest.
+ *
+ * THE W-22 ENRICHED PROJECTION (R3): the served blotter rows carry
+ * the NAMED deciding body (decisionBody — 'desk:…' / 'gate:…'), the
+ * gateway's own risk checks and the record's evidence refs; those
+ * project onto the closed seven-lens shape (agent = the deciding
+ * body, the risk-check lens = the record's own checks, the evidence
+ * lens = the record's own refs) — no new field, the closed shape
+ * holds (the deciding body IS the acting agent of the decision
+ * lens; a body-less record keeps the honest null).
  */
 export function watchEventFromSubmission(scope: WorkspaceScope, submission: GatewaySubmissionRecord): WatchEvent {
   // The submission record carries no scope fields of its own — it is
@@ -201,36 +210,50 @@ export function watchEventFromSubmission(scope: WorkspaceScope, submission: Gate
   const riskChecks: WatchRiskCheck[] = submission.kind === 'refused'
     ? [{ dimension: submission.refusal.stage, outcome: 'refused' }]
     : [];
+  const servedChecks = submission.riskChecks === undefined ? [] : submission.riskChecks.filter((check): check is WatchRiskCheck => typeof check.dimension === 'string' && typeof check.outcome === 'string');
   const proposal = submission.kind === 'routed' ? submission.requestRef : submission.submissionId;
   const event: WatchEvent = {
     at: submission.kind === 'routed' ? submission.routedAt : submission.refusedAt,
     tenantId: scope.tenantId,
     projectId: scope.projectId,
-    agent: null,
+    agent: typeof submission.decisionBody === 'string' && submission.decisionBody.length > 0 ? submission.decisionBody : null,
     capability: 'execution',
-    evidenceConsulted: [{ kind: 'gateway-audit', ref: submission.auditId }],
+    evidenceConsulted: submission.evidence === undefined || submission.evidence.length === 0 ? [{ kind: 'gateway-audit', ref: submission.auditId }] : submission.evidence,
     proposal,
     challenge: null,
-    riskChecks,
+    riskChecks: servedChecks.length > 0 ? servedChecks : riskChecks,
     decision: { kind: submission.kind, ref: submission.submissionId },
   };
   return event;
 }
 
-/** Watch event from an outcome record: the evidence lens carries the outcome's own evidence refs. */
+/**
+ * Watch event from an outcome record: the evidence lens carries the
+ * outcome's own evidence refs.
+ *
+ * THE W-22 ENRICHED PROJECTION (R3 — the 'unknown / unspecified'
+ * deciding-body finding): the served outcome records now carry the
+ * decision's own substance — the NAMED deciding body, the gateway's
+ * risk checks and the evidence refs — which project onto the closed
+ * seven-lens shape (agent = the deciding body; the risk-check lens =
+ * the record's own checks, verbatim). The rationale prose NEVER
+ * enters the watch surface (the closed shape has no prose slot; the
+ * Decisions section's own decision cards render it — render/model.ts).
+ */
 export function watchEventFromOutcome(scope: WorkspaceScope, outcome: OutcomeRecord): WatchEvent {
   assertProjectScope(scope, outcome);
   assertNoReasoningText(outcome, 'outcomeRecord');
+  const servedChecks = outcome.riskChecks === undefined ? [] : outcome.riskChecks.filter((check): check is WatchRiskCheck => typeof check.dimension === 'string' && typeof check.outcome === 'string');
   const event: WatchEvent = {
     at: outcome.asOf,
     tenantId: tenantOfRecord(outcome),
     projectId: outcome.project,
-    agent: null,
+    agent: typeof outcome.decisionBody === 'string' && outcome.decisionBody.length > 0 ? outcome.decisionBody : null,
     capability: null,
     evidenceConsulted: outcome.evidence,
     proposal: outcome.decision.intentRef,
     challenge: null,
-    riskChecks: [],
+    riskChecks: servedChecks,
     decision: { kind: 'observed', ref: outcome.decision.decisionRef },
   };
   return event;

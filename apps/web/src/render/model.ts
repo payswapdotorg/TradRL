@@ -28,7 +28,7 @@
 // bytes (tests pin it). The DOM projector is a mechanical translation
 // of this tree — no logic of its own.
 
-import type { CriterionPredicate, GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
+import type { CriterionPredicate, GatewayRefusal, GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
 import { withRenderGuard } from '../core/clock';
 import { assertVisible, availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfProject, availabilityOfSubmission, projectToView } from '../core/availability';
 import { assertProjectScope, type WorkspaceScope } from '../core/tenant';
@@ -68,12 +68,15 @@ import {
   richStatCard,
   statCard,
   statGrid,
+  statusPill,
   timelineList,
   type ComponentIcon,
   type DefinitionSection,
   type PillTone,
 } from './components';
 import {
+  capsuleBadge,
+  capsulePayload,
   capsuleSurface,
   labeledInput,
   labeledSelect,
@@ -81,6 +84,7 @@ import {
   notificationBell,
   NOTICE_SENTENCES,
   reviewStep,
+  riskCheckToneOf,
   streamCard,
   timeMachineControls,
   twoStepConfirm,
@@ -237,16 +241,96 @@ export function assertVerdictFaithful(submission: GatewaySubmissionRecord, badge
   }
 }
 
-/** Render one submission's card (verdict from the record; the gate proves faithfulness). */
+/** Render one submission's card (verdict from the record; the gate proves faithfulness). THE W-22 SUBSTANCE PASS (R2): the blotter's served rows carry the order leg, the fill economics and the named deciding body — the card renders them (a blotter row without the order id, instrument, side, notional, fee and state proved nothing happened; the M3/L4 finding). */
 function submissionCard(scope: WorkspaceScope, submission: GatewaySubmissionRecord, viewAt: number): VNode {
   visibleAt(submission, availabilityOfSubmission(submission), viewAt, submission.submissionId);
   const badge = submissionVerdictBadgeOf(submission);
   assertVerdictFaithful(submission, badge);
+  const order = submission.order;
+  const fill = submission.fill;
   return v('div', { class: `card verdict-${badge.kind}` }, [
     v('div', { class: 'card-title' }, [submission.submissionId]),
     v('span', { class: `badge badge-${badge.kind}` }, [badge.label]),
     factRow('verdict detail', badge.detail),
+    ...(order === undefined ? [] : [factRow('order', `${order.clientOrderId} · ${order.instrumentId} ${order.side} ${order.kind} ${order.quantity}${order.price === undefined ? '' : ` @ ${order.price}`}`)]),
+    ...(fill === undefined ? [] : [factRow('fill', `${fill.state} · notional ${fill.notional} · fee ${fill.fee}`)]),
+    ...(submission.kind === 'refused' ? [factRow('refusal', refusalDetailOf(submission.refusal))] : []),
+    ...(submission.decisionBody === undefined ? [] : [factRow('deciding body', submission.decisionBody)]),
     factRow('audit', submission.auditId),
+  ]);
+}
+
+/** The refusal's honest one-line detail (the opaque stage payload carries the refusals' constraint ids, predicates and observed values — rendered when present, never invented). */
+function refusalDetailOf(refusal: GatewayRefusal): string {
+  const refusals = (refusal as { readonly refusals?: readonly { readonly constraintId?: unknown; readonly subject?: unknown; readonly predicate?: { readonly kind?: unknown; readonly bound?: unknown }; readonly observed?: unknown; readonly severity?: unknown }[] }).refusals;
+  if (!Array.isArray(refusals) || refusals.length === 0) return `stage ${refusal.stage}`;
+  const parts = refusals.map((entry) => {
+    const subject = typeof entry.subject === 'string' ? entry.subject : 'subject';
+    const predicate = entry.predicate;
+    const kind = predicate !== null && typeof predicate === 'object' && typeof (predicate as { readonly kind?: unknown }).kind === 'string' ? (predicate as { readonly kind: string }).kind : 'predicate';
+    const bound = predicate !== null && typeof predicate === 'object' && 'bound' in (predicate as Record<string, unknown>) ? String((predicate as { readonly bound: unknown }).bound) : 'unspecified';
+    const observed = entry.observed === undefined || entry.observed === null ? 'unspecified' : String(entry.observed);
+    const constraint = typeof entry.constraintId === 'string' ? ` (${entry.constraintId})` : '';
+    return `${subject} ${kind} bound ${bound}, observed ${observed}${constraint}`;
+  });
+  return `stage ${refusal.stage}: ${parts.join('; ')}`;
+}
+
+/** The honest one-line resolution of one evidence ref against the outcome record that cites it (the lineage carries the shadow refs; the decision ref is the record's own — anything else stays a bare ref, L20). */
+function decisionEvidenceLineOf(outcome: OutcomeRecord, kind: string, ref: string): string {
+  if (kind === 'decision' && ref === outcome.decision.decisionRef) {
+    return `the deciding record — body ${outcome.decisionBody ?? 'unspecified'}, disposition ${outcome.decision.disposition}`;
+  }
+  if (ref === outcome.lineage.shadowOutcomeRef) return 'the shadow realization of this outcome (the lineage shadow outcome ref)';
+  if (ref === outcome.lineage.shadow.sessionId) return 'the session the decision ran in (the lineage shadow session)';
+  if (ref === outcome.outcomeId) return 'this outcome record';
+  return 'an evidence-family ref — the evidence read family owns its payload (L20)';
+}
+
+/**
+ * THE DECISION DETAIL CARD (R3, the W-22 substance pass): an outcome
+ * that carries the W-8 decision-substance fields renders its
+ * decision's full audit story — the NAMED deciding body (not
+ * 'unknown'), the published audit rationale (prose — an audit field
+ * the boundary serves on the decision record, never hidden
+ * chain-of-thought), the gateway's own risk checks with their
+ * outcomes, and WORKING evidence chips (the §4.9 inline-open surface:
+ * each ref resolves against the record that cites it, and the
+ * outcome's own capsule badge opens the full payload + provenance).
+ * The watch feed's stream cards keep the closed seven-lens shape;
+ * this card is the Decisions section's own auditable detail.
+ */
+function decisionCard(scope: WorkspaceScope, outcome: OutcomeRecord, viewAt: number, openCapsule: string | null): VNode {
+  visibleAt(outcome, availabilityOfOutcome(outcome), viewAt, outcome.outcomeId);
+  const riskChecks = outcome.riskChecks ?? [];
+  const evidenceRefs = outcome.evidence;
+  const openedRef = evidenceRefs.find((entry) => openCapsule === `${entry.kind}:${entry.ref}`) ?? null;
+  return v('div', { class: 'card decision-card', 'data-decision': outcome.decision.decisionRef }, [
+    v('div', { class: 'card-title' }, [`Decision ${outcome.decision.decisionRef}`]),
+    ...factRows([
+      ['deciding body', outcome.decisionBody ?? 'unspecified'],
+      ['disposition', outcome.decision.disposition],
+      ['intent ref', outcome.decision.intentRef],
+    ]),
+    ...(outcome.decisionRationale === undefined ? [] : [v('p', { class: 'card-note decision-rationale' }, [outcome.decisionRationale])]),
+    ...(riskChecks.length === 0 ? [] : [
+      v('div', { class: 'stream-checks' }, [
+        v('span', { class: 'stream-label' }, ['Risk checks']),
+        ...riskChecks.map((check) => statusPill(riskCheckToneOf(check.outcome), `${check.dimension}: ${check.outcome}`, 'check-pill')),
+      ]),
+    ]),
+    v('div', { class: 'stream-evidence' }, [
+      v('span', { class: 'stream-label' }, ['Evidence']),
+      ...(evidenceRefs.length === 0
+        ? [v('span', { class: 'stream-none' }, ['none'])]
+        : evidenceRefs.map((entry) => capsuleBadge(entry.kind, entry.ref, openCapsule === `${entry.kind}:${entry.ref}`))),
+      ...(openedRef === null ? [] : [capsulePayload(`${openedRef.kind}:${openedRef.ref}`, [
+        `ref ${openedRef.kind}:${openedRef.ref}`,
+        decisionEvidenceLineOf(outcome, openedRef.kind, openedRef.ref),
+      ], `cited by the deciding record ${outcome.decision.decisionRef} of ${outcome.outcomeId} — resolved from the outcome record (L20)`)]),
+      // the outcome's OWN working capsule chip (§4.9): opens the full payload + provenance inline
+      capsuleInline(capsuleFromOutcome(scope, outcome), viewAt, openCapsule),
+    ]),
   ]);
 }
 
@@ -763,13 +847,24 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
   } else if (selector === 'decisions') {
       const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
       const watchFeed = projectToView(watchEventsOf(state), viewAt, (event) => event.at);
+      // THE DECISION DETAIL CARDS (R3, the W-22 substance pass): the
+      // outcomes that carry the W-8 decision-substance fields (a named
+      // deciding body, the audit rationale, the risk checks) render
+      // their decision's auditable story BEFORE the stream — the
+      // section's own purpose; the watch feed keeps the closed
+      // seven-lens shape beneath them.
+      const decisionOutcomes = projectToView(state.outcomes, viewAt, availabilityOfOutcome)
+        .filter((outcome) => outcome.decisionBody !== undefined || outcome.decisionRationale !== undefined || (outcome.riskChecks?.length ?? 0) > 0);
       return v('section', { class: 'panel', 'data-section': 'decisions' }, [
+        ...decisionOutcomes.map((outcome) => v('div', { class: 'decision-block' }, [
+          decisionCard(scope, outcome, viewAt, view.openCapsule),
+        ])),
         v('div', { class: 'watch' }, [v('h2', {}, ['Watch']), ...watchFeed.map((event) => watchEventRow(scope, event, viewAt, view.openCapsule))]),
         ...submissions.map((submission) => v('div', { class: 'decision-block' }, [
           submissionCard(scope, submission, viewAt),
           capsuleInline(capsuleFromSubmission(scope, submission), viewAt, view.openCapsule),
         ])),
-        ...(submissions.length === 0 && watchFeed.length === 0 ? [sectionEmpty('decisions')] : []),
+        ...(submissions.length === 0 && watchFeed.length === 0 && decisionOutcomes.length === 0 ? [sectionEmpty('decisions')] : []),
       ]);
   } else if (selector === 'execution') {
       const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);

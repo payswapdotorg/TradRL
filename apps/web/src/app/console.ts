@@ -268,6 +268,22 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         const page = await client.outcomes.postMortems({ project: projectId, at: instants.nowMs(), latestPerOutcome: true });
         dispatchIfCurrent(projectId, { kind: 'post-mortems-loaded', at: instants.nowMs(), records: [...page.items] });
       });
+      // THE EXECUTION BLOTTER READ (R2, the W-22 fix — the seam the
+      // Lead verified broken live): the backing serves the gateway's
+      // submission records at GET /v1/execution/submissions?project=…
+      // (the W-8 host route), but the console never READ them — the
+      // Execution section rendered state.submissions, which only the
+      // watch events populated (the console's own submissions), so the
+      // seeded blotter stayed invisible forever. The read follows the
+      // bundle's own pattern; each served row dispatches the existing
+      // submission-recorded event, whose reducer arm merges deduped by
+      // submissionId (the same dedup the watch path rides).
+      await read('GET /v1/execution/submissions', async () => {
+        const page = await client.execution.submissions(projectId);
+        for (const submission of page.items) {
+          dispatchIfCurrent(projectId, { kind: 'submission-recorded', at: instants.nowMs(), submission });
+        }
+      });
       const organizationRef = state.project?.lifecycle.organizationRef ?? null;
       if (organizationRef !== null) {
         await read('GET /v1/organizations/:ref/status', async () => {
