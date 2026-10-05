@@ -159,6 +159,7 @@ export type WorkspaceEvent =
   | { readonly kind: 'view-live'; readonly at: number }
   | { readonly kind: 'view-tminus'; readonly at: number; readonly tMinusMs: number }
   | { readonly kind: 'view-timestamp'; readonly at: number; readonly timestamp: number }
+  | { readonly kind: 'anchor-advanced'; readonly at: number }
   | { readonly kind: 'playback-start'; readonly at: number; readonly fromAt: number; readonly stepMs: number }
   | { readonly kind: 'playback-tick'; readonly at: number }
   | { readonly kind: 'notice-read'; readonly at: number; readonly noticeId: string }
@@ -309,6 +310,27 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
 
   } else if (selector === 'view-timestamp') {
       return { ...withHistory, timeMachine: setTimestamp(advanceAnchor(withHistory.timeMachine, event.at), event.timestamp) };
+
+  } else if (selector === 'anchor-advanced') {
+      // THE LIVE ANCHOR'S OWN TRANSITION (the W-17a fix — the v0.1.0
+      // J03 release blocker): the app observed a fresh live instant (the
+      // beat cadence / the launch seam) and the anchor follows it —
+      // exactly what advanceAnchor exists for ("the app observes a fresh
+      // injected instant"). Before this event the anchor only moved on
+      // the user's Time Machine clicks, so a LIVE session's view instant
+      // stayed pinned at the BOOT instant forever: every datum that
+      // became available after boot (the just-created project, the
+      // kickoff job) was post-view-time and the L4 projection refused it
+      // — every launch on the deployed origin ended "Launch (failed)"
+      // with the typed AvailabilityViolationError. The anchor is the
+      // ceiling for every view: in live mode the view IS the anchor (the
+      // world as of NOW); a T-x offset rides the fresh anchor ("x before
+      // now" stays true as now advances); playback's ceiling rises with
+      // it (a tick still never passes the anchor — the pure machine's
+      // typed law, unchanged). The app layer dispatches this only with an
+      // observed instant BEYOND the current anchor (the anchor never
+      // regresses).
+      return { ...withHistory, timeMachine: advanceAnchor(withHistory.timeMachine, event.at) };
 
   } else if (selector === 'playback-start') {
       return { ...withHistory, timeMachine: startPlayback(advanceAnchor(withHistory.timeMachine, event.at), event.fromAt, event.stepMs) };
