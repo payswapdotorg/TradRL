@@ -5,7 +5,7 @@
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
 | Program phase | wave-35: T045+T048 merged 48/52 (PRs #27/#28); T046 merged 49/52 via PR #30 (Arena provider adapter); T047 PR #31 verified (W-8b, head b1a4f365), merging next; T049 ready; the boot-path fix MERGED via PR #29 (W-7b — the console now boots in a real browser for the first time; .tradrl-shell mounts, zero page errors, graceful degradation by design); Lead next: production redeploy + the full J1-J12 journey gate; frontier: T049 then T050 (52/52) |
-| Current authorized Work Order | T046, T047 (wave-35, dispatched); T049 (ready, holds for the next free lane) |
+| Current authorized Work Order | T047 (PR #31 open, merging next); T049 (ready, holds for the next free lane) |
 | Active workers | 3 |
 | In-flight | T035 + T048 (lanes queued behind the chat.z.ai admission drought; sentinel armed with fresh packets); Lead: provider provisioning + public deploy + J1-J12 verification |
 | Blocked | none |
