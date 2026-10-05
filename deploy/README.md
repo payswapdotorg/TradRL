@@ -13,17 +13,22 @@ runbook must be complete enough to run step-by-step.
 
 - **Zero-dep law** — every provider client is hand-authored on platform
   APIs only (`fetch`, `node:crypto`). NO npm dependencies anywhere in
-  `deploy/`, no `package.json`, `pnpm-lock.yaml` NEVER touched (the
-  Vercel `installCommand` is a no-op echo — nothing is installed even at
-  deploy time).
+  `deploy/`, no `package.json` under `deploy/`, no dependency is EVER
+  added and `pnpm-lock.yaml` is NEVER modified: the Vercel
+  `installCommand` is a **frozen-lockfile provision** of the workspace's
+  OWN devDependencies — exactly the build toolchain (`typescript`) the
+  prebuilt emit needs, nothing more (probe-proven live: a no-op echo
+  install leaves the build image with NO node_modules at all — team
+  tepa project `trrl-echo-probe`; the emitted `.func` itself ships with
+  no `node_modules`).
 - **Frozen siblings** — `services/api` is WRAPPED (its route table is
   invoked from `deploy/vercel/api/router.ts`; the service is never
   edited), `apps/web` is deployed AS-IS through a build step OWNED BY
   `deploy/` (the shell copy is substituted host-side; the package tree
   is never edited).
-- **Same-origin /v1** — the console reaches the API through Vercel
-  rewrites on ONE origin. NO CORS headers are ever emitted (pinned by
-  `deploy/vercel/vercel.test.ts`).
+- **Same-origin /v1** — the console reaches the API through the
+  EMITTED `.vercel/output/config.json` routes on ONE origin. NO CORS
+  headers are ever emitted (pinned by `deploy/vercel/vercel.test.ts`).
 - **L12 / L20 stay in code** — the deployment changes WHERE code runs,
   never WHAT enforces: the T041 pipeline (authn → authz →
   tenant-context injection → rate limit → validation → handler → audit
@@ -37,27 +42,55 @@ runbook must be complete enough to run step-by-step.
 
 ```
 https://<project>.vercel.app                       (ONE origin — no CORS anywhere)
-├── /*              static: the console build      (deploy/vercel/dist/console)
+├── /*              static: the console build      (.vercel/output/static)
 │   ├── index.html     the T042/T051 shell with the PRODUCTION config block
 │   └── src/**/*       the console's TypeScript sources, served as static
 │                      files (DATA — the no-build loader fetches them as
 │                      text and strips types IN THE BROWSER)
-├── /v1/*           rewrite → serverless function  (destination = the exact
-│                   function path /api/router; the platform hands the
-│                   function req.url = the ORIGINAL public path — W-3j)
-└── /internal/*     rewrite → the same function    (the private plane)
+├── /v1/*           route → the serverless function  (config.json route dest =
+│                   the exact function path /api/router; the platform hands
+│                   the function req.url = the ORIGINAL public path — W-3k)
+└── /internal/*     route → the same function      (the private plane)
+```
+
+The whole tree is the **prebuilt Build Output API v3 deployment**
+(`.vercel/output/`), emitted by the build command
+(`deploy/vercel/build-console.mjs`) — the platform accepts it AS-IS and
+`@vercel/node` NEVER runs (there is no repo-root `api/` directory to
+discover, W-3k). The emitted tree:
+
+```
+.vercel/output/
+├── config.json            {"version":3,"routes":[{"src":"/v1/(?<path>.*)",
+│                          "dest":"/api/router"},{"src":"/internal/(?<path>.*)",
+│                          "dest":"/api/router"}]}   (NO images key — the
+│                          platform rejects one without sizes, probe-proven)
+├── static/                the console build (the copy + substitute output)
+└── functions/api/router.func/
+    ├── index.js           the seal: module.exports = require(
+    │                      './deploy/vercel/api/router').default
+    ├── .vc-config.json    {"runtime":"nodejs24.x","memory":1024,
+    │                      "maxDuration":10,"handler":"index.js",
+    │                      "launcherType":"Nodejs"}
+    ├── package.json       {"name":"tradrl-function","private":true}
+    │                      — NO "type" field (the sealed tree is CommonJS)
+    ├── deploy/vercel/api/router.js        ┐
+    ├── deploy/vercel/runtime/*.js          │ the tsc-emitted CommonJS tree
+    └── services/api/src/*.js               ┘ (rootDir = the repo root)
+       (NO other package.json anywhere in the .func — the W-3k law)
 ```
 
 - **The console (static).** apps/web is a *no-build* application: the
   shell fetches `./src/...` TypeScript at runtime through the
   erasable-type loader. "Building" it therefore means exactly two
   things, performed by `deploy/vercel/build-console.mjs`
-  (zero-dep: `node:fs`/`node:path`/`node:crypto` only):
+  (zero-dep: `node:fs`/`node:path`/`node:crypto`/`node:url` +
+  `node:child_process` for the tsc invoke — platform APIs only):
   1. **Copy** `apps/web/index.html` + every non-test file under
-     `apps/web/src/` into `deploy/vercel/dist/console` (the vercel.json
-     `outputDirectory`). The `.ts` files are served as static data —
-     the content-type is irrelevant, the loader reads `.text()`. Test
-     sources (`*.test.ts`) are never published.
+     `apps/web/src/` into `.vercel/output/static` (the prebuilt
+     deployment's static tree). The `.ts` files are served as static
+     data — the content-type is irrelevant, the loader reads `.text()`.
+     Test sources (`*.test.ts`) are never published.
   2. **Substitute** the shell's `window.__TRADRL_CONSOLE__` block ON THE
      COPY (apps/web is frozen — never edited):
      - `apiOrigin: 'http://localhost:8787'` → `apiOrigin: ''` — the
@@ -74,21 +107,36 @@ https://<project>.vercel.app                       (ONE origin — no CORS anywh
      deterministic: identical inputs → identical bytes (pinned by a
      test; the build manifest carries file names + SHA-256 digests
      only — never the substituted values).
-- **The API (serverless).** Vercel discovers the function through the
-  repo-root `api/router.ts` discovery shim (W-3h: the platform builds
-  Serverless Functions ONLY from the repo-root `api/` directory),
-  which re-exports `deploy/vercel/api/router.ts` — a single
-  Vercel Node function wrapping the T041 route table: it composes the
+- **The API (serverless, prebuilt — W-3k).** The build itself emits the
+  function as `.vercel/output/functions/api/router.func/`: it runs the
+  workspace's own `tsc` (a devDependency, provisioned by the install
+  step; NEVER an npm addition to `deploy/`) with
+  `deploy/vercel/function.tsconfig.json` (`module: CommonJS` +
+  `moduleResolution: node` — the W-3i/W-3j laws, now owned by the
+  build) over the true entry `deploy/vercel/api/router.ts`, then seals
+  the tree with the `.func` envelope (index.js + `.vc-config.json` + a
+  root `package.json` with NO `"type"` field). Because the platform
+  accepts the prebuilt tree as-is, `@vercel/node` never typechecks,
+  bundles, or copies anything — the whole chain of platform-builder
+  failures (W-3h discovery, W-3i nodenext typecheck, W-3j ESM emit,
+  W-3k `type:module` copy-poison) is eliminated by construction. The
+  emitted function wraps the T041 route table: it composes the
   service ONCE per instance (`runtime/compose.ts`, memoized — warm
   invocations reuse it), adapts each `(req, res)` into the
-  `ApiRequest`/`ApiResponse` contracts (`runtime/http.ts` — the platform
-  hands the function `req.url` = the ORIGINAL public path under the
-  rewrites; the mount-strip is the guard for direct-mount invocations,
-  so the route table sees the original `/v1/...` path either way), and lets `service.handle()` run the whole pipeline. **No route
+  `ApiRequest`/`ApiResponse` contracts (`runtime/http.ts` — the
+  platform hands the function `req.url` = the ORIGINAL public path
+  under the config.json routes; the mount-strip is the guard for
+  direct-mount invocations, so the route table sees the original
+  `/v1/...` path either way), and lets `service.handle()` run the whole pipeline. **No route
   is re-implemented; no pipeline stage is skipped.** The host owns
   exactly what T041's composition root demands: the credential
   registry (env-sourced tokens, minted at this secure boundary), the
   instant source, and the five backing-service ports.
+  The build CLEANS `.vercel/output` first (stale artifacts never leak
+  into a deployment) and is deterministic end-to-end (byte-identical
+  outputs for identical inputs — test-pinned across the whole prebuilt
+  tree; the build manifest carries names + SHA-256 digests only, never
+  values).
 - **The backing services (the W-3f backing resolution).** Which ports
   back the five data-route families is resolved from the environment
   once per composition (`runtime/env.ts` → `resolveDeployBacking`):
@@ -136,34 +184,27 @@ every PRIMARY KEY leads with `tenant`). To apply, paste
 once per database — `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF
 NOT EXISTS` keep it idempotent, no migration tooling (zero-dep law).
 
-### Why vercel.json lives in deploy/vercel/ (and the root hosting copies)
+### Why vercel.json lives in deploy/vercel/ (and the root hosting copy)
 
 The frozen write surface allows edits ONLY under `deploy/**` (+ the
 granted root include lines). Vercel, however, reads `vercel.json` from
-the project root, builds Serverless Functions only from the repo-root
-`api/` directory, and typechecks each function with the tsconfig.json
-NEAREST its entry (walking up from the file) — so the root carries the
-hosting-exception files (the Lead's b4561b7 ruling, W-3h/W-3i
-extension):
+the project root — so the root carries exactly ONE hosting-exception
+file (the Lead's b4561b7 ruling):
 
 - **`./vercel.json`** — committed (b4561b7), byte-identical to
   `deploy/vercel/vercel.json` (test-pinned; git-based Vercel deploys
   read it from the root). The runbook's earlier host-side `cp` step is
   retired — the durable copy replaced it.
-- **`./api/router.ts`** — the discovery shim (W-3h): a pure re-export
-  of the deploy tree's real function. This is part of the same hosting
-  exception — a platform DISCOVERY requirement, not a surface change
-  to the product (the deploy tree stays the source of truth).
-- **`./api/tsconfig.json`** — the nearest-tsconfig resolution pin
-  (W-3i): @vercel/node resolves the function build's compiler options
-  from the tsconfig.json nearest `api/router.ts`, and without this pin
-  its default synthesis (`moduleResolution: nodenext`) rejects the
-  repo's extensionless relative imports (TS2835 — the frozen
-  `services/api` sources are written extensionless). The pin extends
-  `tsconfig.base.json` and pins the SAME `Bundler` resolution the
-  whole repo typechecks green under (test-pinned). NEVER add file
-  extensions to the frozen `services/api` imports to satisfy a build
-  tool — pin the resolution here instead.
+
+The W-3h/W-3i root `api/` hosting-exception files (the discovery shim
+`api/router.ts` + the nearest-tsconfig pin `api/tsconfig.json`) are
+**RETIRED** by W-3k: they existed only because the platform's
+`@vercel/node` builder had to discover, typecheck, and emit the
+function itself. The prebuilt path builds the function in
+`deploy/vercel/build-console.mjs`, so NO repo-root `api/` directory may
+exist — a resurrected one would make `@vercel/node` discover a function
+again and re-enter the exact failure chain W-3k eliminates
+(test-pinned: the repo-root `api/` must not exist).
 
 All paths inside the config are repo-root-relative and verified by
 `deploy/vercel/vercel.test.ts` (including the root-copy byte-identity).
@@ -172,13 +213,15 @@ All paths inside the config are repo-root-relative and verified by
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| `framework` | `null` | no framework — static output + functions |
-| `installCommand` | `echo ...` | ZERO-DEP: nothing installed, lockfile untouched |
-| `buildCommand` | `node deploy/vercel/build-console.mjs` | the console build (§ above) |
-| `outputDirectory` | `deploy/vercel/dist/console` | the ONLY public static tree (gitignored `dist/`) |
-| `functions` | `api/router.ts` (the root discovery shim → `deploy/vercel/api/router.ts`) — 1024 MB, 10 s | within the Hobby free tier (≤1024 MB, ≤60 s); the platform builds functions ONLY from the repo-root `api/` directory |
+| `framework` | `null` | no framework — the build emits the whole prebuilt deployment |
+| `installCommand` | `corepack pnpm install --frozen-lockfile --prefer-offline` | the BUILD TOOLCHAIN provision: the workspace's own devDependencies (typescript + @types/node) for the tsc emit — frozen (the lockfile is never modified, nothing added). Probe-proven live (trrl-echo-probe): a no-op echo install leaves the build image with NO node_modules — the build would die at its own loud no-tsc failure |
+| `buildCommand` | `node deploy/vercel/build-console.mjs` | emits the COMPLETE prebuilt `.vercel/output` (config.json + static/ + the .func) |
 | `regions` | `iad1` (single) | Hobby = one region |
-| `rewrites` | `/v1/:path*` and `/internal/:path*` → `/api/router` (the EXACT function path, both — W-3j) | same-origin API: Vercel functions match their EXACT path only — a subpath destination (`/api/router/v1/:path*`) can never resolve (probe-proven); the platform hands the function `req.url` = the original public path |
+
+Deliberately ABSENT keys (the prebuilt law, test-pinned): `functions`,
+`rewrites`, `outputDirectory` — all routing and outputs live in the
+EMITTED `.vercel/output/config.json` + tree. `@vercel/node` is never
+invoked (no repo-root `api/` directory exists).
 
 ---
 
@@ -275,23 +318,28 @@ a dependency of the repo).
    npx vercel env add TRADRL_API_DEVELOPER_TOKEN production
    # ... repeat per key; values are read from stdin, never logged by this repo
    ```
-3. **Verify the root hosting copies** (the hosting exception, b4561b7 +
-   W-3h — both are COMMITTED, nothing to copy): the root `vercel.json`
-   must be byte-identical to `deploy/vercel/vercel.json` and the root
-   `api/router.ts` discovery shim must re-export the deploy tree's
-   function (both pinned by `deploy/vercel/vercel.test.ts`).
+3. **Verify the root hosting copy** (the hosting exception, b4561b7 —
+   COMMITTED, nothing to copy): the root `vercel.json` must be
+   byte-identical to `deploy/vercel/vercel.json` (test-pinned), and
+   there must be NO repo-root `api/` directory (the prebuilt law — a
+   resurrected one would re-trigger `@vercel/node`; test-pinned).
 4. **Deploy.**
    ```
    npx vercel --prod
    ```
-   What happens: the install step is a no-op (zero-dep), the console
-   build copies + substitutes apps/web into
-   `deploy/vercel/dist/console`, Vercel builds the root
-   `api/router.ts` discovery shim (which bundles
-   `deploy/vercel/api/router.ts` + the services/api import graph —
-   its TypeScript is bundled by Vercel's own toolchain, the repo has
-   no runtime dependencies), and the two rewrites publish the
-   same-origin `/v1` + `/internal`.
+   What happens: the install step provisions the frozen lockfile state
+   (the build toolchain only), then the build command emits the
+   COMPLETE prebuilt Build Output API v3 deployment — it CLEANs
+   `.vercel/output`, copies + substitutes apps/web into
+   `.vercel/output/static`, runs the workspace's own `tsc` over the
+   function entry graph (`deploy/vercel/function.tsconfig.json`:
+   CommonJS + node resolution) into
+   `.vercel/output/functions/api/router.func`, and seals it (index.js +
+   `.vc-config.json` + the no-`type` root package.json) — and writes
+   `.vercel/output/config.json` with the two routes (`/v1/*`,
+   `/internal/*` → `/api/router`). The platform accepts the prebuilt
+   tree as-is (`@vercel/node` never runs) and publishes the same-origin
+   `/v1` + `/internal` planes.
 5. **First verification (the smoke sequence — backing=demo expectations).**
    ```
    BASE=https://<project>.vercel.app
@@ -317,30 +365,60 @@ a dependency of the repo).
    the watch snapshot when the internal pair is set); run the launch
    flow and watch the kickoff job animate submitted → running →
    complete (~3 s / ~8 s) when the internal pair is set.
-   Troubleshooting:
-   - If `/v1/*` (or `/internal/*`) returns Vercel's NOT_FOUND page (not
-     the API's JSON envelope), the rewrite destination must be the
-     EXACT function path (`/api/router`), never a subpath — Vercel
-     functions match their exact path only, and subpath destinations
-     (`/api/router/v1/:path*`) can never resolve (probe-proven, W-3j).
-     Also confirm the root `vercel.json` matches
-     `deploy/vercel/vercel.json` (step 3) and that the function appears
-     in the deployment's Functions tab as `api/router`.
-   - If the exact function path answers FUNCTION_INVOCATION_FAILED
-     (500) with ERR_MODULE_NOT_FOUND or "Cannot use import statement
-     outside a module" in the logs, the function tsconfig emitted ESM —
-     it must emit CommonJS (`api/tsconfig.json`: `module: "CommonJS"` +
-     `moduleResolution: "node"`; the repo package.json has no
-     `"type"` field, so the runtime loads CJS — W-3j). NEVER add file
-     extensions to the frozen `services/api` imports — pin the emit
-     instead.
-   - If the function BUILD fails with TS2835 ("Relative import paths
-     need explicit file extensions in ECMAScript imports" — the build
-     typechecked under `nodenext`), the `api/tsconfig.json`
-     nearest-tsconfig pin (W-3i) is missing or drifted — restore it
-     (extends `tsconfig.base.json`, `moduleResolution: "node"` with
-     `module: "CommonJS"` per W-3j); NEVER add extensions to the frozen
-     `services/api` imports.
+   Troubleshooting (the full W-3h→W-3k history — every row below was a
+   LIVE production failure, root-caused and fixed):
+   - **`/v1/*` (or `/internal/*`) returns Vercel's NOT_FOUND page** (not
+     the API's JSON envelope): the route destination must be the EXACT
+     function path (`/api/router`), never a subpath — Vercel functions
+     match their exact path only, and subpath destinations
+     (`/api/router/v1/:path*`) can never resolve (W-3j, probe-proven
+     on tradrl-router-probe). In the prebuilt deployment the routes
+     live in the EMITTED `.vercel/output/config.json` — check the
+     emitted `dest` values against `FUNCTION_MOUNT_PATH`
+     (`deploy/vercel/runtime/http.ts`; test-pinned equal). Also confirm
+     the root `vercel.json` matches `deploy/vercel/vercel.json` (step
+     3) and the function appears in the deployment's Functions tab as
+     `api/router`.
+   - **The exact function path answers FUNCTION_INVOCATION_FAILED
+     (500)** — the module-load crash class, three known causes:
+     - `ERR_MODULE_NOT_FOUND` or "Cannot use import statement outside a
+       module" in the logs → the function emit is ESM (W-3j): the
+       emit must be CommonJS (`deploy/vercel/function.tsconfig.json`:
+       `module: "CommonJS"`; the repo package.json has no `"type"`
+       field, so the runtime loads CJS). NEVER add file extensions to
+       the frozen `services/api` imports — pin the emit instead.
+     - `ReferenceError: exports is not defined in ES module scope` →
+       the W-3k type:module poison: some `package.json` with
+       `"type": "module"` ended up INSIDE the `.func` (the
+       `@vercel/node` emit copied `services/api/package.json` next to
+       the emitted CJS graph, so Node treated the CommonJS text as
+       ESM). The prebuilt emit produces `.js` files ONLY and seals the
+       `.func` with a root `package.json` carrying NO `"type"` field —
+       test-pinned: NO other `package.json` may exist anywhere in the
+       `.func`.
+     - The build log itself says the deployment is prebuilt ("Build
+       Completed in /vercel/output") — if instead you see
+       `@vercel/node` running, a repo-root `api/` directory exists and
+       the prebuilt path is OFF (test-pinned: it must not exist).
+   - **The function BUILD fails with TS2835** ("Relative import paths
+     need explicit file extensions in ECMAScript imports" — a
+     nodenext typecheck, W-3i): the emit config
+     `deploy/vercel/function.tsconfig.json` drifted — restore `module:
+     "CommonJS"` + `moduleResolution: "node"` (node10 keeps the
+     frozen extensionless imports legal); NEVER add extensions to the
+     frozen `services/api` imports.
+   - **The build fails with `build-console: the TypeScript compiler is
+     missing`** (the loud no-tsc failure): the install step no longer
+     provisions the workspace devDependencies — restore the
+     frozen-lockfile `installCommand` (probe-proven live on
+     trrl-echo-probe: an echo install leaves the build image with NO
+     node_modules). NEVER add an npm dependency to `deploy/` to work
+     around this — the provision comes from the workspace's own
+     lockfile.
+   - **The build fails on the config.json validation** (an `images`
+     key demanding `sizes`): the emitted `config.json` must carry
+     exactly `version` + `routes` and NO `images` key (probe-proven —
+     the platform rejects the images key without sizes).
    - If the data routes answer 503 `deploy_adapter_pending`, a
      `NEON_*`/`UPSTASH_*` key is configured (the durable backing was
      auto-selected) — unset those keys or set
@@ -397,20 +475,25 @@ Rules of engagement:
 ## 7. Testing this tree
 
 ```
-corepack pnpm vitest run deploy     # 146 tests (runtime adaptation vectors,
+corepack pnpm vitest run deploy     # 155 tests (runtime adaptation vectors,
                                     # the backing-resolution matrix + the demo
                                     # data routes + the machinery tick + L12
-                                    # probes, config invariants incl. the
-                                    # root-shim discovery law + the root-copy
-                                    # byte-identity + the W-3i/W-3j
-                                    # resolution-and-emit pin + the W-3j
-                                    # exact-path rewrites pin, build
-                                    # determinism, adapter + wire
-                                    # suites)
-corepack pnpm typecheck             # 0 errors (api/** + deploy/** are in the root tsconfig
-                                    # include; the FUNCTION BUILD's own graph is pinned
-                                    # by api/tsconfig.json — W-3i resolution +
-                                    # W-3j CommonJS emit)
+                                    # probes, the prebuilt-output laws —
+                                    # config.json routes === FUNCTION_MOUNT_PATH,
+                                    # vercel.json carries NO routing keys,
+                                    # the .func law (root package.json no-type,
+                                    # NO inner package.json, index.js seal,
+                                    # .vc-config envelope, require()-loadable),
+                                    # function.tsconfig.json emit pin, the
+                                    # toolchain provision pin, root-copy
+                                    # byte-identity, NO repo-root api/, build
+                                    # determinism + the stale-artifact law,
+                                    # adapter + wire suites)
+corepack pnpm typecheck             # 0 errors (deploy/** is in the root tsconfig
+                                    # include; the FUNCTION EMIT's own graph is
+                                    # owned by deploy/vercel/function.tsconfig.json
+                                    # — W-3i resolution + W-3j CommonJS emit,
+                                    # exercised for real by every build test)
 ```
 
 No live provider calls anywhere in CI — every provider interaction is
@@ -454,7 +537,7 @@ fakes).
   exact entry + import-closure graph). Law
   test-pinned: never add extensions to the frozen `services/api`
   imports to satisfy a build tool.
-- **W-3j (this follow-up): the function EMIT + the exact-path
+- **W-3j (merged): the function EMIT + the exact-path
   rewrites.** The redeploy from main @ 976b12a
   (https://tradrl-console.vercel.app) served the static console but
   the API plane was dead, for two root-caused reasons. (1) The
@@ -464,20 +547,58 @@ fakes).
   probe-proven on the platform (tradrl-router-probe): destination =
   the mount (`/api/router`), and the function receives `req.url` =
   the ORIGINAL public path (`/v1/meta` stays `/v1/meta`; the matched
-  segments arrive as a `path` query param). Both rewrites now target
-  `/api/router`; the runtime's mount-strip stays as the direct-mount
-  guard. (2) The exact function path itself answered
+  segments arrive as a `path` query param). Both rewrites were
+  repointed to `/api/router`; the runtime's mount-strip stays as the
+  direct-mount guard. (2) The exact function path itself answered
   FUNCTION_INVOCATION_FAILED: the emitted function was ESM
   (`module: "ESNext"` — W-3i fixed the typecheck, the emit stayed
   ESM) with extensionless specifiers Node cannot load
   (ERR_MODULE_NOT_FOUND / "Cannot use import statement"); the repo
-  has no `"type": "module"`, so the runtime loads CJS. The pin is now
+  has no `"type": "module"`, so the runtime loads CJS. The pin became
   `module: "CommonJS"` + `moduleResolution: "node"` (node10 —
   extensionless imports stay legal; the frozen sources untouched;
-  "Bundler" is invalid with CommonJS, TS5095). Proven by the new
+  "Bundler" is invalid with CommonJS, TS5095). Proven by the
   EMIT+EXECUTE gate: the emitted function is `require()`d and serves
   the four smoke vectors (401 unauthenticated, 200 meta, 200
   direct-mount meta, 200 knowledge query). Both laws test-pinned.
+- **W-3k (this follow-up): the prebuilt function hosting (Build
+  Output API v3).** The W-3j redeploy STILL died on the exact
+  function path — the API plane answered FUNCTION_INVOCATION_FAILED
+  while the static console served, TWO stacked root causes, both
+  understood and platform-proven by the Lead's live probes. (1) The
+  `type:module` poison: `@vercel/node`'s tsc-emit-and-copy put the
+  emitted CJS graph under `services/api/package.json`'s
+  `"type":"module"` — Node treated the CommonJS-emitted text as ESM
+  and every invocation died at module load
+  (`ReferenceError: exports is not defined in ES module scope`).
+  (2) The rewrites: vercel.json rewrites with subpath destinations
+  can never match (functions match exact paths only — the W-3j
+  lesson, but vercel.json rewrites could not express the working
+  shape). THE FIX (validated LIVE by the Lead, probe projects
+  trrl-probe-tepa + trrl-echo-probe on the tepa team, still live):
+  the build command now emits a PREBUILT Build Output API v3
+  deployment (`.vercel/output`: `config.json` `{"version":3,"routes":
+  [{"src":"/v1/(?<path>.*)","dest":"/api/router"}, {"src":"/internal/(?<path>.*)","dest":"/api/router"}]}`
+  with NO `images` key; `static/` = the console build;
+  `functions/api/router.func/` = the tsc CommonJS emit
+  (`deploy/vercel/function.tsconfig.json`, rootDir = the repo root)
+  sealed by `index.js`
+  (`module.exports = require('./deploy/vercel/api/router').default;`),
+  `.vc-config.json` (`nodejs24.x`, 1024 MB, 10 s, `index.js`,
+  `Nodejs`) and a root `package.json` with NO `"type"` field and NO
+  inner `package.json` anywhere) — and `vercel build` accepts it
+  as-is: `@vercel/node` NEVER runs (the repo-root `api/` exception
+  files are RETIRED — a resurrected `api/` would re-trigger it,
+  test-pinned). The install step became the frozen-lockfile toolchain
+  provision (probe-proven: an echo install leaves the build image
+  with NO node_modules). The function still receives `req.url` = the
+  ORIGINAL public path verbatim (probe-proven: `/v1/meta?q=1` →
+  `req.url` `/v1/meta?q=1`); direct `/api/router` also invokes it
+  (the mount-strip guard covers both shapes). Proven by the
+  EMIT+EXECUTE gate (all four vectors green through the sealed
+  `.func`) + a LIVE staging deployment (the seven-point smoke,
+  runbook §4 step 5). All laws test-pinned
+  (deploy/vercel/vercel.test.ts + the build tests).
 - **W-3e (the Lead step, unchanged): the async-to-sync hydration
   seam.** T041's port methods are synchronous by design; the durable
   adapters are async. Until T041 widens its ports (a frozen-sibling

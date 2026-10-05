@@ -1,0 +1,71 @@
+// deploy/vercel/function.tsconfig.json — the PREBUILT function's compiler
+// config (T052 follow-up W-3k).
+//
+// deploy/vercel/build-console.mjs invokes tsc with THIS config to emit the
+// CommonJS tree sealed inside .vercel/output/functions/api/router.func
+// (the Build Output API v3 prebuilt deployment). It carries the laws the
+// platform builder kept breaking, now owned by the build itself:
+//
+// THE W-3i LESSON (resolution): a builder's default synthesis
+// (moduleResolution "nodenext") rejects the repo's extensionless relative
+// imports (TS2835: "Relative import paths need explicit file extensions
+// in ECMAScript imports...") and collapses services/api's types into
+// cascade errors (TS2339/TS2322). node10 resolution ("node") keeps
+// extensionless imports LEGAL — NEVER add extensions to the frozen
+// services/api sources to satisfy a build tool.
+//
+// THE W-3j LESSON (emit): an ESM emit (`module: "ESNext"`) is UNLOADABLE
+// at invoke time — extensionless specifiers Node cannot load
+// (ERR_MODULE_NOT_FOUND under ESM resolution; "Cannot use import
+// statement outside a module" under CJS loading). The function must EMIT
+// CommonJS (`module: "CommonJS"`; "Bundler" is invalid with CommonJS —
+// TS5095 — so the pairing is node10).
+//
+// THE W-3k LESSON (the sealed scope): @vercel/node's emit copied the
+// package.json files it encountered, so the emitted CJS graph's NEAREST
+// package.json (services/api/package.json — "type": "module") made Node
+// treat the CommonJS text as ESM: `ReferenceError: exports is not defined
+// in ES module scope` at module load, every invocation 500
+// (FUNCTION_INVOCATION_FAILED). The tsc emit produces .js files ONLY —
+// it copies nothing — and the .func is sealed by a root package.json
+// with NO "type" field (pinned by deploy/vercel/vercel.test.ts: NO inner
+// package.json anywhere in the .func).
+//
+// Under a CommonJS compile the vitest-only TEST sources are EXCLUDED
+// (they carry import.meta — legal in the vitest ESM runtime, illegal
+// under CommonJS: TS1343); tests are never part of the function's entry
+// graph. THE EXCLUDE SCOPE LAW (W-3k, discovered by the failing first
+// emit): exclude patterns resolve relative to THIS config file, so a
+// bare "**/*.test.ts" matches nothing outside deploy/vercel/ — and the
+// repo's test files DEEP-IMPORT the real packages (the interop
+// trip-wires), which silently dragged packages/* + services/* into the
+// emit. The exclude is therefore REPO-ROOT-scoped
+// ("../../**/*.test.ts"), which keeps the program exactly the entry
+// graph. The node ambient types are pinned EXPLICITLY (typeRoots
+// relative to THIS file = the repo root's node_modules/@types — the
+// same provision the platform's installCommand makes):
+// runtime/http.ts (Buffer) and runtime/compose.ts (process) need them.
+//
+// rootDir = the repo root: the emit mirrors the repo layout inside the
+// .func (deploy/vercel/api/router.js + deploy/vercel/runtime/*.js +
+// services/api/src/*.js), which the sealed index.js requires verbatim.
+// outDir below is the production .func path; the build script passes the
+// same value as an explicit --outDir flag (hermetic builds may override).
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "typeRoots": ["../../node_modules/@types"],
+    "types": ["node"],
+    "noEmit": false,
+    "rootDir": "../..",
+    "outDir": "../../.vercel/output/functions/api/router.func"
+  },
+  "include": [
+    "../../deploy/vercel/api/**/*.ts",
+    "../../deploy/vercel/runtime/**/*.ts",
+    "../../services/api/src/**/*.ts"
+  ],
+  "exclude": ["../../**/*.test.ts"]
+}

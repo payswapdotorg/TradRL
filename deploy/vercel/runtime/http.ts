@@ -5,22 +5,25 @@
 // contracts (the T041 route table is WRAPPED here — never edited).
 //
 // THE SAME-ORIGIN LAW (the Work Order): the console reaches the API
-// through the /v1 and /internal rewrites in deploy/vercel/vercel.json
+// through the /v1 and /internal routes in the EMITTED prebuilt
+// .vercel/output/config.json (deploy/vercel/build-console.mjs)
 // — one origin, therefore NO cross-origin response headers are ever
 // emitted (verified by deploy/vercel/vercel.test.ts: neither the
 // config nor this file may carry the forbidden header family).
 //
-// THE PATH LAW (W-3j, probe-proven on the platform): the rewrites'
-// destination is the function's EXACT mount path — Vercel functions
-// match exact paths only, so `/v1/:path*` and `/internal/:path*`
-// rewrite to `/api/router` with the matched segments DROPPED from the
-// destination. The platform then hands the function `req.url` = the
-// ORIGINAL public path (`/v1/meta` stays `/v1/meta` — Vercel
-// additionally appends the matched segments as a `path` query param,
-// which this layer ignores). The mount-strip below therefore remains
-// as the GUARD for direct-mount invocations (`/api/router...` —
-// `publicPathOf` handles both shapes): the route table always sees the
-// original public path either way.
+// THE PATH LAW (W-3k, probe-proven on the platform — projects
+// tradrl-router-probe + trrl-probe-tepa): the PREBUILT deployment's
+// .vercel/output/config.json routes (`{"src": "/v1/(?<path>.*)", "dest":
+// "/api/router"}` and the /internal twin — emitted by
+// deploy/vercel/build-console.mjs) hand the function `req.url` = the
+// ORIGINAL public path VERBATIM (`/v1/meta` stays `/v1/meta`; the
+// matched segments arrive as a `path` query param, which this layer
+// ignores). The destination must stay the function's EXACT mount path —
+// Vercel functions match exact paths only, so a subpath destination
+// (`/api/router/v1/:path*`) can never resolve. The mount-strip below
+// therefore remains as the GUARD for direct-mount invocations
+// (`/api/router...` — `publicPathOf` handles both shapes): the route
+// table always sees the original public path either way.
 //
 // Zero-dep law: platform APIs only (structural types for the req/res
 // surface — no @vercel/node import, no npm dependency).
@@ -28,10 +31,10 @@
 import type { ApiRequest, ApiResponse } from '../../../services/api/src/contracts';
 
 /**
- * The function's mount path (W-3h): the function is discovered through the
- * repo-root api/router.ts shim, so the platform mounts it at /api/router —
- * the vercel.json rewrites' destination, verbatim (W-3j: functions match
- * their exact path; the test pins destination === mount).
+ * The function's mount path: the prebuilt .func lives at
+ * .vercel/output/functions/api/router.func, so the platform mounts it at
+ * /api/router — the emitted config.json routes' destination, verbatim
+ * (functions match their exact path; the test pins dest === mount).
  */
 export const FUNCTION_MOUNT_PATH = '/api/router';
 
