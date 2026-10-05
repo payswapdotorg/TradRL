@@ -110,6 +110,7 @@ importers:
   research/benchmarks: {}
 
   research/evaluation-integrity: {}
+  research/public-evaluation: {}
 
   services/agent-runtime: {}
 

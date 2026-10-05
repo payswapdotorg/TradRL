@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "program": "TradRL",
-  "updated_at": "2026-10-05T01:15:00Z",
+  "updated_at": "2026-10-05T06:55:00Z",
   "policies": {
     "max_concurrent_work_orders": 3,
     "allowed_statuses": [
@@ -1315,12 +1315,15 @@
         "benchmarks/",
         "research/public-evaluation/"
       ],
-      "status": "ready",
-      "branch": null,
-      "pr": null,
-      "merged_sha": null,
+      "status": "merged",
+      "branch": "work/T049-benchmark-publication",
+      "pr": 33,
+      "merged_sha": "ee767dd57f7d55b5de01f3e1fe974eb061fcb1ec",
       "evidence": [
-        "D-044: ready (deps T028/T032/T035/T048 all merged); holds for the next free lane (max-3 with the Lead's W-7b boot-path fix)"
+        "PR #33 squash-merged (worker W-9c, audit-then-complete of the dead W-9a/W-9b sessions; own 164/164 across 5 files; full 7642+1skip/524 = floor 7478+1skip/519 +164/+5, zero regressions; typecheck 0; CI verify green)",
+        "The benchmark platform: suite definitions with FLEXIBLE-SCALE book measurables (the red-first scale-law fix \u2014 the REAL T048 report's scale-0/scale-3 values were unmeasurable under the inherited scale-2 pins; money is never silently rescaled), measurement/metrics/discharge, the mirrors-only import discipline (imports.ts, the marketplace precedent), no package.json for the machinery (the merged T048 examples precedent)",
+        "research/public-evaluation: the publication machinery (manifest/evidence/record/gate/publish/reverify) + the 18-test interop suite pinning the REAL records: the T048 report measures end-to-end and attains the platform's own suite; the T032 plan verifies with the identical splan: id; the T031 record verifies through the mirrored chain byte-for-byte; the T045 exchange folds this lane's discharge outcomes; the T035 gate vocabulary agrees; the decimals divergence record pins the three owners' compareMagnitude latent defect",
+        "Five real dead-session defects fixed: the scale-law hole (red-first), the unwired log API through imports.ts, four typecheck errors + debris, the missing interop suite, the README"
       ],
       "depends": [
         "T028",
@@ -1347,11 +1350,13 @@
         "docs/release/",
         "tests/performance/"
       ],
-      "status": "blocked",
+      "status": "ready",
       "branch": null,
       "pr": null,
       "merged_sha": null,
-      "evidence": [],
+      "evidence": [
+        "D-049: ready (last dep T049 merged via PR #33); the final work order (52/52)"
+      ],
       "depends": [
         "T035",
         "T042",

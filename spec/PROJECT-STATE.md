@@ -4,10 +4,10 @@
 |---|---|
 | Repository | payswapdotorg/TradRL |
 | Architecture | locked |
-| Program phase | wave-35: T045+T048 merged 48/52 (PRs #27/#28); T046+T047 merged 50/52 via PRs #30/#31 (Arena adapter + marketplace); T049 dispatching next (W-9a); then T050 (52/52); the boot-path fix MERGED via PR #29 (W-7b — the console now boots in a real browser for the first time; .tradrl-shell mounts, zero page errors, graceful degradation by design); the J1 onboarding blocker FIXED via PR #32 (W-10b — the shell-root data-target shadowing; the double render; the persistence wiring) + the executed-boot test class; J3 entry wiring + J7 capsule surface dispatched as W-10c; Lead next: redeploy + the full J-catalog re-run; frontier: T049 then T050 (52/52) |
-| Current authorized Work Order | T049 (dispatching — W-9a died server-side, W-9b retry with audit-then-complete); T050 (awaits T049) |
+| Program phase | wave-36: T049 benchmark/evidence publication MERGED 51/52 via PR #33 (W-9c audit-then-complete; the flexible-scale platform + the public-evaluation machinery + the 18-test REAL-record interop suite); the J3 launch entry + J7 capsule surface merged via PR #34 (W-10d/W-10e); T050 (production reliability/performance/release) is the FINAL work order; Lead next: T050 dispatch, redeploy + the full J-catalog re-run |
+| Current authorized Work Order | T050 (the final: production reliability/performance/release — ops/, docs/release/, tests/performance/) |
 | Active workers | 3 |
-| In-flight | T035 + T048 (lanes queued behind the chat.z.ai admission drought; sentinel armed with fresh packets); Lead: provider provisioning + public deploy + J1-J12 verification |
+| In-flight | T050 dispatching (W-11); Lead: console redeploy + J1-J12 verification on the public URL; chat-lane model retired 2026-10-05 (all lanes merged; local worker dispatch is the operating model) |
 | Blocked | none |
 | Maximum concurrent workers | 3 |
 | Arena required for core | no |
