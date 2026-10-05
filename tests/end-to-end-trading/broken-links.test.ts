@@ -65,11 +65,15 @@ describe('T048 the broken-link proofs — every stage consumes its predecessor\'
 
   it('the world refuses a FORGED availability quartet at load (available_time cannot precede event_time)', async () => {
     const events = collectMarketData().binanceEvents;
-    const forged = events.map((event) =>
-      event.event_type === 'trade' && event.instrument === BTC && event.available_time === event.event_time
-        ? { ...event, available_time: (event.event_time as number) - 1 }
-        : event,
-    );
+    let forgedCount = 0;
+    const forged = events.map((event) => {
+      if (event.event_type === 'trade' && event.instrument === BTC && event.available_time === event.event_time) {
+        forgedCount += 1;
+        return { ...event, available_time: (event.event_time as number) - 1 };
+      }
+      return event;
+    });
+    expect(forgedCount).toBeGreaterThan(0); // the proof is never vacuous
     await expect(buildReactiveWorld(forged as never)).rejects.toThrow(/available_time/);
   });
 
