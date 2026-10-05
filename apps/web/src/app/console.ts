@@ -35,7 +35,7 @@ import { systemNowMs } from '../core/clock';
 import type { SectionId } from '../core/sections';
 import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
-import { openWorkspace, reduceWorkspace, serializeWorkspace } from '../core/workspace';
+import { openWorkspace, reduceWorkspace, serializeWorkspaceExport } from '../core/workspace';
 import type { WorkspaceScope } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
 import { persistTheme } from '../core/theme';
@@ -861,10 +861,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           view = { ...view, onboarding: initialOnboarding() };
           render();
         }
-        // §5 D7 the data export (a deterministic serialized record of the workspace state)
+        // §5 D7 the data export — the R9 v2 chain export (W-21 seam:
+        // the button now emits serializeWorkspaceExport — the real
+        // sha-256 event chain, capsules, decisions and read state —
+        // not the old v1 workspace dump; core owns the bytes).
         if (kind === 'export-workspace') {
           const anchor = document.createElement('a') as Element & { click?(): void };
-          const blob = `data:application/json;charset=utf-8,${encodeURIComponent(serializeWorkspace(state))}`;
+          const blob = `data:application/json;charset=utf-8,${encodeURIComponent(serializeWorkspaceExport(state))}`;
           anchor.setAttribute('href', blob);
           anchor.setAttribute('download', `tradrl-workspace-${state.scope.projectId}.json`);
           if (typeof anchor.click === 'function') anchor.click();
