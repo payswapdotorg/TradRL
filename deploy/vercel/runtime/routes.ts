@@ -1,7 +1,7 @@
 // deploy/vercel/runtime/routes.ts — THE HOST-OWNED DEMO-SUBSTANCE READ
 // ROUTES (T052 follow-up W-8 — the Phase-2 fix-forward, R2/R5).
 //
-// WHAT THIS IS: two ADDITIVE read-only routes the HOST (this Vercel
+// WHAT THIS IS: three ADDITIVE read-only routes the HOST (this Vercel
 // function) serves from the demo backing's seeded data, BEFORE the
 // request is wrapped into the frozen T041 route table (services/api is
 // frozen — its route table is untouched; these paths are declared
@@ -29,6 +29,20 @@
 //     launched projects carry their goal/constraint set in their own
 //     create request, which the console already holds).
 //
+//   GET /v1/jobs?project=<projectId>   (W-25A, D-3)
+//     THE JOBS LIST: one page of JobRecord rows — the backing's
+//     API-OWNED job store, the SAME store the per-id GET
+//     /v1/jobs/:jobId reads (the frozen route), folded to the
+//     credential tenant's own rows for the requested project — the
+//     SEEDED demo jobs (the W-25A seed: one research + one learning
+//     submission for the demo project) plus every LIVE submission the
+//     boundary accepted (a launched project's kickoff job included —
+//     after a console reload the read refills it). The console's boot
+//     read dispatches the existing job-updated event per served row,
+//     so the Research section and the palette's JOB group populate on
+//     every fresh boot (D-3: "JOB: not searchable in any scope"; the
+//     J8-spec goal — navigate to a job via the palette alone).
+//
 // THE AUTH LAW: the host owns the credential registrations (the
 // secure-boundary act — runtime/compose.ts), so the host authenticates
 // these routes itself with the same law the boundary applies: a
@@ -53,11 +67,16 @@
 // (serveDurableGoalRoute below) — the create-project input's goal +
 // constraint set, persisted at createProject time and rehydrated at every
 // cold start. The two backings serve their own data with the same
-// envelope discipline (never merged).
+// envelope discipline (never merged). The jobs list route (W-25A) is
+// DEMO-BACKING-ONLY by the same construction: the durable job store
+// remains per-instance (PR #50's honest limitation — the async Apify
+// bridge is a later seam, NOT this wave's Neon scope), so under the
+// DURABLE backing GET /v1/jobs falls through to the boundary exactly as
+// before (the typed not_found).
 //
 // Zero-dep law: platform APIs only. Spec anchors: R43 (the composed
 // API surface — additive), L12, L20, R46, phase2-competitive-report
-// R2/R5, D-5.
+// R2/R5, D-5, D-3 (W-25A).
 
 import {
   apiError,
@@ -70,6 +89,7 @@ import {
   type ApiError,
   type ApiRequest,
   type ApiResponse,
+  type JobRecord,
   type RequestId,
 } from '../../../services/api/src/index';
 import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalStatement, demoSubmissionsOf, type DemoPorts } from './demo';
@@ -90,10 +110,18 @@ export interface DemoSubstanceRouteInput {
   readonly ports: DemoPorts;
   /** The host auth seam (the composition's registered developer credential). */
   readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization;
+  /**
+   * THE JOBS-STORE READ (D-3, W-25A): the backing's API-owned job records —
+   * the SAME store the per-id GET /v1/jobs/:jobId reads — folded to one
+   * tenant's rows for one project (runtime/demo.ts's demoJobsOf; the call
+   * site wires it over the composed service). L12 by construction: the
+   * fold filters on the AUTHORIZED tenant, never a request value.
+   */
+  readonly jobsOf: (tenant: string, project: string) => readonly JobRecord[];
 }
 
 /** The demo-substance read paths this host serves (additive — declared nowhere in the frozen route table). */
-export const DEMO_SUBSTANCE_ROUTE_PATHS = deepFreeze(['/v1/execution/submissions', '/v1/projects/:projectId/goal'] as const);
+export const DEMO_SUBSTANCE_ROUTE_PATHS = deepFreeze(['/v1/execution/submissions', '/v1/projects/:projectId/goal', '/v1/jobs'] as const);
 
 // ---------------------------------------------------------------------------
 // The envelope discipline (mirrors the boundary's own response builders)
@@ -133,6 +161,22 @@ function executionSubmissionsRoute(input: DemoSubstanceRouteInput, request: Demo
   // L12 by construction: the served rows are the credential tenant's own
   // (the demo world is seeded per composition for exactly this tenant).
   return demoRouteSuccess(requestId, deepFreeze({ items: demoSubmissionsOf(input.ports, project) }));
+}
+
+/** GET /v1/jobs?project=<id> — the jobs list (D-3, the W-25A seam). */
+function jobsListRoute(input: DemoSubstanceRouteInput, request: DemoSubstanceRequest, requestId: RequestId): ApiResponse {
+  const authorization = input.verifyDeveloperAuthorization(request.headers.authorization);
+  if (authorization === null) {
+    return demoRouteError(requestId, apiError('unauthenticated', 'a Bearer credential token is required on every route of this boundary'));
+  }
+  const project = request.query?.project;
+  if (project === undefined || !isProjectId(project)) {
+    return demoRouteError(requestId, apiError('validation_failed', 'the project query parameter is required (the jobs list is project-scoped)'));
+  }
+  // L12 by construction: the served rows are the credential tenant's own —
+  // the fold filters on the AUTHORIZED tenant (a request value never
+  // steers it), and a foreign project's page is empty, never a leak.
+  return demoRouteSuccess(requestId, deepFreeze({ items: input.jobsOf(authorization.tenant, project) }));
 }
 
 /** The `/v1/projects/:projectId/goal` path match (the captured project id, or null). */
@@ -176,6 +220,11 @@ export function serveDemoSubstanceRoute(input: DemoSubstanceRouteInput, request:
   if (request.method !== 'GET') return null;
   if (request.path === '/v1/execution/submissions') {
     return executionSubmissionsRoute(input, request, demoRouteRequestId(request, serial));
+  }
+  if (request.path === '/v1/jobs') {
+    // The exact 2-segment list path (the per-id GET /v1/jobs/:jobId is
+    // the frozen route's own 3-segment shape — never a collision).
+    return jobsListRoute(input, request, demoRouteRequestId(request, serial));
   }
   const goalProject = matchProjectGoalPath(request.path);
   if (goalProject !== null) {

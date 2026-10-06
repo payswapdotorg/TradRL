@@ -32,13 +32,14 @@ import {
   demoBlotterIsValid,
   demoConstraintSet,
   demoGoalStatement,
+  demoJobsOf,
   demoOutcomeRecordIsValid,
   demoOutcomeRecord,
   demoPostMortemRecordIsValid,
   demoSubmissionBlotter,
 } from './runtime/demo';
 import { validCreateProjectRequest, validStrategyIntent } from '../../services/api/src/fixtures';
-import { isGatewaySubmissionRecord, isOutcomeRecordMirror, type ApiService } from '../../services/api/src/index';
+import { isGatewaySubmissionRecord, isJobRecord, isOutcomeRecordMirror, type ApiService } from '../../services/api/src/index';
 import { handleDeploymentRequest } from './api/router';
 import { FUNCTION_MOUNT_PATH, publicPathOf, queryOf, readJsonBody, toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from './runtime/http';
 
@@ -811,6 +812,148 @@ describe('deploy/vercel — the demo execution blotter (R2: order ids, states, r
     expect(body.data.items).toHaveLength(4); // 3 seeded + the live routed submission
     const live = body.data.items[3]!;
     expect(live.submissionId).toBe((response.body as { data: { submissionId: string } }).data.submissionId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The jobs seam (D-3, W-25A — the list route + the seeded jobs: "JOB: not
+// searchable in any scope" fixed at the host; the console's boot read rides
+// this route to refill state.jobs after every reload/scope-switch)
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the jobs seam (D-3, W-25A: the seeded jobs + the host-owned list route)', () => {
+  it('the demo world seed submits the SEEDED JOBS through the REAL routes: one research + one learning job for the demo project, the credential tenant, in the API-owned store (the same store the per-id GET reads)', () => {
+    const composed = composeDeployment(apiEnv());
+    expect(composed.ok).toBe(true);
+    if (!composed.ok) return;
+    const jobs = composed.service.jobs();
+    expect(jobs).toHaveLength(2);
+    expect(jobs.every((job) => job.tenant === VALID_ENV[API_ENV_KEYS.apiDeveloperTenant])).toBe(true); // L12: the seed is the credential tenant's own
+    expect(jobs.every((job) => job.project === DEMO_PROJECT_ID)).toBe(true);
+    expect(jobs.map((job) => job.kind).sort()).toEqual(['learning', 'research']); // both kinds seeded
+    expect(jobs.every((job) => isJobRecord(job) && job.status === 'submitted' && typeof job.submittedAt === 'number')).toBe(true); // the boundary's own guard, record for record
+    // The store the per-id GET reads (the frozen route) carries exactly the seeded rows.
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    for (const job of jobs) {
+      const read = composed.service.handle({ method: 'GET', path: `/v1/jobs/${job.jobId}`, headers: bearer });
+      expect(read.status).toBe(200);
+      expect((read.body as { data: { jobId: string } }).data.jobId).toBe(job.jobId);
+    }
+  });
+
+  it('the host route GET /v1/jobs?project=<id> serves the seeded jobs through the FULL function handler (the page envelope, no CORS)', async () => {
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const { response, captured } = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: `/v1/jobs?project=${encodeURIComponent(DEMO_PROJECT_ID)}`,
+      headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` },
+    }), response);
+    const written = captured();
+    expect(written.status).toBe(200);
+    expect(written.headers['content-type']).toBe('application/json; charset=utf-8');
+    expect(written.headers['x-api-version']).toBe('v1');
+    expect(written.headers['x-request-id']).toMatch(/^req:/);
+    for (const key of Object.keys(written.headers)) expect(key.toLowerCase()).not.toContain('access-control');
+    const body = JSON.parse(written.payload as string) as { requestId: string; data: { items: readonly { jobId: string; kind: string; tenant: string; project: string; status: string }[] } };
+    expect(body.requestId).toBe(written.headers['x-request-id']);
+    expect(body.data.items).toHaveLength(2);
+    expect(body.data.items.every((job) => isJobRecord(job))).toBe(true); // the boundary's own guard passes on every served row
+    expect(body.data.items.every((job) => job.tenant === VALID_ENV[API_ENV_KEYS.apiDeveloperTenant] && job.project === DEMO_PROJECT_ID)).toBe(true);
+    expect(body.data.items.map((job) => job.kind).sort()).toEqual(['learning', 'research']);
+  });
+
+  it('the host route auth law mirrors the boundary\'s own: absent/unknown Bearer is the typed 401; a missing project param is the typed 400', async () => {
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const noToken = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: `/v1/jobs?project=${DEMO_PROJECT_ID}`, headers: {} }), noToken.response);
+    expect(noToken.captured().status).toBe(401);
+    expect((JSON.parse(noToken.captured().payload as string) as { error: { code: string } }).error.code).toBe('unauthenticated');
+    const wrongToken = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: `/v1/jobs?project=${DEMO_PROJECT_ID}`, headers: { authorization: 'Bearer tok-wrong' } }), wrongToken.response);
+    expect(wrongToken.captured().status).toBe(401);
+    const noProject = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: '/v1/jobs', headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` } }), noProject.response);
+    expect(noProject.captured().status).toBe(400);
+    expect((JSON.parse(noProject.captured().payload as string) as { error: { code: string } }).error.code).toBe('validation_failed');
+  });
+
+  it('the L12/project scoping: a foreign project\'s page is empty, and the fold never serves another tenant\'s rows (demoJobsOf filters on the AUTHORIZED tenant)', async () => {
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const foreign = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: '/v1/jobs?project=prj-someone-elses',
+      headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` },
+    }), foreign.response);
+    expect(foreign.captured().status).toBe(200);
+    expect((JSON.parse(foreign.captured().payload as string) as { data: { items: readonly unknown[] } }).data.items).toEqual([]); // no fabricated rows, byte-identical empty page
+    // The fold itself (the route's data seam): the authorized tenant's own rows only — a foreign tenant's fold is empty even for the demo project.
+    expect(demoJobsOf(composed.service, VALID_ENV[API_ENV_KEYS.apiDeveloperTenant], DEMO_PROJECT_ID)).toHaveLength(2);
+    expect(demoJobsOf(composed.service, 'tenant-other-demo', DEMO_PROJECT_ID)).toEqual([]);
+  });
+
+  it('live submissions join the list: a launched project\'s kickoff job is served for THAT project only (the console reload-refill story\'s host half)', async () => {
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const created = composed.service.handle({
+      method: 'POST',
+      path: '/v1/projects',
+      headers: { ...bearer, 'idempotency-key': 'idem:w25a:jobs:launch:1' },
+      body: validCreateProjectRequest(VALID_ENV[API_ENV_KEYS.apiDeveloperTenant], 'prj-launched-jobs', 'the user-launched project'),
+    });
+    expect(created.status).toBe(201);
+    const kickoff = composed.service.handle({
+      method: 'POST',
+      path: '/v1/jobs/research',
+      headers: { ...bearer, 'idempotency-key': 'idem:w25a:jobs:launch:2' },
+      body: { kind: 'research', projectId: 'prj-launched-jobs', spec: { source: 'w25a-runtime-test' } },
+    });
+    expect(kickoff.status).toBe(202);
+    const kickoffJobId = (kickoff.body as { data: { jobId: string } }).data.jobId;
+    // The LAUNCHED project's list carries its kickoff job (and nothing else).
+    const launched = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: `/v1/jobs?project=${encodeURIComponent('prj-launched-jobs')}`,
+      headers: bearer,
+    }), launched.response);
+    const launchedBody = JSON.parse(launched.captured().payload as string) as { data: { items: readonly { jobId: string }[] } };
+    expect(launchedBody.data.items.map((job) => job.jobId)).toEqual([kickoffJobId]);
+    // The DEMO project's list is untouched (2 seeded rows — the project scoping holds both ways).
+    const demo = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: `/v1/jobs?project=${encodeURIComponent(DEMO_PROJECT_ID)}`,
+      headers: bearer,
+    }), demo.response);
+    const demoBody = JSON.parse(demo.captured().payload as string) as { data: { items: readonly { jobId: string }[] } };
+    expect(demoBody.data.items).toHaveLength(2);
+    expect(demoBody.data.items.every((job) => job.jobId !== kickoffJobId)).toBe(true);
+  });
+
+  it('ADDITIVE / backward-compatible: under the DURABLE backing, under port overrides, and for non-GET methods the route falls through to the boundary (the typed not_found — the pre-W-25A behavior)', async () => {
+    for (const [label, composed] of [
+      ['the durable backing', composeDeployment(apiEnv({ TRADRL_DEPLOY_BACKING: 'durable' }))],
+      ['port overrides (the injection seam owns its own world — no demo seed)', composeDeployment(apiEnv(), { controlPlane: degradedPorts().controlPlane })],
+      ['the demo backing (a non-GET method)', composeDeployment(apiEnv())],
+    ] as const) {
+      expect(composed.ok, label).toBe(true);
+      if (!composed.ok) continue;
+      const { response, captured } = capture();
+      await handleDeploymentRequest(composed, streamingRequest({
+        method: label === 'the demo backing (a non-GET method)' ? 'POST' : 'GET',
+        url: `/v1/jobs?project=${DEMO_PROJECT_ID}`,
+        headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}`, 'idempotency-key': 'idem:w25a:falloff' },
+        chunks: ['{}'],
+      }), response);
+      expect(captured().status, label).toBe(404);
+      expect((JSON.parse(captured().payload as string) as { error: { code: string } }).error.code, label).toBe('not_found');
+    }
   });
 });
 

@@ -184,7 +184,17 @@ describe('trip-wire: the client method surface + route table (literal)', () => {
     // scope-change refetch) needs it; every other member stays
     // SDK-identical.
     expect(Object.keys(client.projects).sort()).toEqual(['bindOrganization', 'create', 'get', 'goal', 'list', 'listAll', 'transition']);
-    expect(Object.keys(client.jobs).sort()).toEqual(['get', 'submitLearning', 'submitResearch']);
+    // THE W-25A AMENDMENT (documented drift, not silent): the jobs
+    // family carries ONE method the frozen SDK does not — `list`, the
+    // HOST-OWNED jobs-list read (GET /v1/jobs?project=<id>, the W-25A
+    // demo-substance route served from the deployed backing BEFORE the
+    // boundary wrap — the backing's API-owned job store, the same store
+    // the per-id GET reads; the route exists nowhere in the frozen route
+    // table, so the SDK has no mirror of it). The console's jobs boot
+    // read (D-3: the list fetch that refills state.jobs after every
+    // reload/scope-switch) needs it; every other member stays
+    // SDK-identical.
+    expect(Object.keys(client.jobs).sort()).toEqual(['get', 'list', 'submitLearning', 'submitResearch']);
     expect(Object.keys(client.knowledge)).toEqual(['query']);
     expect(Object.keys(client.outcomes).sort()).toEqual(['postMortems', 'query']);
     // THE W-22 AMENDMENT (documented drift, not silent): the execution
@@ -274,6 +284,24 @@ describe('client: the injected transport drives every request (negotiation, enve
     const list = requests.find((request) => request.path.includes('/v1/projects?'));
     expect(list?.path).toBe('/v1/projects?cursor=cur-1&limit=50');
     expect(list?.headers['idempotency-key']).toBeUndefined();
+  });
+
+  it('the jobs.list read (the W-25A jobs boot seam): GET /v1/jobs?project=<id>, bearer + no idempotency header, the envelope unwraps to the Page<JobRecord> listing', async () => {
+    const { transport, requests } = scriptedTransport({
+      'GET /v1/meta': () => ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] }),
+      'GET /v1/jobs': () => ok({ items: [
+        { jobId: 'job:1a2b3c4d', kind: 'research', tenant: 'tenant-a', project: 'prj-1', status: 'submitted', submittedAt: T0 },
+      ] }),
+    });
+    const client = createConsoleClient({ transport, token: 'tok-1' });
+    const page = await client.jobs.list('prj-1');
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.jobId).toBe('job:1a2b3c4d');
+    const list = requests.find((request) => request.path === '/v1/jobs?project=prj-1');
+    if (list === undefined) throw new Error('the jobs list read never rode the wire');
+    expect(list.method).toBe('GET');
+    expect(list.headers.authorization).toBe('Bearer tok-1');
+    expect(list.headers['idempotency-key']).toBeUndefined(); // a read carries no idempotency header
   });
 
   it('the projects.goal read (the W-23 goal-boot seam): GET /v1/projects/:id/goal?project=:id, bearer + no idempotency header, the envelope unwraps to the { goal, constraintSet } bundle', async () => {

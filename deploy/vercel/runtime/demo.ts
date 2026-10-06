@@ -71,8 +71,27 @@
 //     — every predicate.bound / predicate.value a number), served
 //     read-only through the host-owned GET /v1/projects/:id/goal.
 //
+// THE SEEDED JOBS (W-25A, D-3 — "JOB: not searchable in any scope"):
+//   - the demo world seed submits ONE research + ONE learning job for
+//     the demo project through the REAL public routes (the full
+//     pipeline: L12 tenant injection, the idempotency law, the audit +
+//     metering tail) — the API-owned job store (the same store the
+//     per-id GET /v1/jobs/:jobId reads) then carries the demo
+//     project's jobs on EVERY fresh boot, and the HOST-OWNED list
+//     route GET /v1/jobs?project=<id> (runtime/routes.ts — additive;
+//     the frozen T041 route table is untouched) serves them, so the
+//     console's boot read (W-25A's client half) refills state.jobs
+//     after every reload/scope-switch: the Research section lists the
+//     seeded jobs on FIRST render and the palette's JOB group has
+//     entries to find (the J8-spec goal — navigate to a job via the
+//     palette alone). The machinery (when the internal credential is
+//     configured) advances the seeded jobs like every other job
+//     (submitted -> running -> complete, the research one with the
+//     release-candidate result); without it they stay submitted —
+//     honest under SIMULATED either way.
+//
 // Zero-dep law: platform APIs only. Spec anchors: R46, L12/L20,
-// UX-DESIGN §7, D-033, phase2-competitive-report R2-R5.
+// UX-DESIGN §7, D-033, phase2-competitive-report R2-R5, D-3 (W-25A).
 
 import {
   fakeControlPlane,
@@ -96,6 +115,7 @@ import {
   type ExecutionGatewayPort,
   type GatewaySubmissionRecord,
   type GoalStatement,
+  type JobRecord,
   type ConstraintSetStatement,
   type OrgStatusSnapshot,
   type OutcomeRecordMirror,
@@ -209,6 +229,29 @@ export function demoCreateProjectRequest(tenant: string, projectId: string): Rec
     constraintSet: demoConstraintSet(tenant),
     at: DEMO_T0,
   });
+}
+
+// ---------------------------------------------------------------------------
+// The seeded jobs (D-3, W-25A — the jobs seam's demo substance)
+// ---------------------------------------------------------------------------
+
+/**
+ * The seeded research job's spec (the demo project's standing research
+ * pass — the same opaque-spec law every job submission rides: the job
+ * machinery owns the semantics, the boundary carries the JSON). Driven
+ * through the REAL POST /v1/jobs/research route by seedDemoWorld.
+ */
+export function demoSeedResearchJobSpec(): Record<string, unknown> {
+  return deepFreeze({ kind: 'demo-seed', note: 'the demo project\'s seeded kickoff research job (W-25A, D-3)', feeds: ['candles:1m', 'news:sentiment'] });
+}
+
+/**
+ * The seeded learning job's spec (the demo project's standing training
+ * pass). Driven through the REAL POST /v1/jobs/learning route by
+ * seedDemoWorld.
+ */
+export function demoSeedLearningJobSpec(): Record<string, unknown> {
+  return deepFreeze({ kind: 'demo-seed', note: 'the demo project\'s seeded training job (W-25A, D-3)', epochs: 3 });
 }
 
 // ---------------------------------------------------------------------------
@@ -571,6 +614,23 @@ export function demoSubmissionsOf(ports: DemoPorts, project: string): readonly G
 }
 
 /**
+ * The demo backing's job records for one project of one tenant (D-3, the
+ * W-25A jobs seam): the composed service's API-OWNED job store — the
+ * SAME store the per-id GET /v1/jobs/:jobId reads (the seed's jobs plus
+ * every live submission the boundary accepted) — folded to the
+ * credential tenant's own rows for the requested project. L12 by
+ * construction on both axes: the pipeline injects the tenant at
+ * submission (a foreign tenant's rows never exist in this composition's
+ * store to begin with) and the fold filters on the AUTHORIZED tenant +
+ * the project query parameter (a foreign project's page is empty, never
+ * a leak). Order-stable: the store's insertion order (the seed's jobs
+ * first, then every live submission in acceptance order).
+ */
+export function demoJobsOf(service: ApiService, tenant: string, project: string): readonly JobRecord[] {
+  return Object.freeze(service.jobs().filter((job) => job.tenant === tenant && job.project === project));
+}
+
+/**
  * Build the demo ports (the REAL fixture fakes, imported from the
  * frozen service's own fixtures — never edited). The knowledge, outcome
  * and submission ports are seeded READ data scoped to the deployment's
@@ -615,12 +675,15 @@ export interface DemoWorldSeedResult {
 /**
  * Seed the demo world through the REAL routes, immediately after the
  * service is composed: one project (the demo goal/constraint shapes —
- * NUMERIC bounds end-to-end, R5 — for the credential tenant) +, when the
- * internal credential is configured, the organization bind and the
- * org-status snapshot report (the watch surface's only writer). `at` is
- * the host-injected boot instant. Throws only on an impossible seed (the
- * demo builders are canonical valid shapes — a failure means the frozen
- * contract drifted, which must be loud).
+ * NUMERIC bounds end-to-end, R5 — for the credential tenant) + the two
+ * SEEDED JOBS for that project (D-3, W-25A: one research + one learning
+ * submission through the real job routes — the jobs seam's demo
+ * substance) and, when the internal credential is configured, the
+ * organization bind and the org-status snapshot report (the watch
+ * surface's only writer). `at` is the host-injected boot instant.
+ * Throws only on an impossible seed (the demo builders are canonical
+ * valid shapes — a failure means the frozen contract drifted, which
+ * must be loud).
  */
 export function seedDemoWorld(service: ApiService, seed: DemoWorldSeed, at: number): DemoWorldSeedResult {
   const developer = { authorization: `Bearer ${seed.developerToken}` };
@@ -634,6 +697,32 @@ export function seedDemoWorld(service: ApiService, seed: DemoWorldSeed, at: numb
   });
   if (created.status !== 201) {
     throw new Error(`demo backing: the demo project seed was refused (${created.status}) — the frozen create contract may have drifted`);
+  }
+  // 1b. THE SEEDED JOBS (D-3, W-25A): one research + one learning job
+  //     for the demo project, submitted through the REAL public routes
+  //     (the full pipeline: L12 tenant injection, the idempotency law,
+  //     the audit + metering tail). The API-owned job store (the same
+  //     store the per-id GET reads) then carries the demo project's
+  //     jobs on every fresh boot, and the host-owned list route
+  //     (GET /v1/jobs?project=<id>, runtime/routes.ts) serves them —
+  //     the console's boot read refills state.jobs after every
+  //     reload/scope-switch (D-3: "JOB: not searchable in any scope").
+  //     A refusal means the frozen job contract drifted — it must be
+  //     loud, exactly like the project seed above.
+  const seededJobs: readonly { readonly path: string; readonly kind: 'research' | 'learning'; readonly idempotencyKey: string; readonly spec: Record<string, unknown> }[] = [
+    { path: '/v1/jobs/research', kind: 'research', idempotencyKey: 'idem:demo:seed:research', spec: demoSeedResearchJobSpec() },
+    { path: '/v1/jobs/learning', kind: 'learning', idempotencyKey: 'idem:demo:seed:learning', spec: demoSeedLearningJobSpec() },
+  ];
+  for (const seedJob of seededJobs) {
+    const submitted = service.handle({
+      method: 'POST',
+      path: seedJob.path,
+      headers: { ...developer, 'idempotency-key': seedJob.idempotencyKey },
+      body: { kind: seedJob.kind, projectId: DEMO_PROJECT_ID, spec: seedJob.spec },
+    });
+    if (submitted.status !== 202) {
+      throw new Error(`demo backing: the seeded ${seedJob.kind} job was refused (${submitted.status}) — the frozen job-submission contract may have drifted`);
+    }
   }
   if (seed.internalToken === null) {
     // The private plane is closed: no bind, no org-status report. The

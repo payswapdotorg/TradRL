@@ -62,7 +62,7 @@ import {
 import { noticeCopyOf } from '../render/flow';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
 import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission, projectToView } from '../core/availability';
-import { parseSheetRef, SHELL_INTERACTION_CSS, type ShellView } from '../render/shell';
+import { parseSheetRef, SHELL_INTERACTION_CSS, type SheetRef, type ShellView } from '../render/shell';
 import { renderConsoleModel, homeFresh } from '../render/model';
 import { mountVTree } from '../render/dom';
 
@@ -436,6 +436,29 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         const page = await client.execution.submissions(projectId);
         for (const submission of page.items) {
           dispatchIfCurrent(projectId, { kind: 'submission-recorded', at: instants.nowMs(), submission });
+        }
+      });
+      // THE JOBS LIST READ (D-3, the W-25A fix — the seam the Lead
+      // verified broken live): the backing serves the project's job
+      // records at GET /v1/jobs?project=… (the W-25A host route — the
+      // backing's API-owned job store, the SAME store the per-id GET
+      // reads), but the console never READ them: state.jobs populated
+      // ONLY from session-local events (job-submitted on the launch
+      // kickoff, job-updated from pollJobs of jobs ALREADY in state),
+      // so on boot/reload/scope-switch state.jobs reset to [] and
+      // NEVER refilled — the Research section and the palette's JOB
+      // group stayed empty forever ("JOB: not searchable in any
+      // scope", the J8-spec goal unreachable). The read follows the
+      // bundle's own pattern, one collection over the W-22 blotter
+      // seam; each served row dispatches the EXISTING job-updated
+      // event, whose reducer arm merges deduped by jobId (the launch
+      // kickoff's own record rides the same merge — a re-refresh
+      // never duplicates, and the read runs BEFORE pollJobs so the
+      // served non-terminal jobs join the poll cadence immediately).
+      await read('GET /v1/jobs', async () => {
+        const page = await client.jobs.list(projectId);
+        for (const job of page.items) {
+          dispatchIfCurrent(projectId, { kind: 'job-updated', at: instants.nowMs(), job });
         }
       });
       const organizationRef = state.project?.lifecycle.organizationRef ?? null;
@@ -1132,14 +1155,24 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           // §4.14: selecting a palette result (a click on a palette
           // item, the only [data-target] reachable while the modal
           // overlay is open) navigates AND closes the dialog — the
-          // same behavior as Enter.
+          // same behavior as Enter. THE J8 OPEN (D-3, W-25A): a JOB
+          // entry's ref (`job:<jobId>`) IS the sheet grammar the
+          // Research section's job rows carry — the selection ALSO
+          // opens that job's detail sheet, so the palette alone
+          // reaches the job's dialog (the J8-spec goal), the same
+          // open path a row click takes. Non-entity entries carry no
+          // parsable sheet ref and navigate exactly as before.
+          let openedSheet: SheetRef | null = null;
           if (view.palette !== null) {
-            view = { ...view, palette: null };
+            const ref = target.getAttribute('data-palette-ref');
+            openedSheet = ref === null ? null : parseSheetRef(ref);
+            view = { ...view, palette: null, ...(openedSheet === null ? {} : { sheet: openedSheet }) };
             refreshPalette();
           }
           if (id === 'home' || id === 'inbox' || id === 'settings') {
             view = { ...view, accountView: id, drawerOpen: false };
             render();
+            if (openedSheet !== null) focusSheetStart();
             return;
           }
           // A workspace section: the state machine owns selection.
@@ -1149,6 +1182,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           } else {
             render();
           }
+          if (openedSheet !== null) focusSheetStart();
           return;
         }
       }
@@ -1384,6 +1418,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         const selected = paletteResults[current];
         if (selected !== undefined) {
           view = { ...view, palette: null };
+          // THE J8 OPEN (D-3, W-25A): a JOB entry's ref (`job:<jobId>`)
+          // IS the sheet grammar the Research section's job rows
+          // carry — Enter navigates to Research AND opens that job's
+          // detail sheet in the same action (the J8-spec goal: navigate
+          // to a job via the palette alone), the same open path a row
+          // click takes; the sheet focus moves to its close button
+          // (the sheet trap's entry point). Non-entity entries carry
+          // no parsable sheet ref and navigate exactly as before.
+          const openedSheet = parseSheetRef(selected.ref);
+          if (openedSheet !== null) view = { ...view, sheet: openedSheet };
           if (selected.target !== null) {
             if (selected.target === 'home' || selected.target === 'inbox' || selected.target === 'settings') {
               view = { ...view, accountView: selected.target };
@@ -1395,6 +1439,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             }
           }
           render();
+          if (openedSheet !== null) focusSheetStart();
         }
         return;
       }

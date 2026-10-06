@@ -142,6 +142,8 @@ export interface ConsoleClient {
     submitLearning(input: { readonly projectId: string; readonly spec: unknown }, options?: ConsequentialOptions): Promise<JobRecord>;
     /** `GET /v1/jobs/:jobId` — read one job's record. */
     get(jobId: string): Promise<JobRecord>;
+    /** `GET /v1/jobs?project=<id>` — the project's job list (the HOST-OWNED W-25A demo-substance route: the backing's API-owned job store — the same store the per-id GET reads — served from the deployed backing BEFORE the boundary wrap, so the frozen SDK surface does not carry it; the mirror extends the family for the console's boot read, interop.test.ts documents the amendment). */
+    list(project: string): Promise<Page<JobRecord>>;
   };
 
   /** The execution routes: THE L8 ROUTE (forward an intent — the console REQUESTS; the gateway decides) + the HOST-OWNED blotter read. */
@@ -332,6 +334,13 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
       },
       async get(jobId) {
         return request('GET', `/v1/jobs/${encodeURIComponent(jobId)}`) as Promise<JobRecord>;
+      },
+      async list(project) {
+        // The exact 2-segment list path (the per-id GET /v1/jobs/:jobId is
+        // the frozen route's own 3-segment shape — never a collision): the
+        // read carries the project query parameter like every sibling
+        // host-owned read, and the envelope unwraps to the Page listing.
+        return request('GET', withQuery('/v1/jobs', { project })) as Promise<Page<JobRecord>>;
       },
     },
 
