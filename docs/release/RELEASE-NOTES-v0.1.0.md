@@ -173,3 +173,64 @@ deployment at the recorded SHA.
 - **The production-name origin caught up (resolved 2026-10-05, Lead-verified)** — the retry daemon's deploy `dpl_56gT1kNCq9zo` (cut SHA, CLI deploy 11:26Z) freed with the quota window and now serves `https://tradrl-console.vercel.app`; Lead post-reset verification (14:05-14:10Z): shell + all real modules byte-identical to the verified staging origin, unauth 401 authn-first, no-CORS law, and the J1 wizard / J2 shell (LIVE + SIMULATED badges, demo data routes 200) / J3 primary flow (POST /v1/projects 201 -> POST /v1/jobs/research 202 -> submitted->running->complete -> 'Launch (launched)') all PASS live on the production origin. The two-step launch confirm and beat-render form commit verified through the real UI.
 - **Rollback readiness (CHECKLIST D3, walked on paper)** — previous deployments: production name `dpl_FUJEcMRetRb3ad4KS2gK4NHnaQya` (main @ 14357ae); cut origin `trrl-console-staging-lo5e7r84u` (main @ a3e2f90). Rollback = `npx vercel rollback <deployment>` per `ops/runbooks/incident-response.md` §4 (or redeploy the prior SHA from the linked worktree); the demo backing is per-instance in-memory (a cold start re-seeds — no data migration on rollback).
 - **Phase 2 competitive simulation findings (2026-10-05, appended post-cut)** — 15 simulated professionals (small/mid/large companies) executed 300 projects through the production origin's UI only (agent-browser; 3 minor self-reported harness-class protocol notes, zero API bypasses). Results: 79.0% project success; TradRL 3.51 vs QuantConnect 2.54 on the 10-dimension rubric; switch rate 1/15 (12 undecided, 15/15 would pilot). Universal blockers (defect register with root-cause hypotheses in `/home/z/my-project/phase2-competitive-report.md`): research release-candidate result renders nowhere in the UI (0/15 — the payload exists in exports); Execution surface has zero submissions in the demo world (0/15); decision records lack deciding-body/rationale/risk-checks (2/15); launched orgs never compile (demo machinery compiles only the seeded project); Risk section renders predicate labels without numeric bounds; workspace scope silently resets to the demo project on reload with no switcher (highest friction count: 69 rows); notice `<details>` accordions collapse within ~500ms defeating per-notice mark-read (the vdom landmine class, now interaction-breaking); nav hit-area occlusion by badge/connection tiles; export hash chain not actually linked (0/19+ digest linkages; capsules/decisions absent from the export); Time Machine Pause restarts playback. The evidence/lineage/disclosure architecture was rated best-in-class by every persona (agent-org 3.1 vs 1.0; audit trail 3.4 vs 2.3); the four UI/seed-layer blockers are the gap between the 12 undecided professionals and adoption.
+
+## Phase-2 re-run (2026-10-06, post-W-27) — 9 personas, PASS
+
+**Context.** After the W-23..W-27 defect-fix waves and the W-27 production heal
+(the `tradrl_jobs` DDL applied to the tradrl-durable Neon database — the
+deployment itself unchanged, still main @ `dcaeb9d0`, durable backing active),
+the 9-persona re-run re-executed the competitive-simulation register against
+the production origin (https://tradrl-console.vercel.app) through the UI only.
+
+**Method.** 9 personas (3 small / 3 mid / 3 large; roles: solo researcher,
+prop-shop PM, bank risk officer, fintech founder, quant team lead, exchange
+ops, crypto trader, compliance auditor, enterprise DS lead). Scripted
+agent-browser journeys per persona: onboarding, connection badge, section
+navigation, persona-specific register claims, reload persistence, palette
+reachability, SIMULATED disclosure, mobile touch targets. Lead-side API gate:
+the W-27 acceptance probes **7/0** (per-id job detail 200, jobs list stable
+across requests, no crossed org-status 404, meta/projects/knowledge 200,
+authn-first typed 401, same-origin no-CORS) + the seven-point smoke **7/7**
+(`ops/tooling/smoke.mjs`). Evidence: per-step JSON + screenshots +
+network observations (harness archived Lead-side).
+
+**Result.** **Overall rubric 4.92 / 5** (prior 15-persona run: 3.51 vs
+QuantConnect 2.54). 249 recorded steps: **208 pass / 2 fail / 39 notes**.
+Per-dimension: onboarding 5.0, navigation/palette 4.89, goal expression 5.0,
+jobs/async 4.67, organization/compile 5.0, risk/decision substance 5.0,
+evidence/audit 4.56, export 5.0, responsiveness/mobile 5.0, disclosure 4.67.
+
+**Register claims verified.** D-1 goal cards after reload ✓ (p1, p5); D-2
+post-mortem cards beneath outcomes ✓ (p6); D-3 jobs list + palette job
+targets after reload ✓ (p1, p2, p9 — palette `job:` targets present in all
+runs); D-4 launched-scope goal route ✓ (p2, p5 reload persistence); D-5
+durable hydration ✓ (p5 — projects/jobs survive reload); D-6 polish wave ✓
+(p4 notices, p6 scrubber/step controls); D-7 durable job surface ✓ (p7 per-id
+job detail 200 after reload, no DEGRADED badge on fresh sessions; the W-27
+acceptance gate 7/0). Register item 1 (research release-candidate renders)
+✓ — the job detail sheet renders the full result (deliverable "release
+candidate", summary, spec id, version); R10 (Time Machine pause) ✓ — manually
+verified: playback armed, the view instant froze at 2026-10-06T20:24:26.266Z
+and stayed frozen (no restart); J12 mobile touch targets ✓ — 0 of 35 buttons
+under 44px at 390px.
+
+**The two remaining fails (one finding, disclosed design).** Both on p1:
+the CONNECTION badge degraded with a `/v1/jobs/:id` 404 poller loop. Root
+cause: the demo project's jobs are per-instance **by design** (the W-27
+disclosed limitation — excluded from the durable write-through lane) and each
+instance's re-seed mints new job ids, so a session served across instances
+polls a job id the current instance does not know. Fresh sessions served by
+one instance are unaffected (p2..p9 all green). Class: the disclosed
+per-instance demo-jobs limitation, not a new defect class.
+
+**Harness-class notes (disclosed).** The onboarding wizard is a 3-panel walk
+(Continue ×2 → Get started); one intermediate "Continue 3" locator miss per
+run is recorded as a note (the wizard completed in all 9 runs — "overlay
+dismissed" green each time). The "Start the primary flow" CTA renders but its
+composed element defeats find-text locators (5 runs, noted; the launch claim
+is evidenced by the org-compile feed + org-status probes + the acceptance
+gate). Personas ran sequentially (the Lead station cannot sustain parallel
+browsers alongside the resident replay). The corrections applied to two
+recorded steps (p7's mobile check — its own data showed 0/35 under 44px; p6's
+"Pause" — the control exists only during playback, verified manually) are
+annotated inline in the per-step records.
