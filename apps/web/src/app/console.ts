@@ -379,9 +379,28 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       });
       const projectId = bundleScope;
       if (projectId === LAUNCHPAD_PROJECT_ID) return;
+      // THE BUNDLE'S OWN ORG-REF CAPTURE (D-7, W-27 — the org-status
+      // pairing fix): the org-status read (below, at the bundle's end)
+      // pairs the organization ref of THE BUNDLE'S OWN project record
+      // with the bundle's own project id — same scope by construction.
+      // The pre-W-27 code read `state.project` at the bundle's END, and a
+      // mid-bundle scope move (the stored-scope restore adopting the
+      // launched project, a launch adoption) could leave state.project
+      // holding the ADOPTED project's record — with its compiled
+      // organization ref — while this bundle's `projectId` was still the
+      // pre-adoption scope: the read crossed scopes (`GET
+      // /v1/organizations/<launched ref>/status?project=<demo id>` — the
+      // Lead's observed 404, the boot-order race). CAPTURING the ref from
+      // the FRESHLY READ record of THIS scope at read time keeps the pair
+      // same-scope; a failed project read leaves the capture null and
+      // skips the org read honestly (no record, no ref — the
+      // dispatchIfCurrent guards still drop stale snapshots), and the
+      // org-snapshot dedup keeps repeats idempotent.
+      let bundleOrganizationRef: string | null = null;
       await read('GET /v1/projects/:id', async () => {
         const project = await client.projects.get(projectId);
         dispatchIfCurrent(projectId, { kind: 'project-loaded', at: instants.nowMs(), project });
+        bundleOrganizationRef = project.lifecycle.organizationRef;
       });
       // THE GOAL READ (D-1, the W-23 fix — the boot seam the Lead
       // verified broken live): `goal-loaded` fired ONLY inside the
@@ -461,8 +480,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           dispatchIfCurrent(projectId, { kind: 'job-updated', at: instants.nowMs(), job });
         }
       });
-      const organizationRef = state.project?.lifecycle.organizationRef ?? null;
-      if (organizationRef !== null) {
+      // THE ORG-STATUS READ (D-7, W-27): at the bundle's end — its
+      // pre-W-27 position (the org-snapshot notice folds AFTER the
+      // outcomes read's, so the boot toast surfaces the shadow
+      // degradation notice — the J06/D6 pin) — but paired with the
+      // CAPTURED ref of THIS bundle's own freshly read project record
+      // (never the mutable state.project — the race fix above).
+      if (bundleOrganizationRef !== null) {
+        const organizationRef = bundleOrganizationRef;
         await read('GET /v1/organizations/:ref/status', async () => {
           const snapshot = await client.organizations.status(organizationRef, projectId);
           dispatchIfCurrent(projectId, { kind: 'org-snapshot', at: instants.nowMs(), snapshot });
@@ -562,18 +587,23 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // Organization section renders the compiled snapshot — still
       // without any reload. Self-terminating: the moment the ref
       // exists, this branch stops (the org-snapshot dedup keeps repeats
-      // idempotent).
+      // idempotent). D-7 (W-27): the org-status read pairs the ref with
+      // the RE-OBSERVED record of THIS scope — never the mutable
+      // `state.project` (a mid-beat scope move could leave state.project
+      // holding the newly adopted scope's record while `scopeNow` is
+      // still this branch's scope — the same crossed-scope read as the
+      // bundle's end, fixed the same way).
       await read('GET /v1/projects/:id', async () => {
         const project = await client.projects.get(scopeNow);
         dispatchIfCurrent(scopeNow, { kind: 'project-loaded', at: instants.nowMs(), project });
+        const organizationRef = project.lifecycle.organizationRef;
+        if (organizationRef !== null) {
+          await read('GET /v1/organizations/:ref/status', async () => {
+            const snapshot = await client.organizations.status(organizationRef, scopeNow);
+            dispatchIfCurrent(scopeNow, { kind: 'org-snapshot', at: instants.nowMs(), snapshot });
+          });
+        }
       });
-      const organizationRef = state.project?.lifecycle.organizationRef ?? null;
-      if (organizationRef !== null) {
-        await read('GET /v1/organizations/:ref/status', async () => {
-          const snapshot = await client.organizations.status(organizationRef, scopeNow);
-          dispatchIfCurrent(scopeNow, { kind: 'org-snapshot', at: instants.nowMs(), snapshot });
-        });
-      }
     }
     await pollJobs();
   }

@@ -157,6 +157,22 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
       demoSubstanceSerial++,
     );
     if (hostRoute !== null) {
+      // THE WRITE-THROUGH DRAIN ON THE HOST-ROUTE PATH (W-27, D-7): the
+      // per-request machinery tick (step 2b) may have queued durable writes
+      // — a job transition of the W-27 write-through lane included — and a
+      // host-route-served response leaves HERE, before the boundary path's
+      // own drain (step 5b). The ordering law (the host awaits the
+      // request's pending durable writes BEFORE the response is served)
+      // therefore runs on THIS path too: a failed write replaces the host
+      // route's answer with the typed 503 (the mutation is unconfirmed;
+      // the seam re-projects — the caller learns, never a silent
+      // divergence). Before W-27 the tick's writes could sit pending on
+      // this path until some later boundary request drained them.
+      const drained = await deployment.durable.drain();
+      if (!drained.ok) {
+        writeApiResponse(response, drainedFailureResponse(hostRoute, drained.error));
+        return;
+      }
       writeApiResponse(response, hostRoute);
       return;
     }

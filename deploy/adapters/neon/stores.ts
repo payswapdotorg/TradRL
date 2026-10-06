@@ -244,6 +244,44 @@ export function goalSetGetStatement(tenant: string, projectId: string): BuiltSta
   return { sql: 'SELECT payload FROM tradrl_project_goals WHERE tenant = $1 AND project_id = $2', params: [tenant, projectId] };
 }
 
+// ---------------------------------------------------------------------------
+// The durable jobs lane (W-27, D-7 — the API-owned job store's persistence)
+// ---------------------------------------------------------------------------
+
+/**
+ * The job-record upsert (W-27, D-7; tenant = param 1 — L12). The payload is
+ * the boundary's own JobRecord (the async pattern's read model) as canonical
+ * JSON; the upsert keys on (tenant, job_id) so every mutation — the
+ * submission and each transition — replaces the row with the newest record.
+ */
+export function jobPutStatement(scopeTenant: string, job: unknown): StoreResult<BuiltStatement> {
+  if (!isRecord(job)) return malformed('the job record is not an object');
+  if (!isNonEmptyString(job.tenant) || job.tenant !== scopeTenant) {
+    return { ok: false, error: crossTenantFailure(`the job record's tenant (${String(job.tenant)}) does not match the store's scope tenant — refusing the cross-tenant write`) };
+  }
+  if (!isNonEmptyString(job.jobId) || !isNonEmptyString(job.project)) return malformed('the job record lacks jobId/project');
+  if (!isNonEmptyString(job.status)) return malformed('the job record lacks status');
+  if (typeof job.submittedAt !== 'number') return malformed('the job record lacks submittedAt');
+  return {
+    ok: true,
+    value: {
+      sql: 'INSERT INTO tradrl_jobs (tenant, project, job_id, submitted_at, status, payload) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (tenant, job_id) DO UPDATE SET project = EXCLUDED.project, submitted_at = EXCLUDED.submitted_at, status = EXCLUDED.status, payload = EXCLUDED.payload',
+      params: [scopeTenant, job.project, job.jobId, String(job.submittedAt), job.status, canonicalJson(job as unknown as JsonValue)],
+    },
+  };
+}
+
+/**
+ * The jobs-of-project select (W-27, D-7; tenant = $1 ALWAYS). The async
+ * pattern's read model serves the record's CURRENT state — no point-in-time
+ * predicate by design (the availability law governs the point-in-time reads
+ * of the knowledge/outcome lanes; the job store is the machine's own
+ * progress surface). Order: submission order.
+ */
+export function jobListStatement(tenant: string, project: string): BuiltStatement {
+  return { sql: 'SELECT payload FROM tradrl_jobs WHERE tenant = $1 AND project = $2 ORDER BY submitted_at', params: [tenant, project] };
+}
+
 /** Decode one goal-set row (`{ goal, constraintSet }`); a malformed row is the typed malformed failure. */
 function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
   const payload = row[0];
@@ -495,6 +533,50 @@ export class NeonProjectStore implements ProjectStoreMirror {
 
   private note(operation: string, tenant: string, ok: boolean): void {
     this.provenance = { adapter: 'neon', store: 'project-store', operation, tenant, at: this.deps.instants.next(), outcome: ok ? 'ok' : 'degraded' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The durable job store (W-27, D-7 — the API-owned job store's persistence
+// lane; the seam's write-through + hydration ride these two operations)
+// ---------------------------------------------------------------------------
+
+/** The durable job-record store (the async pattern's read model, persisted). */
+export class NeonJobStore {
+  private readonly deps: NeonStoreDeps;
+  private readonly fetchLike: FetchLike;
+  private provenance: AdapterProvenance | null = null;
+
+  constructor(deps: NeonStoreDeps) {
+    this.deps = deps;
+    this.fetchLike = deps.fetchLike ?? defaultFetch();
+  }
+
+  lastProvenance(): AdapterProvenance | null {
+    return this.provenance;
+  }
+
+  /** Persist one job record (tenant-scoped upsert — the newest record wins). */
+  async putJobRecord(scopeTenant: string, job: unknown): Promise<StoreResult<{ readonly stored: true }>> {
+    const built = jobPutStatement(scopeTenant, job);
+    if (!built.ok) return built;
+    const executed = await executeNeonStatement(this.deps.config, built.value.sql, built.value.params, this.fetchLike);
+    this.note('putJobRecord', scopeTenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    return { ok: true, value: { stored: true } };
+  }
+
+  /** One project's job records, submission order; a malformed payload row is skipped fail-closed (the store never throws). */
+  async jobRecordsOf(tenant: string, project: string): Promise<StoreResult<readonly unknown[]>> {
+    const built = jobListStatement(tenant, project);
+    const executed = await executeNeonStatement(this.deps.config, built.sql, built.params, this.fetchLike);
+    this.note('jobRecordsOf', tenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    return { ok: true, value: decodeEnvelopes(executed.value) };
+  }
+
+  private note(operation: string, tenant: string, ok: boolean): void {
+    this.provenance = { adapter: 'neon', store: 'job-store', operation, tenant, at: this.deps.instants.next(), outcome: ok ? 'ok' : 'degraded' };
   }
 }
 

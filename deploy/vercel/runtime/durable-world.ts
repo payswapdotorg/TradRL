@@ -54,6 +54,24 @@
 //   in the PR's honest-limitations register (the snapshot store itself is
 //   not Neon-persisted; the report instant is the boot instant).
 //
+//   R8 — THE DURABLE JOBS HYDRATION (W-27, D-7): the durable jobs lane
+//   persists every non-demo job mutation (the submission AND each
+//   transition — the composition's service wrapper queues the records
+//   through the seam's write-through, drained per the ordering law), and
+//   every boot REPLAYS the credential tenant's durable job records back
+//   into THIS instance's API-owned job store (the frozen service's
+//   closure — no injection surface exists) through the REAL public job
+//   routes: the seam's job-submission port serves each durable record
+//   verbatim (the exact jobId, status, result and timestamps) while the
+//   hydration bracket is open, so the frozen pipeline's own handler
+//   stores it. The per-id GET /v1/jobs/:jobId (the frozen route,
+//   unchanged) and the jobs-list fold then serve durable jobs on EVERY
+//   instance — the D-7 defect's both halves (the detail 404 loop + the
+//   boot-time empty list) close. Records already present in the
+//   instance's store are skipped (a retried boot world is idempotent —
+//   the per-instance idempotency cache would not re-store them, so the
+//   replay would misalign the port's FIFO without the skip).
+//
 // THE ORDERING LAW (the W-25D seam's law, ridden by the boot world): the
 // seed's durable writes DRAIN before the first serve; a failed write is
 // the typed degraded state — the triggering request answers the typed
@@ -89,7 +107,9 @@
 
 import {
   deepFreeze,
+  isRecord,
   type ApiService,
+  type JobRecord,
   type TenantId,
 } from '../../../services/api/src/index';
 import { fixtureKnowledge } from '../../../services/api/src/fixtures';
@@ -243,6 +263,48 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
     }
   }
 
+  /**
+   * R8 (W-27, D-7): the durable jobs hydration — replay every durable job
+   * record of the credential tenant's RECONSTRUCTED projects back into this
+   * instance's API-owned job store through the REAL public job routes (the
+   * port serves the durable records verbatim while the bracket is open).
+   * A degraded registry/jobs read fails the boot world with the typed
+   * failure (never a partial hydration); a refused replay means the frozen
+   * job-submission contract drifted — loud, exactly like the world seed.
+   */
+  function hydrateDurableJobs(): void {
+    const listed = durable.ports.controlPlane.projectsOf(tenantId);
+    if (!listed.ok) throw fail(listed.error.code, `the hydrated registry is degraded: ${listed.error.message}`);
+    const known = new Set(service.jobs().map((job) => job.jobId as string));
+    const missing: JobRecord[] = [];
+    for (const project of listed.value) {
+      const read = durable.jobsOf(project.id as string);
+      if (!read.ok) throw fail(read.error.code, `the durable jobs read failed for ${JSON.stringify(project.id as string)}: ${read.error.message}`);
+      for (const record of read.value) {
+        if (known.has(record.jobId)) continue; // already hydrated on this instance — a re-replay would hit the idempotency cache (never re-store), misaligning the port's FIFO
+        missing.push(record);
+      }
+    }
+    if (missing.length === 0) return;
+    durable.beginJobHydration(missing); // the port serves exactly these records, in order
+    try {
+      for (const record of missing) {
+        const replayed = service.handle({
+          method: 'POST',
+          path: record.kind === 'research' ? '/v1/jobs/research' : '/v1/jobs/learning',
+          headers: { authorization: `Bearer ${seed.developerToken}`, 'idempotency-key': `idem:durable:hydrate:${record.jobId}` },
+          body: { kind: record.kind, projectId: record.project, spec: { hydrated: true } },
+        });
+        const stored = (replayed.body as { readonly data?: unknown }).data;
+        if (replayed.status !== 202 || !isRecord(stored) || stored.jobId !== record.jobId) {
+          throw fail('durable_job_hydration_failed', `the durable job ${JSON.stringify(record.jobId)} failed its hydration replay (${replayed.status}) — the frozen job-submission contract may have drifted`);
+        }
+      }
+    } finally {
+      durable.endJobHydration(); // the port mints fresh records again (an unconsumed preload is dropped)
+    }
+  }
+
   /** One boot-world attempt (throws the typed failure on any unconfirmed part). */
   async function run(): Promise<void> {
     const bootAt = input.at();
@@ -292,6 +354,12 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
       // disclosed limitation — the frozen service's closure).
       seedDemoJobs(service, seed.developerToken);
     }
+    // 3b. THE DURABLE JOBS HYDRATION (R8, W-27, D-7): the durable job
+    //     records replay back into this instance's API-owned job store
+    //     through the REAL public job routes — before the first serve (and
+    //     therefore before the first tick, so non-terminal durable jobs
+    //     join the machinery advancement immediately on THIS instance).
+    hydrateDurableJobs();
     // 4. THE FIXTURE BOOT-WRITE (R4), guarded per table.
     if (await bootWriteFixtures()) worldChanged = true;
     // 5. THE POST-SEED REFRESH: the durable truth changed after the boot

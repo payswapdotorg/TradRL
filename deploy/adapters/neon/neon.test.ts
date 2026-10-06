@@ -17,10 +17,13 @@ import { buildNeonRequest, executeNeonStatement, neonConnectionString, type Neon
 import { NEON_DDL_RECORDS } from './schema';
 import {
   NeonFirmMemoryStore,
+  NeonJobStore,
   NeonOutcomeLearningStore,
   NeonProjectStore,
   goalSetGetStatement,
   goalSetPutStatement,
+  jobListStatement,
+  jobPutStatement,
   knowledgePutStatement,
   knowledgeSelectStatement,
   outcomePutStatement,
@@ -67,6 +70,7 @@ const TABLE_SPEC: Readonly<Record<string, { readonly payload: number; readonly o
   tradrl_projects: { payload: 6, order: 5 },
   tradrl_project_events: { payload: 5, order: 2 },
   tradrl_project_goals: { payload: 2, order: 1 },
+  tradrl_jobs: { payload: 5, order: 3 },
 };
 
 interface FakeCall {
@@ -93,6 +97,20 @@ function fakeNeon(seed: readonly FakeRow[] = []): { fetchLike: FetchLike; calls:
     const params = parsed.params;
     const insertMatch = /^INSERT INTO (tradrl_\w+)/.exec(query);
     if (insertMatch !== null) {
+      // Upsert fidelity (the W-27 note, mirroring the wire smoketest's own
+      // W-25D law): an `ON CONFLICT (…) DO UPDATE` replaces the row with the
+      // same conflict-key tuple — the same semantics the real SQL has (the
+      // durable seam upserts project records, goal sets and, since W-27, job
+      // records — a transition replaces the job's row with the newest record).
+      const columns = (query.match(/^INSERT INTO \w+ \(([^)]+)\)/)?.[1] ?? '').split(',').map((column) => column.trim());
+      const conflict = /ON CONFLICT \(([^)]+)\) DO UPDATE/.exec(query);
+      if (conflict !== null) {
+        const keyColumns = (conflict[1] ?? '').split(',').map((column) => column.trim());
+        const keyOf = (row: FakeRow): string => keyColumns.map((column) => row.params[columns.indexOf(column) === -1 ? row.params.length : columns.indexOf(column)]).join('\u0000');
+        const incomingKey = keyColumns.map((column) => params[columns.indexOf(column) === -1 ? params.length : columns.indexOf(column)]).join('\u0000');
+        const existing = rows.findIndex((row) => row.table === insertMatch[1] && keyOf(row) === incomingKey);
+        if (existing >= 0) rows.splice(existing, 1);
+      }
       rows.push({ table: insertMatch[1] as string, params });
       return responder(JSON.stringify({ command: 'INSERT 0 1', rowCount: 1 }));
     }
@@ -364,6 +382,48 @@ describe('deploy/adapters/neon — the stores', () => {
     if (mortems.ok) expect(mortems.value.length).toBe(1);
   });
 
+  it('durable jobs (W-27, D-7): put/list round-trips faithfully in submission order; the newest record wins per job id; foreign tenants find nothing; the statements scope tenant = $1 (L12)', async () => {
+    const fake = fakeNeon();
+    const store = new NeonJobStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const job = (jobId: string, status: string, submittedAt: number): Record<string, unknown> => ({ jobId, kind: 'research', tenant: 'tenant-a', project: 'prj_a', status, submittedAt, ...(status === 'complete' ? { result: { kind: 'release-candidate' }, completedAt: submittedAt + 1000 } : {}) });
+    expect((await store.putJobRecord('tenant-a', job('job:1', 'submitted', 1))).ok).toBe(true);
+    expect((await store.putJobRecord('tenant-a', job('job:2', 'running', 2))).ok).toBe(true);
+    // The transition upsert: the SAME job id's newest record replaces the row.
+    expect((await store.putJobRecord('tenant-a', job('job:1', 'complete', 1))).ok).toBe(true);
+    const listed = await store.jobRecordsOf('tenant-a', 'prj_a');
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+    expect(listed.value).toEqual([job('job:1', 'complete', 1), job('job:2', 'running', 2)]); // submission order, newest payload per id
+    // L12: a foreign tenant's read finds NOTHING (the indistinguishable absence).
+    const foreign = await store.jobRecordsOf('tenant-b', 'prj_a');
+    expect(foreign.ok).toBe(true);
+    if (foreign.ok) expect(foreign.value).toEqual([]);
+    // L12: a cross-tenant WRITE is the typed refusal (never a queued row).
+    const hostile = await store.putJobRecord('tenant-a', job('job:3', 'submitted', 3) as { tenant: string } & Record<string, unknown>);
+    expect(hostile.ok).toBe(true); // same-tenant sanity: the write lands
+    const cross = await store.putJobRecord('tenant-a', { ...job('job:4', 'submitted', 4), tenant: 'tenant-b' });
+    expect(cross.ok).toBe(false);
+    if (!cross.ok) expect(cross.error.code).toBe('cross_tenant_access');
+    // Malformed records are the typed malformed_record (fail-closed, never a throw).
+    const malformed = await store.putJobRecord('tenant-a', { jobId: 'job:5', tenant: 'tenant-a' });
+    expect(malformed.ok).toBe(false);
+    if (!malformed.ok) expect(malformed.error.code).toBe('malformed_record');
+    // The statement vectors: tenant = $1 ALWAYS, the scope param second.
+    const put = jobPutStatement('tenant-a', job('job:v', 'submitted', 9));
+    expect(put.ok).toBe(true);
+    if (put.ok) {
+      expect(put.value.sql).toContain('INSERT INTO tradrl_jobs');
+      expect(put.value.sql).toContain('ON CONFLICT (tenant, job_id) DO UPDATE');
+      expect(put.value.params[0]).toBe('tenant-a');
+      expect(put.value.params[2]).toBe('job:v');
+    }
+    const select = jobListStatement('tenant-a', 'prj_a');
+    expect(select.sql).toBe('SELECT payload FROM tradrl_jobs WHERE tenant = $1 AND project = $2 ORDER BY submitted_at');
+    expect(select.params).toEqual(['tenant-a', 'prj_a']);
+    expect(store.lastProvenance()?.adapter).toBe('neon');
+    expect(store.lastProvenance()?.store).toBe('job-store');
+  });
+
   it('goal sets: put/get round-trip faithfully; absent reads answer null; foreign tenants find nothing (W-25D)', async () => {
     const fake = fakeNeon();
     const store = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
@@ -466,14 +526,14 @@ describe('deploy/adapters/neon — the stores', () => {
 describe('deploy/adapters/neon — the DDL records', () => {
   it('every table referenced by the statement builders has a DDL record with a tenant-leading PRIMARY KEY', () => {
     const tables = new Set(NEON_DDL_RECORDS.map((record) => record.table));
-    expect([...tables].sort()).toEqual(['tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_project_events', 'tradrl_project_goals', 'tradrl_projects']);
+    expect([...tables].sort()).toEqual(['tradrl_jobs', 'tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_project_events', 'tradrl_project_goals', 'tradrl_projects']);
     for (const record of NEON_DDL_RECORDS) {
       expect(record.ddl).toContain(`CREATE TABLE IF NOT EXISTS ${record.table}`);
       expect(record.ddl).toContain('PRIMARY KEY (tenant');
       expect(record.ddl).toMatch(/tenant\s+TEXT\s+NOT NULL/);
     }
     // Every table the statements reference is covered by a DDL record.
-    const referenced = new Set(['tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_projects', 'tradrl_project_events', 'tradrl_project_goals']);
+    const referenced = new Set(['tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_projects', 'tradrl_project_events', 'tradrl_project_goals', 'tradrl_jobs']);
     for (const table of referenced) expect(tables.has(table)).toBe(true);
   });
 

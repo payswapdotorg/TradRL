@@ -116,6 +116,33 @@ CREATE TABLE IF NOT EXISTS tradrl_project_goals (
 );
 `;
 
+/**
+ * The durable JOBS table (W-27, D-7): one row per job record of the
+ * credential tenant — the durable jobs lane the W-27 write-through persists
+ * every non-demo job mutation to (submission + each transition), and the
+ * W-27 hydration replays back into each fresh instance's API-owned job
+ * store (the frozen service's closure) so the per-id GET /v1/jobs/:jobId
+ * and the jobs list serve durable jobs on EVERY instance, not just the one
+ * that received the submission. The payload is the boundary's own
+ * JobRecord as canonical JSON; the extracted columns exist only for
+ * scoping and ordering (the async pattern's read model serves the record's
+ * CURRENT state — no point-in-time filter by design, like the org-status
+ * snapshots).
+ */
+export const JOBS_TABLE_DDL = /* sql */ `
+CREATE TABLE IF NOT EXISTS tradrl_jobs (
+  tenant       TEXT   NOT NULL,
+  project      TEXT   NOT NULL,
+  job_id       TEXT   NOT NULL,
+  submitted_at BIGINT NOT NULL,
+  status       TEXT   NOT NULL,
+  payload      TEXT   NOT NULL,
+  PRIMARY KEY (tenant, job_id)
+);
+CREATE INDEX IF NOT EXISTS tradrl_jobs_scope
+  ON tradrl_jobs (tenant, project, submitted_at);
+`;
+
 /** Every DDL record, in application order (the runbook's §neon paste block). */
 export const NEON_DDL_RECORDS: readonly { readonly table: string; readonly ddl: string }[] = [
   { table: 'tradrl_knowledge', ddl: KNOWLEDGE_TABLE_DDL },
@@ -124,4 +151,5 @@ export const NEON_DDL_RECORDS: readonly { readonly table: string; readonly ddl: 
   { table: 'tradrl_projects', ddl: PROJECT_TABLE_DDL },
   { table: 'tradrl_project_events', ddl: PROJECT_EVENT_TABLE_DDL },
   { table: 'tradrl_project_goals', ddl: GOAL_SET_TABLE_DDL },
+  { table: 'tradrl_jobs', ddl: JOBS_TABLE_DDL },
 ];
