@@ -69,7 +69,14 @@
 //   - R5: the demo project's seeded goal + constraint set carry
 //     NUMERIC bounds end-to-end (demoGoalStatement/demoConstraintSet
 //     — every predicate.bound / predicate.value a number), served
-//     read-only through the host-owned GET /v1/projects/:id/goal.
+//     read-only through the host-owned GET /v1/projects/:id/goal —
+//     which, since W-25B (D-4), serves EVERY project's OWN goal: the
+//     backing retains each create-project request's goal + constraint
+//     set at the control-plane port seam (demoControlPlane below — the
+//     demo seed's own create and every user launch ride the same path)
+//     and the route serves them back, so a launched project's Goal/
+//     Risk cards survive a reload (the console's W-23 boot read finally
+//     gets its 200).
 //
 // THE SEEDED JOBS (W-25A, D-3 — "JOB: not searchable in any scope"):
 //   - the demo world seed submits ONE research + ONE learning job for
@@ -91,7 +98,8 @@
 //     honest under SIMULATED either way.
 //
 // Zero-dep law: platform APIs only. Spec anchors: R46, L12/L20,
-// UX-DESIGN §7, D-033, phase2-competitive-report R2-R5, D-3 (W-25A).
+// UX-DESIGN §7, D-033, phase2-competitive-report R2-R5, D-3 (W-25A),
+// D-4 (W-25B).
 
 import {
   fakeControlPlane,
@@ -587,9 +595,78 @@ export function demoExecutionGateway(): ExecutionGatewayPort & { readonly record
   };
 }
 
+// ---------------------------------------------------------------------------
+// The create-project goal-set capture (D-4, W-25B — every launched
+// project's own goal, retained host-side at the create seam)
+// ---------------------------------------------------------------------------
+
+/**
+ * ONE CAPTURED CREATE-PROJECT GOAL SET: the create input's goal +
+ * constraint set, VERBATIM (what the launch flow already sends —
+ * apps/web toCreateProjectInput rides POST /v1/projects with exactly
+ * these records, and the demo seed's own create carries the seeded
+ * records through the same route). The frozen service's project record
+ * keeps only the lineage REFS (goalId/version, constraintSet id/version)
+ * — the statements themselves surface nowhere else, so the backing
+ * retains them here (the demo-side half of what the DURABLE seam
+ * persists in Neon: runtime/durable.ts's putGoalSet — the same records,
+ * the same law, this backing's per-instance in-memory medium).
+ */
+export interface DemoGoalSetRecording {
+  /** The tenant the pipeline injected at create (L12 — never a request value). */
+  readonly tenant: string;
+  /** The project the goal set belongs to (the create input's own id). */
+  readonly project: string;
+  /** The create-project input's goal statement, verbatim. */
+  readonly goal: GoalStatement;
+  /** The create-project input's constraint set, verbatim. */
+  readonly constraintSet: ConstraintSetStatement;
+}
+
+/**
+ * The demo control plane: the REAL fixture fake, wrapped so every
+ * create-project request's goal + constraint set is RETAINED host-side
+ * (the same wrapping law as demoExecutionGateway — the port is the
+ * seam, the fake is never re-implemented). The capture rides the PORT
+ * seam, never the boundary: the input it sees is the VALIDATED,
+ * tenant-injected create-project request (the full T041 pipeline ran —
+ * L12 tenant injection, the goal/constraint same-tenant law, the audit
+ * + metering tail), so the demo seed's own create and every user launch
+ * ride the exact same path (D-4's root cause: the records exist at
+ * creation; the read just never served them). Only SUCCESSFUL creates
+ * are retained (a refused create leaves no goal on record — the typed
+ * not-found stays for it). Per-instance in-memory, exactly like every
+ * demo port: a serverless cold start resets it (honest under the
+ * SIMULATED badge — durability is the DURABLE backing's own surface,
+ * D-5/W-25D, never this one).
+ */
+export function demoControlPlane(): ReturnType<typeof fakeControlPlane> & { readonly goalSets: ReadonlyMap<string, DemoGoalSetRecording> } {
+  const goalSets = new Map<string, DemoGoalSetRecording>();
+  const inner = fakeControlPlane();
+  return {
+    ...inner, // the fake's own surface verbatim (the project store included)
+    get goalSets(): ReadonlyMap<string, DemoGoalSetRecording> {
+      return goalSets;
+    },
+    createProject(input) {
+      const result = inner.createProject(input);
+      if (result.ok) {
+        goalSets.set(`${input.tenantId as string}/${input.id as string}`, {
+          tenant: input.tenantId as string,
+          project: input.id as string,
+          goal: input.goal as GoalStatement,
+          constraintSet: input.constraintSet as ConstraintSetStatement,
+        });
+      }
+      return result;
+    },
+  };
+}
+
 /** The demo backing's ports (the REAL fixture fakes — the same objects the composition injects) + the seeded blotter. */
 export interface DemoPorts {
-  readonly controlPlane: ReturnType<typeof fakeControlPlane>;
+  /** The demo control plane (the fixture fake, wrapped to retain every create-project goal set — W-25B's capture seam). */
+  readonly controlPlane: ReturnType<typeof demoControlPlane>;
   readonly firmMemory: ReturnType<typeof fakeFirmMemory>;
   readonly outcomeLearning: ReturnType<typeof fakeOutcomeLearning>;
   readonly executionGateway: ReturnType<typeof demoExecutionGateway>;
@@ -631,19 +708,36 @@ export function demoJobsOf(service: ApiService, tenant: string, project: string)
 }
 
 /**
+ * The demo backing's goal set of one project of one tenant (D-4, the
+ * W-25B goal route's data seam): the create-project records the capture
+ * retained — the demo project's own seeded records included (its create
+ * rides the same port). L12 by construction on both axes: the pipeline
+ * injects the tenant at create (a foreign tenant's goal set never exists
+ * in this composition's capture to begin with — the same-tenant law
+ * refused it) and the fold keys on the AUTHORIZED tenant + the requested
+ * project (a foreign tenant's read finds nothing — the typed not-found,
+ * never a leak).
+ */
+export function demoGoalSetOf(ports: DemoPorts, tenant: string, project: string): DemoGoalSetRecording | null {
+  return ports.controlPlane.goalSets.get(`${tenant}/${project}`) ?? null;
+}
+
+/**
  * Build the demo ports (the REAL fixture fakes, imported from the
  * frozen service's own fixtures — never edited). The knowledge, outcome
  * and submission ports are seeded READ data scoped to the deployment's
  * credential tenant (L12: a foreign tenant's credential is served
  * nothing of it); the control plane starts empty — the demo project is
- * created through the real route (see seedDemoWorld); the gateway
- * serves ROUTED submissions for every valid intent (the fixture's own
- * L8 record shapes) and records them into the live blotter; the job
- * port records submissions (the async pattern's entry state).
+ * created through the real route (see seedDemoWorld), and the wrapper
+ * retains every create's goal + constraint set for the host-owned goal
+ * read (W-25B); the gateway serves ROUTED submissions for every valid
+ * intent (the fixture's own L8 record shapes) and records them into the
+ * live blotter; the job port records submissions (the async pattern's
+ * entry state).
  */
 export function seedDemoBacking(tenant: string): DemoPorts {
   return {
-    controlPlane: fakeControlPlane(),
+    controlPlane: demoControlPlane(),
     firmMemory: fakeFirmMemory([...fixtureKnowledge(tenant, DEMO_PROJECT_ID)]),
     outcomeLearning: fakeOutcomeLearning([demoOutcomeRecord(tenant, DEMO_PROJECT_ID)], [demoPostMortemRecord(tenant, DEMO_PROJECT_ID)]),
     executionGateway: demoExecutionGateway(),

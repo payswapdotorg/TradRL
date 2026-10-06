@@ -31,6 +31,7 @@ import {
   DEMO_RISK_BUDGET,
   demoBlotterIsValid,
   demoConstraintSet,
+  demoGoalSetOf,
   demoGoalStatement,
   demoJobsOf,
   demoOutcomeRecordIsValid,
@@ -1105,6 +1106,194 @@ describe('deploy/vercel — the seeded constraint numeric bounds (R5: every boun
     }), foreign.response);
     expect(foreign.captured().status).toBe(404);
     expect((JSON.parse(foreign.captured().payload as string) as { error: { code: string } }).error.code).toBe('not_found');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The launched-scope goal route (D-4, W-25B — the demo backing serves
+// EVERY project's own goal, not just the seed's)
+// ---------------------------------------------------------------------------
+
+describe("deploy/vercel — the launched-scope goal route (D-4, W-25B: the demo backing serves every project's own goal)", () => {
+  /**
+   * The launch flow's own create-project request (apps/web
+   * toCreateProjectInput's shape — the records the launch wizard sends
+   * when the user drafts a goal): the drafted objective + criteria with
+   * NUMERIC bounds, the drafted constraints, and the two budget
+   * constraints the launch flow appends (exact decimal strings).
+   */
+  function launchedCreateProjectRequest(tenant: string, projectId: string, objective: string): Record<string, unknown> {
+    return {
+      id: projectId,
+      name: 'the user-launched project',
+      executionMode: 'simulation',
+      goal: {
+        id: `goal-${projectId}`, version: 1, tenantId: tenant,
+        objective,
+        horizon: { startsAt: 1_700_000_000_000, endsAt: 1_700_000_000_000 + 90 * 24 * 3_600_000, label: 'the launch window' },
+        successCriteria: {
+          criteria: [
+            { id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 }, description: 'net profit is non-negative' },
+            { id: 'sc-2', metric: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.2 }, description: 'bounded drawdown' },
+          ],
+          requiredSatisfaction: 0.5,
+        },
+        evaluation: { blindRef: 'eval:blind-1', walkForwardRef: 'eval:wf-1', regimeRef: 'eval:regime-1', adversarialRequired: true },
+        createdAt: 1_700_000_000_000,
+      },
+      constraintSet: {
+        id: `cs-${projectId}`, version: 1, tenantId: tenant,
+        constraints: [
+          { id: 'c-1', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.2 }, severity: 'blocking', description: 'the drawdown ceiling' },
+          { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: '10000.00' }, severity: 'blocking' },
+          { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: '250.00' }, severity: 'blocking' },
+        ],
+        createdAt: 1_700_000_000_000,
+      },
+      at: 1_700_000_000_000,
+    };
+  }
+
+  it('the launch story (demo backing): a project created through the REAL route serves ITS OWN goal + constraint set at GET /v1/projects/:id/goal — the records it was created with, D-4 closed', async () => {
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const request = launchedCreateProjectRequest(VALID_ENV[API_ENV_KEYS.apiDeveloperTenant], 'prj-launched-goal', 'Find and keep an edge in momentum.');
+    const created = composed.service.handle({ method: 'POST', path: '/v1/projects', headers: bearer, body: request });
+    expect(created.status).toBe(201);
+    // THE GOAL READ (the console's W-23 boot read — after a reload this is the route that refills the Goal/Risk cards): 200 with ITS own records.
+    const { response, captured } = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: '/v1/projects/prj-launched-goal/goal',
+      headers: bearer,
+    }), response);
+    const written = captured();
+    expect(written.status).toBe(200);
+    expect(written.headers['content-type']).toBe('application/json; charset=utf-8');
+    expect(written.headers['x-api-version']).toBe('v1');
+    expect(written.headers['x-request-id']).toMatch(/^req:/);
+    for (const key of Object.keys(written.headers)) expect(key.toLowerCase()).not.toContain('access-control');
+    const body = JSON.parse(written.payload as string) as { requestId: string; data: { goal: unknown; constraintSet: unknown } };
+    expect(body.requestId).toBe(written.headers['x-request-id']);
+    expect(body.data.goal).toEqual(request.goal); // ITS OWN goal — the create input verbatim (the drafted objective, criteria, evaluation)
+    expect(body.data.constraintSet).toEqual(request.constraintSet); // ITS OWN constraint set (the drafted numeric bounds + the budget constraints)
+  });
+
+  it('the demo project stays byte-identical: the seeded records serve exactly as before, and the capture never steers the demo branch', async () => {
+    const tenant = VALID_ENV[API_ENV_KEYS.apiDeveloperTenant];
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    // A launched create exists first — the capture holds records, and the demo branch must still serve the fixed seed.
+    const created = composed.service.handle({ method: 'POST', path: '/v1/projects', headers: bearer, body: launchedCreateProjectRequest(tenant, 'prj-launched-goal-beside-demo', 'a second launched objective') });
+    expect(created.status).toBe(201);
+    const { response, captured } = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: `/v1/projects/${encodeURIComponent(DEMO_PROJECT_ID)}/goal`,
+      headers: bearer,
+    }), response);
+    expect(captured().status).toBe(200);
+    const body = JSON.parse(captured().payload as string) as { data: unknown };
+    expect(body.data).toEqual({ goal: demoGoalStatement(tenant), constraintSet: demoConstraintSet(tenant) }); // byte-identical to the pre-W-25B serve
+    // And the demo seed's own create rode the same port: its captured records ARE the seeded exports (the capture's completeness pin).
+    expect(composed.demo).not.toBeNull();
+    if (composed.demo === null) return;
+    expect(demoGoalSetOf(composed.demo.ports, tenant, DEMO_PROJECT_ID)).toEqual({ tenant, project: DEMO_PROJECT_ID, goal: demoGoalStatement(tenant), constraintSet: demoConstraintSet(tenant) });
+  });
+
+  it('a project with no goal on record answers the typed not-found (unchanged); a REFUSED create leaves nothing — a duplicate-id create never overwrites the first goal', async () => {
+    const tenant = VALID_ENV[API_ENV_KEYS.apiDeveloperTenant];
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok) return;
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    // An unknown project (never created): the typed not-found, exactly as before.
+    const unknown = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: '/v1/projects/prj-never-created/goal', headers: bearer }), unknown.response);
+    expect(unknown.captured().status).toBe(404);
+    expect((JSON.parse(unknown.captured().payload as string) as { error: { code: string } }).error.code).toBe('not_found');
+    // The refused create: the SAME id again with a DIFFERENT goal — the frozen port refuses (conflict -> the typed unavailable), and the capture keeps the FIRST records only.
+    const first = launchedCreateProjectRequest(tenant, 'prj-goal-conflict', 'the first objective');
+    const created = composed.service.handle({ method: 'POST', path: '/v1/projects', headers: bearer, body: first });
+    expect(created.status).toBe(201);
+    const second = launchedCreateProjectRequest(tenant, 'prj-goal-conflict', 'a hostile replacement objective');
+    const refused = composed.service.handle({ method: 'POST', path: '/v1/projects', headers: bearer, body: second });
+    expect(refused.status).not.toBe(201); // the frozen port's conflict (its typed mapping) — no second create ever landed
+    const read = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: '/v1/projects/prj-goal-conflict/goal', headers: bearer }), read.response);
+    expect(read.captured().status).toBe(200);
+    const body = JSON.parse(read.captured().payload as string) as { data: { goal: { objective: string } } };
+    expect(body.data.goal.objective).toBe('the first objective'); // the refused create never overwrote the captured goal set
+  });
+
+  it('L12 — a foreign tenant\'s goal never crosses: the fold keys on the AUTHORIZED tenant, and a goal declaring a foreign tenant is refused at create (the same-tenant law) leaving no record', async () => {
+    const tenant = VALID_ENV[API_ENV_KEYS.apiDeveloperTenant];
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok || composed.demo === null) return;
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    // The same-tenant law at the create seam: a goal declaring a FOREIGN tenant is refused before any port call — nothing is ever captured.
+    const hostile = launchedCreateProjectRequest(tenant, 'prj-hostile-goal', 'an honest objective') as { goal: { tenantId: string } };
+    hostile.goal.tenantId = 'tenant:attacker';
+    const refused = composed.service.handle({ method: 'POST', path: '/v1/projects', headers: bearer, body: hostile });
+    expect(refused.status).toBe(403);
+    expect((refused.body as { error: { code: string } }).error.code).toBe('cross_tenant_access');
+    expect(composed.demo.ports.controlPlane.goalSets.has(`${tenant}/prj-hostile-goal`)).toBe(false); // L12: nothing captured for the refused create
+    // The fold itself (the route's data seam): only the AUTHORIZED tenant's records serve — a foreign tenant's fold finds nothing, never a leak.
+    const created = composed.service.handle({ method: 'POST', path: '/v1/projects', headers: bearer, body: launchedCreateProjectRequest(tenant, 'prj-launched-l12', 'the scoped objective') });
+    expect(created.status).toBe(201);
+    expect(demoGoalSetOf(composed.demo.ports, tenant, 'prj-launched-l12')?.goal.objective).toBe('the scoped objective');
+    expect(demoGoalSetOf(composed.demo.ports, 'tenant-other-demo', 'prj-launched-l12')).toBeNull();
+    // A SECOND composition (another deployment, another credential tenant) owns its own empty capture: the first tenant's project is the typed not-found there.
+    const otherComposed = composeDeployment(apiEnv({ [API_ENV_KEYS.apiDeveloperTenant]: 'tenant-other-demo' }));
+    expect(otherComposed.ok).toBe(true);
+    if (!otherComposed.ok) return;
+    const other = capture();
+    await handleDeploymentRequest(otherComposed, streamingRequest({
+      method: 'GET',
+      url: '/v1/projects/prj-launched-l12/goal',
+      headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` },
+    }), other.response);
+    expect(other.captured().status).toBe(404); // its own world: no goal of the first tenant's project exists in it (unknown and cross-tenant indistinguishable)
+    expect((JSON.parse(other.captured().payload as string) as { error: { code: string } }).error.code).toBe('not_found');
+  });
+
+  it('the honest per-instance limitation: a fresh composition (a serverless cold start) carries no previous instance\'s launched-project goal — the demo project still serves (its seed re-runs)', async () => {
+    const tenant = VALID_ENV[API_ENV_KEYS.apiDeveloperTenant];
+    const first = composeDeployment(apiEnv());
+    if (!first.ok) return;
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const created = first.service.handle({ method: 'POST', path: '/v1/projects', headers: bearer, body: launchedCreateProjectRequest(tenant, 'prj-cold-start', 'an objective that will not survive the cold start') });
+    expect(created.status).toBe(201);
+    const served = capture();
+    await handleDeploymentRequest(first, streamingRequest({ method: 'GET', url: '/v1/projects/prj-cold-start/goal', headers: bearer }), served.response);
+    expect(served.captured().status).toBe(200); // the warm instance serves it
+    // A FRESH composition of the same env — a new instance: the capture is per-instance (the demo backing's honest SIMULATED semantics; durability is the DURABLE backing's surface, D-5/W-25D).
+    const second = composeDeployment(apiEnv());
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    const cold = capture();
+    await handleDeploymentRequest(second, streamingRequest({ method: 'GET', url: '/v1/projects/prj-cold-start/goal', headers: bearer }), cold.response);
+    expect(cold.captured().status).toBe(404);
+    expect((JSON.parse(cold.captured().payload as string) as { error: { code: string } }).error.code).toBe('not_found');
+    // The demo project serves on the fresh instance exactly as ever (its seed re-runs at composition).
+    const demo = capture();
+    await handleDeploymentRequest(second, streamingRequest({ method: 'GET', url: `/v1/projects/${encodeURIComponent(DEMO_PROJECT_ID)}/goal`, headers: bearer }), demo.response);
+    expect(demo.captured().status).toBe(200);
+  });
+
+  it('ADDITIVE / backward-compatible: under port overrides the demo goal route is not served (the boundary\'s own typed not_found — the demo capture never serves a world it does not own)', async () => {
+    const composed = composeDeployment(apiEnv(), { controlPlane: degradedPorts().controlPlane });
+    expect(composed.ok).toBe(true);
+    if (!composed.ok) return;
+    const { response, captured } = capture();
+    await handleDeploymentRequest(composed, streamingRequest({
+      method: 'GET',
+      url: `/v1/projects/${DEMO_PROJECT_ID}/goal`,
+      headers: { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` },
+    }), response);
+    expect(captured().status).toBe(404);
+    expect((JSON.parse(captured().payload as string) as { error: { code: string } }).error.code).toBe('not_found');
   });
 });
 
