@@ -74,7 +74,7 @@ import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import type { NeonStoreDeps } from '../../adapters/neon/stores';
 import { fakeJobSubmission } from '../../../services/api/src/fixtures';
-import { demoExecutionGateway, demoMachineryTick, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts } from './demo';
+import { demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance } from './demo';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization } from './routes';
 
 // ---------------------------------------------------------------------------
@@ -203,6 +203,20 @@ export interface DurableDeploymentHandle extends DurableBackingHandle {
    * overrides own the world (the injection seam's own law).
    */
   readonly ensureBootWorld: () => Promise<void>;
+  /**
+   * THE DURABLE DEMO-SUBSTANCE READS (W-26C, R4 — D-3 + the execution
+   * blotter preserved under durable): the SAME folds the demo arm serves
+   * (demoJobsOf + demoSubmissionsOf — imported, never duplicated), wired
+   * over THIS composition's per-instance stores: `jobsOf` reads the
+   * composed service's API-owned job store (the same store the per-id GET
+   * /v1/jobs/:jobId reads; the boot world re-seeds the two demo jobs per
+   * instance), and the submissions source is the SEEDED demo blotter plus
+   * the seam-live recording gateway the composition injects (every routed
+   * submission of this instance). `null` under port overrides (the
+   * injection seam owns its own world — the host routes then fall through
+   * to the boundary, the pre-W-8 law).
+   */
+  readonly demoSubstance: DurableDemoSubstance | null;
 }
 
 /** Compose the boundary service over the deployment environment (pure — no ambient env read, no cache, no network). */
@@ -232,6 +246,11 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
   const stubs = degradedPorts();
   let durable: DurableDeploymentHandle | null = null;
   let durableStores: NeonStoreDeps | null = null;
+  // The seam-live recording gateway (W-26C): the same instance the port
+  // map injects under durable — its `recorded` blotter is the live half of
+  // the durable demo-substance submissions fold (R4). Non-null exactly
+  // when the seam built.
+  let seamGateway: ReturnType<typeof demoExecutionGateway> | null = null;
   let ports: Required<DeploymentPortOverrides>;
   if (demoPorts !== null) {
     ports = demoPorts;
@@ -255,22 +274,22 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
       // ports are built from). POST /v1/execution/requests routes, POST
       // /v1/jobs/* answer 202, and the per-request machinery tick animates
       // the jobs — the launch journey (J3) works exactly as under demo,
-      // PLUS the Neon persistence. The fake gateway's `recorded` blotter and
-      // the fake job port's `submissions` array stay DEMO-only observables
-      // (no durable surface exposes them); the async Apify bridge remains a
-      // later seam (the host-owned ingestion lanes keep their own matrix).
+      // PLUS the Neon persistence. The W-26C durable demo-substance reads
+      // (R4) ride the SAME gateway instance: its `recorded` blotter is the
+      // live half of the submissions fold the host route serves.
       durableStores = neonStoreDepsOf(seamDeps); // non-null whenever the seam built (the shared construction)
+      seamGateway = demoExecutionGateway();
       ports = {
         ...stubs,
         ...seamHandle.ports,
-        executionGateway: demoExecutionGateway(),
+        executionGateway: seamGateway,
         jobSubmission: fakeJobSubmission(),
       };
       // The base seam handle, carried DORMANT (tick null, the boot world a
-      // no-op) until the composition binds the activation below, once the
-      // service exists (the tick + the boot world drive the real routes
-      // through the composed service).
-      durable = { ...seamHandle, tick: null, ensureBootWorld: async () => undefined };
+      // no-op, the demo-substance reads absent) until the composition binds
+      // the activation below, once the service exists (the tick + the boot
+      // world drive the real routes through the composed service).
+      durable = { ...seamHandle, tick: null, ensureBootWorld: async () => undefined, demoSubstance: null };
     } else {
       // The seam is NOT built (the Neon keys are incomplete): the matrix's
       // Neon-absent row keeps EXACTLY the pre-W-26B law — the typed absent
@@ -355,7 +374,17 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
             seed: { tenant, developerToken: token, internalToken },
             at: () => Date.now(),
           });
-      durable = { ...durable, tick: activation.tick, ensureBootWorld: activation.ensureBootWorld };
+      // THE W-26C DURABLE DEMO-SUBSTANCE READS (R4): the same folds the
+      // demo arm serves, over THIS composition's per-instance stores —
+      // bound only when the composition owns the world (under port
+      // overrides the injection seam owns it and the routes fall through).
+      const demoSubstance: DurableDemoSubstance | null = hasOverrides || seamGateway === null
+        ? null
+        : {
+            ports: { submissions: demoSubmissionBlotter(), executionGateway: seamGateway },
+            jobsOf: (tenant, project) => demoJobsOf(construction.service, tenant, project),
+          };
+      durable = { ...durable, tick: activation.tick, ensureBootWorld: activation.ensureBootWorld, demoSubstance };
     }
     return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization };
   }
