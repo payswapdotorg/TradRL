@@ -262,3 +262,24 @@ export function renderJobProgress(points: readonly JobProgressPoint[]): JobProgr
     observations: Object.freeze(ordered),
   };
 }
+
+/**
+ * D-17 (W-29): the elapsed of a job RECORD — completedAt minus submittedAt,
+ * exact integer arithmetic, derived from the record's OWN timestamps and
+ * NOTHING else. This is the root-cause fix for the "elapsed: pending" the
+ * personas and the Lead kept meeting on COMPLETE jobs with BOTH timestamps
+ * present (L2's seed job:57d1815d; the Lead's fresh kickoff job:1f7a71dc):
+ * the job dialog's elapsed came from renderJobProgress over the SESSION's
+ * observation points, which (a) exist only for the CURRENT launch's own
+ * tracked job, and (b) die at every reload — so every other job (and every
+ * reloaded session) rendered 'pending' while its record carried the truth.
+ * The record is the boundary's own stamp — it outranks any observation
+ * collection. Null while genuinely incomplete (no completedAt on the
+ * record); a corrupt completedAt BEFORE the submittedAt renders null too
+ * (never a fabricated negative elapsed).
+ */
+export function elapsedMsOfJobRecord(job: { readonly submittedAt: number; readonly completedAt?: number }): number | null {
+  if (typeof job.completedAt !== 'number' || !Number.isInteger(job.completedAt)) return null;
+  if (job.completedAt < job.submittedAt) return null; // a corrupt record renders pending, never a negative duration
+  return job.completedAt - job.submittedAt;
+}

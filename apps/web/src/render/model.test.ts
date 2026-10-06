@@ -893,3 +893,54 @@ describe('render model: D-13 — the inbox renders the PROJECT-SCOPED view', () 
     expect(bytes).toContain('data-inbox-scope="proj-a"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-17 (W-29) — THE JOB DIALOG'S ELASTIC ELAPSED, FIXED AT THE RECORD. The
+// dialog's METRICS showed "elapsed: pending" for COMPLETE jobs with BOTH
+// timestamps present — the seed job:57d1815d (L2) and the Lead's fresh
+// kickoff job:1f7a71dc — because the sheet derived it from renderJobProgress
+// over the SESSION's observation points (empty for every non-tracked job and
+// after every reload). The sheet now derives it from the record's own
+// timestamps; 'pending' shows ONLY while the record genuinely carries no
+// completedAt.
+// ---------------------------------------------------------------------------
+
+describe('render model: D-17 — the job sheet\'s elapsed derives from the RECORD', () => {
+  /** A COMPLETE job with both timestamps — the D-17 shape (NO session launch tracking anywhere, the reload/seed reality). */
+  function completeSeededJob(): JobRecord {
+    return { jobId: 'job:57d1815d', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: T0 + 20, completedAt: T0 + 28, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1 } };
+  }
+
+  it('a COMPLETE job with timestamps renders its elapsed — no session launch tracking anywhere (the exact persona/Lead shape)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 30, job: completeSeededJob() },
+      { kind: 'view-live', at: T0 + 40 },
+    ]);
+    expect(state.launch.jobId).toBeNull(); // no tracked launch — the pre-fix sheet rendered 'pending' exactly here
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', sheet: { kind: 'job', id: 'job:57d1815d' } }));
+    expect(bytes).toContain('job:57d1815d');
+    expect(bytes).toContain('completed at');      // the record's completion instant renders
+    // the METRICS pair carries the derived duration (8ms — the record's own arithmetic)
+    expect(bytes).toContain('8ms');
+  });
+
+  it('a RUNNING job (genuinely incomplete — no completedAt on the record) still renders pending', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 30, job: { jobId: 'job-running-1', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'running', submittedAt: T0 + 20 } },
+      { kind: 'view-live', at: T0 + 40 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', sheet: { kind: 'job', id: 'job-running-1' } }));
+    expect(bytes).toContain('pending'); // the honest in-flight state
+  });
+
+  it('the Research section\'s row carries the duration meta for EVERY completed job (not only the tracked launch)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 30, job: completeSeededJob() },
+      { kind: 'section-selected', at: T0 + 31, section: 'research' },
+      { kind: 'view-live', at: T0 + 40 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('job:57d1815d');
+    expect(bytes).toContain('8ms'); // the row's meta — the record's own duration
+  });
+});

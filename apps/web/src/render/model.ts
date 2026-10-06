@@ -35,7 +35,7 @@ import { assertProjectScope, type WorkspaceScope } from '../core/tenant';
 import { renderDecimal } from '../core/decimals';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { PolicyEnforcementError } from '../core/errors';
-import { renderJobProgress, LAUNCH_STEPS, type JobProgressView, type LaunchStep } from '../core/launch';
+import { elapsedMsOfJobRecord, renderJobProgress, LAUNCH_STEPS, type LaunchStep } from '../core/launch';
 import { formatNumberGrouped } from './numbers';
 import {
   EXECUTION_MODES,
@@ -340,22 +340,39 @@ function jobPillOf(job: JobRecord): { tone: PillTone; label: string } {
   return { tone: pillToneOfDomain(status), label: job.status };
 }
 
-/** Render one job with its progress view. */
-function jobCard(scope: WorkspaceScope, job: JobRecord, viewAt: number, progress: JobProgressView | null): VNode {
+/**
+ * Render one job as an interactive list row (§4.4). D-17 (W-29): the row's
+ * duration meta derives from the RECORD's own timestamps (completedAt −
+ * submittedAt) — never from the session's observation points, which exist
+ * only for the current launch's tracked job and die at every reload. Every
+ * complete job with timestamps carries its duration on the row.
+ */
+function jobCard(scope: WorkspaceScope, job: JobRecord, viewAt: number): VNode {
   assertProjectScope(scope, job);
   visibleAt(job, availabilityOfJob(job), viewAt, job.jobId);
+  const elapsed = elapsedMsOfJobRecord(job);
   return listRow({
     icon: 'flask',
     title: job.jobId,
     subtitle: `${job.kind} job`,
     pill: jobPillOf(job),
-    ...(progress !== null && progress.elapsedMs !== null ? { meta: formatDurationMs(progress.elapsedMs) } : {}),
+    ...(elapsed !== null ? { meta: formatDurationMs(elapsed) } : {}),
     rowId: `job:${job.jobId}`,
   });
 }
 
-/** The job's detail sheet (§4.5a) — the same availability + scope gates as the row. */
-function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, progress: JobProgressView | null): VNode[] {
+/**
+ * The job's detail sheet (§4.5a) — the same availability + scope gates as
+ * the row. D-17 (W-29): the METRICS elapsed derives from the RECORD's own
+ * timestamps (completedAt − submittedAt, elapsedMsOfJobRecord) — the
+ * root-cause fix for the "elapsed: pending" the personas and the Lead met
+ * on COMPLETE jobs with BOTH timestamps present (the seed job:57d1815d, the
+ * Lead's fresh kickoff job:1f7a71dc): the sheet used renderJobProgress over
+ * the SESSION's observation points (empty for every non-tracked job and
+ * after every reload), so the truth sitting in the record never rendered.
+ * 'pending' shows ONLY while the record genuinely carries no completedAt.
+ */
+function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number): VNode[] {
   assertProjectScope(scope, job);
   visibleAt(job, availabilityOfJob(job), viewAt, job.jobId);
   const status: DefinitionSection = {
@@ -366,9 +383,10 @@ function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, progres
       ...(job.completedAt !== undefined ? ([['completed at', formatInstantUtc(job.completedAt)]] as const) : []),
     ],
   };
+  const elapsed = elapsedMsOfJobRecord(job);
   const metrics: DefinitionSection = {
     eyebrow: 'METRICS',
-    pairs: [['elapsed', progress === null || progress.elapsedMs === null ? 'pending' : formatDurationMs(progress.elapsedMs)]],
+    pairs: [['elapsed', elapsed === null ? 'pending' : formatDurationMs(elapsed)]],
   };
   // THE RESULT SECTION (the R1 fix): when the job record carries its
   // completion payload, the deliverable renders READABLY here — the
@@ -785,7 +803,7 @@ function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView):
     // fold mints one only for a COMPLETED job WITH a result; a pending or
     // failed job renders no capsule — nothing fabricated, L20).
     return [
-      ...jobSheet(state.scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : [])),
+      ...jobSheet(state.scope, job, viewAt),
       ...capsulesFromJobs(state.scope, [job]).map((capsule) => capsuleInline(capsule, viewAt, view.openCapsule)),
     ];
   }
@@ -920,7 +938,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       ]);
   } else if (selector === 'research') {
       const projected = projectToView(state.jobs.filter((job) => job.kind === 'research'), viewAt, availabilityOfJob);
-      const cards = projected.map((job) => jobCard(scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : [])));
+      const cards = projected.map((job) => jobCard(scope, job, viewAt));
       return v('section', { class: 'panel', 'data-section': 'research' }, [
         ...cards,
         ...(projected.length === 0 ? [sectionEmpty('research')] : []),
@@ -931,7 +949,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       for (const outcome of projectToView(state.outcomes, viewAt, availabilityOfOutcome)) {
         if (outcome.lineage.experiment !== null) experiments.set(outcome.lineage.experiment.experimentRef, outcome.lineage.experiment.trialRef);
       }
-      const cards = projected.map((job) => jobCard(scope, job, viewAt, null));
+      const cards = projected.map((job) => jobCard(scope, job, viewAt));
       return v('section', { class: 'panel', 'data-section': 'experiments' }, [
         v('div', { class: 'card' }, [
           v('div', { class: 'card-title' }, ['Experiment lineage']),
