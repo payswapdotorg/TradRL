@@ -56,7 +56,8 @@ import { bootConsole, readStoredScopeProject, SCOPE_STORAGE_KEY } from './consol
 import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
 import { toCreateProjectInput } from '../core/launch';
-import type { JobRecord, OutcomeRecord } from '../api/contracts';
+import type { GatewaySubmissionRecord, JobRecord, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
+import { capsuleFromJob, capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
 import { verifyWorkspaceExport, viewAtOf } from '../core/workspace';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
 
@@ -2602,6 +2603,215 @@ describe('executed boot: D-1 — the goal boot seam (the goal/constraint-set fet
 });
 
 // ---------------------------------------------------------------------------
+// D-8 (W-28) — THE PERSISTED LAUNCH WORLD: the Market World section was
+// bound to the IN-SESSION launch draft (apps/web render/model.ts read
+// state.launch.draft only), so after a page RELOAD — or a scope switch, or
+// a cold start — the section rendered its teaching empty state FOREVER for
+// every launched project (M4's + L5's re-run finding; the re-run's ONLY
+// project blocker). The fix persists the world at launch (the kickoff
+// job's opaque spec carries it to the backing, which captures it at the
+// job-port seam into the goal-set record's payload — tradrl_project_goals,
+// the payload-side solution; the frozen GoalStatement/ConstraintSet shapes
+// are untouched) and rebinds the section to the goal route's ADDITIVE
+// `world` field (state.world), with the in-session draft remaining only
+// while the wizard is open in a scope that has no world yet. The demo
+// scope keeps the teaching empty state (its seeded goal genuinely has no
+// world fields — the correct behavior, preserved).
+// ---------------------------------------------------------------------------
+
+/** The world-seam fixture: two LAUNCHED desks (each with its OWN persisted world in the goal bundle) + the demo project (no world — the teaching empty state's scope). The launch arm (POST /v1/projects + POST /v1/jobs/research) captures the submitted console-launch spec's world and serves it back on the created project's goal route — the W-28 backing's own law, mirrored. */
+function worldSeamTransport(): {
+  readonly transport: ApiTransport;
+  readonly goalReads: { count: number; projects: string[] };
+  readonly createdProjectId: () => string | null;
+  readonly submittedSpecs: Record<string, unknown>[];
+} {
+  const goalReads = { count: 0, projects: [] as string[] };
+  const submittedSpecs: Record<string, unknown>[] = [];
+  let created: string | null = null;
+  const goalOf = (id: string) => toCreateProjectInput(VALID_DRAFT, { projectId: id, goalId: `goal-${id}`, constraintSetId: `cs-${id}` }, 'tenant-a', T0);
+  const worldOf = (id: string): Record<string, unknown> | null => {
+    if (id === 'prj-desk-a') {
+      return {
+        markets: ['BTC-USD', 'ETH-USD'], venues: ['binance', 'kraken'], dataSources: ['candle-v1', 'depth-v1'],
+        executionMode: 'simulation', capitalBudget: '500000.00', riskBudget: '40000.00',
+        horizon: { startsAt: T0, endsAt: T0 + 2592000000 },
+      };
+    }
+    if (id === 'prj-desk-b') {
+      return {
+        markets: ['SOL-USD', 'AVAX-USD'], venues: ['coinbase', 'okx'], dataSources: ['candle-v1', 'trades-v1'],
+        executionMode: 'simulation', capitalBudget: '250000.00', riskBudget: '12000.00',
+        horizon: { startsAt: T0, endsAt: T0 + 2592000000 },
+      };
+    }
+    if (id === created && created !== null) {
+      // THE W-28 BACKING'S OWN LAW, mirrored: the goal route serves the world
+      // the backing CAPTURED from the created project's kickoff-job spec
+      // (exactly the world fields — the extraction deploy/vercel's
+      // launchWorldOfSpec performs host-side).
+      const spec = submittedSpecs[submittedSpecs.length - 1];
+      if (spec === undefined) return null;
+      return {
+        markets: spec.markets, venues: spec.venues, dataSources: spec.dataSources,
+        executionMode: spec.executionMode, capitalBudget: spec.capitalBudget, riskBudget: spec.riskBudget,
+        horizon: spec.horizon,
+      };
+    }
+    return null; // the demo scope: NO world on record (the seeded goal has none — the teaching empty state is CORRECT)
+  };
+  const projectOf = (id: string, name: string): Record<string, unknown> => ({
+    id, tenantId: 'tenant-a', name, executionMode: 'simulation',
+    lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+    lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: `goal-${id}`, version: 1 }, constraintSet: { id: `cs-${id}`, version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  });
+  const ok = (data: unknown, status = 200) => ({ status, headers: {}, body: { requestId: 'req-1', data } });
+  const notFound = () => ({ status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } });
+  const transport: ApiTransport = async (request) => {
+    const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+    const key = `${request.method} ${path}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-desk-a', 'Desk A'), projectOf('prj-desk-b', 'Desk B'), projectOf('prj-demo-console', 'the TradRL demo project')] });
+    if (path.startsWith('/v1/projects/') && path.endsWith('/goal')) {
+      const id = path.slice('/v1/projects/'.length, -'/goal'.length);
+      goalReads.count += 1;
+      goalReads.projects.push(decodeURIComponent(request.path.split('?project=')[1] ?? ''));
+      if (id !== 'prj-desk-a' && id !== 'prj-desk-b' && id !== 'prj-demo-console' && id !== created) return notFound();
+      const createdGoal = id === created && created !== null ? goalOf(id) : null;
+      if (id === 'prj-demo-console') {
+        // THE DEMO SCOPE: the seeded goal with NO world field (the W-25B serve shape, byte-identical).
+        return ok({ goal: goalOf(id).goal, constraintSet: goalOf(id).constraintSet });
+      }
+      const world = worldOf(id); // null only for a fresh launch pre-capture — the capture is immediate below
+      return ok({
+        goal: (createdGoal ?? goalOf(id)).goal,
+        constraintSet: (createdGoal ?? goalOf(id)).constraintSet,
+        ...(world === null ? {} : { world }),
+      });
+    }
+    if (key === 'POST /v1/projects') {
+      const body = request.body as { id?: string } | undefined;
+      created = body?.id ?? null;
+      return ok(projectOf(created ?? 'prj-created', 'Freshly Launched'), 201);
+    }
+    if (key === 'POST /v1/jobs/research') {
+      const body = request.body as { spec?: Record<string, unknown> } | undefined;
+      if (body?.spec !== undefined) submittedSpecs.push(body.spec);
+      return ok({ jobId: 'job:w28kickoff', kind: 'research', tenant: 'tenant-a', project: created, status: 'submitted', submittedAt: T0 + 10 }, 202);
+    }
+    for (const id of ['prj-desk-a', 'prj-desk-b', 'prj-demo-console', created]) {
+      if (id === null) continue;
+      if (key === `GET /v1/projects/${id}`) return ok(projectOf(id, 'scoped'));
+    }
+    if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: [] });
+    if (key === 'GET /v1/jobs') return ok({ items: [] });
+    if (path.startsWith('/v1/jobs/')) {
+      // the per-id poll of the kickoff job this transport minted (the launch flow's own poll cadence)
+      const jobId = path.slice('/v1/jobs/'.length);
+      if (jobId === 'job:w28kickoff' && created !== null) return ok({ jobId: 'job:w28kickoff', kind: 'research', tenant: 'tenant-a', project: created, status: 'submitted', submittedAt: T0 + 10 });
+      return notFound();
+    }
+    return notFound();
+  };
+  return { transport, goalReads, createdProjectId: () => created, submittedSpecs };
+}
+
+describe('executed boot: D-8 (W-28) — the persisted launch world (the Market World section reads the project\'s own world, not the session draft)', () => {
+  it('the RELOAD path: boot straight into a LAUNCHED scope and the Market World section renders the project\'s OWN persisted world (markets/venues/data sources) — never the teaching empty state', async () => {
+    const api = worldSeamTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-desk-a');
+    expect(goalReadsFor(api, 'prj-desk-a').length).toBeGreaterThan(0); // the boot goal read fired for the launched scope
+    // state.world carries the PERSISTED world (the goal bundle's additive field) — not null, not the session draft (none exists: fresh boot)
+    expect(rig.handle.state().world).not.toBe(null);
+    expect(rig.handle.state().world?.markets).toEqual(['BTC-USD', 'ETH-USD']);
+    expect(rig.handle.state().launch.draft).toBe(null); // no session draft — the pre-fix section rendered the teaching empty state HERE
+    // the Market World section renders the persisted world card (the whole-tree
+    // text — the sidebar's nav item carries data-section too, so the panel is
+    // asserted by its CONTENT, the file's standard pattern)
+    clickNav(rig, 'market-world');
+    const texts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(texts).toContain('BTC-USD, ETH-USD'); // the launched markets
+    expect(texts).toContain('binance, kraken'); // the launched venues
+    expect(texts).toContain('candle-v1, depth-v1'); // the launched data sources
+    expect(texts).toContain('500000.00'); // the capital budget, exact decimal
+    expect(texts).not.toContain('No launch context yet'); // the D-8 defect is gone on the reload path
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+  });
+
+  it('the SCOPE-SWITCH path: each desk keeps its OWN world (A -> B -> demo -> A), and the demo scope keeps the teaching empty state', async () => {
+    const api = worldSeamTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-desk-a');
+    expect(rig.handle.state().world?.markets).toEqual(['BTC-USD', 'ETH-USD']); // desk A's own world loaded at boot
+
+    // switch to desk B: the adoption resets the world, the beat's refetch loads B's OWN world
+    await switchScope(rig, 'prj-desk-b');
+    expect(rig.handle.state().world?.markets).toEqual(['SOL-USD', 'AVAX-USD']); // desk B's world, never A's
+    expect(rig.handle.state().world?.venues).toEqual(['coinbase', 'okx']);
+    clickNav(rig, 'market-world');
+    const bTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(bTexts).toContain('SOL-USD, AVAX-USD');
+    expect(bTexts).not.toContain('BTC-USD, ETH-USD'); // no cross-scope bleed (D-15's market-world half)
+
+    // switch to the DEMO scope: no world on record -> the TEACHING EMPTY STATE (the correct, preserved behavior)
+    await switchScope(rig, 'prj-demo-console');
+    expect(rig.handle.state().world).toBe(null); // the goal bundle served no world — any prior one is CLEARED
+    clickNav(rig, 'market-world');
+    const demoTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(demoTexts).toContain('No launch context yet — the market world is specified at launch.'); // the teaching empty state stays
+    expect(demoTexts).toContain('Open Goal'); // its single action stays
+
+    // switch back to desk A: A's OWN world returns (per-scope truth, no stale carry)
+    await switchScope(rig, 'prj-desk-a');
+    expect(rig.handle.state().world?.markets).toEqual(['BTC-USD', 'ETH-USD']);
+    clickNav(rig, 'market-world');
+    expect(elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ')).toContain('BTC-USD, ETH-USD');
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+  });
+
+  it('the IN-SESSION launch bridge: the kickoff job\'s spec carries the world to the backing, and the world renders IMMEDIATELY after the launch (before any beat) — then the refetch keeps it from the wire', async () => {
+    const api = worldSeamTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-desk-a');
+    await rig.handle.submitLaunch(VALID_DRAFT);
+    const adopted = api.createdProjectId();
+    if (adopted === null) throw new Error('the launch created no project');
+    expect(rig.handle.state().scope.projectId).toBe(adopted);
+    // the kickoff job's spec CARRIED the world (the console->host carrier — the backing's capture surface)
+    expect(api.submittedSpecs.length).toBe(1);
+    expect(api.submittedSpecs[0]?.kind).toBe('console-launch');
+    expect(api.submittedSpecs[0]?.markets).toEqual(['binance:BTC-USDT']);
+    expect(api.submittedSpecs[0]?.venues).toEqual(['binance']);
+    expect(api.submittedSpecs[0]?.dataSources).toEqual(['candles:1m']);
+    // the in-session bridge dispatched the draft's OWN world — the section renders it immediately (no beat yet)
+    expect(rig.handle.state().world?.markets).toEqual(['binance:BTC-USDT']);
+    expect(rig.handle.state().world?.capitalBudget).toBe('10000.00');
+    clickNav(rig, 'market-world');
+    expect(elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ')).toContain('binance:BTC-USDT');
+    // the beat's scope refetch re-reads the goal route: the PERSISTED world (what the backing captured from the spec) keeps the section rendered
+    await rig.handle.beat();
+    expect(rig.handle.state().world).not.toBe(null);
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+  });
+});
+
+/** The goal-route reads recorded for one project (the world-seam fixture's own log). */
+function goalReadsFor(api: { readonly goalReads: { readonly count: number; readonly projects: readonly string[] } }, project: string): readonly string[] {
+  return api.goalReads.projects.filter((read) => read === project);
+}
+
+/** Switch the workspace scope through the Settings switcher (the R6c machinery — the committed choice adopts the project). */
+async function switchScope(rig: Rig, project: string): Promise<void> {
+  clickNav(rig, 'settings');
+  const switcher = findByData(rig.root, 'data-action', 'project-switch');
+  if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+  switcher.value = project;
+  rig.doc.fire('change', { target: switcher });
+  expect(rig.handle.state().scope.projectId).toBe(project); // the adoption landed
+  await rig.handle.beat(); // the scope-change refetch (the goal read included — D-8's read path)
+}
+
+// ---------------------------------------------------------------------------
 // D-3 (W-25A) — THE JOBS SEAM, executed: the backing serves the project's
 // job records at GET /v1/jobs?project=<id> (the W-25A host route — the
 // backing's API-owned job store, the same store the per-id GET reads),
@@ -2793,6 +3003,145 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     clickAction(rig, 'palette-open');
     expect(countByClass(rig.root, 'palette-item')).toBe(16);
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-9 (W-28) — THE RESULT->JOB LINEAGE LEG, executed: the demo scope's
+// OWN seed shape (the re-run's exact observation surface — 6 seed capsules:
+// one outcome, one post-mortem, one knowledge, three submissions — plus the
+// two SEEDED demo jobs, both completed WITH results: the research
+// release-candidate and the learning training-summary). L2's P10 finding
+// was that a fresh release-candidate result minted ZERO capsules and NO
+// capsule referenced its job — the research result was a lineage leaf.
+// These journeys pin the fix at the executed-boot level: the Evidence
+// section lists the job-derived capsules ALONGSIDE the 6 unchanged seed
+// capsules, and the job capsule opens its payload + provenance inline
+// (route · entity id · tenant/project · available-at — the lineage leg).
+// ---------------------------------------------------------------------------
+
+/** The demo evidence transport: the demo scope's full capsule seed (outcome + post-mortem + knowledge + the 3-row blotter) + BOTH seeded demo jobs completed with their results (the jobs the W-25A seam serves — the same records GET /v1/jobs reads in EITHER backing; the durable lane hydrates through the same route). */
+function demoEvidenceTransport(): ApiTransport {
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+  const project = {
+    id: 'prj-a', tenantId: 'tenant-a', name: 'Console Test Project', executionMode: 'simulation',
+    lifecycle: { projectId: 'prj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+    lineage: { projectId: 'prj-a', createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  };
+  const postMortem = {
+    postMortemId: 'pmr:demo0001', ordinal: 1,
+    subject: { outcomeRecordRef: 'out:demo0001', decisionRef: 'xd:demo0001', intentRef: 'si:demo0001', outcomeClass: 'adverse_gap' },
+    expected: { expectedQuantity: '0.75', expectedRealized: '45.5', tolerance: '0.05' },
+    happened: { disposition: 'filled', filledQuantity: '0.75', realizedOutcome: '-12.5', feeTotal: '0.02', notionalTotal: '45750.375' },
+    gap: { quantityShortfall: '0', realizedGap: '-12.5', withinTolerance: false },
+    hypotheses: [{ class: 'decision', confidence: '0.8', detail: { dimension: 'timing' }, evidence: [{ kind: 'decision', ref: 'xd:demo0001' }], note: 'the demo hypothesis: the rebalance window was missed by the simulated venue lag' }],
+    evidence: [{ kind: 'shadow_outcome', ref: 'swo:demo0001' }],
+    lineage: { tenant: 'tenant-a', project: 'prj-a', shadowSessionRef: 'shs:demo0001', shadowOutcomeRef: 'swo:demo0001', trajectoryRef: null, experiment: null },
+    asOf: T0 + 150, priorChainHead: '00000000',
+  };
+  const knowledge = {
+    record: {
+      knowledgeId: 'fkr:ee46c14d', ordinal: 1, tenant: 'tenant-a', project: 'prj-a',
+      claim: { kind: 'decision_pattern', polarity: 'harmful', dimension: 'timing', lagBand: null },
+      confidence: '0.8', evidenceCount: 2,
+      provenance: { postMortemRefs: ['pmr:demo0001'], outcomeRefs: ['out:demo0001'], experimentRefs: [], trialRefs: [], trajectoryRefs: [], sessionRefs: [] },
+      validity: { from: T0, to: T0 + 10_000 }, asOf: T0 + 160, priorChainHead: '00000000',
+    },
+    status: 'active', supersededBy: null,
+  };
+  const demoJobs: readonly JobRecord[] = [
+    { jobId: 'job:57d1815d', kind: 'research', tenant: 'tenant-a', project: 'prj-a', status: 'complete', submittedAt: T0 + 100, completedAt: T0 + 200, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'prj-a' } },
+    { jobId: 'job:9c81a2b0', kind: 'learning', tenant: 'tenant-a', project: 'prj-a', status: 'complete', submittedAt: T0 + 110, completedAt: T0 + 210, result: { kind: 'training-summary', epochs: 3, project: 'prj-a' } },
+  ];
+  const transport: ApiTransport = async (request) => {
+    const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+    const key = `${request.method} ${path}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects/prj-a') return ok(project);
+    if (key === 'POST /v1/knowledge/query') return ok({ items: [knowledge] });
+    if (key === 'POST /v1/post-mortems/query') return ok({ items: [postMortem] });
+    if (key === 'POST /v1/outcomes/query') return ok({ items: [enrichedOutcome()] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: seededSubmissions() });
+    if (key === 'GET /v1/jobs') return ok({ items: demoJobs });
+    if (path.startsWith('/v1/jobs/')) {
+      const job = demoJobs.find((candidate) => candidate.jobId === path.slice('/v1/jobs/'.length));
+      if (job !== undefined) return ok(job);
+    }
+    if (key === 'GET /v1/projects') return ok({ items: [project] });
+    return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
+  };
+  return transport;
+}
+
+describe('executed boot: D-9 (W-28) — the result->job lineage leg (the Evidence section lists the job capsules beside the seed capsules)', () => {
+  it('the demo scope renders its 6 seed capsules UNCHANGED plus ONE capsule per completed job WITH a result — and the job capsule opens the lineage leg inline (the job ref + the provenance line)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, demoEvidenceTransport(), 'prj-a');
+    expect(rig.handle.state().degraded).toEqual([]); // every read answered — honest throughout
+    expect(rig.handle.state().jobs).toHaveLength(2); // both seeded demo jobs entered through the W-25A seam
+
+    // THE EVIDENCE SECTION: the fold lists every source family
+    clickNav(rig, 'evidence');
+    const scope = rig.handle.state().scope;
+    const state = rig.handle.state();
+    const seedIds = [
+      capsuleFromOutcome(scope, state.outcomes[0] as OutcomeRecord).capsuleId,
+      capsuleFromPostMortem(scope, state.postMortems[0] as PostMortemRecord).capsuleId,
+      capsuleFromKnowledge(scope, state.knowledge[0] as ServedKnowledge).capsuleId,
+      ...state.submissions.map((submission) => capsuleFromSubmission(scope, submission as GatewaySubmissionRecord).capsuleId),
+    ];
+    expect(seedIds).toHaveLength(6); // the demo scope's seed capsules: 1 outcome + 1 post-mortem + 1 knowledge + 3 submissions
+    const jobIds = state.jobs.map((job) => capsuleFromJob(scope, job).capsuleId);
+    expect(jobIds).toHaveLength(2); // one per completed job WITH a result (research + learning)
+    for (const capsuleId of [...seedIds, ...jobIds]) {
+      const badge = findByData(rig.root, 'data-capsule-open', capsuleId);
+      if (badge === null) throw new Error(`the Evidence section renders no capsule badge for ${capsuleId}`);
+    }
+    expect(countByData(rig.root, 'data-action', 'capsule-open')).toBeGreaterThanOrEqual(8); // 6 seed + 2 job capsules
+
+    // THE LINEAGE LEG: opening the research job's capsule renders its facts + the JOB REF + the provenance line
+    const researchJob = state.jobs.find((job) => job.kind === 'research');
+    if (researchJob === undefined) throw new Error('the fixture served no research job');
+    const researchCapsule = capsuleFromJob(scope, researchJob);
+    const badge = findByData(rig.root, 'data-capsule-open', researchCapsule.capsuleId) as FakeElement;
+    click(rig, badge);
+    const payload = elementsOf(rig.root).find((element) => element.hasClass('capsule-payload') && element.getAttribute('data-capsule-open') === researchCapsule.capsuleId);
+    if (payload === undefined) throw new Error('the opened job capsule rendered no inline payload');
+    const payloadTexts = elementsOf(payload).map((element) => textOf(element)).join(' ');
+    expect(payloadTexts).toContain('refs: job:job:57d1815d');            // the capsule references its job (the leg L2 asked for)
+    expect(payloadTexts).toContain('deliverable: release-candidate');   // the result payload's own facts
+    expect(payloadTexts).toContain('spec-id: spec-demo-director');
+    expect(payloadTexts).toContain('read from /v1/jobs/:jobId');        // the provenance line's route
+    expect(payloadTexts).toContain('job job:57d1815d');                 // the entity id in the provenance line
+    expect(payloadTexts).toContain(`tenant tenant-a / project prj-a`);  // the scope line (L12's own render)
+    expect(payloadTexts).toContain('available ');                       // the available-at stamp (L4)
+
+    // the LEARNING job's capsule carries its own deliverable marker (the training summary)
+    const learningJob = state.jobs.find((job) => job.kind === 'learning');
+    if (learningJob === undefined) throw new Error('the fixture served no learning job');
+    const learningCapsule = capsuleFromJob(scope, learningJob);
+    const learningBadge = findByData(rig.root, 'data-capsule-open', learningCapsule.capsuleId) as FakeElement;
+    click(rig, learningBadge);
+    const learningPayload = elementsOf(rig.root).find((element) => element.hasClass('capsule-payload') && element.getAttribute('data-capsule-open') === learningCapsule.capsuleId);
+    if (learningPayload === undefined) throw new Error('the opened learning capsule rendered no inline payload');
+    expect(elementsOf(learningPayload).map((element) => textOf(element)).join(' ')).toContain('epochs: 3');
+  });
+
+  it('a scope with NO completed jobs keeps the Evidence teaching empty state (no capsule fabricated for pending work)', async () => {
+    const transport = demoEvidenceTransport();
+    const pendingOnly: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'GET' && path === '/v1/jobs') {
+        return { status: 200, headers: {}, body: { requestId: 'req-1', data: { items: [{ jobId: 'job:pending01', kind: 'research', tenant: 'tenant-a', project: 'prj-a', status: 'running', submittedAt: T0 + 100 }] } } };
+      }
+      return transport(request);
+    };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, pendingOnly, 'prj-a');
+    clickNav(rig, 'evidence');
+    // the seed families still render their capsules (6 — the read families are untouched by the jobs fold)
+    const badges = elementsOf(rig.root).filter((element) => element.getAttribute('data-action') === 'capsule-open');
+    expect(badges).toHaveLength(6); // the running job minted NOTHING (a pending job proves nothing about a deliverable — L20)
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'No evidence capsules at this view instant.')).toBe(false); // the seed capsules render, not the empty state
   });
 });
 

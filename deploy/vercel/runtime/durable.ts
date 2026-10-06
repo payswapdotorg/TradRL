@@ -113,6 +113,7 @@ import type {
 } from '../../../services/api/src/index';
 import { canonicalJson, isJobRecord } from '../../../services/api/src/index';
 import { fakeJobSubmission } from '../../../services/api/src/fixtures';
+import { DEMO_PROJECT_ID, launchWorldOfSpec } from './demo';
 import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, type GoalSetRecord, type NeonStoreDeps } from '../../adapters/neon/stores';
 import type { NeonConfig } from '../../adapters/neon/client';
 import type { ServedKnowledgeMirror } from '../../adapters/neon/mirrors';
@@ -135,10 +136,17 @@ export interface DurableSeamDeps {
   readonly instants: InstantSourceMirror;
 }
 
-/** One hydrated goal set — the create-project input's goal + constraint set, verbatim (what main already carries). */
+/**
+ * One hydrated goal set — the create-project input's goal + constraint set,
+ * verbatim (what main already carries); since W-28 (D-8) optionally the
+ * LAUNCH WORLD SPECIFICATION the kickoff job's spec carried (merged into the
+ * same opaque goal-set payload — no schema change).
+ */
 export interface HydratedGoalSet {
   readonly goal: unknown;
   readonly constraintSet: unknown;
+  /** The launch world specification, when the goal-set row carries one (W-28, D-8). */
+  readonly world?: unknown;
 }
 
 /**
@@ -744,8 +752,41 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
         // exact jobId, status, result and timestamps) — the frozen
         // pipeline's handler stores the port's return into the API-owned
         // job store, which is the whole point (the store the per-id GET
-        // and the list fold read now carries the durable record).
+        // and the list fold read now carries the durable record). The
+        // replay's spec is the seam's own `{ hydrated: true }` marker —
+        // never a console-launch spec, so no world capture rides this
+        // path (the world persisted at the ORIGINAL submission).
         return { ok: true, value: hydrationQueue.shift() as JobRecord };
+      }
+      // THE LAUNCH WORLD CAPTURE (D-8, W-28): a console-launch kickoff
+      // spec carries the launch's world specification — the only
+      // console->host carrier the frozen contracts leave room for (the
+      // create-project parser keeps exactly its own six fields). The
+      // world MERGES into the project's goal-set row: the live overlay
+      // serves it immediately (goalOf) and the durable write rides the
+      // drain like every control-plane write (the ordering law). The
+      // capture is structural (launchWorldOfSpec validates every field;
+      // a foreign or malformed spec captures nothing — R46), skips the
+      // DEMO project (its goal set stays world-less by design — the demo
+      // scope's teaching empty state is correct), requires a goal set on
+      // record for the project (the console's flow always creates the
+      // project first; an unknown project's world is skipped, never a
+      // crash), and is IDEMPOTENT — a goal set already carrying the same
+      // world (byte-identical, the W-27 recordJobs pattern) queues
+      // nothing.
+      const world = launchWorldOfSpec(input.spec);
+      if (world !== null) {
+        const projectId = input.project as string;
+        if (projectId !== DEMO_PROJECT_ID) {
+          const existing = liveGoalSets.get(projectId) ?? null;
+          if (existing !== null) {
+            const merged: GoalSetRecord = { ...existing, world };
+            if (canonicalJson((existing.world ?? null) as never) !== canonicalJson(world as never)) {
+              liveGoalSets.set(projectId, merged);
+              pending.push({ label: 'goalset.world.put', run: () => projectStore.putGoalSet(deps.tenant, projectId, merged) });
+            }
+          }
+        }
       }
       return innerJobSubmission.submitJob(input);
     },

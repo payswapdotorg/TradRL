@@ -11,7 +11,7 @@
 //   - section registry completeness (the twelve, selectable, default goal).
 
 import { describe, expect, it } from 'vitest';
-import type { GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ServedKnowledge } from '../api/contracts';
 import {
   CHAIN_ALGORITHM,
   CHAIN_FORMAT_VERSION,
@@ -32,7 +32,7 @@ import {
 import { WORKSPACE_SECTIONS } from './sections';
 import { CrossTenantRenderError } from './errors';
 import { canonicalJson, sha256Hex, sha256Of } from './digest';
-import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from './evidence';
+import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsuleFromJob } from './evidence';
 
 const SCOPE = { tenantId: 'tenant-a', projectId: 'proj-a' } as const;
 const T0 = 1_700_000_000_000;
@@ -66,6 +66,25 @@ function goalRecord(): GoalStatement {
 
 function orgSnapshot(status: 'forming' | 'active' = 'active'): OrgStatusSnapshot {
   return { organizationRef: 'org:alpha', tenant: 'tenant-a', project: 'proj-a', status, at: T0 + 10, instanceRefs: ['inst:1', 'inst:2'] };
+}
+
+/** A minimal constraint-set record (the goal-loaded pair's second half). */
+function constraintSetRecord(): ConstraintSetStatement {
+  return { id: 'cs-1', version: 1, tenantId: 'tenant-a', constraints: [], createdAt: T0 };
+}
+
+/** One persisted launch world (the host goal route's additive `world` field — D-8, W-28). */
+function worldRecord(overrides: Partial<ProjectGoalWorldSpec> = {}): ProjectGoalWorldSpec {
+  return {
+    markets: ['BTC-USD', 'ETH-USD'],
+    venues: ['binance', 'kraken'],
+    dataSources: ['candle-v1', 'depth-v1'],
+    executionMode: 'simulation',
+    capitalBudget: '500000.00',
+    riskBudget: '40000.00',
+    horizon: { startsAt: T0, endsAt: T0 + 86_400_000 },
+    ...overrides,
+  };
 }
 
 function jobRecord(status: 'submitted' | 'running' | 'complete' | 'failed' = 'running'): JobRecord {
@@ -132,6 +151,28 @@ describe('workspace: opening + the twelve-section registry', () => {
   it('opening requires a real scope and an integer instant', () => {
     expect(() => openWorkspace({ tenantId: '', projectId: 'p' }, T0)).toThrow(/scope/);
     expect(() => openWorkspace(SCOPE, 1.5)).toThrow(/integer/);
+  });
+});
+
+describe('workspace: the persisted launch world (D-8, W-28 — the goal bundle\'s additive `world` field)', () => {
+  it('goal-loaded WITH a world sets it; a later world-less goal-loaded (the demo scope, a pre-W-28 launch) CLEARS it — the state always mirrors THIS scope\'s read-back truth', () => {
+    let state = openWorkspace(SCOPE, T0);
+    expect(state.world).toBeNull(); // the fresh workspace carries no world
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    expect(state.world).toEqual(worldRecord()); // the persisted launch world entered the state
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord() }); // NO world on the wire
+    expect(state.world).toBeNull(); // the prior scope's world never survives a world-less read (no stale carry)
+    // a re-read WITH a world restores it (the scope's own truth)
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 3, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord({ markets: ['SOL-USD'] }) });
+    expect(state.world?.markets).toEqual(['SOL-USD']);
+  });
+
+  it('the export carries the persisted world inside the workspace state block (D-14\'s world-spec gap, closed at the console\'s half)', () => {
+    const state = reduceWorkspace(openWorkspace(SCOPE, T0), { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    const doc = composeWorkspaceExport(state);
+    expect(doc.workspace.world).toEqual(worldRecord()); // the export's workspace.state block carries the world — reconstructable downstream
+    const parsed = JSON.parse(serializeWorkspaceExport(state)) as { workspace: { world: unknown } };
+    expect(parsed.workspace.world).toEqual(worldRecord()); // and it SURVIVES the serialized bytes
   });
 });
 
@@ -213,17 +254,20 @@ describe('workspace: transitions', () => {
     // append-only chain keeps everything).
     let state = openWorkspace({ tenantId: 'tenant-a', projectId: 'proj-a' }, T0);
     state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 1, project: projectRecord({ lifecycle: { projectId: 'proj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:demo' } }) });
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
     state = reduceWorkspace(state, { kind: 'org-snapshot', at: T0 + 2, snapshot: orgSnapshot() });
     state = reduceWorkspace(state, { kind: 'outcomes-loaded', at: T0 + 3, records: [outcomeRecord()] });
     state = reduceWorkspace(state, { kind: 'knowledge-loaded', at: T0 + 4, records: [knowledgeRecord()] });
     state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 5, job: jobRecord('complete') });
     expect(state.project?.id).toBe('proj-a'); // the deployed boot's loaded world
+    expect(state.world).not.toBeNull(); // the loaded world rides the loaded goal (D-8, W-28)
 
     const adopted = reduceWorkspace(state, { kind: 'project-adopted', at: T0 + 6, projectId: 'proj-launched' });
     expect(adopted.scope.projectId).toBe('proj-launched'); // the workspace FOLLOWS the launch
     expect(adopted.project).toBeNull();                    // the prior project's records left the sections…
     expect(adopted.goal).toBeNull();
     expect(adopted.constraintSet).toBeNull();
+    expect(adopted.world).toBeNull(); // D-8 (W-28): the prior project's world left with them (a scope switch never renders a foreign world)
     expect(adopted.orgSnapshots).toHaveLength(0);
     expect(adopted.outcomes).toHaveLength(0);
     expect(adopted.knowledge).toHaveLength(0);
@@ -687,6 +731,34 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
     for (const capsule of doc.capsules) {
       expect(capsule.capsuleId).toMatch(/^evc:[0-9a-f]{8}$/); // content-addressed, derivable from the capsule's own content
     }
+  });
+
+  it('D-9 (W-28): the export carries the JOB capsules too — one per COMPLETED job WITH a result, never for a resultless one; a re-read mints no duplicate', () => {
+    // richState's own job is 'complete' WITHOUT a result — it mints nothing
+    // (the fixture's pinned 5-capsule list above stays true unchanged).
+    const state = richState();
+    expect((state.jobs[0] as JobRecord).status).toBe('complete');
+    expect((state.jobs[0] as JobRecord).result).toBeUndefined();
+    // the completed job WITH a result: the research result mints its capsule
+    const resultJob: JobRecord = {
+      jobId: 'job-result-1', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete',
+      submittedAt: T0 + 20, completedAt: T0 + 25,
+      result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' },
+    };
+    const withResult = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 26, job: resultJob });
+    const doc = composeWorkspaceExport(withResult);
+    expect(doc.capsules.length).toBe(6); // the 5 read-family capsules + the job capsule
+    const jobCapsule = capsuleFromJob(SCOPE, resultJob);
+    expect(doc.capsules).toContainEqual(jobCapsule); // the lineage leg: a capsule that references its job
+    expect(doc.capsules[5]?.refs).toEqual([{ kind: 'job', ref: 'job-result-1' }]);
+    expect(doc.manifest.counts.capsules).toBe(6); // the manifest stays TRUE (self-describing completeness)
+    // the fold is IDEMPOTENT under re-reads: the reducer's replace-by-id
+    // merge keeps the listing deduped, and the content address derives the
+    // identical capsule — a hydration replay or a re-read mints no duplicate.
+    const reRead = reduceWorkspace(withResult, { kind: 'job-updated', at: T0 + 27, job: { ...resultJob } });
+    expect(reRead.jobs.filter((job) => job.jobId === 'job-result-1')).toHaveLength(1);
+    expect(composeWorkspaceExport(reRead).capsules.length).toBe(6);
+    expect(composeWorkspaceExport(reRead).capsules).toContainEqual(jobCapsule);
   });
 
   it('the export carries the DECISIONS (the watch records + the gateway\'s own records, exactly as the Decisions section renders)', () => {

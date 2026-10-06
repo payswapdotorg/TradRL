@@ -50,6 +50,7 @@ import type {
   OrgStatusSnapshot,
   OutcomeRecord,
   PostMortemRecord,
+  ProjectGoalWorldSpec,
   ProjectRecord,
   ServedKnowledge,
 } from '../api/contracts';
@@ -61,6 +62,7 @@ import {
   capsuleFromOutcome,
   capsuleFromPostMortem,
   capsuleFromSubmission,
+  capsulesFromJobs,
   type EvidenceCapsule,
 } from './evidence';
 import {
@@ -132,6 +134,16 @@ export interface WorkspaceState {
   readonly project: ProjectRecord | null;
   readonly goal: GoalStatement | null;
   readonly constraintSet: ConstraintSetStatement | null;
+  /**
+   * THE PROJECT'S PERSISTED LAUNCH WORLD (D-8, W-28): the market world the
+   * scope's project launched with, read back from the host goal route's
+   * ADDITIVE `world` field (the backing persists it from the kickoff job's
+   * spec into the goal-set record's payload). Null when the project
+   * genuinely has no world on record (the demo scope — its seeded goal
+   * carries no world fields; a pre-W-28 launch) — the Market World
+   * section's teaching empty state is CORRECT for exactly those cases.
+   */
+  readonly world: ProjectGoalWorldSpec | null;
   readonly launch: LaunchState;
   readonly orgSnapshots: readonly OrgStatusSnapshot[];
   readonly jobs: readonly JobRecord[];
@@ -159,6 +171,7 @@ export function openWorkspace(scope: WorkspaceScope, at: number): WorkspaceState
     project: null,
     goal: null,
     constraintSet: null,
+    world: null,
     launch: initialLaunchState(),
     orgSnapshots: [],
     jobs: [],
@@ -183,7 +196,7 @@ export type WorkspaceEvent =
   | { readonly kind: 'connection-changed'; readonly at: number; readonly status: ConnectionStatus }
   | { readonly kind: 'project-adopted'; readonly at: number; readonly projectId: string }
   | { readonly kind: 'project-loaded'; readonly at: number; readonly project: ProjectRecord }
-  | { readonly kind: 'goal-loaded'; readonly at: number; readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement }
+  | { readonly kind: 'goal-loaded'; readonly at: number; readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; /** The scope's persisted launch world, when the host goal route served one (D-8, W-28) — absent = the project has none on record. */ readonly world?: ProjectGoalWorldSpec }
   | { readonly kind: 'org-snapshot'; readonly at: number; readonly snapshot: OrgStatusSnapshot }
   | { readonly kind: 'job-updated'; readonly at: number; readonly job: JobRecord }
   | { readonly kind: 'outcomes-loaded'; readonly at: number; readonly records: readonly OutcomeRecord[] }
@@ -316,6 +329,7 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         project: null,
         goal: null,
         constraintSet: null,
+        world: null,
         orgSnapshots: [],
         jobs: [],
         outcomes: [],
@@ -333,7 +347,12 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         // The goal statement carries its own tenant id (the T007 shape): a foreign goal never enters the workspace.
         assertProjectScope(state.scope, event.goal);
       }
-      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet };
+      // D-8 (W-28): the goal bundle's ADDITIVE world field mirrors the
+      // scope's OWN persisted launch world — a read that serves no `world`
+      // (the demo scope, a pre-W-28 launch) CLEARS any prior one, exactly
+      // like goal/constraintSet: the state always mirrors THIS scope's
+      // read-back truth, never a stale world from a prior scope.
+      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet, world: event.world ?? null };
   } else if (selector === 'org-snapshot') {
       assertProjectScope(state.scope, event.snapshot);
       const seen = state.orgSnapshots.some((existing) => existing.organizationRef === event.snapshot.organizationRef && existing.at === event.snapshot.at);
@@ -664,13 +683,18 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
   // R9b: the evidence capsules — the same content-addressed bundles
   // the Evidence section renders (one per outcome, post-mortem,
   // served-knowledge entry and execution submission), in the
-  // section's order. Unprojected: the export is the complete record,
-  // and every capsule carries its own availability instant (L4).
+  // section's order. Since W-28 (D-9) also one per COMPLETED job WITH a
+  // result (the result->job lineage leg — the export's capsules
+  // collection is the audit pack; a research result that mints no
+  // capsule is a lineage leaf, exactly what L2's P19 recompute found).
+  // Unprojected: the export is the complete record, and every capsule
+  // carries its own availability instant (L4).
   const capsules: EvidenceCapsule[] = [
     ...state.outcomes.map((outcome) => capsuleFromOutcome(state.scope, outcome)),
     ...state.postMortems.map((postMortem) => capsuleFromPostMortem(state.scope, postMortem)),
     ...state.knowledge.map((knowledge) => capsuleFromKnowledge(state.scope, knowledge)),
     ...state.submissions.map((submission) => capsuleFromSubmission(state.scope, submission)),
+    ...capsulesFromJobs(state.scope, state.jobs),
   ];
 
   // R9b: the decisions — the seven-lens watch records (agent,

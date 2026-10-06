@@ -37,6 +37,7 @@ import type {
   PaginationParams,
   PostMortemQueryRequest,
   PostMortemRecord,
+  ProjectGoalWorldSpec,
   ProjectLifecycleEvent,
   ProjectRecord,
   StrategyIntent,
@@ -86,14 +87,22 @@ export type ProjectLifecycleTransitionResult = { readonly record: ProjectRecord;
  * serves them — `{ data: { goal: GoalStatement, constraintSet: ConstraintSetStatement } }`,
  * field-for-field the T007 contract shapes (verified against the live
  * production origin; no field mapping needed — the wire IS the
- * contract). The erasable-subset law: no inline object types at
- * call-site generic arguments.
+ * contract). Since W-28 (D-8) the route serves the launch's WORLD
+ * SPECIFICATION as an ADDITIVE third field (`world:
+ * ProjectGoalWorldSpec`) when the project's kickoff job carried a
+ * console-launch spec — the optional mirror field below; a pre-W-28
+ * backing or a world-less project (the demo scope — its seeded goal
+ * genuinely has no world fields) serves no `world`, and the console
+ * keeps its teaching empty state. The erasable-subset law: no inline
+ * object types at call-site generic arguments.
  */
 export interface ProjectGoalBundle {
   /** The project's goal statement (the T007 shape behind the boundary). */
   readonly goal: GoalStatement;
   /** The project's constraint-set statement (the T007 shape behind the boundary). */
   readonly constraintSet: ConstraintSetStatement;
+  /** The launch world specification (D-8, W-28 — the ADDITIVE host-route field; absent for world-less projects and pre-W-28 backings). */
+  readonly world?: ProjectGoalWorldSpec;
 }
 
 /** The typed client over the boundary's public plane (the console's mirror of the SDK's resource surface). */

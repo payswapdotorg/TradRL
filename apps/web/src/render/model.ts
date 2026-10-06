@@ -48,7 +48,7 @@ import {
 } from '../core/launch-form';
 import type { SectionId } from '../core/sections';
 import { unreadCount, type InboxState } from '../core/notices';
-import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, type EvidenceCapsule } from '../core/evidence';
+import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, type WorkspaceState } from '../core/workspace';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
 import type { WatchEvent } from '../core/watch';
@@ -758,7 +758,16 @@ function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView):
   if (sheet.kind === 'job') {
     const job = state.jobs.find((candidate) => candidate.jobId === sheet.id);
     if (job === undefined) return [];
-    return jobSheet(state.scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : []));
+    // D-9 (W-28): the completed job's OWN evidence capsule renders INLINE
+    // beside the sheet (the same §4.9 convention as the outcome's capsule
+    // under Outcomes and the submission's under Execution) — the
+    // bidirectional affordance: the result view links its capsule (the
+    // fold mints one only for a COMPLETED job WITH a result; a pending or
+    // failed job renders no capsule — nothing fabricated, L20).
+    return [
+      ...jobSheet(state.scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : [])),
+      ...capsulesFromJobs(state.scope, [job]).map((capsule) => capsuleInline(capsule, viewAt, view.openCapsule)),
+    ];
   }
   const snapshot = state.orgSnapshots.find((candidate) => candidate.organizationRef === sheet.id);
   if (snapshot === undefined) return [];
@@ -829,6 +838,36 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...(projected.length === 0 ? [sectionEmpty('organization')] : []),
       ]);
   } else if (selector === 'market-world') {
+      // D-8 (W-28): the section is bound to the PROJECT'S OWN PERSISTED
+      // WORLD first (state.world — the host goal route's additive `world`
+      // field, read at boot and on every scope refetch), NOT to the
+      // in-session launch draft: after a reload, a scope switch or a cold
+      // start the section renders the SCOPE's own markets/venues/data
+      // sources (the pre-fix behavior — the draft was the only source —
+      // rendered the teaching empty state forever, and the session draft
+      // could BLEED across scopes when one stayed open). The in-session
+      // draft remains the source while the wizard is open in a scope that
+      // has no world yet (the launchpad, a fresh boot); the teaching empty
+      // state renders ONLY when the project genuinely has no world on
+      // record (the demo scope — its seeded goal carries no world fields).
+      const world = state.world;
+      if (world !== null) {
+        return v('section', { class: 'panel', 'data-section': 'market-world' }, [
+          v('div', { class: 'card', 'data-market-world': 'persisted' }, [
+            v('div', { class: 'card-title' }, ['Market world']),
+            ...factRows([
+              ['markets', world.markets.join(', ')],
+              ['venues', world.venues.join(', ')],
+              ['data sources', world.dataSources.join(', ')],
+              ['execution mode', world.executionMode],
+              ['capital budget', renderDecimal(world.capitalBudget)],
+              ['risk budget', renderDecimal(world.riskBudget)],
+              ['horizon', `${formatInstantUtc(world.horizon.startsAt)} -> ${formatInstantUtc(world.horizon.endsAt)}`],
+            ]),
+            v('p', { class: 'card-note' }, ['The launch specification this project\'s market world was set to — persisted with the project, restored on every visit.']),
+          ]),
+        ]);
+      }
       const draft = state.launch.draft;
       if (draft === null) {
         return v('section', { class: 'panel', 'data-section': 'market-world' }, [sectionEmpty('market-world')]);
@@ -942,6 +981,15 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...projectToView(state.postMortems, viewAt, availabilityOfPostMortem).map((postMortem) => capsuleFromPostMortem(scope, postMortem)),
         ...projectToView(state.knowledge, viewAt, availabilityOfKnowledge).map((knowledge) => capsuleFromKnowledge(scope, knowledge)),
         ...projectToView(state.submissions, viewAt, availabilityOfSubmission).map((submission) => capsuleFromSubmission(scope, submission)),
+        // D-9 (W-28): the jobs lane — one capsule per COMPLETED job WITH a
+        // result (the fold's own law), so the Evidence section lists the
+        // job-derived capsules ALONGSIDE the read families: the research
+        // result is no longer a lineage LEAF (no capsule referenced its
+        // job; a fresh release-candidate result minted zero capsules — L2's
+        // P10 finding). The jobs read (GET /v1/jobs) serves BOTH backings'
+        // records (the durable lane hydrates through the same route), so
+        // this fold covers the demo and the durable backing by construction.
+        ...capsulesFromJobs(scope, projectToView(state.jobs, viewAt, availabilityOfJob)),
       ];
       return v('section', { class: 'panel', 'data-section': 'evidence' }, [
         ...capsules.map((capsule) => capsuleCard(capsule, viewAt, view.openCapsule)),

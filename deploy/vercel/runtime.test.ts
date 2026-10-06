@@ -38,6 +38,7 @@ import {
   demoOutcomeRecord,
   demoPostMortemRecordIsValid,
   demoSubmissionBlotter,
+  demoWorldOf,
 } from './runtime/demo';
 import { validCreateProjectRequest, validStrategyIntent } from '../../services/api/src/fixtures';
 import { isGatewaySubmissionRecord, isJobRecord, isOutcomeRecordMirror, type ApiService } from '../../services/api/src/index';
@@ -1410,5 +1411,102 @@ describe('deploy/vercel — the launched-org compile (R4: a user launch produces
     // And the request path still serves (the tick never took anything down).
     const meta = composed.service.handle({ method: 'GET', path: '/v1/meta', headers: bearer });
     expect(meta.status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The launch world capture, DEMO arm (D-8, W-28): the console's kickoff job
+// spec carries the world; the demo backing's job port retains it per instance
+// (the same extraction the DURABLE seam persists into the goal-set row), and
+// the host goal route serves it back as the bundle's ADDITIVE `world` field —
+// so the console's Market World section renders the PERSISTED world after a
+// reload (the pre-fix section rendered its teaching empty state forever).
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the launched world capture, demo arm (D-8, W-28: every project\'s own world at the goal route)', () => {
+  /** The console's kickoff-job spec (apps/web toLaunchJobSpec's shape). */
+  function consoleLaunchSpec(): Record<string, unknown> {
+    return {
+      kind: 'console-launch',
+      objective: 'Find and keep an edge in momentum.',
+      horizon: { startsAt: 1_700_000_000_000, endsAt: 1_700_002_592_000_000 },
+      capitalBudget: '500000.00',
+      riskBudget: '40000.00',
+      markets: ['BTC-USD', 'ETH-USD'],
+      venues: ['binance', 'kraken'],
+      dataSources: ['candle-v1', 'depth-v1'],
+      executionMode: 'simulation',
+      preferences: [],
+    };
+  }
+
+  /** The extracted world the job port retains (the world fields only). */
+  function extractedWorld(): Record<string, unknown> {
+    return {
+      markets: ['BTC-USD', 'ETH-USD'],
+      venues: ['binance', 'kraken'],
+      dataSources: ['candle-v1', 'depth-v1'],
+      executionMode: 'simulation',
+      capitalBudget: '500000.00',
+      riskBudget: '40000.00',
+      horizon: { startsAt: 1_700_000_000_000, endsAt: 1_700_002_592_000_000 },
+    };
+  }
+
+  /** The D-4 suite's own create-project request shape (a local mirror — the D-4 fixture lives inside its own describe scope). */
+  function createRequest(tenant: string, projectId: string, objective: string): Record<string, unknown> {
+    const base = validCreateProjectRequest(tenant, projectId) as { goal: { objective: string }; constraintSet: unknown };
+    return { ...base, name: `the ${projectId} desk`, goal: { ...base.goal, objective } };
+  }
+
+  it('the launch story (demo backing): create + a console-launch kickoff job -> the goal route serves the bundle WITH the ADDITIVE world field — and the demo project + a foreign spec stay world-less', async () => {
+    const tenant = VALID_ENV[API_ENV_KEYS.apiDeveloperTenant];
+    const composed = composeDeployment(apiEnv());
+    if (!composed.ok || composed.demo === null) return;
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+
+    // A launched desk + its kickoff job carrying the world spec.
+    const created = composed.service.handle({ method: 'POST', path: '/v1/projects', headers: bearer, body: createRequest(tenant, 'prj-world-demo', 'the world story objective') });
+    expect(created.status).toBe(201);
+    const submitted = composed.service.handle({ method: 'POST', path: '/v1/jobs/research', headers: { ...bearer, 'idempotency-key': 'idem:w28:demo-arm' }, body: { kind: 'research', projectId: 'prj-world-demo', spec: consoleLaunchSpec() } });
+    expect(submitted.status).toBe(202);
+
+    // THE GOAL ROUTE: the bundle carries the ADDITIVE world field.
+    const { response, captured } = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-demo/goal', headers: bearer }), response);
+    expect(captured().status).toBe(200);
+    const body = JSON.parse(captured().payload as string) as { data: { goal: unknown; constraintSet: unknown; world?: unknown } };
+    expect(body.data.goal).toEqual(createRequest(tenant, 'prj-world-demo', 'the world story objective').goal);
+    expect(body.data.world).toEqual(extractedWorld()); // the captured world, served back
+
+    // The capture itself (the fold): the authorized tenant's own, per project.
+    expect(demoWorldOf(composed.demo.ports, tenant, 'prj-world-demo')).toEqual(extractedWorld());
+    expect(demoWorldOf(composed.demo.ports, 'tenant-other-demo', 'prj-world-demo')).toBeNull(); // L12: a foreign tenant's fold finds nothing
+    expect(demoWorldOf(composed.demo.ports, tenant, 'prj-never-created')).toBeNull(); // an unknown project has no world
+
+    // THE DEMO PROJECT stays world-less (its seed jobs ride demo-seed specs — the teaching empty state's scope, preserved).
+    const demo = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: `/v1/projects/${encodeURIComponent(DEMO_PROJECT_ID)}/goal`, headers: bearer }), demo.response);
+    expect(demo.captured().status).toBe(200);
+    expect((JSON.parse(demo.captured().payload as string) as { data: Record<string, unknown> }).data).not.toHaveProperty('world');
+
+    // A FOREIGN spec (no console-launch kind marker) captures nothing — the goal route serves no world for it.
+    const foreignCreated = composed.service.handle({ method: 'POST', path: '/v1/projects', headers: bearer, body: createRequest(tenant, 'prj-world-foreign', 'the foreign spec objective') });
+    expect(foreignCreated.status).toBe(201);
+    const foreignJob = composed.service.handle({ method: 'POST', path: '/v1/jobs/research', headers: { ...bearer, 'idempotency-key': 'idem:w28:foreign-spec' }, body: { kind: 'research', projectId: 'prj-world-foreign', spec: { kind: 'demo-seed', note: 'not a console launch' } } });
+    expect(foreignJob.status).toBe(202);
+    const foreign = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-foreign/goal', headers: bearer }), foreign.response);
+    expect(foreign.captured().status).toBe(200);
+    expect((JSON.parse(foreign.captured().payload as string) as { data: Record<string, unknown> }).data).not.toHaveProperty('world'); // a malformed/foreign spec captures nothing (R46)
+
+    // The honest per-instance limitation (the demo capture's own medium — same as the goal-set capture).
+    const second = composeDeployment(apiEnv());
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    if (second.demo === null) return;
+    const cold = capture();
+    await handleDeploymentRequest(second, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-demo/goal', headers: bearer }), cold.response);
+    expect(cold.captured().status).toBe(404); // the fresh instance's capture is per-instance (durability is the DURABLE backing's surface, D-8's durable half)
   });
 });

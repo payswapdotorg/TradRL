@@ -20,6 +20,7 @@ import {
   renderJobProgress,
   toCreateProjectInput,
   toLaunchJobSpec,
+  toLaunchWorldSpec,
   validateLaunchDraft,
   type LaunchDraft,
 } from './launch';
@@ -175,6 +176,28 @@ describe('launch: the composition (POST /v1/projects + the kickoff job spec)', (
       preferences: [{ key: 'rebalance.frequency', value: 'weekly' }],
     });
     expect(JSON.stringify(toLaunchJobSpec(validDraft()))).toBe(JSON.stringify(toLaunchJobSpec(validDraft()))); // deterministic
+  });
+
+  it('D-8/W-28 — the world spec derives from the draft (the host goal route\'s additive `world` shape): the world fields, exact decimals, the horizon label, deterministic; an invalid draft refuses BEFORE any derivation', () => {
+    const world = toLaunchWorldSpec(validDraft());
+    expect(world).toEqual({
+      markets: ['SPY', 'GLD'],
+      venues: ['venue-x'],
+      dataSources: ['data:ohlcv-1d'],
+      executionMode: 'simulation',
+      capitalBudget: '1000000.00',
+      riskBudget: '0.02',
+      horizon: { startsAt: T0, endsAt: T0 + 90 * 86_400_000, label: 'Q1' },
+    });
+    // the horizon's OPTIONAL label stays optional — an unlabeled horizon derives an unlabeled world
+    const unlabeled = validDraft();
+    const unlabeledWorld = toLaunchWorldSpec({ ...unlabeled, horizon: { startsAt: T0, endsAt: T0 + 1000 } });
+    expect(unlabeledWorld.horizon).toEqual({ startsAt: T0, endsAt: T0 + 1000 });
+    expect('label' in unlabeledWorld.horizon).toBe(false);
+    // deterministic — identical draft -> identical world (the same derivation the job spec carries)
+    expect(JSON.stringify(toLaunchWorldSpec(validDraft()))).toBe(JSON.stringify(toLaunchWorldSpec(validDraft())));
+    // the typed gate refuses an invalid draft BEFORE any derivation (no partial world)
+    expect(() => toLaunchWorldSpec(validDraft({ venues: [] }))).toThrow(InvalidLaunchDraftError);
   });
 });
 

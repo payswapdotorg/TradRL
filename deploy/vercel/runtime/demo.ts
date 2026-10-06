@@ -119,6 +119,7 @@ import {
   isOrgStatusSnapshot,
   isOutcomeRecordMirror,
   isPostMortemRecordMirror,
+  isRecord,
   type ApiService,
   type ControlPlanePort,
   type ExecutionGatewayPort,
@@ -597,6 +598,99 @@ export function demoExecutionGateway(): ExecutionGatewayPort & { readonly record
 }
 
 // ---------------------------------------------------------------------------
+// The launch world specification (D-8, W-28 — the market world, persisted
+// at the job-spec seam and served by the host-owned goal route)
+// ---------------------------------------------------------------------------
+
+/** The spec-kind marker the console's launch flow stamps on its kickoff job spec (apps/web core/launch.ts toLaunchJobSpec). */
+export const LAUNCH_JOB_SPEC_KIND = 'console-launch';
+
+/**
+ * THE LAUNCH WORLD SPECIFICATION (D-8, W-28): the market-world fields the
+ * console's launch wizard collects (markets/venues/data sources + the
+ * world-shaped launch context — execution mode, the budgets, the horizon).
+ * The console carries them in the kickoff job's OPAQUE spec (the only
+ * console->host carrier the frozen contracts leave room for: the
+ * create-project request's parser keeps exactly id/name/executionMode/goal/
+ * constraintSet/at, while the job spec passes through untouched); the
+ * backings capture the world HERE, at the job port seam, and persist it in
+ * the goal-set record's opaque payload (the DURABLE seam merges it into the
+ * tradrl_project_goals row — no schema change; the DEMO backing retains it
+ * per instance). The host-owned goal route serves it back as the ADDITIVE
+ * `world` field of the goal bundle, so the console's Market World section
+ * renders the PERSISTED world after a reload, a scope switch or a cold
+ * start (D-8's defect: the section was bound to the in-session launch
+ * draft and rendered its teaching empty state forever after a reload).
+ */
+export interface LaunchWorldRecord {
+  /** The markets (instrument ids), e.g. ['BTC-USD', 'ETH-USD']. */
+  readonly markets: readonly string[];
+  /** The venues, e.g. ['binance', 'kraken']. */
+  readonly venues: readonly string[];
+  /** The data source refs, e.g. ['candle-v1', 'depth-v1', 'trades-v1']. */
+  readonly dataSources: readonly string[];
+  /** The execution mode (simulation | shadow | live). */
+  readonly executionMode: string;
+  /** The capital budget — an exact decimal string. */
+  readonly capitalBudget: string;
+  /** The risk budget — an exact decimal string. */
+  readonly riskBudget: string;
+  /** The horizon (epoch ms bounds + the optional label). */
+  readonly horizon: { readonly startsAt: number; readonly endsAt: number; readonly label?: string };
+}
+
+/** Guard: a non-empty array of non-empty strings (the world's list fields). */
+function isNonEmptyStringList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.length > 0 && value.every((entry) => typeof entry === 'string' && entry.length > 0);
+}
+
+/**
+ * Guard: a structurally valid launch world record (D-8, W-28). The goal
+ * route re-validates a DURABLE-decoded world with this before serving it —
+ * a pre-W-28 or malformed payload never crosses to the console (the route
+ * simply serves no `world` field; R46, never a crash).
+ */
+export function isLaunchWorldRecord(value: unknown): value is LaunchWorldRecord {
+  return launchWorldOfSpec({ kind: LAUNCH_JOB_SPEC_KIND, ...(isRecord(value) ? value : {}) }) !== null;
+}
+
+/**
+ * Extract the launch world specification from a job spec, STRUCTURALLY
+ * (never a throw — R46): a spec is a console launch spec iff it carries the
+ * `console-launch` kind marker AND every world field validates. Anything
+ * else (the demo seed's `demo-seed` specs, hydration replays, foreign or
+ * malformed specs) answers `null` — the backing captures nothing for it
+ * (the demo project's goal stays world-less BY DESIGN: the demo scope's
+ * teaching empty state is correct and must be preserved). The extracted
+ * record is a frozen copy — the caller may persist it without aliasing the
+ * request's spec object.
+ */
+export function launchWorldOfSpec(spec: unknown): LaunchWorldRecord | null {
+  if (!isRecord(spec)) return null;
+  if (spec.kind !== LAUNCH_JOB_SPEC_KIND) return null;
+  if (!isNonEmptyStringList(spec.markets)) return null;
+  if (!isNonEmptyStringList(spec.venues)) return null;
+  if (!isNonEmptyStringList(spec.dataSources)) return null;
+  if (typeof spec.executionMode !== 'string' || spec.executionMode.length === 0) return null;
+  if (typeof spec.capitalBudget !== 'string' || spec.capitalBudget.length === 0) return null;
+  if (typeof spec.riskBudget !== 'string' || spec.riskBudget.length === 0) return null;
+  const horizon = spec.horizon;
+  if (!isRecord(horizon)) return null;
+  if (typeof horizon.startsAt !== 'number' || typeof horizon.endsAt !== 'number') return null;
+  return deepFreeze({
+    markets: Object.freeze([...spec.markets]) as readonly string[],
+    venues: Object.freeze([...spec.venues]) as readonly string[],
+    dataSources: Object.freeze([...spec.dataSources]) as readonly string[],
+    executionMode: spec.executionMode,
+    capitalBudget: spec.capitalBudget,
+    riskBudget: spec.riskBudget,
+    horizon: typeof horizon.label === 'string'
+      ? { startsAt: horizon.startsAt, endsAt: horizon.endsAt, label: horizon.label }
+      : { startsAt: horizon.startsAt, endsAt: horizon.endsAt },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // The create-project goal-set capture (D-4, W-25B — every launched
 // project's own goal, retained host-side at the create seam)
 // ---------------------------------------------------------------------------
@@ -664,6 +758,54 @@ export function demoControlPlane(): ReturnType<typeof fakeControlPlane> & { read
   };
 }
 
+/**
+ * The demo job-submission port: the REAL fixture fake, wrapped so every
+ * job submission whose spec carries a CONSOLE LAUNCH WORLD (D-8, W-28 —
+ * launchWorldOfSpec) retains the world host-side per (tenant, project) —
+ * the DEMO backing's half of what the DURABLE seam persists into the
+ * goal-set row (the same world record, the same structural extraction;
+ * this backing's per-instance in-memory medium — a serverless cold start
+ * resets it, exactly like the goal-set capture, honest under the SIMULATED
+ * badge). The submitted responses themselves are the fixture's own
+ * records, verbatim (W-3f behavior unchanged). Only RESEARCH-submission
+ * console-launch specs exist in practice (the console's kickoff job); the
+ * wrapper is kind-agnostic and validates structurally, so a foreign or
+ * malformed spec captures nothing (R46 — never a crash).
+ */
+export function demoJobSubmission(): ReturnType<typeof fakeJobSubmission> & { readonly worlds: ReadonlyMap<string, LaunchWorldRecord> } {
+  const worlds = new Map<string, LaunchWorldRecord>();
+  const inner = fakeJobSubmission();
+  return {
+    ...inner, // the fake's own surface verbatim (the submissions log included)
+    get worlds(): ReadonlyMap<string, LaunchWorldRecord> {
+      return worlds;
+    },
+    submitJob(input) {
+      const world = launchWorldOfSpec(input.spec);
+      if (world !== null) {
+        worlds.set(`${input.tenant as string}/${input.project as string}`, world);
+      }
+      return inner.submitJob(input);
+    },
+  };
+}
+
+/**
+ * The demo backing's captured launch world of one project of one tenant
+ * (D-8, W-28 — the demo arm's goal-route read): the console-launch spec's
+ * world the job port retained at submission. L12 by construction on both
+ * axes: the pipeline injects the tenant at submission (a foreign tenant's
+ * world never exists in this composition's capture to begin with) and the
+ * fold keys on the AUTHORIZED tenant + the requested project (a foreign
+ * read finds nothing — the goal route then serves no `world` field, the
+ * console's teaching empty state). `null` for the demo project (its seed
+ * jobs carry `demo-seed` specs, never a console-launch one — the demo
+ * scope's teaching empty state is CORRECT and preserved by design).
+ */
+export function demoWorldOf(ports: DemoPorts, tenant: string, project: string): LaunchWorldRecord | null {
+  return ports.jobSubmission.worlds.get(`${tenant}/${project}`) ?? null;
+}
+
 /** The demo backing's ports (the REAL fixture fakes — the same objects the composition injects) + the seeded blotter. */
 export interface DemoPorts {
   /** The demo control plane (the fixture fake, wrapped to retain every create-project goal set — W-25B's capture seam). */
@@ -671,7 +813,8 @@ export interface DemoPorts {
   readonly firmMemory: ReturnType<typeof fakeFirmMemory>;
   readonly outcomeLearning: ReturnType<typeof fakeOutcomeLearning>;
   readonly executionGateway: ReturnType<typeof demoExecutionGateway>;
-  readonly jobSubmission: ReturnType<typeof fakeJobSubmission>;
+  /** The demo job-submission port (the fixture fake, wrapped to retain every console-launch world — D-8, W-28's capture seam). */
+  readonly jobSubmission: ReturnType<typeof demoJobSubmission>;
   /** The seeded execution blotter (R2 — read data, like the outcome records; served by the host-owned read route). */
   readonly submissions: readonly GatewaySubmissionRecord[];
 }
@@ -777,7 +920,7 @@ export function seedDemoBacking(tenant: string): DemoPorts {
     firmMemory: fakeFirmMemory([...fixtureKnowledge(tenant, DEMO_PROJECT_ID)]),
     outcomeLearning: fakeOutcomeLearning([demoOutcomeRecord(tenant, DEMO_PROJECT_ID)], [demoPostMortemRecord(tenant, DEMO_PROJECT_ID)]),
     executionGateway: demoExecutionGateway(),
-    jobSubmission: fakeJobSubmission(),
+    jobSubmission: demoJobSubmission(),
     submissions: demoSubmissionBlotter(),
   };
 }
