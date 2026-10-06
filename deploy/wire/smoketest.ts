@@ -103,7 +103,7 @@ export function fakeProviders(): FakeProviders {
       const select = /^SELECT payload FROM (tradrl_\w+)/.exec(parsed.query);
       if (select !== null) {
         const orderIndex = select[1] === 'tradrl_projects' ? 5 : select[1] === 'tradrl_project_goals' ? 1 : 3;
-        const payloadIndex = select[1] === 'tradrl_projects' ? 6 : select[1] === 'tradrl_project_events' ? 5 : select[1] === 'tradrl_knowledge' ? 6 : select[1] === 'tradrl_project_goals' ? 2 : 7;
+        const payloadIndex = select[1] === 'tradrl_projects' ? 6 : select[1] === 'tradrl_project_events' ? 5 : select[1] === 'tradrl_knowledge' ? 6 : select[1] === 'tradrl_project_goals' ? 2 : select[1] === 'tradrl_jobs' ? 5 : 7;
         let rows = (tables.get(select[1] as string) ?? []).filter((row) => row.params[0] === parsed.params[0]);
         if (parsed.query.includes('AND project = $2') || parsed.query.includes('AND project_id = $2')) {
           rows = rows.filter((row) => row.params[1] === parsed.params[1]);

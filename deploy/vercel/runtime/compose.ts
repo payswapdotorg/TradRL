@@ -53,12 +53,15 @@
 import {
   bearerTokenOf,
   createApiService,
+  deepFreeze,
   fnv1a32Hex,
   isTenantId,
   mintDeveloperCredentialId,
   mintInternalCredentialId,
   PRIVATE_ROUTE_FAMILIES,
   PUBLIC_ROUTE_FAMILIES,
+  type ApiRequest,
+  type ApiResponse,
   type ApiService,
   type ApiServiceConstruction,
   type ControlPlanePort,
@@ -73,8 +76,7 @@ import { buildDurableActivation, type DurableActivation } from './durable-world'
 import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import type { NeonStoreDeps } from '../../adapters/neon/stores';
-import { fakeJobSubmission } from '../../../services/api/src/fixtures';
-import { demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance } from './demo';
+import { DEMO_PROJECT_ID, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance } from './demo';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization } from './routes';
 
 // ---------------------------------------------------------------------------
@@ -125,6 +127,45 @@ function neonAbsentPorts(): Pick<Required<DeploymentPortOverrides>, 'controlPlan
 function apifyAbsentJobPort(): JobSubmissionPort {
   const failure = adapterAbsentFailure('apify');
   return { submitJob: () => ({ ok: false as const, error: failure }) };
+}
+
+// ---------------------------------------------------------------------------
+// THE DURABLE JOB WRITE-THROUGH WRAPPER (W-27, D-7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Wrap the composed boundary service so every JOB MUTATION that lands in
+ * the frozen service's API-owned job store (a submission through the
+ * public routes, a transition through the private plane — the machinery
+ * tick's own driver included, a hydration replay's re-store) queues its
+ * durable write through the seam's job lane (`recordJobs`), drained by
+ * the host per the W-25D ordering law. The wrapper is TRANSPARENT: every
+ * other surface delegates to the inner service verbatim.
+ *
+ * THE DEMO-PROJECT EXCLUSION: the boot world re-seeds the demo project's
+ * two jobs per instance (R3's disclosed limitation — the frozen service's
+ * closure); persisting them would accumulate one seeded pair per cold
+ * start in the durable table (the seed ids are minted fresh per
+ * instance), so the write-through lane skips the demo project's records.
+ * The durable (launched) projects' records — D-7's subject — all ride the
+ * lane.
+ */
+function wrapServiceForDurableJobs(service: ApiService, durable: DurableBackingHandle, demoProjectId: string): ApiService {
+  return deepFreeze({
+    ...service, // every surface delegates verbatim (the frozen service's own closures)
+    handle(request: ApiRequest): ApiResponse {
+      const before = new Map(service.jobs().map((job) => [job.jobId as string, job as unknown]));
+      const response = service.handle(request);
+      // The diff: a NEW record or a REPLACED one (the pipeline's handlers
+      // set a fresh frozen object per mutation; unchanged records keep
+      // their identity — the map lookup is the cheap diff).
+      const changed = service.jobs().filter((job) => before.get(job.jobId as string) !== (job as unknown));
+      if (changed.length > 0) {
+        durable.recordJobs(changed.filter((job) => (job.project as string) !== demoProjectId));
+      }
+      return response;
+    },
+  }) as ApiService;
 }
 
 /** The checkpoint-1 backing services: every route that needs a port degrades to the typed 503. */
@@ -270,20 +311,24 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
       // durable resolution composes the SAME simulated execution +
       // job-submission engines the demo backing composes — imported, zero
       // new simulation logic (runtime/demo.ts's demoExecutionGateway + the
-      // frozen service's own fakeJobSubmission, the exact fixtures the demo
-      // ports are built from). POST /v1/execution/requests routes, POST
-      // /v1/jobs/* answer 202, and the per-request machinery tick animates
-      // the jobs — the launch journey (J3) works exactly as under demo,
-      // PLUS the Neon persistence. The W-26C durable demo-substance reads
-      // (R4) ride the SAME gateway instance: its `recorded` blotter is the
-      // live half of the submissions fold the host route serves.
+      // seam's own hydration-aware job port over the frozen service's
+      // fakeJobSubmission, the exact engine the demo ports are built from).
+      // POST /v1/execution/requests routes, POST /v1/jobs/* answer 202, and
+      // the per-request machinery tick animates the jobs — the launch
+      // journey (J3) works exactly as under demo, PLUS the Neon
+      // persistence. The W-26C durable demo-substance reads (R4) ride the
+      // SAME gateway instance: its `recorded` blotter is the live half of
+      // the submissions fold the host route serves. Since W-27 (D-7) the
+      // seam's job port is HYDRATION-AWARE (the boot world replays the
+      // durable job records through the real routes with the port serving
+      // them verbatim) and its `jobSubmission` port rides the seam spread
+      // below (never the bare fixture engine).
       durableStores = neonStoreDepsOf(seamDeps); // non-null whenever the seam built (the shared construction)
       seamGateway = demoExecutionGateway();
       ports = {
         ...stubs,
-        ...seamHandle.ports,
+        ...seamHandle.ports, // controlPlane + firmMemory + outcomeLearning + the W-27 hydration-aware jobSubmission
         executionGateway: seamGateway,
-        jobSubmission: fakeJobSubmission(),
       };
       // The base seam handle, carried DORMANT (tick null, the boot world a
       // no-op, the demo-substance reads absent) until the composition binds
@@ -365,10 +410,18 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     // stays dormant (tick null, the boot world a no-op) while the seam's
     // settled/drain/goalOf surfaces stay live (the W-25D law).
     if (durable !== null && durableStores !== null) {
+      // THE W-27 JOB WRITE-THROUGH WRAPPER (D-7): when the composition owns
+      // the world, every job mutation that lands in the frozen service's
+      // API-owned store queues its durable write through the seam's job
+      // lane — the wrapped service is what the router, the boot world, the
+      // tick and the demo-substance folds all drive (ONE capture point for
+      // every mutation path). Under port overrides the injection seam owns
+      // the world — the raw service rides, exactly as before.
+      const serving = hasOverrides ? construction.service : wrapServiceForDurableJobs(construction.service, durable, DEMO_PROJECT_ID);
       const activation: DurableActivation = hasOverrides
         ? { tick: null, ensureBootWorld: async () => undefined }
         : buildDurableActivation({
-            service: construction.service,
+            service: serving,
             durable,
             storeDeps: durableStores,
             seed: { tenant, developerToken: token, internalToken },
@@ -382,9 +435,10 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
         ? null
         : {
             ports: { submissions: demoSubmissionBlotter(), executionGateway: seamGateway },
-            jobsOf: (tenant, project) => demoJobsOf(construction.service, tenant, project),
+            jobsOf: (tenant, project) => demoJobsOf(serving, tenant, project),
           };
       durable = { ...durable, tick: activation.tick, ensureBootWorld: activation.ensureBootWorld, demoSubstance };
+      return { ok: true, service: serving, backing, demo: null, durable, verifyDeveloperAuthorization };
     }
     return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization };
   }

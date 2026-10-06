@@ -65,15 +65,26 @@
 // submission engines the demo backing composes over this seam (runtime/
 // compose.ts — the durable superset law), and the boot world
 // (runtime/durable-world.ts) seeds the demo world + the fixture substance
-// into these stores; jobs and the org-status snapshots stay API-OWNED
-// per-instance state (the frozen service's closures — the disclosed
-// limitation, re-seeded per instance by the boot world + the tick).
+// into these stores. Since W-27 (D-7) the JOB RECORDS persist too: every
+// non-demo job mutation (the submission AND each transition) write-throughs
+// to the tradrl_jobs store, and every cold start REPLAYS the durable job
+// records back into the fresh instance's API-owned job store (the frozen
+// service's closure) through the REAL public job routes — the hydration
+// seam below — so the per-id GET /v1/jobs/:jobId (the frozen route,
+// unchanged) and the jobs-list fold serve durable jobs on EVERY instance,
+// never just the one that received the submission (the D-7 defect's both
+// halves: the detail 404 loop and the boot-time empty list).
 //
 // WHAT STAYS API-OWNED (honest limitation): the boundary's job store and
 // org-status snapshots live in the frozen service's closure with no
-// injection surface — they remain per-instance under the durable backing
-// and reset on cold starts (documented; a T041-side change would be needed
-// to persist them).
+// injection surface — under the durable backing the job STORE's durable
+// truth is the tradrl_jobs table (W-27: written on every mutation, read
+// back through the hydration seam), while the ORG-STATUS SNAPSHOTS remain
+// per-instance state (reset on cold starts; the boot world's R7 pass
+// re-reports them — runtime/durable-world.ts). The DEMO project's own jobs
+// stay per-instance by design (the boot world re-seeds them per instance;
+// the write-through lane skips them — a fresh instance would otherwise
+// accumulate one seeded pair per cold start in the durable table).
 //
 // Zero-dep law: platform APIs only. Spec anchors: ARCHITECTURE-LOCK
 // invariant-9 (ports injected, never imported by adapters), L4/L8/L12/L15,
@@ -89,6 +100,8 @@ import {
 import type {
   ControlPlanePort,
   FirmMemoryPort,
+  JobSubmissionPort,
+  JobRecord,
   OutcomeLearningPort,
   OutcomeRecordMirror,
   PortFailure,
@@ -98,7 +111,9 @@ import type {
   ServedKnowledge,
   TransitionProjectResponse,
 } from '../../../services/api/src/index';
-import { NeonFirmMemoryStore, NeonOutcomeLearningStore, NeonProjectStore, type GoalSetRecord, type NeonStoreDeps } from '../../adapters/neon/stores';
+import { canonicalJson, isJobRecord } from '../../../services/api/src/index';
+import { fakeJobSubmission } from '../../../services/api/src/fixtures';
+import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, type GoalSetRecord, type NeonStoreDeps } from '../../adapters/neon/stores';
 import type { NeonConfig } from '../../adapters/neon/client';
 import type { ServedKnowledgeMirror } from '../../adapters/neon/mirrors';
 import { enabledAdapters, type ProviderEnv } from '../../wire/composition';
@@ -129,7 +144,7 @@ export interface HydratedGoalSet {
 /**
  * The boot projection's report — the observable hydration surface (the
  * order is the report's structure: registry -> events -> knowledge ->
- * outcomes -> post-mortems; the counts are the completeness pin).
+ * outcomes -> post-mortems -> jobs; the counts are the completeness pin).
  */
 export interface ProjectionReport {
   /** Projects reconstructed through the REAL control plane (creation order). */
@@ -142,6 +157,8 @@ export interface ProjectionReport {
   readonly outcomes: number;
   /** Post-mortem records hydrated. */
   readonly postMortems: number;
+  /** Durable job records hydrated (W-27, D-7 — the reconstructed projects' rows of tradrl_jobs). */
+  readonly jobs: number;
   /** Rows that could not reconstruct (a missing goal set, a domain-law refusal) — skipped, never a crash. */
   readonly skipped: readonly { readonly project: string; readonly reason: string }[];
 }
@@ -161,11 +178,23 @@ export type DrainResult = { readonly ok: true } | { readonly ok: false; readonly
  * lifecycle the host drives.
  */
 export interface DurableBackingHandle {
-  /** The SYNC in-memory ports (hydrated from the durable stores — the seam's whole point). */
+  /**
+   * The SYNC in-memory ports (hydrated from the durable stores — the seam's
+   * whole point). Since W-27 (D-7) the set includes the job-submission
+   * port: a hydration-aware wrapper over the frozen service's own
+   * `fakeJobSubmission` engine that serves the projection's durable job
+   * records verbatim while a hydration bracket is open (the boot world
+   * replays each durable job through the REAL public job route, so the
+   * frozen pipeline's own store — the store the per-id GET
+   * /v1/jobs/:jobId and the jobs-list fold read — carries the durable
+   * record with its exact jobId), and mints fresh records otherwise
+   * (the pre-W-27 law, byte-identical).
+   */
   readonly ports: {
     readonly controlPlane: ControlPlanePort;
     readonly firmMemory: FirmMemoryPort;
     readonly outcomeLearning: OutcomeLearningPort;
+    readonly jobSubmission: JobSubmissionPort;
   };
   /**
    * Await the projection: starts it on the first call (the boot-time
@@ -195,6 +224,37 @@ export interface DurableBackingHandle {
    * when the projection holds no goal set for the project.
    */
   goalOf(projectId: string): { readonly ok: true; readonly value: HydratedGoalSet | null } | { readonly ok: false; readonly error: StoreFailure };
+  /**
+   * THE DURABLE JOBS READ (W-27, D-7): the projection's job records for
+   * one project — the rows tradrl_jobs holds for the credential tenant
+   * (L12 by construction: only this tenant's rows hydrate). The typed
+   * degraded state while the projection is down (never a silent empty).
+   * The boot world's hydration driver reads this to replay each durable
+   * job into the fresh instance's API-owned job store.
+   */
+  jobsOf(projectId: string): { readonly ok: true; readonly value: readonly JobRecord[] } | { readonly ok: false; readonly error: StoreFailure };
+  /**
+   * THE JOB WRITE-THROUGH LANE (W-27, D-7): queue the durable job writes
+   * for the given records — each rides the drain like every control-plane
+   * write (the ordering law: the host drains before the response is
+   * served; a failed write is the typed 503 + the re-projection). Records
+   * of a foreign tenant are refused (L12 — never queued); a record whose
+   * payload is byte-identical to the projection's row is SKIPPED (the
+   * idempotent no-op — the hydration replays never re-write what they
+   * hydrated).
+   */
+  recordJobs(records: readonly JobRecord[]): void;
+  /**
+   * Open the job-hydration bracket (W-27, D-7): the port's `submitJob`
+   * serves these records verbatim, in order, until `endJobHydration`
+   * closes the bracket. The boot world primes the queue with exactly the
+   * records it will replay (missing from the instance's job store) — the
+   * alignment is by construction; the bracket keeps any other submission
+   * from consuming a preloaded record.
+   */
+  beginJobHydration(records: readonly JobRecord[]): void;
+  /** Close the hydration bracket (the port mints fresh records again; any unconsumed preload is dropped). */
+  endJobHydration(): void;
   /** The last COMPLETED projection's report (null before the first completion — the order/completeness surface). */
   lastProjection(): ProjectionReport | null;
   /** The typed failure of the last failed projection (null when none). */
@@ -254,6 +314,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   const firmMemoryStore = new NeonFirmMemoryStore(neonDeps);
   const outcomeStore = new NeonOutcomeLearningStore(neonDeps);
   const projectStore = new NeonProjectStore(neonDeps);
+  const jobStore = new NeonJobStore(neonDeps);
 
   // The mutable projection state. `current` swaps ATOMICALLY at the end of
   // a successful projection (the event loop makes the swap synchronous);
@@ -268,6 +329,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     readonly outcomes: readonly unknown[];
     readonly postMortems: readonly unknown[];
     readonly goalSets: ReadonlyMap<string, GoalSetRecord>;
+    readonly jobs: ReadonlyMap<string, readonly JobRecord[]>;
     readonly report: ProjectionReport;
   } | null = null;
   let failure: StoreFailure | null = null;
@@ -295,8 +357,10 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     const outcomes: unknown[] = [];
     const postMortems: unknown[] = [];
     const goalSets = new Map<string, GoalSetRecord>();
+    const jobs = new Map<string, readonly JobRecord[]>();
     const skipped: { readonly project: string; readonly reason: string }[] = [];
     let events = 0;
+    let jobCount = 0;
 
     // 1. THE REGISTRY (creation order — the D-5 core).
     const registry = await projectStore.projectRecordsOf(deps.tenant);
@@ -383,6 +447,21 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
       postMortems.push(...postMortemRows.value);
     }
 
+    // 6. THE DURABLE JOBS of every reconstructed project (W-27, D-7): the
+    //    tradrl_jobs rows the write-through lane persisted — read into the
+    //    projection for the hydration driver (the boot world replays them
+    //    through the REAL public job routes so the frozen pipeline's own
+    //    store carries them) and for the host-side jobs read. A malformed
+    //    payload row is skipped fail-closed (the store's own decode law);
+    //    a failed read fails the WHOLE projection (never a partial one).
+    for (const { id } of reconstructed) {
+      const jobRows = await jobStore.jobRecordsOf(deps.tenant, id);
+      if (!jobRows.ok) return { ok: false, error: jobRows.error };
+      const records = jobRows.value.filter((row): row is JobRecord => isJobRecord(row));
+      jobs.set(id, Object.freeze([...records]));
+      jobCount += records.length;
+    }
+
     // THE ATOMIC SWAP — the projection becomes the serving state.
     current = {
       controlPlane,
@@ -390,7 +469,8 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
       outcomes: Object.freeze(outcomes),
       postMortems: Object.freeze(postMortems),
       goalSets,
-      report: { projects: reconstructed.length, events, knowledge: knowledge.length, outcomes: outcomes.length, postMortems: postMortems.length, skipped: Object.freeze([...skipped]) },
+      jobs,
+      report: { projects: reconstructed.length, events, knowledge: knowledge.length, outcomes: outcomes.length, postMortems: postMortems.length, jobs: jobCount, skipped: Object.freeze([...skipped]) },
     };
     liveGoalSets = goalSets; // the live overlay the createProject write-through extends
     report = current.report;
@@ -640,6 +720,80 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   }
 
   // -------------------------------------------------------------------------
+  // THE HYDRATION-AWARE JOB-SUBMISSION PORT + THE JOB WRITE-THROUGH LANE
+  // (W-27, D-7 — the durable jobs surface)
+  // -------------------------------------------------------------------------
+
+  /**
+   * The hydration preload: while the bracket is open, `submitJob` serves
+   * these records verbatim (FIFO — the boot world primes exactly the
+   * records it replays, so the alignment is by construction); the boot
+   * world's driver is SYNCHRONOUS inside the bracket, so nothing else can
+   * consume a preloaded record. Empty (the permanent state outside the
+   * bracket) => the inner fixture engine mints fresh records, the
+   * pre-W-27 law byte-identical.
+   */
+  let hydrationQueue: JobRecord[] = [];
+
+  const innerJobSubmission = fakeJobSubmission();
+
+  const jobSubmissionPort: JobSubmissionPort = {
+    submitJob(input): PortResult<JobRecord> {
+      if (hydrationQueue.length > 0) {
+        // The hydration replay: the durable record serves VERBATIM (its
+        // exact jobId, status, result and timestamps) — the frozen
+        // pipeline's handler stores the port's return into the API-owned
+        // job store, which is the whole point (the store the per-id GET
+        // and the list fold read now carries the durable record).
+        return { ok: true, value: hydrationQueue.shift() as JobRecord };
+      }
+      return innerJobSubmission.submitJob(input);
+    },
+  };
+
+  function beginJobHydration(records: readonly JobRecord[]): void {
+    hydrationQueue = [...records];
+  }
+
+  function endJobHydration(): void {
+    hydrationQueue = [];
+  }
+
+  /** The projection's durable payload of one job id (canonical JSON — the recordJobs skip's comparison key). */
+  function projectedJobPayload(jobId: string): string | null {
+    for (const records of current?.jobs.values() ?? []) {
+      const found = records.find((record) => record.jobId === jobId);
+      if (found !== undefined) return canonicalJson(found as never);
+    }
+    return null;
+  }
+
+  function recordJobs(records: readonly JobRecord[]): void {
+    for (const record of records) {
+      // L12 by construction: only the credential tenant's job records ever
+      // queue (the pipeline injects the tenant; the store would refuse a
+      // foreign row — this guard keeps it out of the drain entirely).
+      if (record.tenant !== deps.tenant) continue;
+      // The idempotent no-op: the projection already holds this exact
+      // payload (the hydration replays re-store their own durable records)
+      // — never re-write what did not change.
+      if (projectedJobPayload(record.jobId) === canonicalJson(record as never)) continue;
+      const job = record;
+      pending.push({ label: 'job.put', run: () => jobStore.putJobRecord(deps.tenant, job) });
+    }
+  }
+
+  function jobsOf(projectId: string): { readonly ok: true; readonly value: readonly JobRecord[] } | { readonly ok: false; readonly error: StoreFailure } {
+    if (phase !== 'ready' || current === null || dirty) {
+      const degradedFailure: StoreFailure = failure !== null
+        ? failure
+        : { code: 'durable_projection_pending', message: 'the durable projection is in flight; the jobs read degrades (R46)' };
+      return { ok: false, error: degradedFailure };
+    }
+    return { ok: true, value: current.jobs.get(projectId) ?? Object.freeze([]) };
+  }
+
+  // -------------------------------------------------------------------------
   // THE DRAIN (the ordering law's second half — the host owns the async lane)
   // -------------------------------------------------------------------------
 
@@ -688,11 +842,15 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   }
 
   return {
-    ports: { controlPlane: controlPlanePort, firmMemory: firmMemoryPort, outcomeLearning: outcomeLearningPort },
+    ports: { controlPlane: controlPlanePort, firmMemory: firmMemoryPort, outcomeLearning: outcomeLearningPort, jobSubmission: jobSubmissionPort },
     settled,
     reproject,
     drain,
     goalOf,
+    jobsOf,
+    recordJobs,
+    beginJobHydration,
+    endJobHydration,
     lastProjection: () => report,
     lastFailure: () => failure,
   };

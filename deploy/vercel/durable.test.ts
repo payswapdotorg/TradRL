@@ -50,7 +50,7 @@ import { composeDeployment, DEPLOY_ADAPTER_PENDING } from './runtime/compose';
 import { API_ENV_KEYS, readApiEnv } from './runtime/env';
 import { handleDeploymentRequest } from './api/router';
 import { fakeProviders } from '../wire/smoketest';
-import { NeonFirmMemoryStore, NeonOutcomeLearningStore, NeonProjectStore, type NeonStoreDeps } from '../adapters/neon/stores';
+import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, type NeonStoreDeps } from '../adapters/neon/stores';
 import type { NeonConfig } from '../adapters/neon/client';
 import type { FetchLike } from '../adapters/shared';
 import { fixtureKnowledge, validConstraintSet, validGoal, validStrategyIntent } from '../../services/api/src/fixtures';
@@ -203,7 +203,7 @@ describe('deploy/vercel — the durable seam: the cold-start survival (D-5)', ()
     expect(first.backing).toBe('durable');
     expect(first.durable).not.toBeNull();
     await first.durable!.settled();
-    expect(first.durable!.lastProjection()).toEqual({ projects: 0, events: 0, knowledge: 0, outcomes: 0, postMortems: 0, skipped: [] });
+    expect(first.durable!.lastProjection()).toEqual({ projects: 0, events: 0, knowledge: 0, outcomes: 0, postMortems: 0, jobs: 0, skipped: [] });
 
     const created = first.service.handle({ method: 'POST', path: '/v1/projects', headers: BEARER, body: createProjectBody('prj-durable-desk-a') });
     expect(created.status).toBe(201);
@@ -237,7 +237,7 @@ describe('deploy/vercel — the durable seam: the cold-start survival (D-5)', ()
     expect(second.ok).toBe(true);
     if (!second.ok) return;
     await second.durable!.settled();
-    expect(second.durable!.lastProjection()).toEqual({ projects: 1, events: 2, knowledge: 0, outcomes: 0, postMortems: 0, skipped: [] });
+    expect(second.durable!.lastProjection()).toEqual({ projects: 1, events: 2, knowledge: 0, outcomes: 0, postMortems: 0, jobs: 0, skipped: [] });
     const listed = second.service.handle({ method: 'GET', path: '/v1/projects', headers: BEARER, query: {} });
     expect(listed.status).toBe(200);
     const page = (listed.body as { data: { items: readonly { id: string; lifecycle: { status: string; organizationRef: string | null } }[] } }).data;
@@ -482,6 +482,7 @@ describe('deploy/vercel — the durable seam: the boot hydration order + complet
       knowledge: 1,
       outcomes: 1,
       postMortems: 1,
+      jobs: 0,
       skipped: [{ project: 'prj-orphan', reason: 'no durable goal set (the record cannot reconstruct through the real control plane)' }],
     });
 
@@ -1141,5 +1142,138 @@ describe('deploy/vercel — the W-26C boot-world race hardening (R5)', () => {
     // And a second retry is stable (latched — never a repeating 503).
     const settled = await drive(loser, streamingRequest({ method: 'GET', url: '/v1/projects', headers: BEARER }));
     expect(settled.status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE W-27 DURABLE JOBS SURFACE (D-7 — the launched project's job records
+// survive cold starts: the per-id detail 404 loop + the boot-time empty
+// list, both closed by the write-through lane + the hydration replay)
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the W-27 durable jobs surface (D-7)', () => {
+  it('a launched project\'s kickoff job SURVIVES the cold start: the write-through persists the submission, and the new instance serves BOTH the jobs list (the host route) and the per-id detail (the FROZEN route, unchanged) with the EXACT durable jobId', async () => {
+    const providers = fakeProviders();
+
+    // INSTANCE A: the launch + the kickoff research job (the console's flow).
+    const first = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const created = await drive(first, streamingRequest({ method: 'POST', url: '/v1/projects', headers: BEARER, body: createProjectBody('prj-durable-jobs-a', Date.now() - 60_000) }));
+    expect(created.status).toBe(201);
+    const kickoff = await drive(first, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:w27:kickoff' }, body: { kind: 'research', projectId: 'prj-durable-jobs-a', spec: { source: 'w27-durable-jobs' } } }));
+    expect(kickoff.status).toBe(202);
+    const kickoffJob = (kickoff.body as { data: { jobId: string; status: string; project: string } }).data;
+    expect(kickoffJob.status).toBe('submitted');
+
+    // THE WRITE-THROUGH LANDED (the router drained the submission before the
+    // 202 left): the durable jobs store holds the record.
+    const direct = new NeonJobStore({ config: NEON_CONFIG, fetchLike: providers.fetchLike, instants: { next: () => T0 } });
+    const durableRows = await direct.jobRecordsOf(TENANT, 'prj-durable-jobs-a');
+    expect(durableRows.ok).toBe(true);
+    if (durableRows.ok) {
+      expect(durableRows.value.map((row) => (row as { jobId: string }).jobId)).toEqual([kickoffJob.jobId]);
+    }
+
+    // INSTANCE B (the cold start — the D-7 scenario): the first request pays
+    // the boot world, whose HYDRATION replays the durable job record back
+    // into the fresh instance's API-owned job store through the REAL public
+    // job route. The projection report carries the hydrated jobs count.
+    const second = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    await second.durable!.settled();
+    expect(second.durable!.lastProjection()?.jobs).toBe(1);
+    // (1) THE JOBS LIST (the host route, D-3's fold): the launched project's
+    // page carries its durable kickoff — never again "No research jobs"
+    // after a reload.
+    const listed = await drive(second, streamingRequest({ method: 'GET', url: `/v1/jobs?project=${encodeURIComponent('prj-durable-jobs-a')}`, headers: BEARER }));
+    expect(listed.status).toBe(200);
+    const listedItems = ((listed.body as { data: { items: readonly { jobId: string; status: string; project: string }[] } }).data).items;
+    expect(listedItems.map((job) => job.jobId)).toEqual([kickoffJob.jobId]); // the EXACT durable id — the hydrated record, not a re-mint
+    expect(listedItems[0]!.status).toBe('submitted');
+    // (2) THE PER-ID DETAIL (the FROZEN 3-segment route, UNCHANGED — served
+    // by the boundary over the hydrated store): 200 on the fresh instance —
+    // the D-7 404 poller loop is gone.
+    const detail = await drive(second, streamingRequest({ method: 'GET', url: `/v1/jobs/${encodeURIComponent(kickoffJob.jobId)}`, headers: BEARER }));
+    expect(detail.status).toBe(200);
+    expect(((detail.body as { data: { jobId: string; project: string } }).data).jobId).toBe(kickoffJob.jobId);
+    expect(((detail.body as { data: { project: string } }).data).project).toBe('prj-durable-jobs-a');
+    // (3) The demo scope's list still serves its RE-SEEDED demo jobs (the
+    // demo project's jobs stay per-instance — the write-through exclusion).
+    const demoList = await drive(second, streamingRequest({ method: 'GET', url: `/v1/jobs?project=${encodeURIComponent(DEMO_PROJECT_ID)}`, headers: BEARER }));
+    const demoItems = ((demoList.body as { data: { items: readonly { kind: string }[] } }).data).items;
+    expect(demoItems.map((job) => job.kind).sort()).toEqual(['learning', 'research']);
+    // (4) L12 unchanged: a foreign project's page is empty.
+    const foreign = await drive(second, streamingRequest({ method: 'GET', url: `/v1/jobs?project=${encodeURIComponent('prj-someone-elses')}`, headers: BEARER }));
+    expect(foreign.status).toBe(200);
+    expect(((foreign.body as { data: { items: readonly unknown[] } }).data).items).toEqual([]);
+    // (5) THE DEMO EXCLUSION (row-level): the durable jobs store holds NO
+    // row for the demo project (only the launched project's kickoff).
+    const demoRows = await direct.jobRecordsOf(TENANT, DEMO_PROJECT_ID);
+    expect(demoRows.ok).toBe(true);
+    if (demoRows.ok) expect(demoRows.value).toEqual([]);
+  });
+
+  it('the machinery tick\'s TRANSITIONS persist too: submitted -> complete rides the write-through, and the cold-start instance serves the COMPLETED record with its release-candidate result (the frozen route)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      const first = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+      const created = await drive(first, streamingRequest({ method: 'POST', url: '/v1/projects', headers: BEARER, body: createProjectBody('prj-durable-jobs-b', T0 - 60_000) }));
+      expect(created.status).toBe(201);
+      const kickoff = await drive(first, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:w27:transition' }, body: { kind: 'research', projectId: 'prj-durable-jobs-b', spec: {} } }));
+      expect(kickoff.status).toBe(202);
+      const jobId = (kickoff.body as { data: { jobId: string } }).data.jobId;
+
+      // The tick at +10s advances the kickoff to COMPLETE (through the real
+      // private plane); the transition's write-through drains with the
+      // request (the ordering law).
+      vi.setSystemTime(T0 + 10_000);
+      const ticked = await drive(first, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      expect(ticked.status).toBe(200);
+      const finished = await drive(first, streamingRequest({ method: 'GET', url: `/v1/jobs/${encodeURIComponent(jobId)}`, headers: BEARER }));
+      expect(((finished.body as { data: { status: string } }).data).status).toBe('complete');
+
+      // THE COLD START: the fresh instance hydrates the COMPLETED record —
+      // status, result and completedAt all durable.
+      const second = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(second.ok).toBe(true);
+      if (!second.ok) return;
+      const coldDetail = await drive(second, streamingRequest({ method: 'GET', url: `/v1/jobs/${encodeURIComponent(jobId)}`, headers: BEARER }));
+      expect(coldDetail.status).toBe(200);
+      const coldRecord = (coldDetail.body as { data: { status: string; result: { kind: string; specId: string; project: string } } }).data;
+      expect(coldRecord.status).toBe('complete');
+      expect(coldRecord.result).toEqual({ kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'prj-durable-jobs-b' });
+      // And the machinery tick does NOT re-transition the terminal durable
+      // job (the async pattern's own legality machine — a terminal record
+      // never re-opens; the write-through lane stays quiet).
+      const afterTick = await drive(second, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      expect(afterTick.status).toBe(200);
+      const stillDone = await drive(second, streamingRequest({ method: 'GET', url: `/v1/jobs/${encodeURIComponent(jobId)}`, headers: BEARER }));
+      expect(((stillDone.body as { data: { status: string } }).data).status).toBe('complete');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the seam\'s jobs read answers the TYPED degraded state while the projection is pending (never a silent empty)', async () => {
+    const providers = fakeProviders();
+    const deployment = composeInstance(durableSource(), providers.fetchLike);
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+    expect(deployment.durable).not.toBeNull();
+    // Before the first settled(): the typed pending failure (R46 — the host
+    // routes would surface the typed degraded state, never an empty 200).
+    const pending = deployment.durable!.jobsOf('prj-any');
+    expect(pending.ok).toBe(false);
+    if (!pending.ok) expect(pending.error.code).toBe('durable_projection_pending');
+    await deployment.durable!.settled();
+    const ready = deployment.durable!.jobsOf('prj-any');
+    expect(ready.ok).toBe(true);
+    if (ready.ok) expect(ready.value).toEqual([]); // an unknown project's page is empty (never a leak)
   });
 });

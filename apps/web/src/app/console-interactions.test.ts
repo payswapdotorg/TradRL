@@ -1921,6 +1921,125 @@ describe('executed boot: R6a — the scope-change refetch (launch -> the adopted
 });
 
 // ---------------------------------------------------------------------------
+// D-7 (W-27) — THE ORG-STATUS SCOPE PAIRING: the boot-order race the Lead
+// observed live on production (a fresh reload with a stored LAUNCHED scope):
+// the boot bundle (still scoped to the pre-hydration demo pin) reads its
+// project, the stored-scope restore ADOPTS the launched project mid-bundle,
+// and the beat's bundle for the adopted scope loads the launched project's
+// record (with its compiled organization ref). The pre-W-27 code read the
+// organization ref from the MUTABLE state.project at the bundle's end —
+// which by then held the LAUNCHED record — while the project query param
+// was still the DEMO bundle's own scope: the read crossed scopes
+// (GET /v1/organizations/<launched ref>/status?project=<demo id> -> the
+// observed 404 -> a degraded-read note -> the CONNECTION badge stuck at
+// DEGRADED). The fix pairs the ref with THE BUNDLE'S OWN freshly read
+// project record — same scope by construction, at BOTH org-status call
+// sites (the refresh bundle + the beat's org-compile poll).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-7 — the org-status read never crosses scopes (the boot-order race)', () => {
+  it('the boot bundle (demo scope) parked mid-flight while the stored LAUNCHED scope adopts and loads its compiled record: every org-status read pairs the ref with ITS OWN scope\'s project — no crossed pair, no degraded note', async () => {
+    // The scripted backing: prj-demo (the env pin's scope) carries org:seeded;
+    // prj-launched (the stored scope) carries org:compiled-prj-launched. The
+    // org-status route serves 200 ONLY for the two same-scope pairs and
+    // records EVERY (ref, project) pair it is asked for — the crossed pair
+    // would be recorded AND answered 404 (the degraded-read note).
+    const orgStatusReads: { ref: string; project: string }[] = [];
+    const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+    const notFound = () => ({ status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no organization status snapshot exists for the requested scope', status: 404 } } });
+    const projectOf = (id: string, organizationRef: string): Record<string, unknown> => ({
+      id, tenantId: 'tenant-a', name: id, executionMode: 'simulation',
+      lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef },
+      lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+      createdAt: T0, updatedAt: T0,
+    });
+    const api: ApiTransport = async (request) => {
+      const [path, query = ''] = request.path.split('?');
+      const key = `${request.method} ${path}`;
+      if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+      if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-demo', 'org:seeded'), projectOf('prj-launched', 'org:compiled-prj-launched')] });
+      if (key.startsWith('GET /v1/projects/')) {
+        const id = path.split('/').pop() ?? '';
+        if (id === 'prj-demo') return ok(projectOf('prj-demo', 'org:seeded'));
+        if (id === 'prj-launched') return ok(projectOf('prj-launched', 'org:compiled-prj-launched'));
+        return notFound();
+      }
+      if (key.startsWith('GET /v1/organizations/')) {
+        const ref = decodeURIComponent(path.slice('/v1/organizations/'.length).split('/status')[0] ?? '');
+        const project = new URLSearchParams(query).get('project') ?? '';
+        orgStatusReads.push({ ref, project });
+        if (ref === 'org:seeded' && project === 'prj-demo') return ok({ organizationRef: ref, tenant: 'tenant-a', project, status: 'active', at: T0, instanceRefs: ['ai:director-1'] });
+        if (ref === 'org:compiled-prj-launched' && project === 'prj-launched') return ok({ organizationRef: ref, tenant: 'tenant-a', project, status: 'active', at: T0, instanceRefs: ['ai:director-1', 'ai:researcher-2'] });
+        return notFound(); // the crossed pair (or any unknown pair) — the pre-fix race's 404
+      }
+      if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+      if (key === 'GET /v1/execution/submissions' || key === 'GET /v1/jobs') return ok({ items: [] });
+      return notFound(); // the host-owned goal route answers the typed not-found — an absent goal is the host's answer (the console catches it silently)
+    };
+    // The slow transport: the DEMO project read PARKS (the boot bundle stays
+    // mid-flight — the race's window), everything else answers immediately.
+    const gate: { release: (() => void) | null } = { release: null };
+    const slow: ApiTransport = async (request) => {
+      if (`${request.method} ${request.path.split('?')[0]}` === 'GET /v1/projects/prj-demo') {
+        await new Promise<void>((resolve) => { gate.release = resolve; });
+      }
+      return api(request);
+    };
+    // The reload's boot shape: the env pin scopes to prj-demo, the STORED
+    // scope (localStorage) holds the launched project.
+    const scopeStorage = new MapStorage();
+    scopeStorage.map.set('tradrl_scope_project', 'prj-launched');
+    const handle = bootConsole({
+      baseUrl: 'http://scripted.invalid',
+      token: 'token-test',
+      scope: { tenantId: 'tenant-a', projectId: 'prj-demo' },
+      transport: slow,
+      instants: { nowMs: () => T0 + 1000 },
+      storage: new MapStorage(),
+      onboardingStorage: new MapStorage(),
+      scopeStorage,
+    });
+    const doc = new FakeDocument();
+    const root = new FakeElement('div');
+    handle.mount(root as unknown as Parameters<ConsoleHandle['mount']>[0], doc as unknown as Parameters<ConsoleHandle['mount']>[1]);
+
+    // The boot bundle (bundleScope=prj-demo) parks on its project read; the
+    // stored-scope restore has ALREADY adopted prj-launched (the projects
+    // directory read completed before the park).
+    const booting = handle.refresh();
+    await settle();
+    if (gate.release === null) throw new Error('the demo project read never parked');
+    expect(handle.state().scope.projectId).toBe('prj-launched'); // the stored scope adopted mid-bundle
+
+    // The beat re-runs the FULL bundle for the ADOPTED scope (the R6a law):
+    // its project read loads the LAUNCHED record (with its compiled ref) and
+    // its org-status read pairs (org:compiled-prj-launched, prj-launched).
+    await handle.beat();
+    expect(handle.state().project?.id).toBe('prj-launched');
+    expect(handle.state().project?.lifecycle.organizationRef).toBe('org:compiled-prj-launched');
+    // The adopted scope's compiled snapshot rendered.
+    expect(handle.state().orgSnapshots.map((snapshot) => snapshot.organizationRef)).toContain('org:compiled-prj-launched');
+
+    // Release the parked DEMO bundle: its org-status read (whose project
+    // record was read BEFORE the adoption) must pair the DEMO record's own
+    // ref with the DEMO project — the pre-W-27 code would have read the
+    // CURRENT state.project (the LAUNCHED record) here and crossed scopes.
+    (gate.release as () => void)();
+    await booting;
+
+    // THE PAIRING PIN: every org-status read the console issued carries a
+    // SAME-SCOPE (ref, project) pair — the crossed pair never fired.
+    expect(orgStatusReads).toContainEqual({ ref: 'org:seeded', project: 'prj-demo' });
+    expect(orgStatusReads).toContainEqual({ ref: 'org:compiled-prj-launched', project: 'prj-launched' });
+    const crossed = orgStatusReads.filter((pair) => (pair.ref === 'org:seeded') !== (pair.project === 'prj-demo'));
+    expect(crossed).toEqual([]); // no pair mixes the demo org with the launched project (or vice versa)
+    // And no degraded read anywhere — the crossed 404 (the pre-fix race) is
+    // the only failure this backing can produce, and it never fired.
+    expect(handle.state().degraded).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // R2 + R3 — THE SERVED-SUBSTANCE SEAMS (the W-22 wave): the backing
 // serves the execution blotter (GET /v1/execution/submissions — the
 // W-8 host route) and the decision-substance fields on the outcome
