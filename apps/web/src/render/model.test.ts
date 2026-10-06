@@ -766,3 +766,78 @@ describe('render model: the MARKET WORLD section (D-8 — the persisted launch w
     };
   }
 });
+
+// ---------------------------------------------------------------------------
+// D-11 (W-29) — THE HOME HERO'S LAUNCH BANNER. M4's finding: after the
+// launch completed, Home kept the "A launch is in progress — details
+// below." banner AND hid the launch-entry buttons (a second launch
+// required a page reload). The banner is now PHASE-DRIVEN: it renders
+// ONLY while the tracked launch is genuinely in flight, and a concluded
+// launch (launched/failed, no open wizard) restores the entry CTA.
+// ---------------------------------------------------------------------------
+
+describe('render model: D-11 — the Home hero\'s launch banner clears when the launch concludes', () => {
+  function homeBytes(events: readonly WorkspaceEvent[]): string {
+    const state = reduceAll(openWorkspace(SCOPE, T0), events);
+    return serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
+  }
+
+  it('while the launch is IN FLIGHT the banner renders and the entry CTA is away', () => {
+    const bytes = homeBytes([{ kind: 'launch-submitted', at: T0 + 1, projectId: 'proj-a', jobId: 'job-9' }]);
+    expect(bytes).toContain('A launch is in progress — details below.');
+    expect(bytes).toContain('data-hero-launch="launching"');
+    expect(bytes).not.toContain('data-action="launch-start"');
+  });
+
+  it('a COMPLETED launch restores the entry CTA — the banner clears (no reload needed for a second launch)', () => {
+    // the jobs-list race shape: the kickoff job arrives already complete
+    // (the D-11 reducer closes the launch on the record itself)
+    const bytes = homeBytes([
+      { kind: 'launch-submitted', at: T0 + 1, projectId: 'proj-a', jobId: 'job-9' },
+      { kind: 'job-updated', at: T0 + 2, job: { jobId: 'job-9', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: T0 + 1, completedAt: T0 + 5 } },
+    ]);
+    expect(bytes).toContain('data-action="launch-start"');       // the launch-entry button is back
+    expect(bytes).toContain('Describe your goal');               // the hero's own CTA copy
+    expect(bytes).not.toContain('A launch is in progress');      // the banner is gone
+    // the launch panel below keeps the concluded launch's own card (the honest terminal render)
+    expect(bytes).toContain('Launch progress');
+    expect(bytes).toContain('data-launch-phase="complete"');
+  });
+
+  it('a FAILED launch restores the entry CTA too — the error card stays in the launch panel, never the hero', () => {
+    const bytes = homeBytes([
+      { kind: 'launch-submitted', at: T0 + 1, projectId: 'proj-a', jobId: 'job-9' },
+      { kind: 'job-updated', at: T0 + 2, job: { jobId: 'job-9', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'failed', submittedAt: T0 + 1 } },
+    ]);
+    expect(bytes).toContain('data-action="launch-start"');
+    expect(bytes).not.toContain('A launch is in progress');
+    expect(bytes).toContain('Launch failed'); // the error card renders in the launch panel below
+  });
+
+  it('the wizard-open note still wins while a draft is active (the J3 resume hint, unchanged)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [{ kind: 'launch-draft-started', at: T0 + 1, draft: blankDraftOfD11() }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
+    expect(bytes).toContain('The launch wizard is open — continue below.');
+    expect(bytes).toContain('data-hero-launch="draft"');
+    expect(bytes).not.toContain('data-action="launch-start"');
+  });
+
+  /** The blank draft fixture (the D-11 describe's own copy — the wizard's opening state). */
+  function blankDraftOfD11(): LaunchDraft {
+    return {
+      name: 'Alpha Seeker',
+      objective: 'Find and keep an edge in momentum.',
+      horizon: { startsAt: T0, endsAt: T0 + 86_400_000 },
+      successCriteria: [{ id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 } }],
+      evaluation: { blindRef: 'eval:blind-1', walkForwardRef: 'eval:wf-1', regimeRef: 'eval:regime-1', adversarialRequired: true },
+      constraints: [],
+      capitalBudget: '10000.00',
+      riskBudget: '250.00',
+      markets: ['SPY'],
+      venues: ['venue-x'],
+      dataSources: ['data:ohlcv-1d'],
+      executionMode: 'simulation',
+      preferences: [],
+    };
+  }
+});

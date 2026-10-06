@@ -346,6 +346,47 @@ describe('workspace: transitions', () => {
     state = reduceWorkspace(state, { kind: 'launch-reset', at: T0 + 5 });
     expect(state.launch.phase).toBe('idle');
   });
+
+  it('D-11 (W-29): the tracked launch\'s phase FOLLOWS ITS JOB\'S RECORD — a terminal job-updated closes the launch even with NO poll observation of the transition (the jobs-list race)', () => {
+    // THE RACE (M4's finding: Home kept the "A launch is in progress"
+    // banner after the launch completed; a second launch required a page
+    // reload): app/console.ts dispatches launch-completed only from
+    // pollJobs, and pollJobs SKIPS jobs already terminal in state — so
+    // when the beat's jobs-list read serves the kickoff job ALREADY
+    // complete (job-updated(complete) with no poll observation of the
+    // transition), the dedicated event never fired and phase stayed
+    // 'launching' forever. The reducer now closes the loop itself.
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'launch-submitted', at: T0 + 2, projectId: 'proj-a', jobId: 'job-9' });
+    expect(state.launch.phase).toBe('launching');
+    // the jobs-list read serves the record already COMPLETE — no
+    // launch-progress, no launch-completed anywhere in the sequence
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 3, job: { ...jobRecord('complete'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('launched');
+    expect(state.launch.progress.map((point) => point.status)).toEqual(['submitted', 'complete']);
+    // the poll path stays idempotent: the same terminal record again (a
+    // re-read) appends its observation and changes the phase nothing
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 4, job: { ...jobRecord('complete'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('launched');
+    // and the dedicated event on top of it changes nothing either
+    state = reduceWorkspace(state, { kind: 'launch-completed', at: T0 + 5 });
+    expect(state.launch.phase).toBe('launched');
+  });
+
+  it('D-11 (W-29): a tracked kickoff job FAILING through the record closes the launch with its error (and a NON-tracked job never touches the launch slice)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'launch-submitted', at: T0 + 2, projectId: 'proj-a', jobId: 'job-9' });
+    // a different project's job completing must not close THIS launch
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 3, job: jobRecord('complete') });
+    expect(state.launch.phase).toBe('launching'); // jobRecord's id is job-1, not the tracked job-9
+    // the tracked job fails through its record (the list-read race again)
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 4, job: { ...jobRecord('failed'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('failed');
+    expect(state.launch.error).toContain('job-9');
+    // a concluded launch never re-opens on later records (the guard is the in-flight phase)
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 5, job: { ...jobRecord('complete'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('failed');
+  });
 });
 
 describe('workspace: the L12 gate on every ingest', () => {

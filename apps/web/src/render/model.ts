@@ -679,18 +679,27 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
   // THE HERO'S LAUNCH AFFORDANCE (the J3 entry, Home shape): the
   // primary flow's own CTA when nothing is running; a resume hint
   // while the wizard is open (the wizard renders in the launch panel
-  // directly below); a progress note while a launch is in flight or
-  // has finished. Mirrors launchPanel's own states — never a dead
-  // button (a launch-start while a draft is open would be refused by
-  // the handler; the hero shows the honest state instead).
+  // directly below); a progress note ONLY while a launch is genuinely
+  // IN FLIGHT. Mirrors launchPanel's own states — never a dead button
+  // (a launch-start while a draft is open would be refused by the
+  // handler; the hero shows the honest state instead).
+  // D-11 (W-29): the banner is PHASE-DRIVEN, never progress-presence-
+  // driven. The pre-fix test (draft === null && progress.length === 0
+  // && error === null) stayed false FOREVER after any launch — the
+  // progress array is append-only and no event ever cleared it, so a
+  // COMPLETED launch kept the "A launch is in progress" banner and hid
+  // the launch-entry buttons (M4's finding: a second launch required a
+  // page reload). A concluded launch (launched/failed, no open wizard)
+  // now restores the CTA; the launch panel below keeps the concluded
+  // launch's own cards (result, progress, Start over).
   const launch = state.launch;
   const draftActive = launch.draft !== null && (launch.phase === 'draft' || launch.phase === 'idle');
-  const launchQuiet = launch.draft === null && launch.progress.length === 0 && launch.error === null;
+  const launchInFlight = launch.phase === 'launching';
   const heroCta: VNode | undefined = draftActive
     ? v('p', { class: 'hero-note', 'data-hero-launch': 'draft' }, ['The launch wizard is open — continue below.'])
-    : launchQuiet
-      ? v('button', { class: 'hero-cta', 'data-action': 'launch-start', type: 'button' }, ['Describe your goal'])
-      : v('p', { class: 'hero-note', 'data-hero-launch': launch.phase }, ['A launch is in progress — details below.']);
+    : launchInFlight
+      ? v('p', { class: 'hero-note', 'data-hero-launch': launch.phase }, ['A launch is in progress — details below.'])
+      : v('button', { class: 'hero-cta', 'data-action': 'launch-start', type: 'button' }, ['Describe your goal']);
   const hero = heroPanel(heroCta);
   if (state.connection === 'connecting' && fresh) {
     return v('section', { class: 'panel home', 'data-section': 'home' }, [hero, loadingState('stat-grid')]);

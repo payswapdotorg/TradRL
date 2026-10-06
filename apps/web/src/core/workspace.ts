@@ -368,9 +368,32 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         : state.jobs.map((job, index) => (index === existing ? event.job : job));
       const next: WorkspaceState = { ...withHistory, jobs };
       // The launch flow tracks its own kickoff job's progress.
-      const launch = state.launch.jobId === event.job.jobId
-        ? { ...state.launch, progress: [...state.launch.progress, { status: event.job.status, at: event.at }] as readonly JobProgressPoint[] }
-        : state.launch;
+      const tracked = state.launch.jobId === event.job.jobId;
+      const progress = tracked
+        ? [...state.launch.progress, { status: event.job.status, at: event.at }] as readonly JobProgressPoint[]
+        : state.launch.progress;
+      // D-11 (W-29): THE PHASE FOLLOWS THE RECORD, NOT THE OBSERVER. The
+      // pre-fix law transitioned launch.phase ONLY on the dedicated
+      // launch-completed / launch-failed events, which app/console.ts
+      // dispatches from pollJobs — and pollJobs SKIPS jobs already
+      // terminal in state, so the common race (the beat's jobs-list read
+      // serves the kickoff job already complete: job-updated(complete),
+      // no poll observation of the transition) left phase='launching'
+      // FOREVER — Home kept the "A launch is in progress" banner and hid
+      // the launch-entry buttons until a page reload (M4's finding: a
+      // second launch required a reload). The reducer now closes the
+      // loop itself: a tracked job's TERMINAL record closes the launch,
+      // whatever path carried the record in. The dedicated events stay
+      // (idempotent for the poll path — setting the same phase twice
+      // changes nothing).
+      let launch = tracked ? { ...state.launch, progress } : state.launch;
+      if (tracked && state.launch.phase === 'launching') {
+        if (event.job.status === 'complete') {
+          launch = { ...launch, phase: 'launched' };
+        } else if (event.job.status === 'failed') {
+          launch = { ...launch, phase: 'failed', error: `the kickoff job ${event.job.jobId} failed` };
+        }
+      }
       return { ...next, launch, inbox: refoldNotices({ ...next, launch }) };
   } else if (selector === 'outcomes-loaded') {
       for (const record of event.records) assertProjectScope(state.scope, record);
