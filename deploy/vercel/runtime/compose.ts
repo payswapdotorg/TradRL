@@ -20,13 +20,21 @@
 //     serve data — per-instance in-memory state, reset by serverless
 //     cold starts, honest under the SIMULATED badge (UX-DESIGN §7).
 //   - DURABLE (any durable-provider key present, or
-//     TRADRL_DEPLOY_BACKING=durable): the current behavior path — the
-//     typed degraded stubs below, because T041's port methods are
-//     SYNCHRONOUS by design while the durable adapters (deploy/wire,
-//     W-3d) are async; the async-to-sync hydration seam is the
-//     documented W-3e/lead step (deploy/wire/production.md). The
-//     wire's durable adapters own those cases; this seam keeps the
-//     honest typed pending state until then.
+//     TRADRL_DEPLOY_BACKING=durable): the W-3e HYDRATION SEAM (W-25D,
+//     runtime/durable.ts) — the Neon-backed surfaces (control plane,
+//     firm memory, outcome learning) are SYNC in-memory ports hydrated
+//     from the durable stores at every cold start, with write-through
+//     on every mutation (the ordering law: durable writes are drained
+//     by the host before the response is served; a failed write is the
+//     typed 503 + a re-projection — never a crash, never a silent
+//     divergence). A launched project + its goal set, organization
+//     bindings and lifecycle events persist in Neon and REHYDRATE on
+//     every cold start (D-5). When the Neon keys are INCOMPLETE the
+//     seam is not built and those surfaces answer the typed
+//     `deploy_adapter_absent` 503s (the matrix); the execution gateway
+//     stays the honest `deploy_adapter_pending` stub (the REAL gateway
+//     delegate is not composed into this runtime — L8: never bypassed,
+//     never faked) and the job port follows the matrix for Apify.
 //   - An INVALID explicit TRADRL_DEPLOY_BACKING value is a host
 //     misconfiguration: the typed not-configured 503 (fail-closed,
 //     key name + legal values only — never a value).
@@ -34,7 +42,7 @@
 // misconfigured answers its typed degraded state, never a crash.
 //
 // Zero-dep law: platform APIs only. Spec anchors: ARCHITECTURE-LOCK
-// L8/L12/L20, R41/R43/R46, D-033.
+// L8/L12/L20, R41/R43/R46, D-033, D-5.
 
 import {
   bearerTokenOf,
@@ -54,6 +62,9 @@ import {
   type OutcomeLearningPort,
 } from '../../../services/api/src/index';
 import { missingApiEnvKeys, readApiEnv, resolveDeployBacking, DEPLOY_BACKING_VALUES, type ApiDeploymentEnv, type DeployBacking } from './env';
+import { buildDurableBacking, type DurableBackingHandle } from './durable';
+import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
+import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import { demoMachineryTick, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts } from './demo';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization } from './routes';
 
@@ -75,6 +86,36 @@ export interface DeploymentPortOverrides {
   readonly outcomeLearning?: OutcomeLearningPort;
   readonly executionGateway?: ExecutionGatewayPort;
   readonly jobSubmission?: JobSubmissionPort;
+}
+
+/**
+ * The durable-seam options (W-25D): the injected fetch + instant source for
+ * the seam's Neon stores. Fakes in tests (the fake provider fleet's fetch);
+ * absent in production (the platform fetch + the host wall clock — the same
+ * law as the composition's own instants). The provider environment itself
+ * rides `ApiDeploymentEnv.providers` (the wire's readProviderEnv — the
+ * single provider implementation).
+ */
+export interface DurableSeamOptions {
+  readonly fetchLike?: FetchLike;
+  readonly instants?: InstantSourceMirror;
+}
+
+/** The typed absent stubs for the Neon-backed surfaces (the matrix's Neon-absent row — R46, never a throw). */
+function neonAbsentPorts(): Pick<Required<DeploymentPortOverrides>, 'controlPlane' | 'firmMemory' | 'outcomeLearning'> {
+  const failure = adapterAbsentFailure('neon');
+  const refuse = () => ({ ok: false as const, error: failure });
+  return {
+    controlPlane: { createProject: refuse, getProject: refuse, projectsOf: refuse, transition: refuse, bindOrganization: refuse },
+    firmMemory: { queryKnowledge: refuse },
+    outcomeLearning: { queryOutcomes: refuse, queryPostMortems: refuse },
+  };
+}
+
+/** The typed absent stub for the job-submission port (the matrix's Apify-absent row). */
+function apifyAbsentJobPort(): JobSubmissionPort {
+  const failure = adapterAbsentFailure('apify');
+  return { submitJob: () => ({ ok: false as const, error: failure }) };
 }
 
 /** The checkpoint-1 backing services: every route that needs a port degrades to the typed 503. */
@@ -124,11 +165,11 @@ export interface DemoBackingHandle {
 }
 
 export type DeploymentComposition =
-  | { readonly ok: true; readonly service: ApiService; readonly backing: DeployBacking; readonly demo: DemoBackingHandle | null; readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization }
+  | { readonly ok: true; readonly service: ApiService; readonly backing: DeployBacking; readonly demo: DemoBackingHandle | null; readonly durable: DurableBackingHandle | null; readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization }
   | DeploymentNotConfigured;
 
-/** Compose the boundary service over the deployment environment (pure — no ambient env read, no cache). */
-export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPortOverrides = {}): DeploymentComposition {
+/** Compose the boundary service over the deployment environment (pure — no ambient env read, no cache, no network). */
+export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPortOverrides = {}, seam: DurableSeamOptions = {}): DeploymentComposition {
   const missing = missingApiEnvKeys(env);
   if (missing.length > 0) return { ok: false, code: 'deploy_not_configured', missing };
   // An invalid explicit backing value is a host misconfiguration —
@@ -148,9 +189,32 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     return { ok: false, code: 'deploy_not_configured', missing: ['TRADRL_API_DEVELOPER_TENANT (not a valid tenant id)'] };
   }
   // The backing matrix: DEMO = the seeded fixture fakes (runtime/demo.ts);
-  // DURABLE = the typed degraded stubs (the hydration seam is W-3e).
+  // DURABLE = the W-3e hydration seam (runtime/durable.ts) over the Neon
+  // stores — or the typed absent stubs when the Neon keys are incomplete.
   const demoPorts = backing === 'demo' ? seedDemoBacking(tenant) : null;
-  const ports: Required<DeploymentPortOverrides> = demoPorts ?? degradedPorts();
+  const stubs = degradedPorts();
+  let durable: DurableBackingHandle | null = null;
+  let ports: Required<DeploymentPortOverrides>;
+  if (demoPorts !== null) {
+    ports = demoPorts;
+  } else {
+    // backing === 'durable': the seam activates only when the Neon adapter
+    // is enabled (its four keys present); otherwise the Neon-backed surfaces
+    // answer the typed `deploy_adapter_absent` 503s (the matrix). The gateway
+    // stays the pending stub; the job port follows the matrix for Apify
+    // (absent keys -> the typed absent; present keys -> the pending stub —
+    // the async Apify bridge is a later seam, NOT this wave's Neon scope).
+    durable = buildDurableBacking({
+      providerEnv: env.providers,
+      tenant,
+      ...(seam.fetchLike === undefined ? {} : { fetchLike: seam.fetchLike }),
+      instants: seam.instants ?? { next: () => Date.now() },
+    });
+    ports = durable !== null ? { ...stubs, ...durable.ports } : { ...stubs, ...neonAbsentPorts() };
+    if (!enabledAdapters(env.providers).apify) {
+      ports = { ...ports, jobSubmission: apifyAbsentJobPort() };
+    }
+  }
   // Port overrides are the injection seam (tests + future hosts): an
   // overridden port set owns its own world — the demo world seed and
   // the machinery handle are suppressed under overrides.
@@ -201,9 +265,11 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
   };
   // The demo world seed — ONLY for the un-overridden demo composition
   // (see hasOverrides above). Every seed mutation goes THROUGH the real
-  // routes (L20 runs for real — see runtime/demo.ts).
+  // routes (L20 runs for real — see runtime/demo.ts). The durable handle
+  // rides every composition where the seam was built (an overridden port
+  // owns its own world; the seam's other surfaces + the drain stay live).
   if (demoPorts === null || hasOverrides) {
-    return { ok: true, service: construction.service, backing, demo: null, verifyDeveloperAuthorization };
+    return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization };
   }
   const seed = seedDemoWorld(construction.service, { tenant, developerToken: token, internalToken }, Date.now());
   const machinery: DemoMachineryContext = { ports: demoPorts, tenant, developerToken: token, internalToken: internalToken as string };
@@ -216,6 +282,7 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
       orgStatusSeeded: seed.orgStatusSeeded,
       tick: internalToken === null ? null : (at: number) => demoMachineryTick(construction.service, machinery, at),
     },
+    durable,
     verifyDeveloperAuthorization,
   };
 }
@@ -227,6 +294,7 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
 let cachedEnv: EnvIdentity | null = null;
 let cachedService: ApiService | null = null;
 let cachedDemo: DemoBackingHandle | null = null;
+let cachedDurable: DurableBackingHandle | null = null;
 let cachedBacking: DeployBacking | null = null;
 let cachedVerify: VerifyDeveloperAuthorization | null = null;
 
@@ -248,14 +316,15 @@ export function getDeploymentService(
   source: Readonly<Record<string, string | undefined>> = process.env,
 ): DeploymentComposition {
   if (cachedService !== null && cachedEnv !== null && cachedEnv.source === source && cachedBacking !== null && cachedVerify !== null) {
-    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo, verifyDeveloperAuthorization: cachedVerify };
+    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo, durable: cachedDurable, verifyDeveloperAuthorization: cachedVerify };
   }
   const composed = composeDeployment(readApiEnv(source));
   if (!composed.ok) return composed;
   cachedEnv = { source, env: readApiEnv(source) };
   cachedService = composed.service;
   cachedDemo = composed.demo;
+  cachedDurable = composed.durable;
   cachedBacking = composed.backing;
   cachedVerify = composed.verifyDeveloperAuthorization;
-  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo, verifyDeveloperAuthorization: composed.verifyDeveloperAuthorization };
+  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo, durable: composed.durable, verifyDeveloperAuthorization: composed.verifyDeveloperAuthorization };
 }

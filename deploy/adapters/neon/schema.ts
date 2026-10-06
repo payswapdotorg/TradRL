@@ -97,6 +97,25 @@ CREATE TABLE IF NOT EXISTS tradrl_project_events (
 );
 `;
 
+/**
+ * The control-plane goal-set table (W-25D, D-5): one row per project — the
+ * create-project input's goal statement + constraint set (the records the
+ * W-3e hydration seam persists at createProject time and rehydrates at every
+ * cold start, so the REAL control plane can reconstruct the project through
+ * its own domain law). The payload is `{ goal, constraintSet }` as canonical
+ * JSON; the row is a dependency of the project record (the seam writes the
+ * goal set BEFORE the record — a partial write leaves an unread orphan, never
+ * a record that cannot reconstruct).
+ */
+export const GOAL_SET_TABLE_DDL = /* sql */ `
+CREATE TABLE IF NOT EXISTS tradrl_project_goals (
+  tenant     TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  PRIMARY KEY (tenant, project_id)
+);
+`;
+
 /** Every DDL record, in application order (the runbook's §neon paste block). */
 export const NEON_DDL_RECORDS: readonly { readonly table: string; readonly ddl: string }[] = [
   { table: 'tradrl_knowledge', ddl: KNOWLEDGE_TABLE_DDL },
@@ -104,4 +123,5 @@ export const NEON_DDL_RECORDS: readonly { readonly table: string; readonly ddl: 
   { table: 'tradrl_post_mortems', ddl: POST_MORTEM_TABLE_DDL },
   { table: 'tradrl_projects', ddl: PROJECT_TABLE_DDL },
   { table: 'tradrl_project_events', ddl: PROJECT_EVENT_TABLE_DDL },
+  { table: 'tradrl_project_goals', ddl: GOAL_SET_TABLE_DDL },
 ];

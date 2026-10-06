@@ -349,15 +349,27 @@ describe('deploy/vercel — the composition seam (the backing resolution matrix)
     expect(composed.demo).not.toBeNull();
   });
 
-  it('THE MATRIX — an explicit "durable" override (even with no provider keys) => the typed pending stubs', () => {
+  it('THE MATRIX — an explicit "durable" override (even with no provider keys) => the typed degraded stubs (never a throw)', () => {
     const composed = composeDeployment(apiEnv({ TRADRL_DEPLOY_BACKING: 'durable' }));
     expect(composed.ok).toBe(true);
     if (!composed.ok) return;
     expect(composed.backing).toBe('durable');
     expect(composed.demo).toBeNull();
+    // The Neon-backed surfaces answer the typed `deploy_adapter_absent` (the
+    // seam is not built — Neon's keys are incomplete; the matrix's Neon-absent
+    // row); the gateway keeps the honest pending stub; jobs follow the matrix
+    // for Apify (absent keys -> the typed absent). W-25D: the SEAM-LIVE law
+    // (hydration + write-through + the cold-start survival) is pinned by
+    // deploy/vercel/durable.test.ts.
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const projects = composed.service.handle({ method: 'GET', path: '/v1/projects', headers: bearer, query: {} });
+    expect(projects.status).toBe(503);
+    expect((projects.body as { error: { code: string; message: string } }).error.message).toContain('deploy_adapter_absent');
+    const execution = composed.service.handle({ method: 'POST', path: '/v1/execution/requests', headers: { ...bearer, 'idempotency-key': 'idem:w25d:matrix' }, body: { intent: validStrategyIntent(VALID_ENV[API_ENV_KEYS.apiDeveloperTenant] as string, 'prj_x') } });
+    expect((execution.body as { error: { message: string } }).error.message).toContain(DEPLOY_ADAPTER_PENDING);
   });
 
-  it('THE MATRIX — durable-provider keys present (full OR partial) => DURABLE; the data routes answer the typed 503 (R46 unchanged)', () => {
+  it('THE MATRIX — durable-provider keys present (full OR partial) => DURABLE; the data routes answer the typed degraded 503s until the host awaits the projection (R46)', () => {
     for (const [label, providerKeys] of [['the full set', DURABLE_KEYS], ['a partial set (an operator opted in)', { NEON_API_HOST: DURABLE_KEYS.NEON_API_HOST }] as const] as const) {
       const composed = composeDeployment(apiEnv({ ...providerKeys }));
       expect(composed.ok, label).toBe(true);
@@ -373,7 +385,10 @@ describe('deploy/vercel — the composition seam (the backing resolution matrix)
       expect(projects.status, label).toBe(503);
       const errorBody = projects.body as { error: { code: string; message: string } };
       expect(errorBody.error.code, label).toBe('unavailable');
-      expect(errorBody.error.message, label).toContain(DEPLOY_ADAPTER_PENDING);
+      // Full set: the seam is built, but a PURE composition makes no network
+      // calls — the projection runs only when the host awaits settled() (the
+      // router does; see durable.test.ts for the seam-live law).
+      expect(errorBody.error.message, label).toContain(providerKeys === DURABLE_KEYS ? 'durable_projection_pending' : 'deploy_adapter_absent');
     }
   });
 

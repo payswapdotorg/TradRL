@@ -68,17 +68,31 @@ export function fakeProviders(): FakeProviders {
     if (url.endsWith('/sql')) {
       seen.neon += 1;
       const parsed = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as { query: string; params: string[] };
-      const insert = /^INSERT INTO (tradrl_\w+)/.exec(parsed.query);
+      const insert = /^INSERT INTO (tradrl_\w+) \(([^)]+)\)/.exec(parsed.query);
       if (insert !== null) {
-        const rows = tables.get(insert[1] as string) ?? [];
+        const table = insert[1] as string;
+        const columns = (insert[2] ?? '').split(',').map((column) => column.trim());
+        const rows = tables.get(table) ?? [];
+        // Upsert fidelity (W-25D): an `ON CONFLICT (…) DO UPDATE` replaces the
+        // row with the same conflict-key tuple — the same semantics the real
+        // SQL has (the durable seam upserts project records + goal sets).
+        const conflict = /ON CONFLICT \(([^)]+)\) DO UPDATE/.exec(parsed.query);
+        if (conflict !== null) {
+          const keyColumns = (conflict[1] ?? '').split(',').map((column) => column.trim());
+          const keyIndexes = keyColumns.map((column) => columns.indexOf(column));
+          const keyOf = (row: { params: readonly string[] }): string => keyIndexes.map((index) => row.params[index === -1 ? row.params.length : index]).join('\u0000');
+          const incomingKey = keyIndexes.map((index) => parsed.params[index === -1 ? parsed.params.length : index]).join('\u0000');
+          const existing = rows.findIndex((row) => keyOf(row) === incomingKey);
+          if (existing >= 0) rows.splice(existing, 1);
+        }
         rows.push({ params: parsed.params });
-        tables.set(insert[1] as string, rows);
+        tables.set(table, rows);
         return responder(JSON.stringify({ command: 'INSERT 0 1', rowCount: 1 }));
       }
       const select = /^SELECT payload FROM (tradrl_\w+)/.exec(parsed.query);
       if (select !== null) {
-        const orderIndex = select[1] === 'tradrl_projects' ? 5 : 3;
-        const payloadIndex = select[1] === 'tradrl_projects' ? 6 : select[1] === 'tradrl_project_events' ? 5 : select[1] === 'tradrl_knowledge' ? 6 : 7;
+        const orderIndex = select[1] === 'tradrl_projects' ? 5 : select[1] === 'tradrl_project_goals' ? 1 : 3;
+        const payloadIndex = select[1] === 'tradrl_projects' ? 6 : select[1] === 'tradrl_project_events' ? 5 : select[1] === 'tradrl_knowledge' ? 6 : select[1] === 'tradrl_project_goals' ? 2 : 7;
         let rows = (tables.get(select[1] as string) ?? []).filter((row) => row.params[0] === parsed.params[0]);
         if (parsed.query.includes('AND project = $2') || parsed.query.includes('AND project_id = $2')) {
           rows = rows.filter((row) => row.params[1] === parsed.params[1]);

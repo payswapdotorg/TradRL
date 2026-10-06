@@ -213,6 +213,50 @@ export function projectEventsStatement(tenant: string, projectId: string): Built
   return { sql: 'SELECT payload FROM tradrl_project_events WHERE tenant = $1 AND project_id = $2 ORDER BY ordinal', params: [tenant, projectId] };
 }
 
+// ---------------------------------------------------------------------------
+// The goal-set surface (W-25D, D-5 — the W-3e seam's create-project records)
+// ---------------------------------------------------------------------------
+
+/** The shape one goal-set row round-trips (the create-project input's own goal + constraint set, verbatim). */
+export interface GoalSetRecord {
+  readonly goal: unknown;
+  readonly constraintSet: unknown;
+}
+
+/**
+ * The goal-set upsert (tenant = param 1 — L12). The payload is the
+ * `{ goal, constraintSet }` pair as canonical JSON — the records ride the
+ * create-project input, which the boundary always carries.
+ */
+export function goalSetPutStatement(scopeTenant: string, projectId: string, goalSet: GoalSetRecord): StoreResult<BuiltStatement> {
+  if (!isNonEmptyString(projectId)) return malformed('the goal set lacks projectId');
+  return {
+    ok: true,
+    value: {
+      sql: 'INSERT INTO tradrl_project_goals (tenant, project_id, payload) VALUES ($1, $2, $3) ON CONFLICT (tenant, project_id) DO UPDATE SET payload = EXCLUDED.payload',
+      params: [scopeTenant, projectId, canonicalJson(goalSet as unknown as JsonValue)],
+    },
+  };
+}
+
+/** The goal-set read (tenant = $1 ALWAYS — a foreign tenant finds nothing, indistinguishably). */
+export function goalSetGetStatement(tenant: string, projectId: string): BuiltStatement {
+  return { sql: 'SELECT payload FROM tradrl_project_goals WHERE tenant = $1 AND project_id = $2', params: [tenant, projectId] };
+}
+
+/** Decode one goal-set row (`{ goal, constraintSet }`); a malformed row is the typed malformed failure. */
+function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
+  const payload = row[0];
+  if (typeof payload !== 'string') return malformed('the stored goal set is not text');
+  try {
+    const value = JSON.parse(payload) as unknown;
+    if (!isRecord(value) || !('goal' in value) || !('constraintSet' in value)) return malformed('the stored goal set lacks goal/constraintSet');
+    return { ok: true, value: { goal: value.goal, constraintSet: value.constraintSet } };
+  } catch {
+    return malformed('the stored goal set is not valid JSON');
+  }
+}
+
 function malformed(message: string): StoreResult<never> {
   return { ok: false, error: { code: 'malformed_record', message } };
 }
@@ -414,6 +458,31 @@ export class NeonProjectStore implements ProjectStoreMirror {
       events.push({ event: entry.event, at: typeof entry.at === 'number' ? entry.at : 0, detail: entry.detail ?? null });
     }
     return { ok: true, value: events };
+  }
+
+  /**
+   * Persist one project's goal set (the create-project input's goal +
+   * constraint set — the W-25D seam's create-time records; the REAL control
+   * plane reconstructs the project from them at every cold start).
+   */
+  async putGoalSet(scopeTenant: string, projectId: string, goalSet: GoalSetRecord): Promise<StoreResult<{ readonly stored: true }>> {
+    const built = goalSetPutStatement(scopeTenant, projectId, goalSet);
+    if (!built.ok) return built;
+    const executed = await executeNeonStatement(this.deps.config, built.value.sql, built.value.params, this.fetchLike);
+    this.note('putGoalSet', scopeTenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    return { ok: true, value: { stored: true } };
+  }
+
+  /** Read one project's goal set; `null` when none is stored (the typed not-found — a foreign tenant finds nothing, indistinguishably). */
+  async goalSetOf(tenant: string, projectId: string): Promise<StoreResult<GoalSetRecord | null>> {
+    const built = goalSetGetStatement(tenant, projectId);
+    const executed = await executeNeonStatement(this.deps.config, built.sql, built.params, this.fetchLike);
+    this.note('goalSetOf', tenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    const rows = selectRows(executed.value);
+    if (rows.length === 0) return { ok: true, value: null };
+    return decodeGoalSet(rows[0] ?? []);
   }
 
   private note(operation: string, tenant: string, ok: boolean): void {
