@@ -60,10 +60,14 @@
 // its bound organization) on every other instance. The knowledge/outcome
 // surfaces are READ projections in this wave: they rehydrate whatever the
 // durable stores hold (their writers are the owning T033/T034 services,
-// not this boundary — the ports are read-only by design). Jobs and the
-// execution gateway are NOT Neon-backed (the Apify async bridge and the
-// real gateway delegate are later seams) — under the durable backing they
-// answer their typed stub states, never a fake.
+// not this boundary — the ports are read-only by design). Since W-26B the
+// composition composes the SAME simulated execution-gateway + job-
+// submission engines the demo backing composes over this seam (runtime/
+// compose.ts — the durable superset law), and the boot world
+// (runtime/durable-world.ts) seeds the demo world + the fixture substance
+// into these stores; jobs and the org-status snapshots stay API-OWNED
+// per-instance state (the frozen service's closures — the disclosed
+// limitation, re-seeded per instance by the boot world + the tick).
 //
 // WHAT STAYS API-OWNED (honest limitation): the boundary's job store and
 // org-status snapshots live in the frozen service's closure with no
@@ -172,6 +176,13 @@ export interface DurableBackingHandle {
    */
   settled(): Promise<void>;
   /**
+   * Force a full re-projection from the durable truth (W-26B — the boot
+   * world's post-seed refresh; see the builder's `reproject`). A failure
+   * leaves the seam in the typed degraded state (the per-request retry
+   * heals).
+   */
+  reproject(): Promise<void>;
+  /**
    * Drain the request's pending durable writes (the host calls this AFTER
    * `service.handle` and BEFORE serving the response). An empty queue is
    * ok; the first failed write stops the drain, reports the typed failure
@@ -201,12 +212,32 @@ export interface DurableBackingHandle {
  */
 export const ORGANIZATION_BOUND_EVENT = 'organization-bound';
 
-/** The point-in-time instant the projection reads at (everything the durable store holds — L4's ceiling). */
-const HYDRATION_AT = 9_007_199_254_740_991; // Number.MAX_SAFE_INTEGER
+/** The point-in-time instant the projection reads at (everything the durable store holds — L4's ceiling). Exported by W-26B: the boot world's guarded fixture reads use the SAME ceiling. */
+export const HYDRATION_AT = 9_007_199_254_740_991; // Number.MAX_SAFE_INTEGER
 
 // ---------------------------------------------------------------------------
 // The seam builder
 // ---------------------------------------------------------------------------
+
+/**
+ * The Neon store deps of the seam's own stores (the shared construction —
+ * W-26B): the same config/fetch/instants `buildDurableBacking` builds its
+ * stores over, factored out so the boot world (runtime/durable-world.ts)
+ * rides the SAME provider configuration for its guarded fixture reads and
+ * writes. Returns `null` exactly when the seam would not build (Neon keys
+ * incomplete — the matrix's absent row).
+ */
+export function neonStoreDepsOf(deps: DurableSeamDeps): NeonStoreDeps | null {
+  if (!enabledAdapters(deps.providerEnv).neon) return null;
+  const neon = deps.providerEnv.neon;
+  const config: NeonConfig = {
+    apiHost: neon.host as string,
+    database: neon.database as string,
+    apiUser: neon.user as string,
+    apiKey: neon.apiKey as string,
+  };
+  return { config, ...(deps.fetchLike === undefined ? {} : { fetchLike: deps.fetchLike }), instants: deps.instants };
+}
 
 /**
  * Build the durable backing: the Neon stores + the sync in-memory ports
@@ -218,15 +249,8 @@ const HYDRATION_AT = 9_007_199_254_740_991; // Number.MAX_SAFE_INTEGER
  * network), exactly once per instance.
  */
 export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle | null {
-  if (!enabledAdapters(deps.providerEnv).neon) return null;
-  const neon = deps.providerEnv.neon;
-  const config: NeonConfig = {
-    apiHost: neon.host as string,
-    database: neon.database as string,
-    apiUser: neon.user as string,
-    apiKey: neon.apiKey as string,
-  };
-  const neonDeps: NeonStoreDeps = { config, ...(deps.fetchLike === undefined ? {} : { fetchLike: deps.fetchLike }), instants: deps.instants };
+  const neonDeps = neonStoreDepsOf(deps);
+  if (neonDeps === null) return null;
   const firmMemoryStore = new NeonFirmMemoryStore(neonDeps);
   const outcomeStore = new NeonOutcomeLearningStore(neonDeps);
   const projectStore = new NeonProjectStore(neonDeps);
@@ -391,6 +415,26 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
       inFlight = attempt(); // the boot projection, a re-projection after a failed write, or the per-request retry of a failed projection
     }
     return inFlight === null ? Promise.resolve() : inFlight;
+  }
+
+  /**
+   * Force a full re-projection from the durable truth (W-26B — the boot
+   * world's refresh): the boot seed and the fixture boot-writes change the
+   * durable stores AFTER the boot projection ran, so the composition
+   * refreshes the projection before the first serve — the seeded world
+   * becomes the serving projection (never a stale, pre-seed one). Joins any
+   * in-flight attempt first, then runs exactly one fresh projection and
+   * awaits it; a failure leaves the seam in the typed degraded state (the
+   * per-request `settled()` retry heals — the same law as a failed boot
+   * projection).
+   */
+  async function reproject(): Promise<void> {
+    if (inFlight !== null) {
+      await inFlight; // attempt() never throws (it catches into the typed failure state)
+    }
+    phase = 'projecting';
+    inFlight = attempt();
+    await inFlight;
   }
 
   // -------------------------------------------------------------------------
@@ -608,6 +652,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   return {
     ports: { controlPlane: controlPlanePort, firmMemory: firmMemoryPort, outcomeLearning: outcomeLearningPort },
     settled,
+    reproject,
     drain,
     goalOf,
     lastProjection: () => report,

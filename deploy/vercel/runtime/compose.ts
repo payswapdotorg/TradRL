@@ -29,12 +29,18 @@
 //     typed 503 + a re-projection — never a crash, never a silent
 //     divergence). A launched project + its goal set, organization
 //     bindings and lifecycle events persist in Neon and REHYDRATE on
-//     every cold start (D-5). When the Neon keys are INCOMPLETE the
-//     seam is not built and those surfaces answer the typed
-//     `deploy_adapter_absent` 503s (the matrix); the execution gateway
-//     stays the honest `deploy_adapter_pending` stub (the REAL gateway
-//     delegate is not composed into this runtime — L8: never bypassed,
-//     never faked) and the job port follows the matrix for Apify.
+//     every cold start (D-5). Since W-26B the seam-live durable
+//     resolution composes the FULL product surface — a SUPERSET of demo:
+//     the SAME simulated execution gateway + job-submission engines the
+//     demo backing composes (imported, zero new simulation logic), the
+//     SAME per-request machinery tick over the hydrated control plane,
+//     and the SAME demo world seed + fixture substance (runtime/
+//     durable-world.ts — idempotent per database, drained before the
+//     first serve). When the Neon keys are INCOMPLETE the seam is not
+//     built and those surfaces answer the typed `deploy_adapter_absent`
+//     503s (the matrix); the execution gateway keeps the honest
+//     `deploy_adapter_pending` stub and the job port follows the matrix
+//     for Apify (the gateway/seed/tick NEVER run in that state).
 //   - An INVALID explicit TRADRL_DEPLOY_BACKING value is a host
 //     misconfiguration: the typed not-configured 503 (fail-closed,
 //     key name + legal values only — never a value).
@@ -62,10 +68,13 @@ import {
   type OutcomeLearningPort,
 } from '../../../services/api/src/index';
 import { missingApiEnvKeys, readApiEnv, resolveDeployBacking, DEPLOY_BACKING_VALUES, type ApiDeploymentEnv, type DeployBacking } from './env';
-import { buildDurableBacking, type DurableBackingHandle } from './durable';
+import { buildDurableBacking, neonStoreDepsOf, type DurableBackingHandle, type DurableSeamDeps } from './durable';
+import { buildDurableActivation, type DurableActivation } from './durable-world';
 import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
-import { demoMachineryTick, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts } from './demo';
+import type { NeonStoreDeps } from '../../adapters/neon/stores';
+import { fakeJobSubmission } from '../../../services/api/src/fixtures';
+import { demoExecutionGateway, demoMachineryTick, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts } from './demo';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization } from './routes';
 
 // ---------------------------------------------------------------------------
@@ -165,8 +174,36 @@ export interface DemoBackingHandle {
 }
 
 export type DeploymentComposition =
-  | { readonly ok: true; readonly service: ApiService; readonly backing: DeployBacking; readonly demo: DemoBackingHandle | null; readonly durable: DurableBackingHandle | null; readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization }
+  | { readonly ok: true; readonly service: ApiService; readonly backing: DeployBacking; readonly demo: DemoBackingHandle | null; readonly durable: DurableDeploymentHandle | null; readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization }
   | DeploymentNotConfigured;
+
+/**
+ * The durable deployment handle (W-26B): the W-25D seam handle (the sync
+ * ports + the projection lifecycle) EXTENDED with the durable activation —
+ * the per-request machinery tick and the idempotent boot world. The base
+ * seam (`buildDurableBacking`) builds the handle with the activation
+ * dormant; the composition wraps it below, once the service exists (the
+ * tick and the boot world drive the REAL routes through the composed
+ * service — they cannot exist before it does).
+ */
+export interface DurableDeploymentHandle extends DurableBackingHandle {
+  /**
+   * The per-request machinery tick (W-26B, R2): the SAME demoMachineryTick
+   * law (org compile + job advancement through the real private plane) over
+   * the seam's HYDRATED control plane. `null` when no internal credential
+   * is configured or when port overrides own the world.
+   */
+  readonly tick: ((at: number) => void) | null;
+  /**
+   * The idempotent boot world (W-26B, R3+R4+R7): the demo world seed + the
+   * fixture boot-writes + the org-status snapshot pass, once per instance,
+   * every durable write DRAINED before the first serve (the W-25D ordering
+   * law). Rejects with the typed failure while unconfirmed — the host
+   * serves the typed 503 and the next request retries. A no-op when port
+   * overrides own the world (the injection seam's own law).
+   */
+  readonly ensureBootWorld: () => Promise<void>;
+}
 
 /** Compose the boundary service over the deployment environment (pure — no ambient env read, no cache, no network). */
 export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPortOverrides = {}, seam: DurableSeamOptions = {}): DeploymentComposition {
@@ -193,26 +230,58 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
   // stores — or the typed absent stubs when the Neon keys are incomplete.
   const demoPorts = backing === 'demo' ? seedDemoBacking(tenant) : null;
   const stubs = degradedPorts();
-  let durable: DurableBackingHandle | null = null;
+  let durable: DurableDeploymentHandle | null = null;
+  let durableStores: NeonStoreDeps | null = null;
   let ports: Required<DeploymentPortOverrides>;
   if (demoPorts !== null) {
     ports = demoPorts;
   } else {
     // backing === 'durable': the seam activates only when the Neon adapter
     // is enabled (its four keys present); otherwise the Neon-backed surfaces
-    // answer the typed `deploy_adapter_absent` 503s (the matrix). The gateway
-    // stays the pending stub; the job port follows the matrix for Apify
-    // (absent keys -> the typed absent; present keys -> the pending stub —
-    // the async Apify bridge is a later seam, NOT this wave's Neon scope).
-    durable = buildDurableBacking({
+    // answer the typed `deploy_adapter_absent` 503s (the matrix).
+    const seamDeps: DurableSeamDeps = {
       providerEnv: env.providers,
       tenant,
       ...(seam.fetchLike === undefined ? {} : { fetchLike: seam.fetchLike }),
       instants: seam.instants ?? { next: () => Date.now() },
-    });
-    ports = durable !== null ? { ...stubs, ...durable.ports } : { ...stubs, ...neonAbsentPorts() };
-    if (!enabledAdapters(env.providers).apify) {
-      ports = { ...ports, jobSubmission: apifyAbsentJobPort() };
+    };
+    const seamHandle = buildDurableBacking(seamDeps);
+    if (seamHandle !== null) {
+      // THE W-26B ACTIVATION (the durable superset law): the seam-live
+      // durable resolution composes the SAME simulated execution +
+      // job-submission engines the demo backing composes — imported, zero
+      // new simulation logic (runtime/demo.ts's demoExecutionGateway + the
+      // frozen service's own fakeJobSubmission, the exact fixtures the demo
+      // ports are built from). POST /v1/execution/requests routes, POST
+      // /v1/jobs/* answer 202, and the per-request machinery tick animates
+      // the jobs — the launch journey (J3) works exactly as under demo,
+      // PLUS the Neon persistence. The fake gateway's `recorded` blotter and
+      // the fake job port's `submissions` array stay DEMO-only observables
+      // (no durable surface exposes them); the async Apify bridge remains a
+      // later seam (the host-owned ingestion lanes keep their own matrix).
+      durableStores = neonStoreDepsOf(seamDeps); // non-null whenever the seam built (the shared construction)
+      ports = {
+        ...stubs,
+        ...seamHandle.ports,
+        executionGateway: demoExecutionGateway(),
+        jobSubmission: fakeJobSubmission(),
+      };
+      // The base seam handle, carried DORMANT (tick null, the boot world a
+      // no-op) until the composition binds the activation below, once the
+      // service exists (the tick + the boot world drive the real routes
+      // through the composed service).
+      durable = { ...seamHandle, tick: null, ensureBootWorld: async () => undefined };
+    } else {
+      // The seam is NOT built (the Neon keys are incomplete): the matrix's
+      // Neon-absent row keeps EXACTLY the pre-W-26B law — the typed absent
+      // stubs for the Neon-backed surfaces, the honest pending stub for the
+      // gateway, and the job port follows the matrix for Apify (absent keys
+      // -> the typed absent; present keys -> the pending stub). The
+      // gateway/seed/tick NEVER run in this state.
+      ports = { ...stubs, ...neonAbsentPorts() };
+      if (!enabledAdapters(env.providers).apify) {
+        ports = { ...ports, jobSubmission: apifyAbsentJobPort() };
+      }
     }
   }
   // Port overrides are the injection seam (tests + future hosts): an
@@ -267,8 +336,27 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
   // (see hasOverrides above). Every seed mutation goes THROUGH the real
   // routes (L20 runs for real — see runtime/demo.ts). The durable handle
   // rides every composition where the seam was built (an overridden port
-  // owns its own world; the seam's other surfaces + the drain stay live).
+  // set owns its own world; the seam's other surfaces + the drain stay
+  // live).
   if (demoPorts === null || hasOverrides) {
+    // THE W-26B DURABLE ACTIVATION (the durable backing reaches this arm
+    // with the seam built): wrap the seam handle with the machinery tick +
+    // the boot world, now that the composed service exists. Under port
+    // overrides the world is the injection seam's own — the activation
+    // stays dormant (tick null, the boot world a no-op) while the seam's
+    // settled/drain/goalOf surfaces stay live (the W-25D law).
+    if (durable !== null && durableStores !== null) {
+      const activation: DurableActivation = hasOverrides
+        ? { tick: null, ensureBootWorld: async () => undefined }
+        : buildDurableActivation({
+            service: construction.service,
+            durable,
+            storeDeps: durableStores,
+            seed: { tenant, developerToken: token, internalToken },
+            at: () => Date.now(),
+          });
+      durable = { ...durable, tick: activation.tick, ensureBootWorld: activation.ensureBootWorld };
+    }
     return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization };
   }
   const seed = seedDemoWorld(construction.service, { tenant, developerToken: token, internalToken }, Date.now());
@@ -294,7 +382,7 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
 let cachedEnv: EnvIdentity | null = null;
 let cachedService: ApiService | null = null;
 let cachedDemo: DemoBackingHandle | null = null;
-let cachedDurable: DurableBackingHandle | null = null;
+let cachedDurable: DurableDeploymentHandle | null = null;
 let cachedBacking: DeployBacking | null = null;
 let cachedVerify: VerifyDeveloperAuthorization | null = null;
 

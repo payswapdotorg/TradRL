@@ -120,6 +120,7 @@ import {
   isOutcomeRecordMirror,
   isPostMortemRecordMirror,
   type ApiService,
+  type ControlPlanePort,
   type ExecutionGatewayPort,
   type GatewaySubmissionRecord,
   type GoalStatement,
@@ -803,21 +804,7 @@ export function seedDemoWorld(service: ApiService, seed: DemoWorldSeed, at: numb
   //     reload/scope-switch (D-3: "JOB: not searchable in any scope").
   //     A refusal means the frozen job contract drifted — it must be
   //     loud, exactly like the project seed above.
-  const seededJobs: readonly { readonly path: string; readonly kind: 'research' | 'learning'; readonly idempotencyKey: string; readonly spec: Record<string, unknown> }[] = [
-    { path: '/v1/jobs/research', kind: 'research', idempotencyKey: 'idem:demo:seed:research', spec: demoSeedResearchJobSpec() },
-    { path: '/v1/jobs/learning', kind: 'learning', idempotencyKey: 'idem:demo:seed:learning', spec: demoSeedLearningJobSpec() },
-  ];
-  for (const seedJob of seededJobs) {
-    const submitted = service.handle({
-      method: 'POST',
-      path: seedJob.path,
-      headers: { ...developer, 'idempotency-key': seedJob.idempotencyKey },
-      body: { kind: seedJob.kind, projectId: DEMO_PROJECT_ID, spec: seedJob.spec },
-    });
-    if (submitted.status !== 202) {
-      throw new Error(`demo backing: the seeded ${seedJob.kind} job was refused (${submitted.status}) — the frozen job-submission contract may have drifted`);
-    }
-  }
+  seedDemoJobs(service, seed.developerToken);
   if (seed.internalToken === null) {
     // The private plane is closed: no bind, no org-status report. The
     // console simply never queries org-status for the unbound project
@@ -837,8 +824,8 @@ export function seedDemoWorld(service: ApiService, seed: DemoWorldSeed, at: numb
   // 3. The org-status snapshot report (the private plane — the watch
   //    surface's only writer; the full pipeline runs: internal authn,
   //    the snapshot guard, the audit + metering tail).
-  const snapshot: OrgStatusSnapshot = deepFreeze({ ...validOrgStatusSnapshot(seed.tenant, DEMO_PROJECT_ID, DEMO_ORGANIZATION_REF), at });
-  if (!isOrgStatusSnapshot(snapshot)) {
+  const snapshot = demoOrgStatusSnapshot(seed.tenant, DEMO_PROJECT_ID, DEMO_ORGANIZATION_REF, at);
+  if (snapshot === null) {
     // Unreachable (the fixture builder is the canonical shape) — the
     // boundary is fail-closed; the demo seed is too.
     throw new Error('demo backing: the demo org-status snapshot failed its structural guard');
@@ -855,20 +842,72 @@ export function seedDemoWorld(service: ApiService, seed: DemoWorldSeed, at: numb
   return { orgStatusSeeded: true };
 }
 
+/**
+ * The seeded jobs, submitted through the REAL public routes (D-3, W-25A —
+ * the same submissions `seedDemoWorld` drives at world-seed time). Split out
+ * as its own seam by W-26B: under the DURABLE backing the demo world's
+ * PROJECT is seeded once (the registry guard skips a re-create), but the
+ * API-owned job store is per-instance (the frozen service's closure — the
+ * disclosed limitation), so every fresh instance re-seeds its two demo jobs
+ * through this exact path. The fixed idempotency keys keep the re-seed
+ * idempotent PER INSTANCE (the boundary's idempotency store is per-instance
+ * too — a same-instance replay returns the original job record).
+ * Throws only on an impossible submission (the frozen job contract drifted —
+ * loud, exactly like the world seed).
+ */
+export function seedDemoJobs(service: ApiService, developerToken: string): void {
+  const developer = { authorization: `Bearer ${developerToken}` };
+  const seededJobs: readonly { readonly path: string; readonly kind: 'research' | 'learning'; readonly idempotencyKey: string; readonly spec: Record<string, unknown> }[] = [
+    { path: '/v1/jobs/research', kind: 'research', idempotencyKey: 'idem:demo:seed:research', spec: demoSeedResearchJobSpec() },
+    { path: '/v1/jobs/learning', kind: 'learning', idempotencyKey: 'idem:demo:seed:learning', spec: demoSeedLearningJobSpec() },
+  ];
+  for (const seedJob of seededJobs) {
+    const submitted = service.handle({
+      method: 'POST',
+      path: seedJob.path,
+      headers: { ...developer, 'idempotency-key': seedJob.idempotencyKey },
+      body: { kind: seedJob.kind, projectId: DEMO_PROJECT_ID, spec: seedJob.spec },
+    });
+    if (submitted.status !== 202) {
+      throw new Error(`demo backing: the seeded ${seedJob.kind} job was refused (${submitted.status}) — the frozen job-submission contract may have drifted`);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The demo machinery (org compile + job animation — THROUGH the real planes)
 // ---------------------------------------------------------------------------
 
 /** The machinery's fixed inputs (the composition's own values). */
 export interface DemoMachineryContext {
-  /** The demo ports (the control plane's project listing drives the org-compile pass). */
-  readonly ports: DemoPorts;
+  /**
+   * The ports the org-compile pass reads (ONLY the control plane's project
+   * listing). Widened by W-26B from `DemoPorts` to the structural minimum so
+   * the SAME machinery law runs under the DURABLE backing over the W-25D
+   * seam's HYDRATED control plane (the projection's project listing drives
+   * the compile pass unchanged) — the demo composition still passes its own
+   * DemoPorts (a structural superset).
+   */
+  readonly ports: { readonly controlPlane: ControlPlanePort };
   /** The credential tenant (L12 — the compile pass serves ONLY this tenant's projects). */
   readonly tenant: string;
   /** The public-plane developer token (the organization bind route). */
   readonly developerToken: string;
   /** The private-plane internal token (the org-status report + the job transitions). */
   readonly internalToken: string;
+}
+
+/**
+ * One org-status snapshot for a machinery report (the fixture builder + the
+ * reporting instant — the exact construction the world seed and the compile
+ * pass use, split out by W-26B so the durable boot world reports through the
+ * SAME shape). `null` only if the fixture builder fails its structural guard
+ * (unreachable — it is the canonical shape); callers skip or throw per their
+ * own failure law, never a crash here.
+ */
+export function demoOrgStatusSnapshot(tenant: string, project: string, organizationRef: string, at: number): OrgStatusSnapshot | null {
+  const snapshot: OrgStatusSnapshot = deepFreeze({ ...validOrgStatusSnapshot(tenant, project, organizationRef), at });
+  return isOrgStatusSnapshot(snapshot) ? snapshot : null;
 }
 
 /**
@@ -915,8 +954,8 @@ function compileOrganizations(service: ApiService, context: DemoMachineryContext
       body: { organizationRef, at },
     });
     if (bound.status !== 200) continue; // the real route refused — honest, never a crash
-    const snapshot: OrgStatusSnapshot = deepFreeze({ ...validOrgStatusSnapshot(context.tenant, project.id, organizationRef), at });
-    if (!isOrgStatusSnapshot(snapshot)) continue; // unreachable (the fixture builder is the canonical shape) — skip, never a crash
+    const snapshot = demoOrgStatusSnapshot(context.tenant, project.id, organizationRef, at);
+    if (snapshot === null) continue; // unreachable (the fixture builder is the canonical shape) — skip, never a crash
     service.handle({
       method: 'POST',
       path: '/internal/organizations/status',

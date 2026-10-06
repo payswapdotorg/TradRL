@@ -18,7 +18,12 @@
 // badge; see runtime/demo.ts). Under the DURABLE backing the W-3e
 // hydration seam (W-25D, runtime/durable.ts) serves the Neon-backed
 // surfaces from the per-instance projection: this handler awaits the
-// boot-time projection before serving (settled) and drains every
+// boot-time projection before serving (settled), drives the W-26B
+// durable activation — the idempotent boot world (the demo world seed +
+// the fixture substance + the org-status snapshots, every durable write
+// drained before the first serve; a failure is the typed 503, retried
+// per request) and the SAME machinery tick over the hydrated control
+// plane (the org-compile pass + the job advancement) — and drains every
 // request's pending durable writes before the response leaves (a
 // failed write is the typed 503 — the ordering law, runtime/durable.ts).
 //
@@ -67,18 +72,38 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
   //    async pattern (submitted -> running -> complete) — and compile
   //    any user-launched project's organization (W-8's R4 pass, same
   //    tick). A no-op under every other backing / without the internal
-  //    credential.
+  //    credential. THE DEMO PATH STAYS BYTE-IDENTICAL (W-26B's R5).
   if (deployment.demo !== null && deployment.demo.tick !== null) {
     deployment.demo.tick(Date.now());
   }
 
-  // 2b. THE DURABLE SEAM (W-25D): await the boot-time projection (or any
-  //     in-flight re-projection — a failed projection retries per request,
-  //     no circuit state, so a Neon that recovers mid-instance heals the
-  //     surfaces). The first request after a cold start pays the hydration;
-  //     warm requests reuse the per-instance projection.
+  // 2b. THE DURABLE SEAM (W-25D) + THE DURABLE ACTIVATION (W-26B): await
+  //     the boot-time projection (or any in-flight re-projection — a
+  //     failed projection retries per request, no circuit state, so a
+  //     Neon that recovers mid-instance heals the surfaces). The first
+  //     request after a cold start pays the hydration; warm requests
+  //     reuse the per-instance projection. THEN the boot world (W-26B):
+  //     the demo world seed + the fixture substance + the org-status
+  //     snapshots, once per instance, every durable write DRAINED before
+  //     the first serve (the ordering law) — a failure is the typed 503
+  //     (the seeded world is unconfirmed; never a crash, never a silent
+  //     partial world) and the next request retries. THEN the machinery
+  //     tick (W-26B, R2): the SAME demoMachineryTick law (org compile +
+  //     job advancement through the real private plane) over the seam's
+  //     HYDRATED control plane — driven AFTER the projection + boot world
+  //     so the first request already sees the seeded world compiled.
   if (deployment.durable !== null) {
     await deployment.durable.settled();
+    try {
+      await deployment.durable.ensureBootWorld();
+    } catch (cause) {
+      const failure = cause as { readonly code: string; readonly message: string };
+      writeDegraded(response, 503, 'unavailable', `the durable boot world failed (${failure.code}): ${failure.message} — the seeded world is unconfirmed; the boundary degrades this request and retries on the next (R46)`);
+      return;
+    }
+    if (deployment.durable.tick !== null) {
+      deployment.durable.tick(Date.now());
+    }
   }
 
   // 3. Wrap the (req) into the ApiRequest contract.
