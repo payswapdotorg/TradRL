@@ -47,7 +47,7 @@ import {
   type LaunchFieldName,
 } from '../core/launch-form';
 import type { SectionId } from '../core/sections';
-import { unreadCount, type InboxState } from '../core/notices';
+import { scopedInbox, unreadCount, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, type WorkspaceState } from '../core/workspace';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
@@ -562,13 +562,18 @@ function watchEventRow(scope: WorkspaceScope, event: WatchEvent, viewAt: number,
   });
 }
 
-/** The inbox panel (§4.10): the bell + list rows with read/unread state + mark-all-read + the per-notice read toggle (the W-14b J6 wiring — the workspace's own notice-read event, dispatched by the row's explicit affordance). */
+/** The inbox panel (§4.10): the bell + list rows with read/unread state + mark-all-read + the per-notice read toggle (the W-14b J6 wiring — the workspace's own notice-read event, dispatched by the row's explicit affordance). D-13 (W-29): the panel renders the PROJECT-SCOPED inbox — only this scope's own folded notices list here (the state keeps every session notice, append-only; another desk's notices stay in their own desk's inbox). */
 function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
-  const unread = unreadCount(state.inbox);
-  const projected = projectToView(state.inbox.notices, viewAt, (record) => record.at);
+  // D-13: the scoped view — the fold-scoping pattern every section panel
+  // follows (the section folds derive from the state's own scope-gated
+  // records; the inbox's records predate the current scope, so the scope
+  // gate applies at the view).
+  const inbox = scopedInbox(state.inbox, state.scope);
+  const unread = unreadCount(inbox);
+  const projected = projectToView(inbox.notices, viewAt, (record) => record.at);
   const rows = projected.map((record) => {
     const copy = noticeCopyOf(record.kind);
-    const isRead = state.inbox.readNoticeIds.includes(record.noticeId);
+    const isRead = inbox.readNoticeIds.includes(record.noticeId);
     return accordionRow({
       icon: copy.icon,
       title: record.title,
@@ -591,6 +596,9 @@ function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
   });
   return v('aside', { class: 'inbox', 'data-unread': String(unread) }, [
     v('h2', {}, [`Notifications${unread > 0 ? ` (${unread} unread)` : ''}`]),
+    // D-13: the scoping is STATED, not implied — each desk sees its own
+    // notices; cross-project notices never render in another desk's inbox.
+    v('p', { class: 'hint', 'data-inbox-scope': state.scope.projectId }, [`Notices for this project (${state.scope.projectId}) — each desk sees its own; cross-project notices stay in their own desk's inbox.`]),
     v('button', { class: 'inbox-read-all', 'data-action': 'notices-read-all', type: 'button' }, ['Mark all read']),
     ...rows,
     ...(projected.length === 0 ? [sectionEmpty('inbox')] : []),
@@ -720,7 +728,10 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
   const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
   const snapshots = projectToView(state.orgSnapshots, viewAt, availabilityOfOrgSnapshot);
   const capsuleCount = outcomes.length + postMortems.length + knowledge.length + submissions.length;
-  const unread = unreadCount(state.inbox);
+  // D-13 (W-29): the unread tile + the activity timeline render the
+  // PROJECT-SCOPED inbox — another desk's notices never count here.
+  const scopedNotices = scopedInbox(state.inbox, state.scope);
+  const unread = unreadCount(scopedNotices);
   const running = jobs.filter((job) => job.status === 'running').length;
   const snapshot = snapshots.length > 0 ? snapshots[0] : null;
   const tiles = statGrid([
@@ -740,7 +751,7 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
       ['Instances', snapshot === null ? '0' : String(snapshot.instanceRefs.length)],
     ],
   });
-  const notices = projectToView(state.inbox.notices, viewAt, (record) => record.at);
+  const notices = projectToView(scopedNotices.notices, viewAt, (record) => record.at);
   const entries: TimelineEntry[] = notices.map((record) => ({
     at: record.at,
     title: record.title,

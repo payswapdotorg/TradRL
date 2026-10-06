@@ -3503,3 +3503,79 @@ describe('executed boot: D-10 (W-29) — the keyboard focus survives the beat re
   });
 });
 
+// ---------------------------------------------------------------------------
+// D-13 (W-29) — THE PROJECT-SCOPED INBOX, executed. The persona finding
+// (M4/M5/L5): the Inbox was tenant-scoped while every section panel was
+// project-scoped — a multi-desk tenant saw the demo project's seed notices
+// inside their own desk's inbox (7 unread = 5 demo + 2 own). The inbox
+// SURFACE is now project-scoped (the state keeps every session notice,
+// append-only); the bell badge, the toast and mark-all-read follow the same
+// scoped fold.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-13 (W-29) — the project-scoped inbox across a desk switch', () => {
+  /** A second desk's failed job (the failed_evaluation signal, scoped to proj-b). */
+  const FAILED_JOB_B: JobRecord = {
+    jobId: 'job-desk-b',
+    kind: 'research',
+    tenant: 'tenant-a',
+    project: 'prj-b',
+    status: 'failed',
+    submittedAt: T0 + 40,
+  };
+
+  it('the Inbox lists ONLY the current desk\'s notices after a scope switch; mark-all-read marks the CURRENT desk only; switching back restores the other desk\'s unread state', async () => {
+    const noticeReadStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { noticeReadStorage });
+    // desk A (prj-a, the booted scope) folds its notice
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    expect(rig.handle.state().inbox.notices).toHaveLength(1);
+    // the switcher adopts desk B (prj-b) — the same reset+switch transition a launch rides
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 30, projectId: 'prj-b' });
+    // desk B folds its own notice (the state now carries BOTH desks' notices)
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 41, job: FAILED_JOB_B });
+    expect(rig.handle.state().inbox.notices).toHaveLength(2); // the STATE keeps both (append-only)
+
+    clickNav(rig, 'inbox');
+    // the panel renders ONLY desk B's row — the demo/desk-A notice never renders here
+    expect(findByData(rig.root, 'data-notice-read', (rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-b') as { readonly noticeId: string }).noticeId)).not.toBeNull();
+    expect(findByData(rig.root, 'data-notice-read', (rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-a') as { readonly noticeId: string }).noticeId)).toBeNull(); // desk A's row is not in THIS desk's inbox
+    expect(findByData(rig.root, 'data-inbox-scope', 'prj-b')).not.toBeNull(); // the scoping is stated in the copy
+    const aside = elementsOf(rig.root).find((element) => element.hasClass('inbox'));
+    if (aside === undefined) throw new Error('no inbox aside');
+    expect(aside.getAttribute('data-unread')).toBe('1'); // the scoped count, never the two-desk total
+
+    // "Mark all read" on desk B's inbox marks desk B's notice ONLY
+    clickAction(rig, 'notices-read-all');
+    const deskANotice = rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-a');
+    const deskBNotice = rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-b');
+    if (deskANotice === undefined || deskBNotice === undefined) throw new Error('fixture: both desks folded');
+    expect(rig.handle.state().inbox.readNoticeIds).toContain(deskBNotice.noticeId); // desk B marked
+    expect(rig.handle.state().inbox.readNoticeIds).not.toContain(deskANotice.noticeId); // desk A KEEPS its unread state
+
+    // switching BACK to desk A: its notice is still there and still unread
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 50, projectId: 'prj-a' });
+    clickNav(rig, 'inbox');
+    const restoredToggle = findByData(rig.root, 'data-notice-read', deskANotice.noticeId);
+    expect(restoredToggle).not.toBeNull(); // desk A's row is back in ITS inbox, still unread (the toggle renders on unread rows)
+    expect(findByData(rig.root, 'data-inbox-scope', 'prj-a')).not.toBeNull();
+  });
+
+  it('the read-state write-through persists exactly the marks the SCOPED mark-all applied (another desk\'s notice stays unread across reloads)', async () => {
+    const noticeReadStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { noticeReadStorage });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 30, projectId: 'prj-b' });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 41, job: FAILED_JOB_B });
+    clickNav(rig, 'inbox');
+    clickAction(rig, 'notices-read-all'); // marks desk B's notice only
+    const stored = noticeReadStorage.map.get('tradrl_notice_read');
+    if (stored === undefined) throw new Error('the mark-all write-through persisted nothing');
+    const marks = JSON.parse(stored) as Record<string, 1>;
+    const deskAKey = `tenant-a/prj-a/${(rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-a') as { readonly noticeId: string }).noticeId}`;
+    const deskBKey = `tenant-a/prj-b/${(rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-b') as { readonly noticeId: string }).noticeId}`;
+    expect(marks[deskBKey]).toBe(1);  // desk B's mark persisted
+    expect(marks[deskAKey]).toBeUndefined(); // desk A's notice was never marked by desk B's action
+  });
+});
+

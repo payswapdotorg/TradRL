@@ -841,3 +841,55 @@ describe('render model: D-11 — the Home hero\'s launch banner clears when the 
     };
   }
 });
+
+// ---------------------------------------------------------------------------
+// D-13 (W-29) — THE PROJECT-SCOPED INBOX. The inbox state keeps every notice
+// the session folded (append-only), but the SURFACE is project-scoped like
+// every section panel: a multi-desk tenant never sees the demo project's
+// seed notices inside their own desk's inbox (M4/M5/L5: 7 unread = 5 demo +
+// 2 own). The bell badge, the Home unread tile and the activity timeline
+// all follow the same scoped fold.
+// ---------------------------------------------------------------------------
+
+describe('render model: D-13 — the inbox renders the PROJECT-SCOPED view', () => {
+  /** A two-desk session: desk A (proj-a) folds a notice, the workspace adopts desk B (proj-b), desk B folds its own. */
+  function twoDeskState(): WorkspaceState {
+    const events: readonly WorkspaceEvent[] = [
+      { kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-desk-a', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'failed', submittedAt: T0 + 10 } },
+      { kind: 'project-adopted', at: T0 + 30, projectId: 'proj-b' },
+      { kind: 'job-updated', at: T0 + 40, job: { jobId: 'job-desk-b', kind: 'research', tenant: 'tenant-a', project: 'proj-b', status: 'failed', submittedAt: T0 + 35 } },
+      { kind: 'view-live', at: T0 + 50 },
+    ];
+    return reduceAll(openWorkspace(SCOPE, T0), events);
+  }
+
+  it('the Inbox panel lists ONLY the current desk\'s notices — the other desk\'s rows never render, and the scoping is STATED in the copy', () => {
+    const state = twoDeskState();
+    expect(state.inbox.notices).toHaveLength(2); // the STATE keeps both desks' notices (append-only)
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'inbox' }));
+    expect(bytes).toContain('data-row="notice:');                       // the row grammar renders
+    expect(bytes).not.toContain('job-desk-a');                          // desk A's notice NEVER renders in desk B's inbox
+    expect(bytes).toContain('job-desk-b');                              // desk B's own notice renders
+    expect(bytes).toContain('data-inbox-scope="proj-b"');               // the scoping is disclosed
+    expect(bytes).toContain('Notices for this project (proj-b)');       // in plain-English copy
+    expect(bytes).toContain('data-unread="1"');                         // the panel's own count is the scoped one
+  });
+
+  it('the bell badge and Home\'s unread tile + activity timeline follow the SAME scoped fold (another desk\'s notices never badge this desk)', () => {
+    const state = twoDeskState();
+    const homeBytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
+    expect(homeBytes).toContain('data-unread="1"');          // the bell badge: ONE unread (desk B's own)
+    expect(homeBytes).not.toContain('data-unread="2"');      // never the two-desk total
+    expect(homeBytes).toContain('UNREAD NOTICES');           // the Home tile
+    expect(homeBytes).toContain('job-desk-b');               // the activity timeline carries desk B's notice
+    expect(homeBytes).not.toContain('job-desk-a');           // never desk A's
+  });
+
+  it('switching BACK to the first desk restores ITS notices (the state kept them; each desk sees its own)', () => {
+    const state = reduceAll(twoDeskState(), [{ kind: 'project-adopted', at: T0 + 60, projectId: 'proj-a' }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 70, { ...defaultShellView(state), accountView: 'inbox' }));
+    expect(bytes).toContain('job-desk-a');          // desk A's notice is back in ITS inbox
+    expect(bytes).not.toContain('job-desk-b');      // desk B's never renders here
+    expect(bytes).toContain('data-inbox-scope="proj-a"');
+  });
+});

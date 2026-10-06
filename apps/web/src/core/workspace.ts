@@ -482,7 +482,11 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       return { ...withHistory, inbox: markNoticeRead(withHistory.inbox, event.noticeId) };
 
   } else if (selector === 'notices-read-all') {
-      return { ...withHistory, inbox: markAllNoticesRead(withHistory.inbox) };
+      // D-13 (W-29): "Mark all read" marks exactly what the SCOPED inbox
+      // showed — the current scope's own notices (another desk's notices
+      // keep their marks and their unread state; the inbox state itself
+      // keeps every folded notice, append-only).
+      return { ...withHistory, inbox: markAllNoticesRead(withHistory.inbox, withHistory.scope) };
 
   } else if (selector === 'degraded-read') {
       const notes = [...withHistory.degraded, { route: event.route, family: event.family, message: event.message, at: event.at }];

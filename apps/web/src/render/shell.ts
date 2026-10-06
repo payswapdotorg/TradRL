@@ -18,7 +18,7 @@
 //   CONNECTING neutral (gentle pulse, reduced-motion disabled).
 
 import type { ConnectionStatus, WorkspaceState } from '../core/workspace';
-import { unreadCount } from '../core/notices';
+import { scopedInbox, unreadCount } from '../core/notices';
 import type { ThemeName } from '../core/theme';
 import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellTarget } from '../core/nav';
 import { formatInstantUtc } from '../core/format';
@@ -197,6 +197,11 @@ function navItem(target: ShellTarget, active: boolean, unread: number): VNode {
   if (isSectionTarget(target)) attrs['data-section'] = target;
   if (active) attrs['aria-current'] = 'page';
   return v('button', attrs, [navGlyphOf(target), v('span', { class: 'nav-item-label' }, [SHELL_TITLES[target]])]);
+}
+
+/** The bell's unread count of a state — the PROJECT-SCOPED inbox's own (D-13, W-29: another desk's notices never badge this desk's bell). */
+function scopedUnreadCount(state: WorkspaceState): number {
+  return unreadCount(scopedInbox(state.inbox, state.scope));
 }
 
 /** The grouped navigation (aria-label="Primary", the four charter groups in order; the bell carries the unread count). */
@@ -455,7 +460,7 @@ export function renderAppShell(
         v('span', { class: 'brand-word' }, ['TradRL']),
       ]),
       paletteAffordance(),
-      shellNav(activeTarget, unreadCount(state.inbox)),
+      shellNav(activeTarget, scopedUnreadCount(state)),
       connectionZone(state, view, at),
     ]),
     // §6 J12 (the W-17b fix): the content region is the <main> landmark
@@ -471,7 +476,7 @@ export function renderAppShell(
       ]),
     ]),
     // §4.14 the palette overlay (the app layer owns keys + Enter)
-    ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: unreadCount(state.inbox) })]),
+    ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: scopedUnreadCount(state) })]),
     // §4.13 the onboarding wizard — THE ONE COPY: the fixed-position
     // modal overlay directly under the shell root (render/model.ts
     // renders the main content normally behind it; it never renders

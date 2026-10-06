@@ -45,6 +45,7 @@ import {
   NOTICE_READ_STORAGE_KEY,
   noticeReadKey,
   parseStoredNoticeReads,
+  scopedInbox,
   serializeNoticeReads,
   storedReadNoticeIds,
 } from '../core/notices';
@@ -258,13 +259,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // THE READ-STATE WRITE-THROUGH (D-6c, W-25C): a mark-read /
     // mark-all-read persists the affected notices' read marks (keyed
     // tenant/project/notice — the map is scope-safe by construction).
+    // D-13 (W-29): mark-all marks exactly the CURRENT scope's own notices
+    // (the scoped inbox the user pressed the action on) — another desk's
+    // notices keep their unread state in their own scope.
     // A storage failure degrades silently: the session keeps the reads
     // (the workspace state is already reduced), only the durability
     // across reload is lost — exactly the pre-seam behavior.
     if (options.noticeReadStorage !== undefined && (event.kind === 'notice-read' || event.kind === 'notices-read-all')) {
       const marks: readonly NoticeRecord[] = event.kind === 'notice-read'
         ? state.inbox.notices.filter((record) => record.noticeId === event.noticeId)
-        : state.inbox.notices;
+        : scopedInbox(state.inbox, state.scope).notices;
       const next: Record<string, 1> = { ...storedNoticeReads };
       let changed = false;
       for (const record of marks) {
@@ -959,8 +963,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // words — toasts are for NEW notices — so the latest notice toasts ONCE
       // (the W-14b re-fire guard: the old layer re-toasted the latest notice on
       // EVERY state change, which once auto-dismissal worked became an
-      // endless toast loop on every dispatch).
-      const latest = next.inbox.notices.length === 0 ? null : next.inbox.notices[next.inbox.notices.length - 1] as { readonly kind: string; readonly noticeId: string; readonly title: string; readonly at: number };
+      // endless toast loop on every dispatch). D-13 (W-29): the pick is the
+      // CURRENT SCOPE's latest notice — another desk's notice never toasts in
+      // this desk's session (the inbox state keeps them, the surface does not).
+      const scopedNow = scopedInbox(next.inbox, next.scope).notices;
+      const latest = scopedNow.length === 0 ? null : scopedNow[scopedNow.length - 1] as { readonly kind: string; readonly noticeId: string; readonly title: string; readonly at: number };
       if (latest !== null && view.toast === null && next.connection !== 'connecting' && latest.noticeId !== lastToastedNoticeId) {
         const copy = noticeCopyOf(latest.kind as 'failed_evaluation');
         const shown = { kind: latest.kind, title: copy.title, sentence: copy.sentence };
