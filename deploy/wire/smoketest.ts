@@ -84,6 +84,17 @@ export function fakeProviders(): FakeProviders {
           const incomingKey = keyIndexes.map((index) => parsed.params[index === -1 ? parsed.params.length : index]).join('\u0000');
           const existing = rows.findIndex((row) => keyOf(row) === incomingKey);
           if (existing >= 0) rows.splice(existing, 1);
+        } else if (table === 'tradrl_project_events'
+          && rows.some((row) => row.params[0] === parsed.params[0] && row.params[1] === parsed.params[1] && row.params[2] === parsed.params[2])) {
+          // W-26C (R3, live-wire fidelity): the append-only event log's
+          // PRIMARY KEY (tenant, project_id, ordinal) — the live Postgres
+          // answers a colliding append with HTTP 400 carrying exactly this
+          // message (the production incident's wire error, proven by the
+          // Lead's live probes). The fake models the live PK so the
+          // concurrent cold-boot race (two instances seeding simultaneously,
+          // the loser's event colliding) is OBSERVABLE — the fakes match
+          // the live wire, never the adapter's expectations.
+          return responder(JSON.stringify({ message: 'duplicate key value violates unique constraint "tradrl_project_events_pkey"' }), 400);
         }
         rows.push({ params: parsed.params });
         tables.set(table, rows);
@@ -103,7 +114,13 @@ export function fakeProviders(): FakeProviders {
       if (parsed.query.startsWith('SELECT COALESCE(MAX(ordinal)')) {
         const rows = (tables.get('tradrl_project_events') ?? []).filter((row) => row.params[0] === parsed.params[0] && row.params[1] === parsed.params[1]);
         const max = rows.reduce((accumulator, row) => Math.max(accumulator, Number(row.params[2])), 0);
-        return responder(JSON.stringify({ fields: [{ name: 'coalesce', typeOID: 20 }], rows: [[max]] }));
+        // W-26C (R3): the fake models the LIVE wire — int8 (BIGINT) columns
+        // return as STRINGS even in array mode (the live proxy's JSON
+        // precision guard: the Lead's live probes answered [["1"]] for
+        // COALESCE(MAX(ordinal),0); the number form is exactly the
+        // regression that shipped the production incident). The fakes
+        // match the live wire, never the adapter's expectations.
+        return responder(JSON.stringify({ fields: [{ name: 'coalesce', typeOID: 20 }], rows: [[String(max)]] }));
       }
       return responder(JSON.stringify({ message: 'unhandled' }), 500);
     }

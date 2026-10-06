@@ -8,11 +8,31 @@
 //   Content-Type: application/json
 //   Accept: application/json
 //   Neon-Connection-String: <the RAW postgresql://user:password@host/database?sslmode=require>
+//   Neon-Array-Mode: true
+//   Neon-Raw-Text-Output: true
 //   {"query": "<SQL with $1..$n placeholders>", "params": ["...", ...]}
 //
 //   200 SELECT -> {"fields":[{"name":..,"typeOID":..},..],"rows":[[v,..],..]}
 //   200 DML    -> {"command":"INSERT 0 1","rowCount":1}
 //   4xx/5xx    -> non-JSON or {"message":".."} error body
+//
+// THE THREE-HEADER SET = THE REFERENCE DRIVER'S EXACT THREE (W-26C,
+// live-proxy proof 2026-10-06 12:14-12:20 UTC): @neondatabase/serverless
+// (src/http/index.ts ~332-336) sends Neon-Connection-String (RAW — W-26A),
+// Neon-Raw-Text-Output: 'true' and Neon-Array-Mode: 'true' on EVERY /sql
+// call. WITHOUT array-mode the live proxy answers OBJECT-mode rows
+// ({"fields":[...],"rows":[{"payload":"{...}"}]}) — this client's
+// decoders read row[0] (the array-mode shape), so EVERY adapter read
+// yields zero values and the projection "succeeds" EMPTY (the direct
+// cause of the 2026-10-06 production incident under the durable
+// backing). This client sends the lowercase spellings of all three —
+// HTTP headers are case-insensitive and the live proxy accepts the
+// lowercase forms (probe-proven).
+//
+// INT8 (BIGINT) COLUMNS COME BACK AS STRINGS even in array mode (the
+// proxy's JSON precision guard — with or without raw-text-output):
+// SELECT COALESCE(MAX(ordinal),0) answers [["1"]] — the stores' decoders
+// accept number | numeric-string on every int8 surface (stores.ts).
 //
 // THE CONNECTION-STRING HEADER GOES RAW (W-26A, live-proxy proof
 // 2026-10-06): the header value is the connection string itself —
@@ -102,12 +122,24 @@ export function buildNeonRequest(config: NeonConfig, query: string, params: read
     headers: {
       accept: 'application/json',
       'content-type': 'application/json',
+      // The reference driver's exact three (W-26C) — lowercase like the
+      // rest (the live proxy accepts lowercase; probe-proven):
       // RAW — never outer-encoded (W-26A): the live proxy parses this
       // header value as a URL; percent-encoding the whole string strips
       // its scheme and the proxy answers 400 "invalid connection string:
       // relative URL without a base". Component-level encoding (the
       // password) happens inside neonConnectionString.
       'neon-connection-string': neonConnectionString(config),
+      // ARRAY MODE (W-26C): without this header the live proxy answers
+      // OBJECT-mode rows ({"rows":[{"payload":..}]}) and every decoder
+      // here reads row[0] -> undefined -> EVERY read yields zero values
+      // (the empty-projection production incident). The reference driver
+      // sends it on every /sql call.
+      'neon-array-mode': 'true',
+      // RAW TEXT OUTPUT (W-26C): the reference driver's third header —
+      // values arrive as their Postgres text forms (int8 columns as
+      // strings; the stores decode accordingly).
+      'neon-raw-text-output': 'true',
     },
     body: JSON.stringify({ query, params }),
   };

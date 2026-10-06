@@ -66,24 +66,29 @@
 // NO CORS headers are ever emitted (the same-origin law — pinned by
 // deploy/vercel/vercel.test.ts, which scans this file too).
 //
-// THE DURABLE GOAL READ (W-25D, D-5 — additive, durable-only): under the
-// DURABLE backing the same path (GET /v1/projects/:projectId/goal) serves
-// the seam's HYDRATED goal set of ANY of the credential tenant's projects
-// (serveDurableGoalRoute below) — the create-project input's goal +
-// constraint set, persisted at createProject time and rehydrated at every
-// cold start. The two backings serve their own data with the same
-// envelope discipline (never merged); since W-25B the DEMO backing serves
-// the same story from its per-instance capture (above) — durable there,
-// in-memory here, one law. The jobs list route (W-25A) is
-// DEMO-BACKING-ONLY by the same construction: the durable job store
-// remains per-instance (PR #50's honest limitation — the async Apify
-// bridge is a later seam, NOT this wave's Neon scope), so under the
-// DURABLE backing GET /v1/jobs falls through to the boundary exactly as
-// before (the typed not_found).
+// THE DURABLE SUBSTANCE READS (W-25D's goal, D-5; W-26C's jobs list +
+// blotter, R4): under the DURABLE backing the host serves the same
+// substance paths the demo arm serves, through the demo arm's OWN route
+// handlers (imported, never duplicated — the same folds, the same auth,
+// the same envelope): GET /v1/projects/:projectId/goal reads the seam's
+// HYDRATED goal set (the create-project input's records, persisted at
+// createProject time and rehydrated at every cold start — W-25D); since
+// W-26C, GET /v1/jobs?project= (D-3 — the console's Research list and
+// palette JOB entries broke under durable) and GET
+// /v1/execution/submissions (the execution blotter) serve from the
+// composed service's per-instance stores — demoJobsOf over the composed
+// service's API-owned job store (the same store the per-id GET reads;
+// the boot world re-seeds the demo jobs per instance) and the
+// submissions fold over the seeded demo blotter + the durable
+// composition's recording gateway (serveDurableSubstanceRoute below).
+// The two backings serve their own data with the same envelope
+// discipline (never merged); under port overrides (the injection seam
+// owns its own world) the jobs + submissions routes fall through to the
+// boundary exactly as before (the pre-W-8 law).
 //
 // Zero-dep law: platform APIs only. Spec anchors: R43 (the composed
 // API surface — additive), L12, L20, R46, phase2-competitive-report
-// R2/R5, D-5, D-3 (W-25A), D-4 (W-25B).
+// R2/R5, D-5, D-3 (W-25A + W-26C), D-4 (W-25B).
 
 import {
   apiError,
@@ -99,7 +104,7 @@ import {
   type JobRecord,
   type RequestId,
 } from '../../../services/api/src/index';
-import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, type DemoPorts } from './demo';
+import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
 import type { DurableBackingHandle } from './durable';
 
 /** The host auth's verdict: the credential tenant + principal behind the presented token. */
@@ -111,10 +116,16 @@ export interface DemoSubstanceAuthorization {
 /** The composition's host-auth seam (runtime/compose.ts mints it from the registered developer credential). */
 export type VerifyDeveloperAuthorization = (authorization: string | undefined) => DemoSubstanceAuthorization | null;
 
-/** The host-route serving input. */
-export interface DemoSubstanceRouteInput {
-  /** The demo backing's ports (the seeded blotter + the live gateway recordings). */
-  readonly ports: DemoPorts;
+/**
+ * The execution-blotter + jobs-list routes' STRUCTURAL input (W-26C, R4):
+ * the folds' source + the host auth — BOTH arms build it (the demo arm
+ * from its DemoPorts, the durable arm from the composition's own pair),
+ * so the two routes serve with literally the same handlers, folds, auth
+ * and envelope under both backings.
+ */
+export interface FoldRouteInput {
+  /** The submissions fold's source (the seeded blotter + a recording gateway — DemoPorts under demo, the durable composition's own pair under durable). */
+  readonly ports: DemoSubstanceSource;
   /** The host auth seam (the composition's registered developer credential). */
   readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization;
   /**
@@ -125,6 +136,12 @@ export interface DemoSubstanceRouteInput {
    * fold filters on the AUTHORIZED tenant, never a request value.
    */
   readonly jobsOf: (tenant: string, project: string) => readonly JobRecord[];
+}
+
+/** The host-route serving input (the demo dispatcher's — the fold routes' structural surface + the demo goal route's capture). */
+export interface DemoSubstanceRouteInput extends FoldRouteInput {
+  /** The demo backing's FULL port set (the goal route's capture reads the control-plane seam — demoGoalSetOf). */
+  readonly ports: DemoPorts;
 }
 
 /** The demo-substance read paths this host serves (additive — declared nowhere in the frozen route table). */
@@ -155,8 +172,8 @@ function demoRouteError(requestId: RequestId, error: ApiError): ApiResponse {
 // The routes
 // ---------------------------------------------------------------------------
 
-/** GET /v1/execution/submissions?project=<id> — the execution blotter (R2). */
-function executionSubmissionsRoute(input: DemoSubstanceRouteInput, request: DemoSubstanceRequest, requestId: RequestId): ApiResponse {
+/** GET /v1/execution/submissions?project=<id> — the execution blotter (R2; both arms — W-26C R4). */
+function executionSubmissionsRoute(input: FoldRouteInput, request: DemoSubstanceRequest, requestId: RequestId): ApiResponse {
   const authorization = input.verifyDeveloperAuthorization(request.headers.authorization);
   if (authorization === null) {
     return demoRouteError(requestId, apiError('unauthenticated', 'a Bearer credential token is required on every route of this boundary'));
@@ -170,8 +187,8 @@ function executionSubmissionsRoute(input: DemoSubstanceRouteInput, request: Demo
   return demoRouteSuccess(requestId, deepFreeze({ items: demoSubmissionsOf(input.ports, project) }));
 }
 
-/** GET /v1/jobs?project=<id> — the jobs list (D-3, the W-25A seam). */
-function jobsListRoute(input: DemoSubstanceRouteInput, request: DemoSubstanceRequest, requestId: RequestId): ApiResponse {
+/** GET /v1/jobs?project=<id> — the jobs list (D-3, the W-25A seam; both arms — W-26C R4). */
+function jobsListRoute(input: FoldRouteInput, request: DemoSubstanceRequest, requestId: RequestId): ApiResponse {
   const authorization = input.verifyDeveloperAuthorization(request.headers.authorization);
   if (authorization === null) {
     return demoRouteError(requestId, apiError('unauthenticated', 'a Bearer credential token is required on every route of this boundary'));
@@ -263,32 +280,82 @@ export function serveDemoSubstanceRoute(input: DemoSubstanceRouteInput, request:
 }
 
 // ---------------------------------------------------------------------------
-// THE DURABLE GOAL READ ROUTE (W-25D, D-5 — additive, durable-only)
+// THE DURABLE SUBSTANCE ROUTES (W-25D's goal read, D-5; W-26C's jobs list
+// + execution blotter, R4 — the durable arm's host-owned reads)
 // ---------------------------------------------------------------------------
 
-/** The durable backing's goal-read surface (the seam handle — runtime/durable.ts). */
-export type DurableGoalRouteInput = {
+/** The durable backing's substance-route surface (the seam handle + the demo-substance folds + the host auth seam). */
+export type DurableSubstanceRouteInput = {
   /** The durable seam (the hydrated goal sets + the typed degraded state). */
   readonly durable: DurableBackingHandle;
   /** The host auth seam (the composition's registered developer credential). */
   readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization;
+  /**
+   * THE DURABLE DEMO-SUBSTANCE READS (W-26C, R4 — D-3 + the blotter under
+   * durable): the SAME folds the demo arm serves (demoJobsOf +
+   * demoSubmissionsOf — imported, never duplicated), wired by the
+   * composition over the composed service's per-instance stores. `null`
+   * when the composition does not own the world (port overrides) — the
+   * jobs + submissions routes then fall through to the boundary exactly
+   * as before (the pre-W-8 law).
+   */
+  readonly demoSubstance: DurableDemoSubstance | null;
 };
 
 /**
- * GET /v1/projects/:projectId/goal UNDER THE DURABLE BACKING (W-25D): the
- * project's goal + constraint set, served from the seam's HYDRATED goal
- * sets — the records that ride the create-project input (which main
- * already carries), persisted at createProject time and rehydrated at
- * every cold start (D-5: the project lands on another instance WITH ITS
- * WORLD — the W-23 console goal fetch gets a real answer). The same
- * envelope discipline as the demo-substance routes; the same auth law;
- * the typed not-found for a project without a hydrated goal set; the
- * typed 503 while the projection is degraded (never a crash, never a
- * silent empty — R46). The demo path serves its OWN route byte-identically
- * (the two backings never merge their data).
+ * THE DURABLE ARM'S SUBSTANCE DISPATCHER (W-26C, R4): under the DURABLE
+ * backing the host serves — with the SAME auth + envelope discipline the
+ * demo arm applies, through the SAME route handlers (imported, never
+ * duplicated) — the paths that previously fell through to the boundary:
+ *
+ *   GET /v1/jobs?project=<id>            (D-3 — the Research list + the
+ *                                        palette JOB entries; the re-seeded
+ *                                        demo jobs + every live submission
+ *                                        the boundary accepted, from the
+ *                                        composed service's API-owned job
+ *                                        store — the same store the per-id
+ *                                        GET reads)
+ *   GET /v1/execution/submissions        (the execution blotter — the
+ *                                        seeded demo rows + the session's
+ *                                        live routed submissions, from the
+ *                                        seeded demo blotter + the durable
+ *                                        composition's recording gateway)
+ *   GET /v1/projects/:projectId/goal     (the W-25D goal read, D-5 —
+ *                                        UNCHANGED: the seam's hydrated
+ *                                        goal sets, the create-project
+ *                                        input's records persisted at
+ *                                        createProject time and rehydrated
+ *                                        at every cold start; the typed
+ *                                        not-found for a project without
+ *                                        one, the typed 503 while the
+ *                                        projection is degraded — R46)
+ *
+ * Returns `null` when the request is NOT one of them (the caller falls
+ * through to the frozen boundary — the pre-W-8 behavior, byte-identical)
+ * or when the method is not the route's own. Under port overrides
+ * (`demoSubstance === null`) the jobs + submissions routes fall through —
+ * the injection seam owns its own world.
  */
-export function serveDurableGoalRoute(input: DurableGoalRouteInput, request: DemoSubstanceRequest, serial: number): ApiResponse | null {
+export function serveDurableSubstanceRoute(input: DurableSubstanceRouteInput, request: DemoSubstanceRequest, serial: number): ApiResponse | null {
   if (request.method !== 'GET') return null;
+  // R4 (W-26C): the jobs list + the execution blotter serve under durable
+  // through the DEMO arm's own handlers — the same folds (demoJobsOf +
+  // demoSubmissionsOf), the same auth, the same envelope, D-3 preserved.
+  if (input.demoSubstance !== null && (request.path === '/v1/jobs' || request.path === '/v1/execution/submissions')) {
+    const foldInput: FoldRouteInput = {
+      ports: input.demoSubstance.ports,
+      verifyDeveloperAuthorization: input.verifyDeveloperAuthorization,
+      jobsOf: input.demoSubstance.jobsOf,
+    };
+    if (request.path === '/v1/execution/submissions') {
+      // The exact 2-segment blotter path (the boundary's own 3-segment
+      // per-resource shapes are never collided with).
+      return executionSubmissionsRoute(foldInput, request, demoRouteRequestId(request, serial));
+    }
+    // The exact 2-segment list path (the per-id GET /v1/jobs/:jobId is
+    // the frozen route's own 3-segment shape — never a collision).
+    return jobsListRoute(foldInput, request, demoRouteRequestId(request, serial));
+  }
   const goalProject = matchProjectGoalPath(request.path);
   if (goalProject === null) return null;
   const requestId = demoRouteRequestId(request, serial);

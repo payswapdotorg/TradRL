@@ -677,12 +677,47 @@ export interface DemoPorts {
 }
 
 /**
+ * The submissions fold's STRUCTURAL SOURCE (W-26C, R4): the seeded blotter
+ * plus a recording gateway — exactly the two fields of DemoPorts the fold
+ * reads. Widened from `DemoPorts` so the DURABLE arm passes its own
+ * seam-built pair (the seeded demo blotter + the durable composition's
+ * recording gateway) through the SAME fold without fabricating a demo
+ * port set — the demo composition still passes its own DemoPorts (a
+ * structural superset).
+ */
+export interface DemoSubstanceSource {
+  /** The seeded execution blotter rows (read data — demoSubmissionBlotter under both backings). */
+  readonly submissions: readonly GatewaySubmissionRecord[];
+  /** A recording execution gateway — the fold reads its `recorded` live rows. */
+  readonly executionGateway: { readonly recorded: readonly DemoGatewayRecording[] };
+}
+
+/**
+ * The durable arm's demo-substance read surface (W-26C, R4 — D-3 + the
+ * blotter preserved under durable): the SAME folds the demo arm serves,
+ * wired by the composition over ITS OWN per-instance stores (the composed
+ * service's API-owned job store for `jobsOf`, and the seeded demo blotter
+ * + the durable composition's recording gateway for the submissions
+ * fold). Carried on the durable handle; `null` under port overrides (the
+ * injection seam owns its own world — the routes then fall through to
+ * the boundary, the pre-W-8 law).
+ */
+export interface DurableDemoSubstance {
+  /** The submissions fold's source: the seeded demo blotter + the durable composition's recording gateway. */
+  readonly ports: DemoSubstanceSource;
+  /** The jobs fold (demoJobsOf over the composed service — the same store the per-id GET /v1/jobs/:jobId reads). */
+  readonly jobsOf: (tenant: string, project: string) => readonly JobRecord[];
+}
+
+/**
  * The demo project's full execution blotter at one instant: the SEEDED rows
  * (all scoped to the demo project) plus every LIVE submission the demo
  * gateway has routed for the requested project. Order-stable (seeded first,
- * then live in routing order).
+ * then live in routing order). The parameter is the structural source
+ * (W-26C: DemoSubstanceSource — DemoPorts satisfies it; the durable arm
+ * passes its own seam-built pair through the SAME fold).
  */
-export function demoSubmissionsOf(ports: DemoPorts, project: string): readonly GatewaySubmissionRecord[] {
+export function demoSubmissionsOf(ports: DemoSubstanceSource, project: string): readonly GatewaySubmissionRecord[] {
   // The seeded rows are the DEMO project's own (the record shape carries no
   // scope fields — the console's watch fold inherits the workspace scope,
   // and the host read route scopes by the project query parameter).

@@ -27,15 +27,21 @@
 // request's pending durable writes before the response leaves (a
 // failed write is the typed 503 — the ordering law, runtime/durable.ts).
 //
-// THE HOST-OWNED DEMO-SUBSTANCE READ ROUTES (W-8, additive): under the
-// demo backing, three read-only routes are served from the seeded demo
-// data BEFORE the boundary wrap (GET /v1/execution/submissions — the
-// execution blotter, R2; GET /v1/projects/:id/goal — the seeded goal +
-// constraint set, R5; GET /v1/jobs?project=<id> — the jobs list, D-3 the
-// W-25A seam: the backing's API-owned job store, the same store the
-// per-id GET reads). The paths are declared nowhere in the frozen
-// route table, so every other backing/shape keeps the exact pre-W-8
-// behavior (the typed not-found). See runtime/routes.ts.
+// THE HOST-OWNED DEMO-SUBSTANCE READ ROUTES (W-8, additive; W-26C R4 the
+// durable arm): read-only routes served from the backing's seeded data
+// BEFORE the boundary wrap (GET /v1/execution/submissions — the execution
+// blotter, R2; GET /v1/projects/:id/goal — the seeded goal + constraint
+// set, R5; GET /v1/jobs?project=<id> — the jobs list, D-3 the W-25A seam:
+// the backing's API-owned job store, the same store the per-id GET
+// reads). Under the DEMO backing they serve from the seeded demo data;
+// under the DURABLE backing (W-26C, R4) the goal read serves the seam's
+// hydrated goal sets (W-25D, D-5) and the jobs list + blotter serve
+// through the SAME folds over the composed service's per-instance
+// stores (the boot world re-seeds the demo jobs per instance; the
+// seam-live recording gateway carries the live submissions). The paths
+// are declared nowhere in the frozen route table, so every other
+// backing/shape keeps the exact pre-W-8 behavior (the typed not-found).
+// See runtime/routes.ts.
 //
 // NO CORS headers are ever emitted (the same-origin law — the console
 // reaches this function through rewrites, never cross-origin).
@@ -46,7 +52,7 @@
 import { getDeploymentService, type DeploymentComposition } from '../runtime/compose';
 import { demoJobsOf } from '../runtime/demo';
 import { toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
-import { drainedFailureResponse, serveDemoSubstanceRoute, serveDurableGoalRoute } from '../runtime/routes';
+import { drainedFailureResponse, serveDemoSubstanceRoute, serveDurableSubstanceRoute } from '../runtime/routes';
 
 /** The demo-substance/durable-goal read routes' request serial (per instance — the minted request ids stay unique per invocation). */
 let demoSubstanceSerial = 0;
@@ -116,13 +122,16 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
   // 4. The host-owned demo-substance read routes (W-8, additive): served
   //    from the demo backing's seeded data when the request is one of
   //    them; every other request (and every other backing) falls through
-  //    to the boundary unchanged. Under the DURABLE backing the same goal
-  //    path serves the seam's hydrated goal set (W-25D, D-5) — every other
-  //    durable request falls through to the boundary. The jobs list
-  //    (W-25A, D-3) is demo-backing-only: the jobsOf seam reads the
-  //    composed service's API-owned job store (the same store the per-id
-  //    GET serves), folded to the authorized tenant's rows for the
-  //    project (runtime/demo.ts's demoJobsOf).
+  //    to the boundary unchanged. Under the DURABLE backing the same
+  //    substance paths serve (W-26C, R4 — D-3 + the blotter preserved
+  //    under durable): the goal read from the seam's hydrated goal sets
+  //    (W-25D, D-5) and, since W-26C, the jobs list + the execution
+  //    blotter through the DEMO arm's own handlers — the SAME folds
+  //    (demoJobsOf + demoSubmissionsOf, imported from runtime/demo.ts)
+  //    over the composed service's per-instance stores, with the same
+  //    auth + envelope discipline. Under port overrides (the injection
+  //    seam owns its own world) the jobs + submissions routes fall
+  //    through to the boundary (the pre-W-8 law).
   if (deployment.demo !== null) {
     const hostRoute = serveDemoSubstanceRoute(
       {
@@ -138,8 +147,12 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
       return;
     }
   } else if (deployment.durable !== null) {
-    const hostRoute = serveDurableGoalRoute(
-      { durable: deployment.durable, verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization },
+    const hostRoute = serveDurableSubstanceRoute(
+      {
+        durable: deployment.durable,
+        verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization,
+        demoSubstance: deployment.durable.demoSubstance,
+      },
       wrapped.request,
       demoSubstanceSerial++,
     );

@@ -63,6 +63,18 @@
 // the seed + the fixture writes land, the boot world forces a full
 // RE-PROJECTION so the serving projection IS the seeded world.
 //
+// THE RACE HARDENING (W-26C, R5): two instances may cold-boot over one
+// empty durable store SIMULTANEOUSLY — both registry guards read the
+// pre-seed truth, both seed, and the loser's append-only event collides
+// on the live PRIMARY KEY (the 2026-10-06 production incident's wire
+// error). The failed attempt now AWAITS the re-projection from the
+// durable truth before its typed 503 surfaces, so the NEXT attempt's
+// registry guard reads the winner's rows and skips the re-seed — the
+// collision is a TRANSIENT 503 that self-heals on the first retry (the
+// drain-failure re-projection is tracked, never an untracked twin; the
+// seam's dirty flag keeps pre-failure snapshots from ever serving —
+// runtime/durable.ts).
+//
 // THE MACHINERY TICK (R2): the SAME `demoMachineryTick` law the demo
 // backing drives per request — the org-compile pass (bind through the real
 // public route + the watch snapshot through the real private route) and
@@ -260,7 +272,20 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
       //    first serve. A failed drain re-projects (the seam's own law) and
       //    the boot world reports the typed failure — never a silent partial.
       const drained = await durable.drain();
-      if (!drained.ok) throw fail(drained.error.code, `the demo world seed's durable write failed: ${drained.error.message}`);
+      if (!drained.ok) {
+        // R5 (W-26C — the boot-world race hardening): the concurrent
+        // cold-boot race — another instance's identical seed already landed
+        // in the durable store and THIS instance's append-only event
+        // collided (the live PRIMARY KEY's 400). AWAIT the re-projection
+        // from the durable truth BEFORE the typed failure surfaces, so the
+        // failed attempt's NEXT run reads the durable truth FRESH (the
+        // winner's rows are present — the registry guard skips the re-seed)
+        // — the boot world self-heals on the FIRST retry, never a repeating
+        // 503. (The seed-refusal path above already carried this law; the
+        // drain-failure path now carries it too — the asymmetry removed.)
+        await durable.reproject().catch(() => undefined);
+        throw fail(drained.error.code, `the demo world seed's durable write failed: ${drained.error.message}`);
+      }
     } else {
       // Subsequent boots: the registry guard skips the create; the
       // per-instance job store still re-seeds its two demo jobs (R3's

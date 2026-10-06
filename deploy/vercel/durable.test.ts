@@ -562,11 +562,13 @@ describe('deploy/vercel — the durable seam: the goal read route', () => {
     expect((unknown.body as { error: { code: string } }).error.code).toBe('not_found');
     const unauthenticated = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/projects/prj-goal-route/goal' }));
     expect(unauthenticated.status).toBe(401);
-    // The execution blotter is demo-substance only — under durable it falls
-    // through to the frozen boundary (the typed not_found, the pre-W-8 behavior).
+    // The execution blotter now SERVES under durable too (W-26C, R4 — the
+    // same fold the demo arm serves, over the composition's per-instance
+    // stores): the pre-W-26C fallthrough 404 is retired. A project with no
+    // gateway submissions answers an honest EMPTY page (never a leak).
     const blotter = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/execution/submissions?project=prj-goal-route', headers: BEARER }));
-    expect(blotter.status).toBe(404);
-    expect((blotter.body as { error: { code: string } }).error.code).toBe('not_found');
+    expect(blotter.status).toBe(200);
+    expect(((blotter.body as { data: { items: readonly unknown[] } }).data).items).toEqual([]);
   });
 });
 
@@ -878,5 +880,266 @@ describe('deploy/vercel — the W-26B activation: the degraded matrix unchanged 
     // (no boot projection, no seed write, no fixture write, no tick write).
     expect(counting.inserts()).toBe(0);
     expect(providers.seen.neon).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE W-26C DURABLE DEMO-SUBSTANCE ROUTES (R4 — D-3 + the blotter under
+// durable: the same folds, the same auth, the same envelope as the demo arm)
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the W-26C durable demo-substance routes (R4)', () => {
+  it('GET /v1/jobs?project= serves the re-seeded demo jobs + a user-launched project\'s jobs — D-3 preserved under durable (the SAME fold, auth + envelope identical to the demo arm)', async () => {
+    const providers = fakeProviders();
+    const deployment = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+
+    // The first request pays the boot world: the demo jobs re-seed per instance.
+    await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+    const demoJobs = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/jobs?project=${encodeURIComponent(DEMO_PROJECT_ID)}`, headers: BEARER }));
+    expect(demoJobs.status).toBe(200);
+    expect(demoJobs.headers['x-api-version']).toBe('v1');
+    expect(demoJobs.headers['x-request-id']).toMatch(/^req:/);
+    const jobsBody = (demoJobs.body as { requestId: unknown; data: { items: readonly { kind: string; tenant: string; project: string }[] } });
+    expect(jobsBody.requestId).toBe(demoJobs.headers['x-request-id']); // the envelope discipline, identical to the demo arm
+    expect(jobsBody.data.items.map((job) => job.kind).sort()).toEqual(['learning', 'research']); // the re-seeded demo jobs
+    expect(jobsBody.data.items.every((job) => job.tenant === TENANT && job.project === DEMO_PROJECT_ID)).toBe(true); // L12 + the project scope
+
+    // A user-launched project's kickoff job serves for THAT project only.
+    const created = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/projects', headers: BEARER, body: createProjectBody('prj-durable-jobs', Date.now() - 60_000) }));
+    expect(created.status).toBe(201);
+    const kickoff = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:w26c:jobs:kickoff' }, body: { kind: 'research', projectId: 'prj-durable-jobs', spec: {} } }));
+    expect(kickoff.status).toBe(202);
+    const launchedJobs = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/jobs?project=${encodeURIComponent('prj-durable-jobs')}`, headers: BEARER }));
+    const launchedItems = ((launchedJobs.body as { data: { items: readonly { jobId: string }[] } }).data).items;
+    expect(launchedItems).toHaveLength(1); // the kickoff job through the SAME fold (demoJobsOf over the composed service)
+
+    // The auth + envelope discipline is identical to the demo arm.
+    const unauthenticated = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/jobs?project=${DEMO_PROJECT_ID}` }));
+    expect(unauthenticated.status).toBe(401);
+    expect((unauthenticated.body as { error: { code: string } }).error.code).toBe('unauthenticated');
+    const wrongToken = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/jobs?project=${DEMO_PROJECT_ID}`, headers: { authorization: 'Bearer tok-wrong-durable' } }));
+    expect(wrongToken.status).toBe(401);
+    const missingProject = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/jobs', headers: BEARER }));
+    expect(missingProject.status).toBe(400);
+    expect((missingProject.body as { error: { code: string } }).error.code).toBe('validation_failed');
+    // A foreign project's page is empty (L12 by construction — the fold filters on the AUTHORIZED tenant).
+    const foreign = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/jobs?project=prj-someone-elses', headers: BEARER }));
+    expect(foreign.status).toBe(200);
+    expect(((foreign.body as { data: { items: readonly unknown[] } }).data).items).toEqual([]);
+    // Non-GET still falls through to the frozen boundary (the pre-W-8 law).
+    const postJobs = await drive(deployment, streamingRequest({ method: 'POST', url: `/v1/jobs?project=${DEMO_PROJECT_ID}`, headers: { ...BEARER, 'idempotency-key': 'idem:w26c:jobs:post' }, body: {} }));
+    expect(postJobs.status).toBe(404);
+    expect((postJobs.body as { error: { code: string } }).error.code).toBe('not_found');
+  });
+
+  it('GET /v1/execution/submissions serves the blotter: the seeded demo rows + the session\'s live routed submissions, project-scoped (R2 under durable)', async () => {
+    const providers = fakeProviders();
+    const deployment = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+
+    // The first request pays the boot world (the demo project seeds).
+    await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+    const seeded = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/execution/submissions?project=${encodeURIComponent(DEMO_PROJECT_ID)}`, headers: BEARER }));
+    expect(seeded.status).toBe(200);
+    const seededRows = ((seeded.body as { data: { items: readonly { kind: string; submissionId: string; venue: string }[] } }).data).items;
+    expect(seededRows).toHaveLength(3); // the SEEDED demo blotter (two routed fills + the honest risk-limit refusal)
+    expect(seededRows.every((row) => row.kind === 'routed' || row.kind === 'refused')).toBe(true);
+    expect(seededRows.filter((row) => row.kind === 'routed').every((row) => row.venue === 'BROKER-FIX')).toBe(true);
+
+    // A live routed submission joins the blotter through the seam-live gateway.
+    const execution = await drive(deployment, streamingRequest({
+      method: 'POST',
+      url: '/v1/execution/requests',
+      headers: { ...BEARER, 'idempotency-key': 'idem:w26c:blotter:live' },
+      body: { intent: validStrategyIntent(TENANT, DEMO_PROJECT_ID as never) },
+    }));
+    expect(execution.status).toBe(200);
+    const withLive = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/execution/submissions?project=${encodeURIComponent(DEMO_PROJECT_ID)}`, headers: BEARER }));
+    const liveRows = ((withLive.body as { data: { items: readonly { submissionId: string }[] } }).data).items;
+    expect(liveRows).toHaveLength(4); // 3 seeded + 1 live (the recording gateway's blotter — the same fold the demo arm serves)
+    const routed = (execution.body as { data: { submissionId: string } }).data;
+    expect(liveRows.some((row) => row.submissionId === routed.submissionId)).toBe(true); // the session's own submission is on the blotter
+
+    // A user-launched project's blotter carries only ITS live rows (never the demo seed's).
+    const created = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/projects', headers: BEARER, body: createProjectBody('prj-durable-blotter', Date.now() - 60_000) }));
+    expect(created.status).toBe(201);
+    const deskExecution = await drive(deployment, streamingRequest({
+      method: 'POST',
+      url: '/v1/execution/requests',
+      headers: { ...BEARER, 'idempotency-key': 'idem:w26c:blotter:desk' },
+      body: { intent: validStrategyIntent(TENANT, 'prj-durable-blotter' as never) },
+    }));
+    expect(deskExecution.status).toBe(200);
+    const deskBlotter = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/execution/submissions?project=${encodeURIComponent('prj-durable-blotter')}`, headers: BEARER }));
+    const deskRows = ((deskBlotter.body as { data: { items: readonly { submissionId: string }[] } }).data).items;
+    expect(deskRows).toHaveLength(1); // the desk's own live row only — the project scoping holds both ways
+
+    // The auth law is identical to the demo arm's.
+    const unauthenticated = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/execution/submissions?project=${DEMO_PROJECT_ID}` }));
+    expect(unauthenticated.status).toBe(401);
+    const missingProject = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/execution/submissions', headers: BEARER }));
+    expect(missingProject.status).toBe(400);
+    expect((missingProject.body as { error: { code: string } }).error.code).toBe('validation_failed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE W-26C BOOT-WORLD RACE HARDENING (R5 — the concurrent cold-boot
+// collision self-heals on the FIRST retry)
+// ---------------------------------------------------------------------------
+
+/**
+ * The W-26C race levers over the fake Neon fleet (deterministic cold-boot
+ * windows — the live wire's concurrency, made schedulable for the tests):
+ *  - SCAN HOLD: every COALESCE(MAX(ordinal)) scan is held until released —
+ *    two boot worlds can both read the EMPTY ordinal space before either
+ *    insert lands (the true concurrent cold-boot window; the production
+ *    incident's mechanism, reproduced deterministically).
+ *  - REGISTRY HOLD (armed at scan release): every subsequent registry
+ *    SELECT is held until released (then the hold disarms) — the failure
+ *    path's re-projection is observable landing BEFORE the typed 503
+ *    leaves (the W-26C law: the failure never outruns the durable truth).
+ */
+function raceGatedFetch(inner: FetchLike): {
+  readonly fetchLike: FetchLike;
+  whenScansHeld(count: number): Promise<void>;
+  releaseScans(): void;
+  whenRegistriesHeld(count: number): Promise<void>;
+  releaseRegistries(): void;
+} {
+  const SCAN_MARKER = 'SELECT COALESCE(MAX(ordinal)';
+  const REGISTRY_MARKER = 'SELECT payload FROM tradrl_projects WHERE tenant = $1 ORDER BY created_at';
+  let scansArmed = true;
+  let registriesArmed = false;
+  let scansHeld = 0;
+  let registriesHeld = 0;
+  const scanWaiters: Array<() => void> = [];
+  const registryWaiters: Array<() => void> = [];
+  interface CountWaiter { readonly count: number; readonly resolve: () => void }
+  let scanCounts: CountWaiter[] = [];
+  let registryCounts: CountWaiter[] = [];
+  const settleCounts = (held: number, waiters: CountWaiter[]): { readonly ready: CountWaiter[]; readonly pending: CountWaiter[] } => ({
+    ready: waiters.filter((waiter) => held >= waiter.count),
+    pending: waiters.filter((waiter) => held < waiter.count),
+  });
+  const onScanHeld = (): void => {
+    const { ready, pending } = settleCounts(scansHeld, scanCounts);
+    scanCounts = pending;
+    for (const waiter of ready) waiter.resolve();
+  };
+  const onRegistryHeld = (): void => {
+    const { ready, pending } = settleCounts(registriesHeld, registryCounts);
+    registryCounts = pending;
+    for (const waiter of ready) waiter.resolve();
+  };
+  const fetchLike: FetchLike = (url, init) => {
+    const body = typeof init?.body === 'string' ? init.body : '';
+    if (url.endsWith('/sql') && scansArmed && body.includes(SCAN_MARKER)) {
+      scansHeld += 1;
+      onScanHeld();
+      return new Promise((resolve) => { scanWaiters.push(() => { resolve(inner(url, init)); }); });
+    }
+    if (url.endsWith('/sql') && registriesArmed && body.includes(REGISTRY_MARKER)) {
+      registriesHeld += 1;
+      onRegistryHeld();
+      return new Promise((resolve) => { registryWaiters.push(() => { resolve(inner(url, init)); }); });
+    }
+    return inner(url, init);
+  };
+  return {
+    fetchLike,
+    whenScansHeld: (count) => new Promise<void>((resolve) => {
+      if (scansHeld >= count) resolve();
+      else scanCounts = [...scanCounts, { count, resolve }];
+    }),
+    releaseScans: () => { scansArmed = false; registriesArmed = true; for (const waiter of scanWaiters.splice(0)) waiter(); },
+    whenRegistriesHeld: (count) => new Promise<void>((resolve) => {
+      if (registriesHeld >= count) resolve();
+      else registryCounts = [...registryCounts, { count, resolve }];
+    }),
+    releaseRegistries: () => { registriesArmed = false; for (const waiter of registryWaiters.splice(0)) waiter(); },
+  };
+}
+
+describe('deploy/vercel — the W-26C boot-world race hardening (R5)', () => {
+  it('two compositions over ONE fake Neon race the cold boot: the loser\'s append-only event collides on the live PK; its 503 never outruns the durable truth; the NEXT retry completes (the 503 is transient, never permanent)', async () => {
+    const providers = fakeProviders();
+    const gate = raceGatedFetch(providers.fetchLike);
+    const first = composeInstance(durableSourceWithMachinery(), gate.fetchLike);
+    const second = composeInstance(durableSourceWithMachinery(), gate.fetchLike);
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+
+    // Both cold boots start together over the SAME empty durable store (the
+    // production incident's start line). The scan gate holds every
+    // MAX-ordinal scan until BOTH boot worlds have read the EMPTY ordinal
+    // space — the true concurrency window (both scans before either
+    // insert), reproduced deterministically.
+    let firstDone = false;
+    let secondDone = false;
+    const firstBoot = drive(first, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER })).finally(() => { firstDone = true; });
+    const secondBoot = drive(second, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER })).finally(() => { secondDone = true; });
+    await gate.whenScansHeld(2);
+    gate.releaseScans(); // both scans read the empty log; both inserts race for ordinal 1 — exactly one lands, the other answers the live PK's 400
+    // The winner's post-seed re-projection + the loser's failure-path
+    // re-projection both reach their registry reads and park there.
+    await gate.whenRegistriesHeld(2);
+
+    // THE W-26C LAW (R5): the loser's typed 503 NEVER outruns the durable
+    // truth — the failure-path re-projection is AWAITED before the failure
+    // surfaces, so the failed attempt's next registry guard reads the
+    // winner's rows fresh and skips the re-seed. While the re-projections
+    // are parked, NEITHER response has left the function.
+    expect(firstDone).toBe(false);
+    expect(secondDone).toBe(false);
+    gate.releaseRegistries();
+
+    const firstResponse = await firstBoot;
+    const secondResponse = await secondBoot;
+    const raced = [[first, firstResponse], [second, secondResponse]] as const;
+    expect(raced.map(([, response]) => response.status).sort()).toEqual([200, 503]); // exactly one winner + one collision
+    const loserEntry = raced.find(([, response]) => response.status === 503);
+    const winnerEntry = raced.find(([, response]) => response.status === 200);
+    expect(loserEntry).toBeDefined();
+    expect(winnerEntry).toBeDefined();
+    if (loserEntry === undefined || winnerEntry === undefined) return;
+    const [loser] = loserEntry;
+    const [winner] = winnerEntry;
+    void winner;
+
+    // The failure is the LIVE PK's wire error (the production incident's
+    // exact 400), surfaced through the boot world's typed degraded state.
+    const failure = (loserEntry[1].body as { error: { code: string; message: string } }).error;
+    expect(failure.code).toBe('unavailable');
+    expect(failure.message).toContain('tradrl_project_events_pkey');
+    expect(failure.message).toContain('unconfirmed');
+
+    // The durable truth landed BEFORE the 503 left: the loser's projection
+    // already hydrates the winner's world (the next guard reads it fresh).
+    const loserProjection = loser.durable!.lastProjection();
+    expect(loserProjection?.projects).toBe(1);
+    expect(loserProjection?.events).toBe(1); // the winner's organization-bound event — the loser's colliding append never landed
+
+    // THE FIRST RETRY COMPLETES (the guard now sees the durable truth —
+    // the 503 is transient, never permanent).
+    const retry = await drive(loser, streamingRequest({ method: 'GET', url: '/v1/projects', headers: BEARER }));
+    expect(retry.status).toBe(200);
+    expect((((retry.body as { data: { items: readonly { id: string }[] } }).data).items).map((project) => project.id)).toEqual([DEMO_PROJECT_ID]);
+
+    // No duplicated world in the durable truth (the loser's re-seed never
+    // ran; the guard skipped it): exactly one demo project row + one event.
+    const direct = storesOver(providers.fetchLike);
+    const registryRows = await direct.project.projectRecordsOf(TENANT);
+    expect(registryRows.ok).toBe(true);
+    if (registryRows.ok) expect(registryRows.value.filter((row) => (row as { id: string }).id === DEMO_PROJECT_ID)).toHaveLength(1);
+    const events = await direct.project.projectEventsOf(TENANT, DEMO_PROJECT_ID);
+    expect(events.ok).toBe(true);
+    if (events.ok) expect(events.value.map((event) => event.event)).toEqual(['organization-bound']);
+    // And a second retry is stable (latched — never a repeating 503).
+    const settled = await drive(loser, streamingRequest({ method: 'GET', url: '/v1/projects', headers: BEARER }));
+    expect(settled.status).toBe(200);
   });
 });

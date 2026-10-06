@@ -273,6 +273,16 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   let failure: StoreFailure | null = null;
   let report: ProjectionReport | null = null;
   let inFlight: Promise<void> | null = null;
+  /**
+   * W-26C (the boot-world race hardening): a failed durable write marks
+   * the seam DIRTY — a projection whose reads PREDATE that failure (an
+   * attempt already in flight when the write failed) must never satisfy a
+   * later read or the boot world's registry guard: the ports stay degraded
+   * and settled()/reproject() land a projection that STARTED after the
+   * failure (its reads postdate it — the durable truth). Cleared only by
+   * such a post-failure successful projection.
+   */
+  let dirty = false;
   const pending: PendingDurableWrite[] = [];
 
   // -------------------------------------------------------------------------
@@ -391,10 +401,15 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   /** Run one projection attempt, applying the phase transitions (never throws). */
   async function attempt(): Promise<void> {
     phase = 'projecting';
+    // W-26C: an attempt started while the seam is dirty reads the
+    // POST-failure durable truth — only such an attempt may clear the flag
+    // (a pre-failure attempt completing late must leave it set).
+    const startedDirty = dirty;
     try {
       const result = await project();
       if (result.ok) {
         phase = 'ready';
+        if (startedDirty) dirty = false;
       } else {
         failure = result.error;
         phase = 'failed';
@@ -411,7 +426,10 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   }
 
   function settled(): Promise<void> {
-    if (inFlight === null && phase !== 'ready') {
+    // W-26C: a dirty-but-ready seam (a projection completed with
+    // pre-failure reads) re-projects too — settled() only returns over a
+    // projection that started after the last failed write.
+    if (inFlight === null && (phase !== 'ready' || dirty)) {
       inFlight = attempt(); // the boot projection, a re-projection after a failed write, or the per-request retry of a failed projection
     }
     return inFlight === null ? Promise.resolve() : inFlight;
@@ -453,7 +471,11 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   }
 
   function requireReady(): { readonly ok: false; readonly error: PortFailure } | null {
-    return phase === 'ready' && current !== null ? null : { ok: false, error: degraded() };
+    // W-26C: a DIRTY seam never serves — a projection whose reads predate
+    // the last failed write may hold the unconfirmed mutation (the silent
+    // divergence the W-25D law forbids); the typed degraded state answers
+    // until a post-failure projection lands.
+    return phase === 'ready' && current !== null && !dirty ? null : { ok: false, error: degraded() };
   }
 
   function crossTenant(): PortFailure {
@@ -630,9 +652,25 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
         // (no port call serves the unconfirmed mutation) and rebuild it
         // from the durable truth. The host serves the typed 503 for THIS
         // request; the re-projection is not awaited (the 503 answers now).
+        //
+        // W-26C (the boot-world race hardening): the re-projection is
+        // TRACKED in `inFlight` (never again an untracked `void` twin) so
+        // the next settled()/reproject() JOINS this rebuild instead of
+        // racing a second concurrent projection — and the DIRTY flag keeps
+        // every surface degraded (never a pre-failure snapshot) until a
+        // projection that started AFTER the failure lands the durable
+        // truth. The boot world's retry then reads it FRESH (the concurrent
+        // cold-boot collision self-heals on the first retry).
         failure = result.error; // the degraded surfaces report the durable failure's own code
         phase = 'projecting';
-        void attempt();
+        dirty = true;
+        if (inFlight === null) {
+          inFlight = attempt();
+        }
+        // (an already-tracked attempt keeps its slot: it started BEFORE
+        // this failure, so the dirty flag above forces settled() to land a
+        // fresh post-failure projection after it completes — never join
+        // the stale one as sufficient)
         return { ok: false, error: result.error };
       }
     }
@@ -640,7 +678,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   }
 
   function goalOf(projectId: string): { readonly ok: true; readonly value: GoalSetRecord | null } | { readonly ok: false; readonly error: StoreFailure } {
-    if (phase !== 'ready' || current === null) {
+    if (phase !== 'ready' || current === null || dirty) {
       const degradedFailure: StoreFailure = failure !== null
         ? failure
         : { code: 'durable_projection_pending', message: 'the durable projection is in flight; the goal read degrades (R46)' };

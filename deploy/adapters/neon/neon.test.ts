@@ -117,7 +117,13 @@ function fakeNeon(seed: readonly FakeRow[] = []): { fetchLike: FetchLike; calls:
       const table = 'tradrl_project_events';
       const matching = rows.filter((row) => row.table === table && row.params[0] === params[0] && row.params[1] === params[1]);
       const max = matching.reduce((accumulator, row) => Math.max(accumulator, Number(row.params[2])), 0);
-      return responder(JSON.stringify({ fields: [{ name: 'coalesce', typeOID: 20 }], rows: [[max]] }));
+      // W-26C (R3): the fake models the LIVE wire — int8 (BIGINT) columns
+      // return as STRINGS even in array mode (the live proxy's JSON
+      // precision guard: the Lead's probes answered [["1"]] for
+      // COALESCE(MAX(ordinal),0)). The fakes match the live wire, never
+      // the adapter's expectations — the number form is exactly the
+      // regression that shipped the production incident.
+      return responder(JSON.stringify({ fields: [{ name: 'coalesce', typeOID: 20 }], rows: [[String(max)]] }));
     }
     return responder(JSON.stringify({ message: `fake Neon: unhandled statement ${query.slice(0, 40)}` }), 500);
   };
@@ -138,7 +144,7 @@ describe('deploy/adapters/neon — the client request determinism', () => {
     expect(neonConnectionString({ ...FAKE_CONFIG, apiKey: 'p@ss:word/' })).toBe('postgresql://neondb_owner:p%40ss%3Aword%2F@ep-demo-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require');
   });
 
-  it('the SQL-over-HTTP request is byte-pinned: POST {host}/sql, the RAW connection-string header, the JSON body', () => {
+  it('the SQL-over-HTTP request is byte-pinned: POST {host}/sql, the RAW connection-string header, the driver\'s array-mode + raw-text headers, the JSON body', () => {
     const request = buildNeonRequest(FAKE_CONFIG, 'SELECT payload FROM tradrl_knowledge WHERE tenant = $1', ['tenant-a']);
     expect(request.method).toBe('POST');
     expect(request.url).toBe('https://ep-demo-pooler.us-east-2.aws.neon.tech/sql');
@@ -149,7 +155,25 @@ describe('deploy/adapters/neon — the client request determinism', () => {
     // string: relative URL without a base"); the reference driver sends
     // the serialized URL verbatim — scheme, ://, @, /, ? all literal.
     expect(request.headers['neon-connection-string']).toBe('postgresql://neondb_owner:fake-neon-key-demo@ep-demo-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require');
+    // ARRAY MODE + RAW TEXT OUTPUT (W-26C): the reference driver's other
+    // two headers — WITHOUT array-mode the live proxy answers OBJECT-mode
+    // rows ("rows":[{"payload":..}]) and every decoder here reads
+    // row[0] -> undefined -> EVERY read yields zero values (the direct
+    // cause of the 2026-10-06 production incident under durable).
+    expect(request.headers['neon-array-mode']).toBe('true');
+    expect(request.headers['neon-raw-text-output']).toBe('true');
     expect(request.body).toBe('{"query":"SELECT payload FROM tradrl_knowledge WHERE tenant = $1","params":["tenant-a"]}');
+  });
+
+  it('the Neon header set is the reference driver\'s EXACT three — no more, no fewer (W-26C)', () => {
+    const request = buildNeonRequest(FAKE_CONFIG, 'SELECT 1', ['x']);
+    const neonHeaders = Object.keys(request.headers).filter((name) => name.startsWith('neon-')).sort();
+    expect(neonHeaders).toEqual(['neon-array-mode', 'neon-connection-string', 'neon-raw-text-output']);
+    // The two mode headers are the driver's literal booleans ('true',
+    // lowercase names — HTTP headers are case-insensitive; the live proxy
+    // accepts the lowercase forms, probe-proven).
+    expect(request.headers['neon-array-mode']).toBe('true');
+    expect(request.headers['neon-raw-text-output']).toBe('true');
   });
 
   it('the RAW header percent-encodes a special-char password WITHIN the string while the structure stays literal (W-26A)', () => {
@@ -379,6 +403,52 @@ describe('deploy/adapters/neon — the stores', () => {
     const events = await store.projectEventsOf('tenant-a', 'prj_a');
     expect(events.ok).toBe(true);
     if (events.ok) expect(events.value.map((event) => event.event)).toEqual(['activate', 'suspend']);
+  });
+
+  it('the event log\'s MAX-ordinal scan accepts the int8-as-string live truth (W-26C): "1" -> ordinal 2; a number still decodes; garbage stays 0 (fail-open, never a throw)', async () => {
+    // The scan\'s live byte shape: fields + one row carrying the int8
+    // value — a STRING on the live proxy (the byte shape [["1"]] for a
+    // one-event log), a number on wire models that decode int8, garbage never.
+    const scanShapedFetch = (coalesce: unknown): FetchLike => async (_url, init) => {
+      const parsed = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as { query: string };
+      if (parsed.query.startsWith('SELECT COALESCE(MAX(ordinal)')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ fields: [{ name: 'coalesce', typeOID: 20 }], rows: [[coalesce]] }) };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ command: 'INSERT 0 1', rowCount: 1 }) };
+    };
+    // THE LIVE PIN: the scan answers "1" (the production probe\'s exact
+    // byte shape) -> maxOrdinal 1 -> ordinal 2 (the pre-W-26C typeof-check
+    // read 0 here and collided on the append-only PRIMARY KEY — the
+    // production 503\'s direct mechanism).
+    const liveShaped = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: scanShapedFetch('1'), instants });
+    const appended = await liveShaped.appendProjectEvent({ tenant: 'tenant-a', projectId: 'prj_a', event: 'activate', at: 5 });
+    expect(appended.ok).toBe(true);
+    if (appended.ok) expect(appended.value.ordinal).toBe(2);
+    // A number still decodes (the wire-model form the old law accepted).
+    const numberShaped = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: scanShapedFetch(1), instants });
+    const appendedNumber = await numberShaped.appendProjectEvent({ tenant: 'tenant-a', projectId: 'prj_a', event: 'activate', at: 5 });
+    expect(appendedNumber.ok).toBe(true);
+    if (appendedNumber.ok) expect(appendedNumber.value.ordinal).toBe(2);
+    // Garbage, empty, non-integer and hostile shapes stay 0 -> ordinal 1
+    // (fail-open to the existing law — never a throw).
+    for (const garbage of ['not-a-number', '', '   ', '1.5', '-1', '0x1', 'NaN', null, undefined, {}, true, []]) {
+      const store = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: scanShapedFetch(garbage), instants });
+      const appended = await store.appendProjectEvent({ tenant: 'tenant-a', projectId: 'prj_a', event: 'activate', at: 5 });
+      expect(appended.ok, `garbage ${JSON.stringify(garbage)} must fail open (never a throw)`).toBe(true);
+      if (appended.ok) expect(appended.value.ordinal, `garbage ${JSON.stringify(garbage)} stays 0 -> ordinal 1`).toBe(1);
+    }
+    // An empty row set stays 0 too (the absent-log shape).
+    const emptyRowsFetch: FetchLike = async (_url, init) => {
+      const parsed = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as { query: string };
+      if (parsed.query.startsWith('SELECT COALESCE(MAX(ordinal)')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ fields: [{ name: 'coalesce', typeOID: 20 }], rows: [] }) };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ command: 'INSERT 0 1', rowCount: 1 }) };
+    };
+    const emptyLog = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: emptyRowsFetch, instants });
+    const appendedEmpty = await emptyLog.appendProjectEvent({ tenant: 'tenant-a', projectId: 'prj_a', event: 'activate', at: 5 });
+    expect(appendedEmpty.ok).toBe(true);
+    if (appendedEmpty.ok) expect(appendedEmpty.value.ordinal).toBe(1);
   });
 
   it('a malformed record is the typed malformed_record (fail-closed, never a throw)', () => {

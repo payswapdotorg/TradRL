@@ -56,7 +56,10 @@ void controlPlaneNamesTracked;
 void mirrorFirmMemoryNamesMatch;
 void mirrorOutcomeNamesMatch;
 import type { JobRecord } from '../../services/api/src/contracts';
-import { NeonFirmMemoryStore, NeonOutcomeLearningStore, NeonProjectStore } from '../adapters/neon/stores';
+import { NeonFirmMemoryStore, NeonOutcomeLearningStore, NeonProjectStore, projectEventAppendStatement, type NeonStoreDeps } from '../adapters/neon/stores';
+import { executeNeonStatement } from '../adapters/neon/client';
+import type { NeonConfig } from '../adapters/neon/client';
+import type { FetchLike } from '../adapters/shared';
 import { UpstashCache, UpstashIdempotencyStore } from '../adapters/upstash/stores';
 import { R2EvidenceStore } from '../adapters/r2/store';
 import { ResendNoticeDelivery } from '../adapters/resend/templates';
@@ -143,6 +146,79 @@ describe('deploy/wire — the CI smoketest (full composition against fakes)', ()
     expect(providers.seen.r2).toBeGreaterThan(0);
     expect(providers.seen.resend).toBeGreaterThan(0);
     expect(providers.seen.apify).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2b. THE FAKES MODEL THE LIVE WIRE (W-26C — the shape-guard)
+// ---------------------------------------------------------------------------
+
+// THE REGRESSION THIS PINS: the 2026-10-06 production incident shipped
+// BECAUSE the fakes modeled the adapter's expectations (number ordinals;
+// object rows were never exercised) instead of the LIVE wire shapes the
+// Lead's probes proved (array-mode rows; int8 columns as strings; the
+// append-only event PK's 400). This battery fails if the fleet ever
+// diverges from the live wire again — fake == live, always.
+
+describe('deploy/wire — the fake Neon fleet models the LIVE wire (W-26C shape-guard)', () => {
+  it('SELECT answers are ARRAY-mode rows, int8 columns are STRINGS, and the append-only event PK answers the live 400 — fake == live, never the adapter\'s expectations', async () => {
+    const providers = fakeProviders();
+    const served: string[] = [];
+    const recording: FetchLike = async (url, init) => {
+      const response = await providers.fetchLike(url, init);
+      const text = await response.text();
+      served.push(text);
+      return { ok: response.ok, status: response.status, text: async () => text };
+    };
+    const neon = fakeProviderEnv().neon;
+    const config: NeonConfig = {
+      apiHost: neon.host as string,
+      database: neon.database as string,
+      apiUser: neon.user as string,
+      apiKey: neon.apiKey as string,
+    };
+    const deps: NeonStoreDeps = { config, fetchLike: recording, instants: { next: () => 1 } };
+    const store = new NeonProjectStore(deps);
+    const record = { id: 'prj_wire', tenantId: 'tenant-wire', name: 'the wire desk', executionMode: 'simulation', lifecycle: { status: 'active' }, lineage: {}, createdAt: 1, updatedAt: 1 };
+    expect((await store.putProjectRecord('tenant-wire', record)).ok).toBe(true);
+    // Two appends through the REAL store: the scan round-trips the int8
+    // STRING the live wire sends ("0" for the empty log, then "1").
+    const first = await store.appendProjectEvent({ tenant: 'tenant-wire', projectId: 'prj_wire', event: 'activate', at: 1 });
+    expect(first.ok).toBe(true);
+    if (first.ok) expect(first.value.ordinal).toBe(1);
+    const second = await store.appendProjectEvent({ tenant: 'tenant-wire', projectId: 'prj_wire', event: 'suspend', at: 2 });
+    expect(second.ok).toBe(true);
+    if (second.ok) expect(second.value.ordinal).toBe(2);
+
+    // THE SHAPE GUARD, over every body the fleet itself served: every
+    // SELECT answers ARRAY-mode rows (each row an ARRAY — never the
+    // object-mode {"rows":[{…}]} the live proxy answers WITHOUT the
+    // array-mode header), and every int8 (coalesce) column value is a
+    // numeric STRING (never a number ordinal).
+    let sawCoalesce = false;
+    for (const body of served) {
+      const parsed = JSON.parse(body) as { fields?: { name: string }[]; rows?: unknown[][] };
+      if (!Array.isArray(parsed.fields) || !Array.isArray(parsed.rows)) continue; // DML envelopes
+      for (const row of parsed.rows) {
+        expect(Array.isArray(row), `the fleet must model ARRAY-mode rows (the live array-mode shape), got ${JSON.stringify(row)}`).toBe(true);
+      }
+      if (parsed.fields.some((field) => field.name === 'coalesce')) {
+        sawCoalesce = true;
+        const value = parsed.rows[0]?.[0];
+        expect(typeof value, 'the fleet must model int8-as-string (the live wire), never a number ordinal').toBe('string');
+        expect(value).toMatch(/^\d+$/);
+      }
+    }
+    expect(sawCoalesce).toBe(true); // the scans really crossed the wire
+
+    // THE LIVE PK (the production incident's exact wire error): a forced
+    // duplicate append answers the typed 400 the live Postgres does.
+    const statement = projectEventAppendStatement({ tenant: 'tenant-wire', projectId: 'prj_wire', event: 'activate', at: 3 }, 1);
+    const collision = await executeNeonStatement(config, statement.sql, statement.params, recording);
+    expect(collision.ok).toBe(false);
+    if (collision.ok) return;
+    expect(collision.error.code).toBe('neon_http_error');
+    expect(collision.error.message).toContain('duplicate key value violates unique constraint "tradrl_project_events_pkey"');
   });
 });
 

@@ -437,7 +437,15 @@ export class NeonProjectStore implements ProjectStoreMirror {
       return degraded(scanned.error.code, scanned.error.message);
     }
     const rows = selectRows(scanned.value);
-    const maxOrdinal = rows.length > 0 && typeof (rows[0] ?? [])[0] === 'number' ? ((rows[0] ?? [])[0] as number) : 0;
+    // THE INT8-AS-STRING WIRE TRUTH (W-26C, live-proxy proof 2026-10-06):
+    // COALESCE(MAX(ordinal),0) over a BIGINT column arrives as a STRING
+    // even in array mode ([["1"]] — the proxy's JSON precision guard for
+    // int8), or as a number on wire models that decode int8. Both decode;
+    // anything else (garbage, empty, non-integer) stays 0 — the fail-open
+    // law, never a throw (the append-only log's real collision guard is
+    // the PRIMARY KEY, whose violation surfaces as the typed unique-key
+    // write failure below, never as a scan throw).
+    const maxOrdinal = decodeMaxOrdinal(rows.length > 0 ? (rows[0] ?? [])[0] : undefined);
     const ordinal = maxOrdinal + 1;
     const append = projectEventAppendStatement(input, ordinal);
     const executed = await executeNeonStatement(this.deps.config, append.sql, append.params, this.fetchLike);
@@ -496,6 +504,24 @@ export class NeonProjectStore implements ProjectStoreMirror {
 
 function selectRows(outcome: NeonQueryOutcome): readonly (readonly unknown[])[] {
   return outcome.kind === 'select' ? outcome.rows : [];
+}
+
+/**
+ * Decode the MAX-ordinal scan's value (W-26C): a NUMBER (wire models that
+ * decode int8) or a numeric STRING (the live proxy's int8-as-string truth
+ * — `"1"`); a finite non-integer, a non-numeric/empty string, or any other
+ * shape stays 0 (fail-open to the existing law — never a throw).
+ */
+function decodeMaxOrdinal(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length > 0 && /^\d+$/.test(trimmed)) {
+      const parsed = Number(trimmed);
+      return Number.isSafeInteger(parsed) ? parsed : 0;
+    }
+  }
+  return 0;
 }
 
 function decodeEnvelopes(outcome: NeonQueryOutcome): readonly unknown[] {
