@@ -289,9 +289,17 @@ describe('deploy/wire — the production wiring record', () => {
     for (const port of ['FirmMemoryPort', 'OutcomeLearningPort', 'ControlPlanePort', 'ExecutionGatewayPort', 'JobSubmissionPort']) {
       expect(record.includes(port)).toBe(true);
     }
-    // The L8 statement (the gateway is carried verbatim, never wrapped).
-    expect(record.includes('never wrapped')).toBe(true);
+    // The L8 statement (W-26B's law: the real T040 delegate remains a later
+    // seam — the port map's honest wording — while the simulated gateway the
+    // demo backing composes serves the seam-live durable resolution under the
+    // SIMULATED badge; never bypassed, never faked).
+    expect(record.includes('never bypassed, never faked')).toBe(true);
     expect(record.includes('L8')).toBe(true);
+    // The doc-sync pins for the W-26B activation: the port map names the
+    // EXACT engines the runtime composition composes under durable (the
+    // imported fixtures — zero new simulation logic).
+    expect(record.includes('demoExecutionGateway')).toBe(true);
+    expect(record.includes('fakeJobSubmission')).toBe(true);
   });
 
   it('the typed absence code the record documents is the implementation\'s code', () => {

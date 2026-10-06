@@ -170,10 +170,33 @@ discover, W-3k). The emitted tree:
     in-memory ports hydrated from the durable stores at every cold
     start, with write-through on every mutation — a launched project +
     its goal set, organization bindings and lifecycle events persist in
-    Neon and REHYDRATE on every instance (D-5). With the Neon keys
-    INCOMPLETE (or Neon down) those routes answer the typed degraded
-    503s (R46) while everything else keeps serving; the execution
-    gateway + Apify jobs keep their honest typed stubs (later seams).
+    Neon and REHYDRATE on every instance (D-5). Since **W-26B** the
+    seam-live durable resolution is a **SUPERSET of demo** — everything
+    the demo backing serves, PLUS the Neon persistence
+    (`deploy/vercel/runtime/durable-world.ts`): the SAME simulated
+    execution gateway + job-submission engines the demo backing composes
+    (imported from the frozen fixtures — `POST /v1/execution/requests`
+    routes, `POST /v1/jobs/*` answer 202, the launch journey J3 works),
+    the SAME per-request machinery tick over the hydrated control plane
+    (org compile + job advancement through the real private plane), the
+    SAME demo world seed (once per DATABASE — the hydrated registry
+    guard skips the create on subsequent boots; the per-instance job
+    store re-seeds its two demo jobs each boot), and the fixture
+    substance (the demo knowledge capsule, outcome + post-mortem)
+    boot-written into the Neon stores through the STORE layer (guarded,
+    idempotent — the read-only ports then serve it like any durable
+    row). Every boot-world durable write drains before the first serve
+    (the W-25D ordering law); a failed write is the typed 503, retried
+    per request (never a crash, never a silent partial world). The
+    org-status snapshots re-report per instance after each cold start
+    (R7 — the frozen service's watch store is per-instance; disclosed).
+    With the Neon keys INCOMPLETE (or Neon down) the Neon-backed routes
+    answer the typed degraded 503s (R46) while everything else keeps
+    serving; in that seam-not-built state the execution gateway keeps
+    its honest `deploy_adapter_pending` stub and the job port follows
+    the matrix for Apify (absent keys -> the typed absent) — the
+    gateway/seed/tick NEVER run there. The async Apify bridge remains a
+    later seam (the host-owned ingestion lanes keep their own matrix).
     The DEMO path stays byte-identical (the seam activates only on the
     durable resolution).
   - An **invalid** `TRADRL_DEPLOY_BACKING` value is a host
@@ -270,7 +293,7 @@ every key the deployment reads, with its purpose. Summary:
 | `TRADRL_API_DEVELOPER_PRINCIPAL` | the credential's principal name (audit WHO) | you choose (e.g. `public-console`) |
 | `TRADRL_API_INTERNAL_TOKEN` | the private-plane (`/internal/*`) credential token — **optional**: absent = the internal plane stays closed (R46) | `openssl rand -hex 24` |
 | `TRADRL_API_INTERNAL_PRINCIPAL` | the internal service principal (required when the internal token is set) | you choose (e.g. `job-runner`) |
-| `TRADRL_DEPLOY_BACKING` | **optional** — which backing the data routes compose over: `demo` (the in-memory fixture-backed demo; per-instance state, honest under SIMULATED; byte-identical whether or not Neon keys are present) or `durable` (the W-25D hydration seam: the Neon-backed surfaces rehydrate per instance with write-through; incomplete Neon keys keep the typed `deploy_adapter_absent` 503s). **UNSET = auto**: `demo` when no `NEON_*`/`UPSTASH_*` key is configured (the public free-tier default), `durable` the moment any is. An invalid value fails closed (the typed 503 naming the key) | unset (auto) |
+| `TRADRL_DEPLOY_BACKING` | **optional** — which backing the data routes compose over: `demo` (the in-memory fixture-backed demo; per-instance state, honest under SIMULATED; byte-identical whether or not Neon keys are present) or `durable` (the W-25D hydration seam + the W-26B activation: the Neon-backed surfaces rehydrate per instance with write-through, and the durable resolution is a SUPERSET of demo — the same simulated gateway/jobs engines, the same machinery tick, the same demo world seed + fixture substance, every boot-world write drained before the first serve; incomplete Neon keys keep the typed `deploy_adapter_absent` 503s and the gateway/seed/tick never run). **UNSET = auto**: `demo` when no `NEON_*`/`UPSTASH_*` key is configured (the public free-tier default), `durable` the moment any is. An invalid value fails closed (the typed 503 naming the key) | unset (auto) |
 
 ### Console shell substitution (Vercel BUILD-time env — consumed by build-console.mjs)
 
@@ -483,13 +506,19 @@ Rules of engagement:
 ## 7. Testing this tree
 
 ```
-corepack pnpm vitest run deploy     # 181 tests (runtime adaptation vectors,
+corepack pnpm vitest run deploy     # 201 tests (runtime adaptation vectors,
                                     # the backing-resolution matrix + the demo
                                     # data routes + the machinery tick + L12
                                     # probes, the W-25D durable seam
                                     # (cold-start survival, write-through,
                                     # the ordering law, the degradation
-                                    # matrix, demo byte-identity —
+                                    # matrix, demo byte-identity) + the
+                                    # W-26B activation (the J3 launch
+                                    # journey end-to-end, the demo world's
+                                    # two-boot law, the fixture boot-write
+                                    # idempotency, the org compile + the
+                                    # R7 snapshot re-report, the boot-world
+                                    # failure law, the Neon-absent row —
                                     # deploy/vercel/durable.test.ts),
                                     # the prebuilt-output laws —
                                     # config.json routes === FUNCTION_MOUNT_PATH,
