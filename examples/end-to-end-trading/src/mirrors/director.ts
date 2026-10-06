@@ -682,7 +682,7 @@ export function composeDirectorDecision(input: DirectorCompositionInput): Direct
     return {
       lane,
       status: (conflictedLaneSet.has(lane) ? 'conflicted' : 'consumed') as LaneCoverageStatus,
-      position: entry.position,
+      position: positionsByLane.get(lane) ?? entry.position,
       absence: null,
     };
   });

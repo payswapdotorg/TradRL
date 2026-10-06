@@ -765,7 +765,7 @@ function runPipeline(scenario: ScenarioRecord): EndToEndRunRecord {
   const sentimentDigests = newsObservations.map((observation, index) => {
     const event = scenario.stream.find((candidate) => candidate.event_id === observation.observation_id.replace('obs-', '')) as StreamEvent;
     return deepFreeze({
-      digestId: `sed-${String(index + 1).padStart(4, '0')}`,
+      digestId: `ed-${String(index + 1).padStart(4, '0')}`,
       kind: 'sentiment-spike' as const,
       instruments: [event.instrument],
       venues: [event.venue],
@@ -800,7 +800,7 @@ function runPipeline(scenario: ScenarioRecord): EndToEndRunRecord {
       coverage: { observationsOffered: newsObservations.length, observationsAdmitted: newsObservations.length, observationsDeferred: 0, observationsUnsupported: 0, observationsInvalid: 0 },
       dataGaps: scenario.universe
         .filter((instrument) => !newsObservations.some((observation) => observation.instrument === instrument.instrumentId))
-        .map((instrument) => ({ kind: 'no-news-observation', instrument: instrument.instrumentId })),
+        .map((instrument) => ({ kind: 'no-news-observations', instrument: instrument.instrumentId })),
     },
   };
   const sentimentReport: SentimentReportMirror = deepFreeze({
@@ -826,7 +826,7 @@ function runPipeline(scenario: ScenarioRecord): EndToEndRunRecord {
     const label = compareDecimal(netMoveRatio, '0.008') >= 0 ? 'trending-up' : compareDecimal(netMoveRatio, '-0.008') <= 0 ? 'trending-down' : compareDecimal(meanAbsChangeRatio, '0.01') >= 0 ? 'volatile' : 'ranging';
     return [
       deepFreeze({
-        classificationId: `rgc-${String(index + 1).padStart(4, '0')}`,
+        classificationId: `rc-${String(index + 1).padStart(4, '0')}`,
         scope: { instrument: instrument.instrumentId, venue: instrument.venueId },
         label,
         netMoveRatio,
@@ -878,7 +878,7 @@ function runPipeline(scenario: ScenarioRecord): EndToEndRunRecord {
     const value = Number(payload.value);
     const direction: 'positive' | 'negative' | 'neutral' = value >= 0.7 ? 'positive' : value <= 0.3 ? 'negative' : 'neutral';
     return deepFreeze({
-      assessmentId: `fna-${String(index + 1).padStart(4, '0')}`,
+      assessmentId: `fa-${String(index + 1).padStart(4, '0')}`,
       scope: { instrument: event.instrument, series: payload.field },
       assessmentKind: 'health-indicator' as const,
       stance: { methodId: 'method/fundamental/stance', methodVersion: '1.0.0', direction, score: payload.value },
@@ -910,7 +910,7 @@ function runPipeline(scenario: ScenarioRecord): EndToEndRunRecord {
       coverage: { observationsOffered: fundamentalObservations.length, observationsAdmitted: fundamentalObservations.length, observationsDeferred: 0, observationsUnsupported: 0, observationsInvalid: 0 },
       dataGaps: scenario.universe
         .filter((instrument) => !fundamentalAssessments.some((assessment) => assessment.scope.instrument === instrument.instrumentId))
-        .map((instrument) => ({ kind: 'no-fundamental-observation', instrument: instrument.instrumentId, series: 'ALL' })),
+        .map((instrument) => ({ kind: 'no-fundamental-observations', instrument: instrument.instrumentId, series: 'ALL' })),
     },
   };
   const fundamentalReport: FundamentalReportMirror = deepFreeze({
@@ -1021,6 +1021,7 @@ function runPipeline(scenario: ScenarioRecord): EndToEndRunRecord {
     throw new Error('director composition escalated in the reference scenario (quorum/conflict) — the reference expects a decision');
   }
   const decision = directorOutcome.decision;
+  const directorDecisionRef = decision.decisionId;
   const directorEntry = ledgerAppend(
     ledger,
     'director',
@@ -1426,8 +1427,8 @@ function runPipeline(scenario: ScenarioRecord): EndToEndRunRecord {
       decisionRef: decision.decisionId,
       decisionAsOf: decision.asOf,
       intentRef: intent.intentId,
-      directorDecision: decision.decisionId,
-      orderRef: intent.order.clientOrderId,
+      directorDecision: directorDecisionRef,
+      orderRef: `e2e-${String(index + 1)}`,
       venue: intent.order.venueId,
       instrument: intent.order.instrumentId,
       side: intent.order.side,
