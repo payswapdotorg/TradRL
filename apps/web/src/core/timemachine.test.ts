@@ -5,6 +5,9 @@
 //   - the view instant derives from an INJECTED anchor (never a wall clock);
 //   - a view instant may never point AFTER the anchor (no inspecting the future);
 //   - playback is controlled: armed with a step, advanced by ticks;
+//   - THE PAUSE (R10, W-25C): pause FREEZES the view instant (a tick
+//     while paused advances nothing; the anchor never regresses) and
+//     resume continues from exactly the frozen instant;
 //   - L4 interaction: the projection + render gate consume viewAt — a
 //     post-availability fact at a view time is the typed
 //     AvailabilityViolationError.
@@ -16,7 +19,9 @@ import {
   advanceAnchor,
   backToLive,
   liveTimeMachine,
+  pausePlayback,
   playbackProgressOf,
+  resumePlayback,
   setTimestamp,
   setTMinus,
   startPlayback,
@@ -127,6 +132,73 @@ describe('timemachine: controlled playback', () => {
     state = tickPlayback(state);
     state = tickPlayback(state);
     expect(playbackProgressOf(state)).toBe(1); // clamped at the anchor
+  });
+});
+
+describe('timemachine: THE PAUSE (R10, W-25C — pause freezes the view, resume continues from the frozen instant)', () => {
+  it('pause FREEZES the view instant: fromAt/ticks untouched (no jump-back), a tick while paused advances NOTHING', () => {
+    let state = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 10_000, 1_000);
+    state = tickPlayback(state);
+    state = tickPlayback(state);
+    state = tickPlayback(state);
+    const frozenAt = viewAtOf(state); // ANCHOR - 7_000
+    expect(frozenAt).toBe(ANCHOR - 7_000);
+    const paused = pausePlayback(state);
+    expect(paused.mode).toBe('playback');
+    expect(paused.playback?.paused).toBe(true);
+    expect(paused.playback?.fromAt).toBe(state.playback?.fromAt); // no re-arm at the opened instant (the R10 defect)
+    expect(paused.playback?.ticks).toBe(3); // no tick reset
+    expect(viewAtOf(paused)).toBe(frozenAt); // NO JUMP-BACK — the exact J5 symptom
+    // The scheduled beat keeps arriving while paused — every tick is a no-op.
+    let still = paused;
+    for (let beat = 0; beat < 5; beat += 1) still = tickPlayback(still);
+    expect(viewAtOf(still)).toBe(frozenAt); // frozen — playback does NOT keep advancing
+    expect(still.playback?.ticks).toBe(3);
+    expect(pausePlayback(paused)).toEqual(paused); // idempotent
+  });
+
+  it('the anchor keeps following the observed now while paused (the anchor never regresses; the VIEW does not follow it)', () => {
+    let state = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 10_000, 1_000);
+    state = tickPlayback(state);
+    const paused = pausePlayback(advanceAnchor(state, ANCHOR + 60_000));
+    expect(paused.anchorAt).toBe(ANCHOR + 60_000);
+    expect(viewAtOf(paused)).toBe(ANCHOR - 9_000); // the view stays at the frozen instant
+  });
+
+  it('resume continues from EXACTLY the frozen instant (the next tick steps from where pause left the view)', () => {
+    let state = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 10_000, 1_000);
+    state = tickPlayback(state);
+    state = tickPlayback(state);
+    const paused = pausePlayback(state);
+    const frozenAt = viewAtOf(paused); // ANCHOR - 8_000
+    const resumed = resumePlayback(paused);
+    expect(resumed.playback?.paused).toBe(false);
+    expect(viewAtOf(resumed)).toBe(frozenAt); // still the frozen instant at the resume boundary
+    const stepped = tickPlayback(resumed);
+    expect(viewAtOf(stepped)).toBe(frozenAt + 1_000); // continues from the frozen instant
+    expect(resumePlayback(resumed)).toEqual(resumed); // idempotent
+  });
+
+  it('pause/resume with playback not armed are typed input errors', () => {
+    expect(() => pausePlayback(liveTimeMachine(ANCHOR))).toThrow(/not armed/);
+    expect(() => resumePlayback(liveTimeMachine(ANCHOR))).toThrow(/not armed/);
+    expect(() => pausePlayback(setTMinus(liveTimeMachine(ANCHOR), 5))).toThrow(/not armed/);
+  });
+
+  it('a fresh arm is never paused (startPlayback resets the control to playing)', () => {
+    let state = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 10_000, 1_000);
+    state = pausePlayback(state);
+    const reArmed = startPlayback(state, ANCHOR - 4_000, 500);
+    expect(reArmed.playback?.paused).toBe(false);
+    expect(viewAtOf(reArmed)).toBe(ANCHOR - 4_000);
+    expect(tickPlayback(reArmed).playback?.ticks).toBe(1); // an armed (unpaused) machine ticks
+  });
+
+  it('the frozen progress renders while paused (the % readout holds its position)', () => {
+    let state = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 10_000, 2_500);
+    state = tickPlayback(state);
+    const paused = pausePlayback(state);
+    expect(playbackProgressOf(paused)).toBe(0.25);
   });
 });
 

@@ -27,6 +27,7 @@ import {
   absorbedEdit,
   blankLaunchDraft,
   editLaunchField,
+  firstBadConstraintEntry,
   launchFieldValidation,
   launchFieldValue,
   launchDraftProblems,
@@ -157,7 +158,9 @@ describe('launch-form: the per-field §4.11 validation', () => {
       ['horizonEndsAt', 'never', 'Enter the horizon instants as epoch milliseconds.'],
       ['executionMode', 'paper', 'Choose an execution mode.'],
       ['preferences', 'broken', 'Preferences are key=value pairs, e.g. rebalance=daily.'],
-      ['constraints', 'nope', 'Each constraint is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2.'],
+      // D-6b (W-25C): the constraint message NAMES the offending entry —
+      // which one (1-based) + what it says + the expected grammar.
+      ['constraints', 'nope', 'Constraints entry 1 ("nope") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2.'],
     ];
     for (const [field, value, message] of cases) {
       const values = { ...base, [field]: value } as LaunchFormValues;
@@ -173,6 +176,29 @@ describe('launch-form: the per-field §4.11 validation', () => {
     const inverted = { ...base, horizonEndsAt: String(T0) } as LaunchFormValues;
     expect(launchFieldValidation(inverted, 'horizonEndsAt')).toBe('The horizon must end after it starts.');
     expect(launchFieldValidation(inverted, 'horizonStartsAt')).toBe('The horizon must end after it starts.');
+  });
+
+  it('D-6b: the constraint validation names the OFFENDING entry — a mixed list points at the broken one (index + raw text), the good ones stay unnamed', () => {
+    const base = validValues();
+    const good = 'c-1:outcome:risk.maxDrawdown:limit.max:0.2';
+    const alsoGood = 'c-2:action:position.size:limit.max:10:advisory';
+    const broken = 'c-3:outcome:risk.maxDrawdown:limit.max:abc'; // not a number
+    const values = { ...base, constraints: `${good}, ${alsoGood}, ${broken}` } as LaunchFormValues;
+    expect(firstBadConstraintEntry(values.constraints)).toEqual({ index: 3, entry: broken });
+    expect(launchFieldValidation(values, 'constraints')).toBe(
+      `Constraints entry 3 ("${broken}") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2.`,
+    );
+    // the offender rides the REVIEW banner's problem list too (the D-6b surface: "FIX BEFORE LAUNCHING" names its offender)
+    const problems = launchDraftProblems(values);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]?.[0]).toBe('constraints');
+    expect(problems[0]?.[1]).toContain('Constraints entry 3');
+    expect(problems[0]?.[1]).toContain(broken);
+    // a first-entry failure names entry 1; a fully valid list names nothing
+    const firstBroken = { ...base, constraints: `${broken}, ${good}` } as LaunchFormValues;
+    expect(firstBadConstraintEntry(firstBroken.constraints)?.index).toBe(1);
+    expect(firstBadConstraintEntry(base.constraints)).toBeNull();
+    expect(launchFieldValidation(base, 'constraints')).toBe('');
   });
 
   it('launchDraftProblems lists every problem in field order (the review gate\'s input)', () => {

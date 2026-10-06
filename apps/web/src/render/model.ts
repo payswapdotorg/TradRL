@@ -606,7 +606,11 @@ function timeMachineBar(state: WorkspaceState, viewAt: number): VNode {
       viewAt,
       openedAt: state.openedAt,
       anchorAt: state.timeMachine.anchorAt,
-      playing: state.timeMachine.mode === 'playback',
+      // R10 (W-25C): the control renders "Pause" only while playback
+      // is actually ADVANCING — a PAUSED playback renders "Play" (the
+      // control's resume face; the view instant is frozen at the last
+      // tick's instant until then).
+      playing: state.timeMachine.mode === 'playback' && state.timeMachine.playback !== null && !state.timeMachine.playback.paused,
       progress,
     }),
     v('p', { class: 'hint' }, ['Every visible datum passed the availability projection for this view instant (L4).']),
@@ -849,7 +853,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         factRow('mode', state.timeMachine.mode),
         factRow('anchor instant', formatInstantUtc(state.timeMachine.anchorAt)),
         factRow('t-minus offset', `${state.timeMachine.tMinusMs}ms`),
-        factRow('playback', state.timeMachine.playback === null ? 'not armed' : `from ${formatInstantUtc(state.timeMachine.playback.fromAt)} step ${state.timeMachine.playback.stepMs}ms after ${state.timeMachine.playback.ticks} ticks`),
+        factRow('playback', state.timeMachine.playback === null ? 'not armed' : `from ${formatInstantUtc(state.timeMachine.playback.fromAt)} step ${state.timeMachine.playback.stepMs}ms after ${state.timeMachine.playback.ticks} ticks${state.timeMachine.playback.paused ? ' (paused)' : ''}`),
       ];
       return v('section', { class: 'panel', 'data-section': 'time-machine' }, [
         v('div', { class: 'card' }, [v('div', { class: 'card-title' }, ['Time Machine']), ...knowable]),

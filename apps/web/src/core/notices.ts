@@ -310,3 +310,74 @@ export function assertReadsScoped(scope: WorkspaceScope, reads: NoticeReads): vo
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// The durable read-state (D-6c, W-25C — per-browser, per-scope UI state).
+// ---------------------------------------------------------------------------
+
+/**
+ * The localStorage key the inbox's read-state persists under. Plain UI
+ * state in the SAME browser-trust-zone class as `tradrl_theme` /
+ * `tradrl_onboarded` / `tradrl_scope_project` (spec/SECURITY.md's trust
+ * zones place the browser first; spec/UX-DESIGN.md sanctions
+ * localStorage for this class): the persisted map carries no
+ * credentials and no notice content — only read marks keyed by the
+ * full tenant/project/notice triple.
+ */
+export const NOTICE_READ_STORAGE_KEY = 'tradrl_notice_read';
+
+/**
+ * The storage-scoped read key of one notice. The tenant-isolation law
+ * carries into the persisted shape: one tenant's (or one project's)
+ * read marks can never apply to another's notices.
+ */
+export function noticeReadKey(tenantId: string, projectId: string, noticeId: string): string {
+  return `${tenantId}/${projectId}/${noticeId}`;
+}
+
+/** The persisted read-state map: read keys -> 1 (a closed shape; JSON round-trips it). */
+export type StoredNoticeReads = Readonly<Record<string, 1>>;
+
+/**
+ * Parse a stored read-state blob. Storage is UNTRUSTED input: any
+ * garbage (missing, corrupted, a foreign JSON shape, a non-1 mark)
+ * degrades to the empty map — the session then behaves exactly like a
+ * browser with no stored read-state (nothing marked, nothing lost).
+ */
+export function parseStoredNoticeReads(value: string | null): StoredNoticeReads {
+  if (typeof value !== 'string' || value.length === 0) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return {};
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+  const out: Record<string, 1> = {};
+  for (const entry of Object.entries(parsed as Record<string, unknown>)) {
+    if (entry[1] === 1) out[entry[0]] = 1;
+  }
+  return out;
+}
+
+/** Serialize a read-state map for storage (the parse round-trip's other half). */
+export function serializeNoticeReads(reads: StoredNoticeReads): string {
+  return JSON.stringify(reads);
+}
+
+/**
+ * The ids of notices whose read marks the stored map carries (the
+ * rehydration pass's input: these are the notices a fresh session
+ * marks read the moment they fold). A notice's key derives from the
+ * record's OWN tenant/project — a stored mark only ever matches the
+ * scope it was written for.
+ */
+export function storedReadNoticeIds(reads: StoredNoticeReads, notices: readonly NoticeRecord[]): readonly string[] {
+  const ids: string[] = [];
+  for (const record of notices) {
+    if (reads[noticeReadKey(record.tenantId, record.projectId, record.noticeId)] === 1) {
+      ids.push(record.noticeId);
+    }
+  }
+  return ids;
+}

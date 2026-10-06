@@ -188,6 +188,8 @@ class FakeDocument {
   focused: FakeElement | null = null;
   /** The document head (the R8 supplement's injection target — W-19); a fake element with an id-based querySelector. */
   readonly head: FakeElement = new FakeElement('head');
+  /** The document's root element (D-6d, W-25C — the html element's data-theme sync target); a fake element with attribute bookkeeping. */
+  readonly documentElement: FakeElement = new FakeElement('html');
 
   createElement(tagName: string): FakeElement {
     const element = new FakeElement(tagName);
@@ -388,12 +390,16 @@ interface Rig {
   readonly scheduler: ScriptedScheduler | null;
 }
 
-/** The per-rig seam overrides (the scheduler + an instant source other than the fixed one + the scope persistence seam). */
+/** The per-rig seam overrides (the scheduler + an instant source other than the fixed one + the scope persistence seam + the notice read-state seam + the boot theme). */
 interface RigOverrides {
   readonly scheduler?: ScriptedScheduler;
   readonly instants?: InstantSource;
   /** THE SCOPE PERSISTENCE SEAM (R6b, W-22): when passed, the rig's storage carries localStorage `tradrl_scope_project` — the write-through on every scope move + the boot restore. */
   readonly scopeStorage?: MapStorage;
+  /** THE NOTICE READ-STATE SEAM (D-6c, W-25C): when passed, the rig's storage carries localStorage `tradrl_notice_read` — the write-through on every mark + the boot rehydration. */
+  readonly noticeReadStorage?: MapStorage;
+  /** The boot theme (D-6d, W-25C — the html element's data-theme at first paint). */
+  readonly theme?: 'light' | 'dark';
 }
 
 /** Boot the real console with every seam injected and mount it (DOM-free until here — the architecture's law). The project id defaults to the rig's scoped project; pass '' for the LAUNCHPAD (the shipped shell's own default — the primary flow starts there). */
@@ -407,12 +413,13 @@ async function bootRig(stored: Record<string, string> = {}, transport: ApiTransp
     scope: { tenantId: 'tenant-a', projectId },
     transport,
     instants: overrides.instants ?? { nowMs: () => T0 + 1000 },
-    theme: 'light',
+    theme: overrides.theme ?? 'light',
     storage,
     onboardingStorage: storage,
     simulated: true,
     ...(scheduler === null ? {} : { scheduler }),
     ...(overrides.scopeStorage === undefined ? {} : { scopeStorage: overrides.scopeStorage }),
+    ...(overrides.noticeReadStorage === undefined ? {} : { noticeReadStorage: overrides.noticeReadStorage }),
   });
   const doc = new FakeDocument();
   const root = new FakeElement('div');
@@ -2400,5 +2407,299 @@ describe('executed boot: D-1 — the goal boot seam (the goal/constraint-set fet
     clickNav(rig, 'goal');
     expect(elementsOf(rig.root).some((element) => textOf(element) === 'Goal statement')).toBe(true); // the card renders again
     expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R10 (W-25C) — THE TIME MACHINE PAUSE, executed: pause freezes the view
+// (no jump-back, no advance), resume continues from the frozen instant.
+// The rest of the J5 catalog (scrub, TIMESTAMP, PLAYBACK +500ms/s with %
+// progress) stays green in the block above.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: R10 (W-25C) — the Time Machine pause', () => {
+  it('PAUSE freezes the view instant (no jump-back, no advance across beats) and RESUME continues from exactly the frozen instant', async () => {
+    const scheduler = new ScriptedScheduler();
+    let nowMs = T0;
+    const instants: InstantSource = { nowMs: () => (nowMs += 100) };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler, instants });
+    nowMs = T0 + 60_000; // the scripted clock jumps forward — the playback span is real
+    rig.handle.dispatch({ kind: 'view-live', at: instants.nowMs() });
+    clickAction(rig, 'tm-mode-playback'); // arm playback from the opened instant, step 500ms
+    const readoutOf = (): string => {
+      const readout = elementsOf(rig.root).find((element) => element.hasClass('tm-readout'));
+      if (readout === undefined) throw new Error('the mono readout is missing');
+      return textOf(readout);
+    };
+    const playPauseOf = (): FakeElement => {
+      const button = findByData(rig.root, 'data-action', 'playback-start');
+      if (button === null) throw new Error('the play/pause control is missing');
+      return button;
+    };
+    expect(playPauseOf().getAttribute('aria-label')).toBe('Pause playback'); // the control's pause face while playing
+
+    // three beats advance three controlled steps (+500ms/s — the J5 catalog's own pace)
+    for (let beat = 0; beat < 3; beat += 1) {
+      expect(scheduler.fireNext(), `beat ${beat + 1} was scheduled`).toBe(true);
+      await settle();
+    }
+    let playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('playback not armed');
+    const armedFromAt = playback.fromAt;
+    expect(playback.ticks).toBe(3);
+    const frozenAt = armedFromAt + playback.ticks * playback.stepMs;
+    expect(readoutOf()).toBe(formatInstantUtc(frozenAt));
+
+    // THE PAUSE — the same control's pause face
+    clickAction(rig, 'playback-start');
+    playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('the pause disarmed playback');
+    expect(rig.handle.state().timeMachine.mode).toBe('playback'); // still the playback mode
+    expect(playback.paused).toBe(true);
+    expect(playback.fromAt).toBe(armedFromAt); // NOT re-armed at the opened instant (the R10 defect: pause used to restart from openedAt)
+    expect(viewAtOf(rig.handle.state())).toBe(frozenAt); // NO JUMP-BACK — the exact J5 symptom
+    expect(readoutOf()).toBe(formatInstantUtc(frozenAt));
+    expect(playPauseOf().getAttribute('aria-label')).toBe('Play playback'); // the control flips to its resume face
+
+    // the beats keep coming — playback does NOT keep advancing (the J5 symptom's second half)
+    for (let beat = 0; beat < 3; beat += 1) {
+      expect(scheduler.fireNext(), `paused beat ${beat + 1} was scheduled`).toBe(true);
+      await settle();
+    }
+    playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('the beats disarmed playback');
+    expect(playback.ticks).toBe(3); // frozen
+    expect(readoutOf()).toBe(formatInstantUtc(frozenAt)); // the readout holds the frozen instant
+
+    // THE RESUME — continues from exactly the frozen instant
+    clickAction(rig, 'playback-start'); // the control's play face
+    playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('the resume disarmed playback');
+    expect(playback.paused).toBe(false);
+    expect(viewAtOf(rig.handle.state())).toBe(frozenAt); // the resume boundary IS the frozen instant
+    expect(scheduler.fireNext()).toBe(true);
+    await settle();
+    playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('the beat disarmed playback');
+    expect(playback.ticks).toBe(4); // the step AFTER the frozen instant — continuing, not restarting
+    expect(readoutOf()).toBe(formatInstantUtc(armedFromAt + 4 * playback.stepMs));
+    expect(playPauseOf().getAttribute('aria-label')).toBe('Pause playback'); // back to the pause face
+  });
+
+  it('the rest of the J5 catalog is untouched: the timestamp mode + the scrubber still work around a pause cycle', async () => {
+    const scheduler = new ScriptedScheduler();
+    let nowMs = T0;
+    const instants: InstantSource = { nowMs: () => (nowMs += 100) };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler, instants });
+    nowMs = T0 + 60_000;
+    rig.handle.dispatch({ kind: 'view-live', at: instants.nowMs() });
+    clickAction(rig, 'tm-mode-playback');
+    expect(scheduler.fireNext()).toBe(true);
+    await settle();
+    clickAction(rig, 'playback-start'); // pause
+    expect(rig.handle.state().timeMachine.playback?.paused).toBe(true);
+
+    // the scrubber still commits (the timestamp mode supersedes the paused playback)
+    const scrubber = findByData(rig.root, 'data-action', 'tm-scrub');
+    if (scrubber === null) throw new Error('the Time Machine renders no scrubber');
+    const anchor = rig.handle.state().timeMachine.anchorAt;
+    scrubber.value = String(anchor - 100);
+    rig.doc.fire('input', { target: scrubber });
+    rig.doc.fire('change', { target: scrubber });
+    expect(rig.handle.state().timeMachine.mode).toBe('timestamp');
+    expect(rig.handle.state().timeMachine.timestamp).toBe(anchor - 100);
+
+    // and a fresh arm from the timestamp view still starts playback playing (never stuck paused)
+    clickAction(rig, 'tm-mode-playback');
+    expect(rig.handle.state().timeMachine.playback?.paused).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-6a (W-25C) — THE BEAT-RENDER CLICK RACE, executed: a press on the
+// primary flow's buttons survives the mid-press re-projection (the
+// pending press replays through the same action branch a live click
+// takes). No double-dispatch on the normal path; a dragged-away press
+// stays cancelled.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-6a (W-25C) — the beat-render click race', () => {
+  it('a press on "Next" that the mid-press beat re-projection REPLACED still lands (the silent no-op is gone)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickAction(rig, 'launch-start'); // the primary flow begins on the goal step
+    expect(rig.handle.state().launch.step).toBe('goal');
+
+    // THE PRESS: mousedown on the current tree's Next button
+    const next = findByData(rig.root, 'data-action', 'launch-step-budget');
+    if (next === null) throw new Error('the goal step renders no Next: budget button');
+    rig.doc.fire('mousedown', { target: next });
+
+    // THE BEAT LANDS MID-PRESS: a state change re-projects the whole tree —
+    // the pressed element is REPLACED (detached from the mounted root), and
+    // the browser composes the click on a common ANCESTOR (an inert
+    // container) that resolves to nothing interactive.
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 5_000 });
+    rig.doc.fire('click', { target: shellOf(rig.root) });
+
+    expect(rig.handle.state().launch.step).toBe('budget'); // the click LANDED
+  });
+
+  it('the normal path is never double-dispatched: mousedown + click on the SAME live element advances exactly once; a dead click with no stale press fires nothing', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickAction(rig, 'launch-start');
+    const next = findByData(rig.root, 'data-action', 'launch-step-budget');
+    if (next === null) throw new Error('the goal step renders no Next: budget button');
+    rig.doc.fire('mousedown', { target: next });
+    rig.doc.fire('click', { target: next }); // the element still attached — the click resolves by itself
+    expect(rig.handle.state().launch.step).toBe('budget'); // one advance
+
+    // a dead click (inert chrome, nothing pending on a replaced element) fires nothing
+    const shell = shellOf(rig.root);
+    rig.doc.fire('mousedown', { target: shell }); // pressing inert chrome presses nothing
+    rig.doc.fire('click', { target: shell });
+    expect(rig.handle.state().launch.step).toBe('budget'); // still exactly one advance in total
+  });
+
+  it('a press the user dragged AWAY from (released over inert chrome, element never replaced) stays CANCELLED — the browser\'s own semantics hold', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickAction(rig, 'launch-start');
+    const next = findByData(rig.root, 'data-action', 'launch-step-budget');
+    if (next === null) throw new Error('the goal step renders no Next: budget button');
+    rig.doc.fire('mousedown', { target: next });
+    // NO re-render in between — the pressed element is still attached
+    rig.doc.fire('click', { target: shellOf(rig.root) });
+    expect(rig.handle.state().launch.step).toBe('goal'); // the drag-off cancel holds
+  });
+
+  it('a NAV press survives the mid-press re-projection too (the [data-target] vocabulary replays as navigation)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    const navItem = elementsOf(rig.root).find((element) => element.getAttribute('data-target') === 'goal' && element.tagName === 'BUTTON' && element.hasClass('nav-item'));
+    if (navItem === undefined) throw new Error('no nav item for goal');
+    rig.doc.fire('mousedown', { target: navItem });
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 5_000 }); // the mid-press re-projection
+    rig.doc.fire('click', { target: shellOf(rig.root) }); // the composed click resolves nothing from the shell root
+    expect(rig.handle.state().selectedSection).toBe('goal'); // the navigation landed
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-6c (W-25C) — THE DURABLE READ-STATE, executed: mark-read +
+// mark-all-read + the unread badge survive scope-switch + reload for the
+// same browser (localStorage `tradrl_notice_read`, keyed
+// tenant/project/notice — spec/SECURITY.md's browser trust zone permits
+// this class of UI state; spec/UX-DESIGN.md sanctions localStorage for
+// theme/onboarding, the same class).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-6c (W-25C) — the durable notice read-state', () => {
+  it('the per-notice READ TOGGLE persists: a FRESH boot (a reload) rehydrates the read mark — the badge starts at zero, the row carries no toggle', async () => {
+    const readStorage = new MapStorage();
+    const first = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { noticeReadStorage: readStorage });
+    first.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB }); // folds a failed_evaluation notice
+    const notice = first.handle.state().inbox.notices[0];
+    if (notice === undefined) throw new Error('the notice did not fold');
+    const bellOf = (rig: Rig): FakeElement => {
+      const bell = elementsOf(rig.root).find((element) => element.getAttribute('data-target') === 'inbox' && element.hasClass('bell'));
+      if (bell === undefined) throw new Error('no bell');
+      return bell;
+    };
+    expect(bellOf(first).getAttribute('aria-label')).toContain('1 unread notice'); // unread at first
+
+    clickNav(first, 'inbox'); // the notice rows + their read toggles render on the Inbox page
+    const toggle = findByData(first.root, 'data-notice-read', notice.noticeId);
+    if (toggle === null) throw new Error('the unread row carries no read toggle');
+    click(first, toggle);
+    expect(bellOf(first).getAttribute('aria-label')).toContain('no unread notices'); // read in-session
+    expect(readStorage.map.get('tradrl_notice_read')).toContain(`tenant-a/prj-a/${notice.noticeId}`); // the mark PERSISTED (the key carries the scope)
+
+    // THE RELOAD: a fresh console on the same browser (the same storage seam)
+    const second = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { noticeReadStorage: readStorage });
+    second.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB }); // the same signal folds the same notice
+    expect(bellOf(second).getAttribute('aria-label')).toContain('no unread notices'); // ALREADY read — the badge survived the reload
+    clickNav(second, 'inbox');
+    expect(findByData(second.root, 'data-notice-read', notice.noticeId)).toBeNull(); // read rows carry no toggle
+  });
+
+  it('mark-all-read persists too — every folded notice\'s mark survives a reload', async () => {
+    const readStorage = new MapStorage();
+    const first = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { noticeReadStorage: readStorage });
+    first.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    first.handle.dispatch({ kind: 'job-updated', at: T0 + 40, job: FAILED_JOB_2 }); // a second, later notice
+    expect(first.handle.state().inbox.notices).toHaveLength(2);
+    clickNav(first, 'inbox'); // the Mark all read action renders on the Inbox page
+    clickAction(first, 'notices-read-all');
+    const stored = readStorage.map.get('tradrl_notice_read') ?? '';
+    for (const notice of first.handle.state().inbox.notices) {
+      expect(stored).toContain(`tenant-a/prj-a/${notice.noticeId}`); // every mark persisted
+    }
+
+    const second = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { noticeReadStorage: readStorage });
+    second.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    second.handle.dispatch({ kind: 'job-updated', at: T0 + 40, job: FAILED_JOB_2 });
+    const bell = elementsOf(second.root).find((element) => element.getAttribute('data-target') === 'inbox' && element.hasClass('bell'));
+    if (bell === undefined) throw new Error('no bell');
+    expect(bell.getAttribute('aria-label')).toContain('no unread notices'); // both marks rehydrated
+  });
+
+  it('the persisted marks are SCOPE-KEYED: another project\'s identical signal stays unread (the tenant/project isolation carries into storage)', async () => {
+    const readStorage = new MapStorage();
+    const first = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { noticeReadStorage: readStorage });
+    first.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    const notice = first.handle.state().inbox.notices[0];
+    if (notice === undefined) throw new Error('the notice did not fold');
+    clickNav(first, 'inbox');
+    const toggle = findByData(first.root, 'data-notice-read', notice.noticeId);
+    if (toggle === null) throw new Error('the unread row carries no read toggle');
+    click(first, toggle); // read under tenant-a/prj-a
+
+    // a console on ANOTHER project (the same browser): the same job signal folds a DIFFERENT (project-scoped) notice
+    const otherJob = { ...FAILED_JOB, project: 'prj-b' } as JobRecord;
+    const second = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-b', { noticeReadStorage: readStorage });
+    second.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: otherJob });
+    const bell = elementsOf(second.root).find((element) => element.getAttribute('data-target') === 'inbox' && element.hasClass('bell'));
+    if (bell === undefined) throw new Error('no bell');
+    expect(bell.getAttribute('aria-label')).toContain('1 unread notice'); // prj-a's mark never applied to prj-b
+    clickNav(second, 'inbox');
+    const otherNotice = second.handle.state().inbox.notices[0];
+    if (otherNotice === undefined) throw new Error('the other notice did not fold');
+    expect(findByData(second.root, 'data-notice-read', otherNotice.noticeId)).not.toBeNull(); // still unread: the toggle renders
+  });
+
+  it('a console WITHOUT the seam behaves exactly as before (session-only read state — no storage writes at all)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }); // no noticeReadStorage injected
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    const notice = rig.handle.state().inbox.notices[0];
+    if (notice === undefined) throw new Error('the notice did not fold');
+    clickNav(rig, 'inbox');
+    const toggle = findByData(rig.root, 'data-notice-read', notice.noticeId);
+    if (toggle === null) throw new Error('the unread row carries no read toggle');
+    click(rig, toggle);
+    expect(rig.handle.state().inbox.readNoticeIds).toContain(notice.noticeId); // read in-session
+    expect(rig.storage.map.has('tradrl_notice_read')).toBe(false); // nothing persisted (the seam is the gate)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-6d (W-25C) — THE HTML ELEMENT'S data-theme AT PAINT, executed: the
+// attribute is correct at boot AND after every in-app theme change.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-6d (W-25C) — the documentElement data-theme at paint', () => {
+  it('the attribute matches the ACTIVE theme at first paint (the boot read), not just the pre-paint script\'s snapshot', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { theme: 'dark' });
+    expect(shellOf(rig.root).getAttribute('data-theme')).toBe('dark'); // the shell root
+    expect(rig.doc.documentElement.getAttribute('data-theme')).toBe('dark'); // <html> too — tokens.css keys its background on this
+  });
+
+  it('every in-app theme change syncs the attribute (light -> dark -> light)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }); // boots light
+    expect(rig.doc.documentElement.getAttribute('data-theme')).toBe('light');
+    clickNav(rig, 'settings');
+    click(rig, findByData(rig.root, 'data-action', 'theme-dark') as FakeElement);
+    expect(rig.doc.documentElement.getAttribute('data-theme')).toBe('dark'); // synced at the change's paint — never stale
+    expect(shellOf(rig.root).getAttribute('data-theme')).toBe('dark');
+    click(rig, findByData(rig.root, 'data-action', 'theme-light') as FakeElement);
+    expect(rig.doc.documentElement.getAttribute('data-theme')).toBe('light');
+    expect(shellOf(rig.root).getAttribute('data-theme')).toBe('light');
   });
 });

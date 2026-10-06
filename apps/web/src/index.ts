@@ -158,6 +158,12 @@ export async function bootFromShell(options: {
       // not the env pin's (validated against the tenant's project
       // directory at boot; a stale id falls back to the pin).
       ...(storage === undefined ? {} : { scopeStorage: storage }),
+      // THE NOTICE READ-STATE SEAM (D-6c, W-25C): the same seam carries
+      // the inbox's per-notice read marks (localStorage
+      // `tradrl_notice_read`, keyed tenant/project/notice) — mark-read
+      // + mark-all-read + the unread badge survive scope-switch +
+      // reload for the same browser.
+      ...(storage === undefined ? {} : { noticeReadStorage: storage }),
       simulated: config.simulated ?? false,
       // THE BROWSER TIMER SEAM (the live J03 finding's second half, and
       // the J05/J06 finding's shared root cause — deduped at the W-15b-r

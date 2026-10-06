@@ -15,6 +15,13 @@
 // point after the anchor (you cannot inspect the future); a past
 // view hides post-availability facts (core/availability.ts).
 //
+// THE PAUSE (R10, W-25C): the same control that arms playback pauses
+// it. Pause FREEZES the view instant — a tick arriving while paused
+// advances NOTHING (the freeze is this machine's own law, so every
+// scheduler inherits it), the anchor never regresses, and resume
+// continues from exactly the frozen instant (fromAt/ticks are
+// untouched; the next tick steps from where the view stopped).
+//
 // Spec anchors: R7 (first-class Time Machine), L4, UX.md "Support
 // T-x, explicit timestamp and controlled playback. Visible
 // information must respect simulated availability."
@@ -30,6 +37,8 @@ export interface PlaybackState {
   readonly stepMs: number;
   /** The number of elapsed ticks. */
   readonly ticks: number;
+  /** True while PAUSED: the view instant is frozen (ticks stop advancing it) until resume (R10). */
+  readonly paused: boolean;
 }
 
 /** The Time Machine state (pure — transitions below). */
@@ -98,25 +107,52 @@ export function setTimestamp(state: TimeMachineState, timestamp: number): TimeMa
   return next;
 }
 
-/** Transition: arm controlled playback at an anchor with a step. */
+/** Transition: arm controlled playback at an anchor with a step (never paused — a fresh arm is playing). */
 export function startPlayback(state: TimeMachineState, fromAt: number, stepMs: number): TimeMachineState {
   requireNonNegativeMs(stepMs, 'the playback step');
   if (!Number.isFinite(fromAt) || !Number.isInteger(fromAt)) {
     throw new Error('time machine: the playback start instant must be an integer of epoch milliseconds');
   }
-  const next: TimeMachineState = { ...state, mode: 'playback', playback: { fromAt, stepMs, ticks: 0 } };
+  const next: TimeMachineState = { ...state, mode: 'playback', playback: { fromAt, stepMs, ticks: 0, paused: false } };
   requireNotAfterAnchor(viewAtOf(next), next.anchorAt);
   return next;
 }
 
-/** Transition: one controlled playback tick (the app schedules these — injected, deterministic in tests). */
+/**
+ * Transition: ONE controlled playback tick (the app schedules these
+ * — injected, deterministic in tests). THE PAUSE FREEZE (R10): a tick
+ * arriving while paused advances NOTHING — the view instant stays at
+ * `fromAt + ticks * stepMs` until resume. (The app's beat also stops
+ * dispatching ticks while paused so the history chain carries no
+ * no-op entries; the freeze itself lives HERE so every caller
+ * inherits it.)
+ */
 export function tickPlayback(state: TimeMachineState): TimeMachineState {
   if (state.mode !== 'playback' || state.playback === null) {
     throw new Error('time machine: a playback tick with playback not armed is a typed input error');
   }
+  if (state.playback.paused) return state; // frozen — the tick stops advancing the view
   const next: TimeMachineState = { ...state, playback: { ...state.playback, ticks: state.playback.ticks + 1 } };
   requireNotAfterAnchor(viewAtOf(next), next.anchorAt);
   return next;
+}
+
+/** Transition: pause — FREEZE the view instant (no jump-back: fromAt/ticks untouched; the anchor never regresses). Idempotent. */
+export function pausePlayback(state: TimeMachineState): TimeMachineState {
+  if (state.mode !== 'playback' || state.playback === null) {
+    throw new Error('time machine: pausing with playback not armed is a typed input error');
+  }
+  if (state.playback.paused) return state;
+  return { ...state, playback: { ...state.playback, paused: true } };
+}
+
+/** Transition: resume — continue from the frozen instant (the next tick steps from exactly where pause left the view). Idempotent. */
+export function resumePlayback(state: TimeMachineState): TimeMachineState {
+  if (state.mode !== 'playback' || state.playback === null) {
+    throw new Error('time machine: resuming with playback not armed is a typed input error');
+  }
+  if (!state.playback.paused) return state;
+  return { ...state, playback: { ...state.playback, paused: false } };
 }
 
 /** Transition: return to the live view. */

@@ -67,6 +67,8 @@ import {
   advanceAnchor,
   backToLive,
   liveTimeMachine,
+  pausePlayback,
+  resumePlayback,
   setTimestamp,
   setTMinus,
   startPlayback,
@@ -196,6 +198,8 @@ export type WorkspaceEvent =
   | { readonly kind: 'anchor-advanced'; readonly at: number }
   | { readonly kind: 'playback-start'; readonly at: number; readonly fromAt: number; readonly stepMs: number }
   | { readonly kind: 'playback-tick'; readonly at: number }
+  | { readonly kind: 'playback-paused'; readonly at: number }
+  | { readonly kind: 'playback-resumed'; readonly at: number }
   | { readonly kind: 'notice-read'; readonly at: number; readonly noticeId: string }
   | { readonly kind: 'notices-read-all'; readonly at: number }
   | { readonly kind: 'degraded-read'; readonly at: number; readonly route: string; readonly family: string; readonly message: string }
@@ -414,6 +418,23 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
 
   } else if (selector === 'playback-tick') {
       return { ...withHistory, timeMachine: tickPlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
+
+  } else if (selector === 'playback-paused') {
+      // THE PAUSE (R10, W-25C): the playback control's second face —
+      // the view instant FREEZES (tickPlayback stops advancing it; the
+      // anchor keeps following the observed now, the view does not).
+      // Before this event the pause control re-dispatched
+      // playback-start, which RE-ARMED playback at the opened instant
+      // with zero ticks: the view jumped BACK to openedAt (the J5
+      // symptom: "pause jumps the view back ~5.5s") and the beat kept
+      // ticking it forward from there ("playback keeps advancing").
+      return { ...withHistory, timeMachine: pausePlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
+
+  } else if (selector === 'playback-resumed') {
+      // The resume: continue from the FROZEN instant — fromAt/ticks
+      // untouched, so the next tick steps from exactly where pause
+      // left the view (no jump-back, no re-arm).
+      return { ...withHistory, timeMachine: resumePlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
 
   } else if (selector === 'notice-read') {
       return { ...withHistory, inbox: markNoticeRead(withHistory.inbox, event.noticeId) };
