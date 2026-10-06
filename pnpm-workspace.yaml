@@ -5,3 +5,4 @@ packages:
   - adapters/*
   - bodies/*
   - research/*
+  - examples/*

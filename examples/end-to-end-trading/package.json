@@ -1,0 +1,9 @@
+{
+  "name": "@tradrl/example-e2e-trading",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The reference end-to-end trading slice (Work Order T048): one deterministic, fully-wired demonstration of the whole TradRL pipeline — scenario setup (goal + constraints + budget), a small organization compiled for it, bodies with possessions wired into the reactive world (T027 shapes), decision production through the Trading Director (T024 shapes) consuming the four research bodies' outputs, strategy/portfolio construction (T018 shapes), risk + authorization through the execution gateway (T040 shapes — L8: the model NEVER bypasses the gate stack), paper/shadow execution in the exchange-sim (T030 pattern) and outcome records with full L15 lineage. Every cross-package shape is consumed via STRUCTURAL MIRRORS (D-003/D-004 law — this package imports nothing outside its own tree; the interop trip-wire tests under tests/end-to-end-trading/ import the REAL packages and make drift loud). Zero runtime dependencies; every numeric record is an exact decimal string; every instant is injected (no ambient clock); every record carries tenant/project scoping (L12) and the whole run is byte-reproducible from its scenario file.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" }
+}
