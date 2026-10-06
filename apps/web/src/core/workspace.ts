@@ -662,6 +662,20 @@ export type ExportedWorkspaceState = Omit<WorkspaceState, 'history'>;
 export interface ExportManifest {
   readonly included: readonly string[];
   readonly counts: Record<string, number>;
+  /**
+   * D-14 (W-29): THE CHAIN-SCOPE AUDIT NOTE — present ONLY when the events
+   * chain spans MORE THAN ONE project id under this project-scoped export
+   * label (the L1/L2/L5 finding: a session that switched desks — a launch
+   * adoption, a switcher choice — links its history entries under EACH
+   * scope at link time, so the chain legitimately spans projects while the
+   * export label names the FINAL scope). The note states the audit facts:
+   * every entry self-labels its own projectId, each digest covers its own
+   * entry's {seq, tenantId, projectId, payload}, and the chain's integrity
+   * is unaffected by the span (the personas' independent recomputes — L2
+   * 535+602 entries, L5 149+112 — verified every link). Absent = the chain
+   * is single-project (or empty): nothing to disclose.
+   */
+  readonly chainScopeNote?: string;
 }
 
 /** THE EXPORT DOCUMENT — everything the console knows about the workspace. */
@@ -671,6 +685,22 @@ export interface WorkspaceExportDocument {
   readonly scope: WorkspaceScope;
   readonly chain: ExportChainDescriptor;
   readonly manifest: ExportManifest;
+  /**
+   * D-14 (W-29): THE LAUNCH'S WORLD SPECIFICATION, first-class — the
+   * markets/venues/data sources (+ execution mode, budgets, horizon) the
+   * scope's project launched with, as the host goal route serves it (the
+   * ADDITIVE `world` sibling of the goal in the bundle — the same shape,
+   * the same precedence: the frozen GoalStatement itself stays untouched).
+   * L5's P19 finding: the world spec was NOWHERE in the export file (the
+   * goal object carries no world fields, launch.draft was null) — the
+   * launch config was unrecoverable downstream. Null when the scope has no
+   * world on record (the demo scope — its seeded goal carries no world
+   * fields; a pre-W-28 launch) — the honest absence, never a fabricated
+   * world. ADDITIVE by construction: v2 readers that do not know the field
+   * ignore it (verifyWorkspaceExport accepts documents with and without
+   * it — the format version stays 2).
+   */
+  readonly launchWorld: ProjectGoalWorldSpec | null;
   readonly workspace: ExportedWorkspaceState;
   readonly events: readonly ExportChainEntry[];
   readonly capsules: readonly EvidenceCapsule[];
@@ -744,8 +774,26 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
   // block IS the history, rebuilt as the v2 chain)
   const { history: _retainedHistory, ...workspaceWithoutHistory } = state;
 
+  // D-14 (W-29): THE LAUNCH WORLD, first-class — the same additive-sibling
+  // shape the host goal route serves (the goal bundle's `world`). The
+  // manifest declares + counts it so an auditor reading the manifest alone
+  // knows the world spec is in the file (L5's finding: it was nowhere —
+  // the launch config was unrecoverable downstream).
+  const launchWorld: ProjectGoalWorldSpec | null = state.world;
+
+  // D-14 (W-29): THE CHAIN-SCOPE AUDIT NOTE — the events chain's distinct
+  // project ids, disclosed when the span crosses projects under this
+  // project-scoped export label. Every entry self-labels its own projectId
+  // (the digest covers it) and the chain's integrity is unaffected by the
+  // span; the note states exactly that, with the span's count.
+  const chainProjectIds = new Set(events.map((entry) => entry.projectId));
+  const chainScopeNote = chainProjectIds.size > 1
+    ? `This export is labeled for project ${JSON.stringify(state.scope.projectId)}, but its events chain spans ${chainProjectIds.size} project ids (${[...chainProjectIds].join(', ')}): the session linked history entries under each scope it held (a launch adoption, a project switch). Every entry self-labels its own projectId — each digest covers its own entry's {seq, tenantId, projectId, payload} — so the chain's integrity is unaffected by the span.`
+    : undefined;
+
   const manifest: ExportManifest = {
     included: [
+      'launchWorld',
       'workspace.state',
       'events.chain',
       'evidence.capsules',
@@ -754,6 +802,7 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
       'readState',
     ],
     counts: {
+      launchWorld: launchWorld === null ? 0 : 1,
       events: events.length,
       capsules: capsules.length,
       decisionsWatch: decisions.watch.length,
@@ -762,6 +811,7 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
       readNotices: readNoticeIds.length,
       unreadNotices: unreadNoticeIds.length,
     },
+    ...(chainScopeNote === undefined ? {} : { chainScopeNote }),
   };
 
   return {
@@ -778,6 +828,7 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
       head: priorHead,
     },
     manifest,
+    launchWorld,
     workspace: workspaceWithoutHistory,
     events,
     capsules,
