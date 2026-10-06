@@ -7,12 +7,24 @@
 //   POST https://<host>/sql
 //   Content-Type: application/json
 //   Accept: application/json
-//   Neon-Connection-String: <URI-encoded postgresql://user:password@host/database?sslmode=require>
+//   Neon-Connection-String: <the RAW postgresql://user:password@host/database?sslmode=require>
 //   {"query": "<SQL with $1..$n placeholders>", "params": ["...", ...]}
 //
 //   200 SELECT -> {"fields":[{"name":..,"typeOID":..},..],"rows":[[v,..],..]}
 //   200 DML    -> {"command":"INSERT 0 1","rowCount":1}
 //   4xx/5xx    -> non-JSON or {"message":".."} error body
+//
+// THE CONNECTION-STRING HEADER GOES RAW (W-26A, live-proxy proof
+// 2026-10-06): the header value is the connection string itself —
+// components percent-encoded WITHIN it (a special-char password via
+// encodeURIComponent), the postgresql://…@…/…? structure LITERAL —
+// exactly the WHATWG URL serializer semantics of the real
+// @neondatabase/serverless driver (src/http/index.ts sends
+// resolvedConnectionString raw). The live SQL-over-HTTP proxy parses
+// the header value as a URL and REJECTS the whole-string-encoded form
+// (HTTP 400 "invalid connection string: relative URL without a base");
+// the raw form answers 200. HTTP headers are case-insensitive — this
+// client keeps the lowercase spelling; the live proxy accepts it.
 //
 // The connection string is built from the environment (NEON_API_HOST —
 // the POOLED host (`ep-...-pooler.<region>.aws.neon.tech`), NEON_DATABASE,
@@ -46,7 +58,11 @@ export interface NeonConfig {
   readonly apiKey: string;
 }
 
-/** Build the connection string the `Neon-Connection-String` header carries (URL-encoded per the protocol). */
+/**
+ * Build the connection string the `neon-connection-string` header carries:
+ * the password is percent-encoded WITHIN the string, the structure stays
+ * literal (WHATWG URL serializer semantics — see the wire-format note above).
+ */
 export function neonConnectionString(config: NeonConfig): string {
   return `postgresql://${config.apiUser}:${encodeURIComponent(config.apiKey)}@${config.apiHost}/${config.database}?sslmode=require`;
 }
@@ -86,7 +102,12 @@ export function buildNeonRequest(config: NeonConfig, query: string, params: read
     headers: {
       accept: 'application/json',
       'content-type': 'application/json',
-      'neon-connection-string': encodeURIComponent(neonConnectionString(config)),
+      // RAW — never outer-encoded (W-26A): the live proxy parses this
+      // header value as a URL; percent-encoding the whole string strips
+      // its scheme and the proxy answers 400 "invalid connection string:
+      // relative URL without a base". Component-level encoding (the
+      // password) happens inside neonConnectionString.
+      'neon-connection-string': neonConnectionString(config),
     },
     body: JSON.stringify({ query, params }),
   };
