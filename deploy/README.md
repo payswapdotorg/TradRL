@@ -204,16 +204,50 @@ discover, W-3k). The emitted tree:
     key and its two legal values (fail-closed; never the value).
   Before first durable use, apply the Neon DDL records (below).
 
-### The Neon schema (apply once — the runbook's §neon paste block)
+### The Neon schema (apply once — the runbook's §neon paste block) + THE PRE-DEPLOY CANARY
 
-`deploy/adapters/neon/schema.ts` carries the DDL records for the six
+`deploy/adapters/neon/schema.ts` carries the DDL records for the seven
 tenant-scoped tables (`tradrl_knowledge`, `tradrl_outcomes`,
 `tradrl_post_mortems`, `tradrl_projects`, `tradrl_project_events`,
 `tradrl_project_goals` — the W-25D seam's create-project goal sets;
-every PRIMARY KEY leads with `tenant`). To apply, paste
-`NEON_DDL_RECORDS`' statements into the Neon SQL editor (or psql)
-once per database — `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF
-NOT EXISTS` keep it idempotent, no migration tooling (zero-dep law).
+`tradrl_jobs` — the W-27 durable jobs lane; every PRIMARY KEY leads
+with `tenant`). To apply, paste `NEON_DDL_RECORDS`' statements into the
+Neon SQL editor (or psql) once per database — `CREATE TABLE IF NOT
+EXISTS` / `CREATE INDEX IF NOT EXISTS` keep it idempotent, no migration
+tooling (zero-dep law).
+
+**THE PRE-DEPLOY LIVE-STORAGE CANARY (mandatory since the 2026-10-06
+W-27 incident).** W-27 added the seventh table and deployed WITHOUT
+it — the durable boot world failed at the first request (`relation
+'tradrl_jobs' does not exist`), every route answered the typed 503,
+and production had to be rolled back and redeployed after the DDL was
+applied by hand (worklog LEAD-W27-INCIDENT-1 / LEAD-W27-DDL-1). The
+lesson, now the law: **every schema-changing wave must prove the live
+database carries its tables BEFORE the deploy flips the alias.**
+
+Before deploying any wave whose `deploy/adapters/neon/schema.ts` adds
+or changes a table (and on any first deploy of a fresh database), run
+the canary from the deploying wave's checkout:
+
+```
+export NEON_API_HOST=<the pooled host>   # ep-...-pooler.<region>.aws.neon.tech
+export NEON_API_USER=<the database role>
+export NEON_DATABASE=<the database name>
+export NEON_API_KEY=<the role's password>   # the DB password — never echo it
+deploy/canary/neon-tables.sh
+```
+
+The canary (bash + curl only — the zero-dep law) probes the live
+database over the SAME SQL-over-HTTP wire protocol the product client
+speaks (`deploy/adapters/neon/client.ts`: POST `https://<host>/sql`
+with the `Neon-Connection-String` / `Neon-Array-Mode: true` /
+`Neon-Raw-Text-Output: true` headers) with ONE read-only SELECT
+(`pg_tables`), verifies EVERY `NEON_DDL_RECORDS` table exists, and is
+idempotent (re-run freely). It exits `0` listing the present tables —
+deploy may proceed. It exits non-zero naming the MISSING tables and
+this runbook step — in that case **apply the DDL records FIRST (the
+paste block above), re-run the canary until it exits 0, THEN deploy.**
+Never deploy over a failing canary.
 
 ### Why vercel.json lives in deploy/vercel/ (and the root hosting copy)
 
@@ -354,7 +388,12 @@ a dependency of the repo).
    byte-identical to `deploy/vercel/vercel.json` (test-pinned), and
    there must be NO repo-root `api/` directory (the prebuilt law — a
    resurrected one would re-trigger `@vercel/node`; test-pinned).
-4. **Deploy.**
+4. **Deploy (durable-backed: run the §neon canary FIRST).**
+   If the deployment configures the durable backing (any `NEON_*` key),
+   run the pre-deploy live-storage canary against the production
+   database NOW — `deploy/canary/neon-tables.sh` (§neon above; it must
+   exit 0 before the alias flips — the 2026-10-06 W-27 incident's law).
+   Then:
    ```
    npx vercel --prod
    ```
