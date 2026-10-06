@@ -11,7 +11,7 @@
 //   - section registry completeness (the twelve, selectable, default goal).
 
 import { describe, expect, it } from 'vitest';
-import type { GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ServedKnowledge } from '../api/contracts';
 import {
   CHAIN_ALGORITHM,
   CHAIN_FORMAT_VERSION,
@@ -66,6 +66,25 @@ function goalRecord(): GoalStatement {
 
 function orgSnapshot(status: 'forming' | 'active' = 'active'): OrgStatusSnapshot {
   return { organizationRef: 'org:alpha', tenant: 'tenant-a', project: 'proj-a', status, at: T0 + 10, instanceRefs: ['inst:1', 'inst:2'] };
+}
+
+/** A minimal constraint-set record (the goal-loaded pair's second half). */
+function constraintSetRecord(): ConstraintSetStatement {
+  return { id: 'cs-1', version: 1, tenantId: 'tenant-a', constraints: [], createdAt: T0 };
+}
+
+/** One persisted launch world (the host goal route's additive `world` field — D-8, W-28). */
+function worldRecord(overrides: Partial<ProjectGoalWorldSpec> = {}): ProjectGoalWorldSpec {
+  return {
+    markets: ['BTC-USD', 'ETH-USD'],
+    venues: ['binance', 'kraken'],
+    dataSources: ['candle-v1', 'depth-v1'],
+    executionMode: 'simulation',
+    capitalBudget: '500000.00',
+    riskBudget: '40000.00',
+    horizon: { startsAt: T0, endsAt: T0 + 86_400_000 },
+    ...overrides,
+  };
 }
 
 function jobRecord(status: 'submitted' | 'running' | 'complete' | 'failed' = 'running'): JobRecord {
@@ -132,6 +151,28 @@ describe('workspace: opening + the twelve-section registry', () => {
   it('opening requires a real scope and an integer instant', () => {
     expect(() => openWorkspace({ tenantId: '', projectId: 'p' }, T0)).toThrow(/scope/);
     expect(() => openWorkspace(SCOPE, 1.5)).toThrow(/integer/);
+  });
+});
+
+describe('workspace: the persisted launch world (D-8, W-28 — the goal bundle\'s additive `world` field)', () => {
+  it('goal-loaded WITH a world sets it; a later world-less goal-loaded (the demo scope, a pre-W-28 launch) CLEARS it — the state always mirrors THIS scope\'s read-back truth', () => {
+    let state = openWorkspace(SCOPE, T0);
+    expect(state.world).toBeNull(); // the fresh workspace carries no world
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    expect(state.world).toEqual(worldRecord()); // the persisted launch world entered the state
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord() }); // NO world on the wire
+    expect(state.world).toBeNull(); // the prior scope's world never survives a world-less read (no stale carry)
+    // a re-read WITH a world restores it (the scope's own truth)
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 3, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord({ markets: ['SOL-USD'] }) });
+    expect(state.world?.markets).toEqual(['SOL-USD']);
+  });
+
+  it('the export carries the persisted world inside the workspace state block (D-14\'s world-spec gap, closed at the console\'s half)', () => {
+    const state = reduceWorkspace(openWorkspace(SCOPE, T0), { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    const doc = composeWorkspaceExport(state);
+    expect(doc.workspace.world).toEqual(worldRecord()); // the export's workspace.state block carries the world — reconstructable downstream
+    const parsed = JSON.parse(serializeWorkspaceExport(state)) as { workspace: { world: unknown } };
+    expect(parsed.workspace.world).toEqual(worldRecord()); // and it SURVIVES the serialized bytes
   });
 });
 
@@ -213,17 +254,20 @@ describe('workspace: transitions', () => {
     // append-only chain keeps everything).
     let state = openWorkspace({ tenantId: 'tenant-a', projectId: 'proj-a' }, T0);
     state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 1, project: projectRecord({ lifecycle: { projectId: 'proj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:demo' } }) });
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
     state = reduceWorkspace(state, { kind: 'org-snapshot', at: T0 + 2, snapshot: orgSnapshot() });
     state = reduceWorkspace(state, { kind: 'outcomes-loaded', at: T0 + 3, records: [outcomeRecord()] });
     state = reduceWorkspace(state, { kind: 'knowledge-loaded', at: T0 + 4, records: [knowledgeRecord()] });
     state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 5, job: jobRecord('complete') });
     expect(state.project?.id).toBe('proj-a'); // the deployed boot's loaded world
+    expect(state.world).not.toBeNull(); // the loaded world rides the loaded goal (D-8, W-28)
 
     const adopted = reduceWorkspace(state, { kind: 'project-adopted', at: T0 + 6, projectId: 'proj-launched' });
     expect(adopted.scope.projectId).toBe('proj-launched'); // the workspace FOLLOWS the launch
     expect(adopted.project).toBeNull();                    // the prior project's records left the sections…
     expect(adopted.goal).toBeNull();
     expect(adopted.constraintSet).toBeNull();
+    expect(adopted.world).toBeNull(); // D-8 (W-28): the prior project's world left with them (a scope switch never renders a foreign world)
     expect(adopted.orgSnapshots).toHaveLength(0);
     expect(adopted.outcomes).toHaveLength(0);
     expect(adopted.knowledge).toHaveLength(0);

@@ -444,6 +444,33 @@ describe('deploy/adapters/neon — the stores', () => {
     expect(malformed.ok).toBe(false);
   });
 
+  it('goal sets with the ADDITIVE launch world (D-8, W-28): the world rides the same opaque payload, round-trips verbatim, and a pre-W-28 row (no world) still decodes', async () => {
+    const fake = fakeNeon();
+    const store = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const goal = { id: 'goal-tenant-a', version: 1, tenantId: 'tenant-a' };
+    const constraintSet = { id: 'cs-tenant-a', version: 1, tenantId: 'tenant-a' };
+    const world = {
+      markets: ['BTC-USD', 'ETH-USD'], venues: ['binance', 'kraken'], dataSources: ['candle-v1', 'depth-v1'],
+      executionMode: 'simulation', capitalBudget: '500000.00', riskBudget: '40000.00',
+      horizon: { startsAt: 1, endsAt: 2 },
+    };
+    // The launch-time write (the create, no world yet) followed by the world-merge write (the kickoff job's capture).
+    expect((await store.putGoalSet('tenant-a', 'prj_world', { goal, constraintSet })).ok).toBe(true);
+    expect((await store.putGoalSet('tenant-a', 'prj_world', { goal, constraintSet, world })).ok).toBe(true);
+    const got = await store.goalSetOf('tenant-a', 'prj_world');
+    expect(got.ok).toBe(true);
+    if (got.ok && got.value !== null) {
+      expect(got.value.goal).toEqual(goal);
+      expect(got.value.constraintSet).toEqual(constraintSet);
+      expect(got.value.world).toEqual(world); // the additive field round-trips verbatim (the opaque payload law)
+    }
+    // A pre-W-28 row (written without a world) decodes exactly as before — no fabricated world.
+    expect((await store.putGoalSet('tenant-a', 'prj_legacy', { goal, constraintSet })).ok).toBe(true);
+    const legacy = await store.goalSetOf('tenant-a', 'prj_legacy');
+    expect(legacy.ok).toBe(true);
+    if (legacy.ok && legacy.value !== null) expect(legacy.value.world).toBeUndefined();
+  });
+
   it('projects: put/get/list round-trip; the event log appends and reads back in order', async () => {
     const fake = fakeNeon();
     const store = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });

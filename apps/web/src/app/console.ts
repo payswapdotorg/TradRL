@@ -26,7 +26,7 @@ import { createFetchTransport } from '../api/transport';
 import { createConsoleClient, type ConsoleClient } from '../api/client';
 import type { ApiConsoleError } from '../api/errors';
 import type { LaunchDraft, LaunchIds } from '../core/launch';
-import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, validateLaunchDraft } from '../core/launch';
+import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, toLaunchWorldSpec, validateLaunchDraft } from '../core/launch';
 import { InvalidLaunchDraftError } from '../core/errors';
 import { absorbedEdit, blankLaunchDraft, editLaunchField, isLaunchFieldName, launchFormValuesOfDraft, type LaunchFieldName } from '../core/launch-form';
 import { digestOf } from '../core/digest';
@@ -423,7 +423,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // the host never promised this scope).
       try {
         const bundle = await client.projects.goal(projectId);
-        dispatchIfCurrent(projectId, { kind: 'goal-loaded', at: instants.nowMs(), goal: bundle.goal, constraintSet: bundle.constraintSet });
+        // D-8 (W-28): the bundle's ADDITIVE `world` (the scope's persisted
+        // launch world — the backing captured it from the kickoff job's
+        // spec into the goal-set record) rides the SAME event, so the
+        // Market World section renders the project's OWN world after a
+        // reload, a scope switch or a cold start; an absent world (the
+        // demo scope, a pre-W-28 launch) clears any prior one — the
+        // teaching empty state stays CORRECT for exactly those cases.
+        dispatchIfCurrent(projectId, {
+          kind: 'goal-loaded',
+          at: instants.nowMs(),
+          goal: bundle.goal,
+          constraintSet: bundle.constraintSet,
+          ...(bundle.world === undefined ? {} : { world: bundle.world }),
+        });
       } catch {
         // the goal route is host-owned demo-backing-only — an absent
         // goal is the host's answer, not a failure of the console's
@@ -649,7 +662,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: project.id });
       dispatch({ kind: 'project-loaded', at: instants.nowMs(), project });
       const goal = toCreateProjectInput(draft, ids, scope.tenantId, at).goal;
-      dispatch({ kind: 'goal-loaded', at: instants.nowMs(), goal, constraintSet: toCreateProjectInput(draft, ids, scope.tenantId, at).constraintSet });
+      // D-8 (W-28): the in-session bridge carries the draft's OWN world —
+      // the just-launched project's world renders immediately (the beat's
+      // scope-change refetch then re-reads the PERSISTED world from the
+      // goal route; the two agree by construction — same draft, same
+      // derivation the kickoff job's spec carried to the backing).
+      dispatch({ kind: 'goal-loaded', at: instants.nowMs(), goal, constraintSet: toCreateProjectInput(draft, ids, scope.tenantId, at).constraintSet, world: toLaunchWorldSpec(draft) });
       const job = await client.jobs.submitResearch({ projectId: project.id, spec: toLaunchJobSpec(draft) });
       dispatch({ kind: 'launch-submitted', at: instants.nowMs(), projectId: project.id, jobId: job.jobId });
       dispatch({ kind: 'job-updated', at: instants.nowMs(), job });

@@ -574,6 +574,149 @@ describe('deploy/vercel — the durable seam: the goal read route', () => {
 });
 
 // ---------------------------------------------------------------------------
+// THE LAUNCH WORLD CAPTURE (D-8, W-28): the Market World section was bound to
+// the console's IN-SESSION launch draft, so after a reload (or a cold start)
+// it rendered its teaching empty state FOREVER for every launched project
+// (the re-run's ONLY project blocker). The durable fix: the kickoff job's
+// OPAQUE spec (the only console->host carrier the frozen contracts leave room
+// for — the create-project parser keeps exactly its own six fields) carries
+// the world; the seam's job port CAPTURES it structurally at submission and
+// MERGES it into the goal-set row's opaque payload (tradrl_project_goals —
+// no schema change), where it rehydrates at every cold start and the
+// host-owned goal route serves it back as the bundle's ADDITIVE `world`
+// field.
+// ---------------------------------------------------------------------------
+
+/** The console's kickoff-job spec (apps/web toLaunchJobSpec's shape — the world fields + the launch context). */
+function consoleLaunchSpec(): Record<string, unknown> {
+  return {
+    kind: 'console-launch',
+    objective: 'Find and keep an edge in momentum.',
+    horizon: { startsAt: T0, endsAt: T0 + 2_592_000_000, label: 'the launch window' },
+    capitalBudget: '500000.00',
+    riskBudget: '40000.00',
+    markets: ['BTC-USD', 'ETH-USD'],
+    venues: ['binance', 'kraken'],
+    dataSources: ['candle-v1', 'depth-v1'],
+    executionMode: 'simulation',
+    preferences: [{ key: 'rebalance', value: 'daily' }],
+  };
+}
+
+/** The extracted world the backings persist + serve (the world fields only — deploy/vercel's launchWorldOfSpec law). */
+function extractedWorld(): Record<string, unknown> {
+  return {
+    markets: ['BTC-USD', 'ETH-USD'],
+    venues: ['binance', 'kraken'],
+    dataSources: ['candle-v1', 'depth-v1'],
+    executionMode: 'simulation',
+    capitalBudget: '500000.00',
+    riskBudget: '40000.00',
+    horizon: { startsAt: T0, endsAt: T0 + 2_592_000_000, label: 'the launch window' },
+  };
+}
+
+describe('deploy/vercel — the durable seam: the launch world capture (D-8, W-28)', () => {
+  it('the launch story: create + a console-launch kickoff job -> the goal-set row carries the MERGED world, the goal route serves it as the ADDITIVE field, and a COLD START rehydrates it (the reload/cold-start path, closed)', async () => {
+    const providers = fakeProviders();
+    // Count ONLY the goal-set upserts (the world-merge write's own lane — the job rows' writes are a different table and must not pollute the count).
+    let goalSetInserts = 0;
+    const counting: FetchLike = (url, init) => {
+      if (typeof init?.body === 'string' && init.body.includes('INSERT INTO tradrl_project_goals')) goalSetInserts += 1;
+      return providers.fetchLike(url, init);
+    };
+    const deployment = composeInstance(durableSource(), counting);
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+    await deployment.durable!.settled();
+
+    // THE LAUNCH: the create (goal + constraint set), then the kickoff job whose spec carries the world.
+    const created = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/projects', headers: BEARER, body: createProjectBody('prj-world-desk') }));
+    expect(created.status).toBe(201); // the router drained the create's writes (goal set -> record)
+    const kickoff = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:w28:kickoff' }, body: { kind: 'research', projectId: 'prj-world-desk', spec: consoleLaunchSpec() } }));
+    expect(kickoff.status).toBe(202); // the router drained the world's merge write before serving
+
+    // THE DURABLE ROW: the goal set now carries the MERGED world (the opaque payload's additive field).
+    const direct = storesOver(providers.fetchLike);
+    const goalSet = await direct.project.goalSetOf(TENANT, 'prj-world-desk');
+    expect(goalSet.ok).toBe(true);
+    if (goalSet.ok && goalSet.value !== null) {
+      expect(goalSet.value.goal).toEqual(validGoal(TENANT));
+      expect(goalSet.value.constraintSet).toEqual(validConstraintSet(TENANT));
+      expect(goalSet.value.world).toEqual(extractedWorld()); // the captured world, merged into the same row
+    }
+
+    // THE GOAL ROUTE: the bundle serves the ADDITIVE `world` field.
+    const goal = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-desk/goal', headers: BEARER }));
+    expect(goal.status).toBe(200);
+    const goalBody = (goal.body as { data: { goal: unknown; constraintSet: unknown; world?: unknown } }).data;
+    expect(goalBody.goal).toEqual(validGoal(TENANT));
+    expect(goalBody.constraintSet).toEqual(validConstraintSet(TENANT));
+    expect(goalBody.world).toEqual(extractedWorld());
+
+    // IDEMPOTENCE (the W-27 byte-identical pattern): a re-submission of the
+    // SAME world queues NOTHING — the goal-set row is written once (the new
+    // job's own tradrl_jobs row is a different table and does not touch this count).
+    const insertsAfterFirst = goalSetInserts;
+    const resubmitted = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:w28:resubmit' }, body: { kind: 'research', projectId: 'prj-world-desk', spec: consoleLaunchSpec() } }));
+    expect(resubmitted.status).toBe(202);
+    expect(goalSetInserts).toBe(insertsAfterFirst); // no second goal-set write (the identical world is a no-op)
+
+    // THE COLD START: the projection rehydrates the world from the row, and the goal route serves it on the fresh instance.
+    const second = composeInstance(durableSource(), providers.fetchLike);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    await second.durable!.settled();
+    const hydrated = second.durable!.goalOf('prj-world-desk');
+    expect(hydrated.ok).toBe(true);
+    if (hydrated.ok && hydrated.value !== null) expect(hydrated.value.world).toEqual(extractedWorld());
+    const coldGoal = await drive(second, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-desk/goal', headers: BEARER }));
+    expect(coldGoal.status).toBe(200);
+    expect(((coldGoal.body as { data: { world?: unknown } }).data).world).toEqual(extractedWorld()); // the reloaded console renders the PERSISTED world
+
+    // THE DEMO PROJECT stays world-less (the teaching empty state's scope — preserved by design).
+    const demoGoal = await drive(second, streamingRequest({ method: 'GET', url: `/v1/projects/${DEMO_PROJECT_ID}/goal`, headers: BEARER }));
+    expect(demoGoal.status).toBe(200);
+    expect((demoGoal.body as { data: Record<string, unknown> }).data).not.toHaveProperty('world'); // NO world field — the pre-W-28 serve shape
+  });
+
+  it('the capture is STRUCTURAL: a non-console-launch spec (the demo seed\'s own shape) and the DEMO project never capture a world; a hydration replay never re-captures (the spec rides `{ hydrated: true }`)', async () => {
+    const providers = fakeProviders();
+    const deployment = composeInstance(durableSource(), providers.fetchLike);
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+    await deployment.durable!.settled();
+
+    // A launched desk whose kickoff job carried a DEMO-SEED-shaped spec (no console-launch kind marker): no world captured.
+    await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/projects', headers: BEARER, body: createProjectBody('prj-world-foreign') }));
+    const submitted = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:w28:foreign' }, body: { kind: 'research', projectId: 'prj-world-foreign', spec: { kind: 'demo-seed', note: 'not a console launch', feeds: ['candles:1m'] } } }));
+    expect(submitted.status).toBe(202);
+    const foreign = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-foreign/goal', headers: BEARER }));
+    expect(foreign.status).toBe(200);
+    expect((foreign.body as { data: Record<string, unknown> }).data).not.toHaveProperty('world'); // a malformed/foreign spec captures nothing (R46)
+
+    // A console-launch job for the DEMO project: the capture's demo-project guard keeps the demo goal world-less.
+    const demoJob = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:w28:demo' }, body: { kind: 'research', projectId: DEMO_PROJECT_ID, spec: consoleLaunchSpec() } }));
+    expect(demoJob.status).toBe(202);
+    const demoGoal = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/projects/${DEMO_PROJECT_ID}/goal`, headers: BEARER }));
+    expect(demoGoal.status).toBe(200);
+    expect((demoGoal.body as { data: Record<string, unknown> }).data).not.toHaveProperty('world'); // the demo scope's teaching empty state is preserved
+
+    // A hydration replay never re-captures: the boot world replays the durable job through the real
+    // POST route with the `{ hydrated: true }` marker spec (never a console-launch one). A second
+    // instance's hydration must leave the goal-set rows exactly as they are (no world churn).
+    const second = composeInstance(durableSource(), providers.fetchLike);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    const booted = await drive(second, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER })); // the first request runs the boot world (the jobs hydration included)
+    expect(booted.status).toBe(200);
+    const rehydrated = await storesOver(providers.fetchLike).project.goalSetOf(TENANT, 'prj-world-foreign');
+    expect(rehydrated.ok).toBe(true);
+    if (rehydrated.ok && rehydrated.value !== null) expect(rehydrated.value.world).toBeUndefined(); // still world-less — the replay never captured
+  });
+});
+
+// ---------------------------------------------------------------------------
 // (h) THE W-26B ACTIVATION — the durable resolution as a SUPERSET of demo
 // ---------------------------------------------------------------------------
 

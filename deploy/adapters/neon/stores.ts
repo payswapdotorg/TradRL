@@ -217,16 +217,28 @@ export function projectEventsStatement(tenant: string, projectId: string): Built
 // The goal-set surface (W-25D, D-5 — the W-3e seam's create-project records)
 // ---------------------------------------------------------------------------
 
-/** The shape one goal-set row round-trips (the create-project input's own goal + constraint set, verbatim). */
+/**
+ * The shape one goal-set row round-trips (the create-project input's own
+ * goal + constraint set, verbatim; since W-28 (D-8) optionally the LAUNCH
+ * WORLD SPECIFICATION the console's kickoff job carried — the payload
+ * column is opaque TEXT, so the additive `world` field rides the SAME row
+ * with no schema change: the goal-set write the launch's job-spec capture
+ * merges into is the row this record describes, and pre-W-28 rows simply
+ * carry no `world` (the console degrades to its teaching empty state)).
+ */
 export interface GoalSetRecord {
   readonly goal: unknown;
   readonly constraintSet: unknown;
+  /** The launch world specification (markets/venues/data sources + the world-shaped launch fields), when the kickoff job's spec carried one (W-28, D-8). */
+  readonly world?: unknown;
 }
 
 /**
  * The goal-set upsert (tenant = param 1 — L12). The payload is the
- * `{ goal, constraintSet }` pair as canonical JSON — the records ride the
- * create-project input, which the boundary always carries.
+ * `{ goal, constraintSet, world? }` record as canonical JSON — the records
+ * ride the create-project input, and the optional `world` (W-28, D-8) is
+ * the launch world specification the kickoff job's spec carried (the
+ * payload column is opaque TEXT; no schema change).
  */
 export function goalSetPutStatement(scopeTenant: string, projectId: string, goalSet: GoalSetRecord): StoreResult<BuiltStatement> {
   if (!isNonEmptyString(projectId)) return malformed('the goal set lacks projectId');
@@ -282,14 +294,19 @@ export function jobListStatement(tenant: string, project: string): BuiltStatemen
   return { sql: 'SELECT payload FROM tradrl_jobs WHERE tenant = $1 AND project = $2 ORDER BY submitted_at', params: [tenant, project] };
 }
 
-/** Decode one goal-set row (`{ goal, constraintSet }`); a malformed row is the typed malformed failure. */
+/** Decode one goal-set row (`{ goal, constraintSet, world? }`); a malformed row is the typed malformed failure. */
 function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
   const payload = row[0];
   if (typeof payload !== 'string') return malformed('the stored goal set is not text');
   try {
     const value = JSON.parse(payload) as unknown;
     if (!isRecord(value) || !('goal' in value) || !('constraintSet' in value)) return malformed('the stored goal set lacks goal/constraintSet');
-    return { ok: true, value: { goal: value.goal, constraintSet: value.constraintSet } };
+    // W-28 (D-8): the optional launch world specification rides the same
+    // opaque payload — carried through verbatim when present (the host
+    // goal route re-validates it structurally before serving; a malformed
+    // world is dropped there, never a decode failure here — pre-W-28 rows
+    // never carry the field).
+    return { ok: true, value: { goal: value.goal, constraintSet: value.constraintSet, ...('world' in value ? { world: value.world } : {}) } };
   } catch {
     return malformed('the stored goal set is not valid JSON');
   }

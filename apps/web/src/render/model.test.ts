@@ -17,7 +17,8 @@
 //      the last known world, never a blank.
 
 import { describe, expect, it } from 'vitest';
-import type { ConstraintSetStatement, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { ConstraintSetStatement, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { LaunchDraft } from '../core/launch';
 import { systemNowMs } from '../core/clock';
 import { AvailabilityViolationError, CrossTenantRenderError, PolicyEnforcementError, WallClockReadError } from '../core/errors';
 import { assertVisible } from '../core/availability';
@@ -582,4 +583,125 @@ describe('render model: the OUTCOMES post-mortem cards (D-2 — the W-24 fix)', 
     const foreign = { ...anchored, postMortems: [{ ...postMortem(), lineage: { ...postMortem().lineage, tenant: 'tenant-b' } }] } as WorkspaceState;
     expect(() => serializeConsoleModel({ ...foreign, selectedSection: 'outcomes' } as WorkspaceState, T0 + 60)).toThrow(CrossTenantRenderError);
   });
+});
+
+// ---------------------------------------------------------------------------
+// D-8 (W-28) — THE MARKET WORLD SECTION'S BINDING: the section was bound to
+// the IN-SESSION launch draft (state.launch.draft) only, so after a reload
+// (or a scope switch, or a cold start) it rendered the teaching empty state
+// forever for every launched project — M4's + L5's re-run finding, the
+// re-run's ONLY project blocker. The fix rebinds it to the PERSISTED world
+// (state.world — the host goal route's additive `world` field) FIRST, with
+// the draft remaining the source only while the wizard is open in a scope
+// that has no world yet, and the teaching empty state rendering ONLY for a
+// project that genuinely has no world on record (the demo scope).
+// ---------------------------------------------------------------------------
+
+describe('render model: the MARKET WORLD section (D-8 — the persisted launch world, W-28)', () => {
+  /** The fixture persisted world (the host goal route's additive `world` shape). */
+  function world(overrides: Partial<ProjectGoalWorldSpec> = {}): ProjectGoalWorldSpec {
+    return {
+      markets: ['BTC-USD', 'ETH-USD', 'SOL-USD'],
+      venues: ['binance', 'kraken'],
+      dataSources: ['candle-v1', 'depth-v1', 'trades-v1'],
+      executionMode: 'simulation',
+      capitalBudget: '750000.00',
+      riskBudget: '60000.00',
+      horizon: { startsAt: T0, endsAt: T0 + 2_592_000_000 },
+      ...overrides,
+    };
+  }
+
+  it('a workspace with a PERSISTED world (the reload path — no session draft anywhere) renders the world card, NOT the teaching empty state', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'goal-loaded', at: T0 + 5, goal: goalStatementOf(), constraintSet: constraintSetOf(), world: world() },
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    expect(state.launch.draft).toBeNull(); // the reload path: no in-session draft — the pre-fix section rendered the empty state HERE
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-market-world="persisted"');      // the persisted-world card
+    expect(bytes).toContain('BTC-USD, ETH-USD, SOL-USD');          // the launched markets
+    expect(bytes).toContain('binance, kraken');                    // the launched venues
+    expect(bytes).toContain('candle-v1, depth-v1, trades-v1');     // the launched data sources
+    expect(bytes).toContain('750000.00');                          // the capital budget, exact decimal
+    expect(bytes).toContain('60000.00');                           // the risk budget, exact decimal
+    expect(bytes).not.toContain('No launch context yet');          // the D-8 defect is gone
+  });
+
+  it('the persisted world WINS over a stale session draft (the D-15 cross-scope bleed, closed for this section): a draft from ANOTHER scope never renders here', () => {
+    // a workspace with BOTH: a persisted world (this scope's own) and a leftover
+    // launch draft (another scope's session context — D-15's bleed source)
+    const draft = { ...blankDraft(), markets: ['STALE-MKT'], venues: ['stale-venue'], dataSources: ['stale-feed'] };
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'launch-draft-started', at: T0 + 1, draft },
+      { kind: 'goal-loaded', at: T0 + 5, goal: goalStatementOf(), constraintSet: constraintSetOf(), world: world() },
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('BTC-USD, ETH-USD, SOL-USD'); // the SCOPE's own world renders
+    expect(bytes).not.toContain('STALE-MKT');             // the foreign session draft never bleeds in
+    expect(bytes).not.toContain('Market world (launch context)'); // the draft card lost its precedence
+  });
+
+  it('the in-session DRAFT still renders while the wizard is open in a scope that has NO world yet (the pre-W-28 behavior, preserved)', () => {
+    const draft = { ...blankDraft(), markets: ['SPY', 'GLD'], venues: ['venue-x'], dataSources: ['data:ohlcv-1d'] };
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'launch-draft-started', at: T0 + 1, draft },
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('Market world (launch context)'); // the draft card (the in-session source)
+    expect(bytes).toContain('SPY, GLD');
+    expect(bytes).not.toContain('No launch context yet');
+  });
+
+  it('a workspace with NEITHER a world NOR a draft (the demo scope — its seeded goal genuinely has no world fields) renders the TEACHING EMPTY STATE', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'goal-loaded', at: T0 + 5, goal: goalStatementOf(), constraintSet: constraintSetOf() }, // NO world on the wire
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('No launch context yet — the market world is specified at launch.'); // the teaching empty state stays
+    expect(bytes).toContain('Open Goal'); // its single action stays
+    expect(bytes).not.toContain('data-market-world');
+  });
+
+  /** A minimal goal statement (the goal-loaded pair's first half). */
+  function goalStatementOf(): GoalStatement {
+    return {
+      id: 'goal-1', version: 1, tenantId: 'tenant-a', objective: 'Compound the book.',
+      horizon: { startsAt: T0, endsAt: T0 + 90_000 },
+      successCriteria: { criteria: [], requiredSatisfaction: 1 },
+      evaluation: { blindRef: 'ev-blind', walkForwardRef: 'ev-wf', regimeRef: 'ev-regime', adversarialRequired: false },
+      createdAt: T0,
+    };
+  }
+
+  /** A minimal constraint-set statement (the goal-loaded pair's second half). */
+  function constraintSetOf(): ConstraintSetStatement {
+    return { id: 'cs-1', version: 1, tenantId: 'tenant-a', constraints: [], createdAt: T0 };
+  }
+
+  /** A blank launch draft (core/launch-form's own factory — the wizard's opening state). */
+  function blankDraft(): LaunchDraft {
+    return {
+      name: 'Alpha Seeker',
+      objective: 'Find and keep an edge in momentum.',
+      horizon: { startsAt: T0, endsAt: T0 + 86_400_000 },
+      successCriteria: [{ id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 } }],
+      evaluation: { blindRef: 'eval:blind-1', walkForwardRef: 'eval:wf-1', regimeRef: 'eval:regime-1', adversarialRequired: true },
+      constraints: [],
+      capitalBudget: '10000.00',
+      riskBudget: '250.00',
+      markets: ['SPY'],
+      venues: ['venue-x'],
+      dataSources: ['data:ohlcv-1d'],
+      executionMode: 'simulation',
+      preferences: [],
+    };
+  }
 });

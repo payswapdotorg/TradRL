@@ -50,6 +50,7 @@ import type {
   OrgStatusSnapshot,
   OutcomeRecord,
   PostMortemRecord,
+  ProjectGoalWorldSpec,
   ProjectRecord,
   ServedKnowledge,
 } from '../api/contracts';
@@ -132,6 +133,16 @@ export interface WorkspaceState {
   readonly project: ProjectRecord | null;
   readonly goal: GoalStatement | null;
   readonly constraintSet: ConstraintSetStatement | null;
+  /**
+   * THE PROJECT'S PERSISTED LAUNCH WORLD (D-8, W-28): the market world the
+   * scope's project launched with, read back from the host goal route's
+   * ADDITIVE `world` field (the backing persists it from the kickoff job's
+   * spec into the goal-set record's payload). Null when the project
+   * genuinely has no world on record (the demo scope — its seeded goal
+   * carries no world fields; a pre-W-28 launch) — the Market World
+   * section's teaching empty state is CORRECT for exactly those cases.
+   */
+  readonly world: ProjectGoalWorldSpec | null;
   readonly launch: LaunchState;
   readonly orgSnapshots: readonly OrgStatusSnapshot[];
   readonly jobs: readonly JobRecord[];
@@ -159,6 +170,7 @@ export function openWorkspace(scope: WorkspaceScope, at: number): WorkspaceState
     project: null,
     goal: null,
     constraintSet: null,
+    world: null,
     launch: initialLaunchState(),
     orgSnapshots: [],
     jobs: [],
@@ -183,7 +195,7 @@ export type WorkspaceEvent =
   | { readonly kind: 'connection-changed'; readonly at: number; readonly status: ConnectionStatus }
   | { readonly kind: 'project-adopted'; readonly at: number; readonly projectId: string }
   | { readonly kind: 'project-loaded'; readonly at: number; readonly project: ProjectRecord }
-  | { readonly kind: 'goal-loaded'; readonly at: number; readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement }
+  | { readonly kind: 'goal-loaded'; readonly at: number; readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; /** The scope's persisted launch world, when the host goal route served one (D-8, W-28) — absent = the project has none on record. */ readonly world?: ProjectGoalWorldSpec }
   | { readonly kind: 'org-snapshot'; readonly at: number; readonly snapshot: OrgStatusSnapshot }
   | { readonly kind: 'job-updated'; readonly at: number; readonly job: JobRecord }
   | { readonly kind: 'outcomes-loaded'; readonly at: number; readonly records: readonly OutcomeRecord[] }
@@ -316,6 +328,7 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         project: null,
         goal: null,
         constraintSet: null,
+        world: null,
         orgSnapshots: [],
         jobs: [],
         outcomes: [],
@@ -333,7 +346,12 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         // The goal statement carries its own tenant id (the T007 shape): a foreign goal never enters the workspace.
         assertProjectScope(state.scope, event.goal);
       }
-      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet };
+      // D-8 (W-28): the goal bundle's ADDITIVE world field mirrors the
+      // scope's OWN persisted launch world — a read that serves no `world`
+      // (the demo scope, a pre-W-28 launch) CLEARS any prior one, exactly
+      // like goal/constraintSet: the state always mirrors THIS scope's
+      // read-back truth, never a stale world from a prior scope.
+      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet, world: event.world ?? null };
   } else if (selector === 'org-snapshot') {
       assertProjectScope(state.scope, event.snapshot);
       const seen = state.orgSnapshots.some((existing) => existing.organizationRef === event.snapshot.organizationRef && existing.at === event.snapshot.at);

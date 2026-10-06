@@ -829,6 +829,36 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...(projected.length === 0 ? [sectionEmpty('organization')] : []),
       ]);
   } else if (selector === 'market-world') {
+      // D-8 (W-28): the section is bound to the PROJECT'S OWN PERSISTED
+      // WORLD first (state.world — the host goal route's additive `world`
+      // field, read at boot and on every scope refetch), NOT to the
+      // in-session launch draft: after a reload, a scope switch or a cold
+      // start the section renders the SCOPE's own markets/venues/data
+      // sources (the pre-fix behavior — the draft was the only source —
+      // rendered the teaching empty state forever, and the session draft
+      // could BLEED across scopes when one stayed open). The in-session
+      // draft remains the source while the wizard is open in a scope that
+      // has no world yet (the launchpad, a fresh boot); the teaching empty
+      // state renders ONLY when the project genuinely has no world on
+      // record (the demo scope — its seeded goal carries no world fields).
+      const world = state.world;
+      if (world !== null) {
+        return v('section', { class: 'panel', 'data-section': 'market-world' }, [
+          v('div', { class: 'card', 'data-market-world': 'persisted' }, [
+            v('div', { class: 'card-title' }, ['Market world']),
+            ...factRows([
+              ['markets', world.markets.join(', ')],
+              ['venues', world.venues.join(', ')],
+              ['data sources', world.dataSources.join(', ')],
+              ['execution mode', world.executionMode],
+              ['capital budget', renderDecimal(world.capitalBudget)],
+              ['risk budget', renderDecimal(world.riskBudget)],
+              ['horizon', `${formatInstantUtc(world.horizon.startsAt)} -> ${formatInstantUtc(world.horizon.endsAt)}`],
+            ]),
+            v('p', { class: 'card-note' }, ['The launch specification this project\'s market world was set to — persisted with the project, restored on every visit.']),
+          ]),
+        ]);
+      }
       const draft = state.launch.draft;
       if (draft === null) {
         return v('section', { class: 'panel', 'data-section': 'market-world' }, [sectionEmpty('market-world')]);

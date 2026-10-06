@@ -22,6 +22,7 @@ import type {
   ExecutionMode,
   GoalStatement,
   JobStatus,
+  ProjectGoalWorldSpec,
   SuccessCriterion,
 } from '../api/contracts';
 import { InvalidLaunchDraftError } from './errors';
@@ -201,6 +202,33 @@ export function toLaunchJobSpec(draft: LaunchDraft): Record<string, unknown> {
     dataSources: [...draft.dataSources],
     executionMode: draft.executionMode,
     preferences: draft.preferences.map((preference) => ({ key: preference.key, value: preference.value })),
+  };
+}
+
+/**
+ * Build the launch's WORLD SPECIFICATION from a validated draft (D-8,
+ * W-28): the market-world fields the wizard's markets/world steps
+ * collected, in the host goal route's additive `world` shape. This is
+ * what the kickoff job's spec carries to the backing (the world rides
+ * `toLaunchJobSpec` — the opaque spec is the only console->host carrier
+ * the frozen contracts leave room for), what the backing persists into
+ * the goal-set record's payload, and what the host goal route serves
+ * back so the Market World section renders the PERSISTED world after a
+ * reload, a scope switch or a cold start — the in-session draft was the
+ * section's ONLY source before (D-8's defect).
+ */
+export function toLaunchWorldSpec(draft: LaunchDraft): ProjectGoalWorldSpec {
+  validateLaunchDraft(draft);
+  return {
+    markets: [...draft.markets],
+    venues: [...draft.venues],
+    dataSources: [...draft.dataSources],
+    executionMode: draft.executionMode,
+    capitalBudget: draft.capitalBudget,
+    riskBudget: draft.riskBudget,
+    horizon: draft.horizon.label === undefined
+      ? { startsAt: draft.horizon.startsAt, endsAt: draft.horizon.endsAt }
+      : { startsAt: draft.horizon.startsAt, endsAt: draft.horizon.endsAt, label: draft.horizon.label },
   };
 }
 
