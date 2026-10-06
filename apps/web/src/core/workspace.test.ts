@@ -346,6 +346,47 @@ describe('workspace: transitions', () => {
     state = reduceWorkspace(state, { kind: 'launch-reset', at: T0 + 5 });
     expect(state.launch.phase).toBe('idle');
   });
+
+  it('D-11 (W-29): the tracked launch\'s phase FOLLOWS ITS JOB\'S RECORD — a terminal job-updated closes the launch even with NO poll observation of the transition (the jobs-list race)', () => {
+    // THE RACE (M4's finding: Home kept the "A launch is in progress"
+    // banner after the launch completed; a second launch required a page
+    // reload): app/console.ts dispatches launch-completed only from
+    // pollJobs, and pollJobs SKIPS jobs already terminal in state — so
+    // when the beat's jobs-list read serves the kickoff job ALREADY
+    // complete (job-updated(complete) with no poll observation of the
+    // transition), the dedicated event never fired and phase stayed
+    // 'launching' forever. The reducer now closes the loop itself.
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'launch-submitted', at: T0 + 2, projectId: 'proj-a', jobId: 'job-9' });
+    expect(state.launch.phase).toBe('launching');
+    // the jobs-list read serves the record already COMPLETE — no
+    // launch-progress, no launch-completed anywhere in the sequence
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 3, job: { ...jobRecord('complete'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('launched');
+    expect(state.launch.progress.map((point) => point.status)).toEqual(['submitted', 'complete']);
+    // the poll path stays idempotent: the same terminal record again (a
+    // re-read) appends its observation and changes the phase nothing
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 4, job: { ...jobRecord('complete'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('launched');
+    // and the dedicated event on top of it changes nothing either
+    state = reduceWorkspace(state, { kind: 'launch-completed', at: T0 + 5 });
+    expect(state.launch.phase).toBe('launched');
+  });
+
+  it('D-11 (W-29): a tracked kickoff job FAILING through the record closes the launch with its error (and a NON-tracked job never touches the launch slice)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'launch-submitted', at: T0 + 2, projectId: 'proj-a', jobId: 'job-9' });
+    // a different project's job completing must not close THIS launch
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 3, job: jobRecord('complete') });
+    expect(state.launch.phase).toBe('launching'); // jobRecord's id is job-1, not the tracked job-9
+    // the tracked job fails through its record (the list-read race again)
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 4, job: { ...jobRecord('failed'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('failed');
+    expect(state.launch.error).toContain('job-9');
+    // a concluded launch never re-opens on later records (the guard is the in-flight phase)
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 5, job: { ...jobRecord('complete'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('failed');
+  });
 });
 
 describe('workspace: the L12 gate on every ingest', () => {
@@ -790,8 +831,9 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
     const state = richState();
     const doc = composeWorkspaceExport(state);
     expect(doc.manifest.included).toEqual([
-      'workspace.state', 'events.chain', 'evidence.capsules', 'decisions.watch', 'decisions.gateway', 'readState',
+      'launchWorld', 'workspace.state', 'events.chain', 'evidence.capsules', 'decisions.watch', 'decisions.gateway', 'readState',
     ]);
+    expect(doc.manifest.counts.launchWorld).toBe(doc.launchWorld === null ? 0 : 1); // D-14: the world count is TRUE either way
     expect(doc.manifest.counts.events).toBe(doc.events.length);
     expect(doc.manifest.counts.capsules).toBe(doc.capsules.length);
     expect(doc.manifest.counts.decisionsWatch).toBe(doc.decisions.watch.length);
@@ -806,6 +848,8 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
     expect(doc.chain.genesis).toBe(CHAIN_GENESIS);
     expect(doc.chain.digestRule).toContain('sha256Hex(canonicalJson');
     expect(doc.chain.linkRule).toContain('previousChainHead + digest');
+    // D-14: richState's chain is single-project — no cross-scope note to disclose
+    expect(doc.manifest.chainScopeNote).toBeUndefined();
   });
 
   it('the workspace block carries EVERYTHING but the history (which IS the events chain)', () => {
@@ -836,5 +880,95 @@ describe('workspace: export DETERMINISM (the law extends to the export bytes)', 
     const base = serializeWorkspaceExport(richState());
     const varied = serializeWorkspaceExport(reduceWorkspace(richState(), { kind: 'view-live', at: T0 + 99 }));
     expect(varied).not.toBe(base);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-14 (W-29) — THE EXPORT'S SUBSTANCE: the launch WORLD specification,
+// first-class, and the chain-scope audit note. L5's P19 finding: the world
+// spec (markets/venues/dataSources) was NOWHERE in the export file (the
+// goal object carries no world fields, launch.draft was null) — the launch
+// config was unrecoverable downstream; and L1/L2/L5 noted the events chain
+// legitimately spans projects under a project-scoped export label with
+// every entry self-labeling its projectId and integrity unaffected — a span
+// an audit pack must DISCLOSE, not hide. Both additions are ADDITIVE: the
+// format version stays 2 and v2 readers that do not know the fields verify
+// the document unchanged.
+// ---------------------------------------------------------------------------
+
+describe('workspace: D-14 — the export carries the launch WORLD, first-class (additive)', () => {
+  it('a scope WITH a world exports it as the document\'s own launchWorld field — the full specification, byte-true, surviving the serialized bytes', () => {
+    let state = reduceWorkspace(openWorkspace(SCOPE, T0), { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord({ markets: ['BTC-USD', 'ETH-USD', 'SOL-USD'], venues: ['binance', 'kraken'], dataSources: ['candle-v1', 'depth-v1', 'trades-v1'] }) });
+    state = reduceWorkspace(state, { kind: 'view-live', at: T0 + 2 }); // one chained event, so the export is non-trivial
+    const doc = composeWorkspaceExport(state);
+    expect(doc.launchWorld).toEqual(worldRecord({ markets: ['BTC-USD', 'ETH-USD', 'SOL-USD'], venues: ['binance', 'kraken'], dataSources: ['candle-v1', 'depth-v1', 'trades-v1'] }));
+    expect(doc.launchWorld?.markets).toEqual(['BTC-USD', 'ETH-USD', 'SOL-USD']); // the markets
+    expect(doc.launchWorld?.venues).toEqual(['binance', 'kraken']);               // the venues
+    expect(doc.launchWorld?.dataSources).toEqual(['candle-v1', 'depth-v1', 'trades-v1']); // the data sources
+    expect(doc.manifest.included).toContain('launchWorld');       // the manifest DECLARES it
+    expect(doc.manifest.counts.launchWorld).toBe(1);              // and counts it TRUE
+    // the serialized bytes carry it (the downloaded file is what downstream holds)
+    const parsed = exportedDoc(state);
+    expect(parsed.launchWorld).toEqual(doc.launchWorld);
+    // the goal statement itself stays the frozen served shape — the world rides its own sibling field
+    expect((parsed.workspace as Record<string, unknown>).world).toEqual(doc.launchWorld); // the state block keeps its own copy (W-28)
+  });
+
+  it('a scope with NO world on record (the demo scope — its seeded goal carries no world fields) exports launchWorld: null with the manifest count TRUE at 0 — the honest absence, never a fabricated world', () => {
+    const state = reduceWorkspace(openWorkspace(SCOPE, T0), { kind: 'view-live', at: T0 + 1 });
+    const doc = composeWorkspaceExport(state);
+    expect(doc.launchWorld).toBeNull();
+    expect(doc.manifest.counts.launchWorld).toBe(0);
+    expect(exportedDoc(state).launchWorld).toBeNull(); // survives the bytes
+  });
+
+  it('the additions are ADDITIVE for v2 readers: a document carrying launchWorld + chainScopeNote verifies END TO END, and one WITHOUT them verifies too (the format version stays 2)', () => {
+    const withWorld = reduceWorkspace(openWorkspace(SCOPE, T0), { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    expect(verifyWorkspaceExport(exportedDoc(withWorld))).toEqual({ ok: true });
+    expect(verifyWorkspaceExport(exportedDoc(richState()))).toEqual({ ok: true }); // no world, single-project chain
+    // a PRE-D-14 v2 document (the additive fields stripped) still verifies — no reader breaks
+    const stripped = exportedDoc(withWorld) as Record<string, unknown>;
+    delete stripped.launchWorld;
+    delete (stripped.manifest as Record<string, unknown>).chainScopeNote;
+    expect(verifyWorkspaceExport(stripped)).toEqual({ ok: true });
+  });
+});
+
+describe('workspace: D-14 — the chain-scope audit note (a cross-project chain under a project-scoped label)', () => {
+  /** A session that HELD two scopes: events under proj-a, then the launch adopts proj-launched and more events follow. */
+  function crossScopeState(): WorkspaceState {
+    let state = openWorkspace(SCOPE, T0); // proj-a
+    state = reduceWorkspace(state, { kind: 'connection-changed', at: T0 + 1, status: 'connected' });
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 2, project: projectRecord() });
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 5, job: jobRecord('running') });
+    state = reduceWorkspace(state, { kind: 'project-adopted', at: T0 + 6, projectId: 'proj-launched' }); // the launch bridge / a switch
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 7, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    state = reduceWorkspace(state, { kind: 'view-live', at: T0 + 8 });
+    return state;
+  }
+
+  it('a chain spanning MORE THAN ONE project carries the note: the span named, every entry self-labeled, integrity unaffected — and the export still verifies END TO END', () => {
+    const state = crossScopeState();
+    const doc = composeWorkspaceExport(state);
+    // the span is real: the history carries entries under BOTH project ids
+    const projectIds = new Set(doc.events.map((entry) => entry.projectId));
+    expect(projectIds).toEqual(new Set(['proj-a', 'proj-launched']));
+    // the note discloses it
+    expect(typeof doc.manifest.chainScopeNote).toBe('string');
+    expect(doc.manifest.chainScopeNote).toContain('proj-launched'); // the export's own label
+    expect(doc.manifest.chainScopeNote).toContain('proj-a');        // the spanned project
+    expect(doc.manifest.chainScopeNote).toContain('2 project ids'); // the span's count
+    expect(doc.manifest.chainScopeNote).toContain('self-labels its own projectId');
+    expect(doc.manifest.chainScopeNote).toContain('integrity is unaffected');
+    // the note survives the serialized bytes (the file is what the auditor holds)
+    const manifest = (exportedDoc(state).manifest as Record<string, unknown>);
+    expect(typeof manifest.chainScopeNote).toBe('string');
+    // and the chain verifies END TO END from the file alone — the span never broke integrity
+    expect(verifyWorkspaceExport(exportedDoc(state))).toEqual({ ok: true });
+  });
+
+  it('a SINGLE-project chain carries NO note (nothing to disclose) — and the empty-workspace export carries none either', () => {
+    expect(composeWorkspaceExport(richState()).manifest.chainScopeNote).toBeUndefined();
+    expect(composeWorkspaceExport(openWorkspace(SCOPE, T0)).manifest.chainScopeNote).toBeUndefined();
   });
 });

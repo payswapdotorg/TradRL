@@ -766,3 +766,181 @@ describe('render model: the MARKET WORLD section (D-8 — the persisted launch w
     };
   }
 });
+
+// ---------------------------------------------------------------------------
+// D-11 (W-29) — THE HOME HERO'S LAUNCH BANNER. M4's finding: after the
+// launch completed, Home kept the "A launch is in progress — details
+// below." banner AND hid the launch-entry buttons (a second launch
+// required a page reload). The banner is now PHASE-DRIVEN: it renders
+// ONLY while the tracked launch is genuinely in flight, and a concluded
+// launch (launched/failed, no open wizard) restores the entry CTA.
+// ---------------------------------------------------------------------------
+
+describe('render model: D-11 — the Home hero\'s launch banner clears when the launch concludes', () => {
+  function homeBytes(events: readonly WorkspaceEvent[]): string {
+    const state = reduceAll(openWorkspace(SCOPE, T0), events);
+    return serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
+  }
+
+  it('while the launch is IN FLIGHT the banner renders and the entry CTA is away', () => {
+    const bytes = homeBytes([{ kind: 'launch-submitted', at: T0 + 1, projectId: 'proj-a', jobId: 'job-9' }]);
+    expect(bytes).toContain('A launch is in progress — details below.');
+    expect(bytes).toContain('data-hero-launch="launching"');
+    expect(bytes).not.toContain('data-action="launch-start"');
+  });
+
+  it('a COMPLETED launch restores the entry CTA — the banner clears (no reload needed for a second launch)', () => {
+    // the jobs-list race shape: the kickoff job arrives already complete
+    // (the D-11 reducer closes the launch on the record itself)
+    const bytes = homeBytes([
+      { kind: 'launch-submitted', at: T0 + 1, projectId: 'proj-a', jobId: 'job-9' },
+      { kind: 'job-updated', at: T0 + 2, job: { jobId: 'job-9', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: T0 + 1, completedAt: T0 + 5 } },
+    ]);
+    expect(bytes).toContain('data-action="launch-start"');       // the launch-entry button is back
+    expect(bytes).toContain('Describe your goal');               // the hero's own CTA copy
+    expect(bytes).not.toContain('A launch is in progress');      // the banner is gone
+    // the launch panel below keeps the concluded launch's own card (the honest terminal render)
+    expect(bytes).toContain('Launch progress');
+    expect(bytes).toContain('data-launch-phase="complete"');
+  });
+
+  it('a FAILED launch restores the entry CTA too — the error card stays in the launch panel, never the hero', () => {
+    const bytes = homeBytes([
+      { kind: 'launch-submitted', at: T0 + 1, projectId: 'proj-a', jobId: 'job-9' },
+      { kind: 'job-updated', at: T0 + 2, job: { jobId: 'job-9', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'failed', submittedAt: T0 + 1 } },
+    ]);
+    expect(bytes).toContain('data-action="launch-start"');
+    expect(bytes).not.toContain('A launch is in progress');
+    expect(bytes).toContain('Launch failed'); // the error card renders in the launch panel below
+  });
+
+  it('the wizard-open note still wins while a draft is active (the J3 resume hint, unchanged)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [{ kind: 'launch-draft-started', at: T0 + 1, draft: blankDraftOfD11() }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
+    expect(bytes).toContain('The launch wizard is open — continue below.');
+    expect(bytes).toContain('data-hero-launch="draft"');
+    expect(bytes).not.toContain('data-action="launch-start"');
+  });
+
+  /** The blank draft fixture (the D-11 describe's own copy — the wizard's opening state). */
+  function blankDraftOfD11(): LaunchDraft {
+    return {
+      name: 'Alpha Seeker',
+      objective: 'Find and keep an edge in momentum.',
+      horizon: { startsAt: T0, endsAt: T0 + 86_400_000 },
+      successCriteria: [{ id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 } }],
+      evaluation: { blindRef: 'eval:blind-1', walkForwardRef: 'eval:wf-1', regimeRef: 'eval:regime-1', adversarialRequired: true },
+      constraints: [],
+      capitalBudget: '10000.00',
+      riskBudget: '250.00',
+      markets: ['SPY'],
+      venues: ['venue-x'],
+      dataSources: ['data:ohlcv-1d'],
+      executionMode: 'simulation',
+      preferences: [],
+    };
+  }
+});
+
+// ---------------------------------------------------------------------------
+// D-13 (W-29) — THE PROJECT-SCOPED INBOX. The inbox state keeps every notice
+// the session folded (append-only), but the SURFACE is project-scoped like
+// every section panel: a multi-desk tenant never sees the demo project's
+// seed notices inside their own desk's inbox (M4/M5/L5: 7 unread = 5 demo +
+// 2 own). The bell badge, the Home unread tile and the activity timeline
+// all follow the same scoped fold.
+// ---------------------------------------------------------------------------
+
+describe('render model: D-13 — the inbox renders the PROJECT-SCOPED view', () => {
+  /** A two-desk session: desk A (proj-a) folds a notice, the workspace adopts desk B (proj-b), desk B folds its own. */
+  function twoDeskState(): WorkspaceState {
+    const events: readonly WorkspaceEvent[] = [
+      { kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-desk-a', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'failed', submittedAt: T0 + 10 } },
+      { kind: 'project-adopted', at: T0 + 30, projectId: 'proj-b' },
+      { kind: 'job-updated', at: T0 + 40, job: { jobId: 'job-desk-b', kind: 'research', tenant: 'tenant-a', project: 'proj-b', status: 'failed', submittedAt: T0 + 35 } },
+      { kind: 'view-live', at: T0 + 50 },
+    ];
+    return reduceAll(openWorkspace(SCOPE, T0), events);
+  }
+
+  it('the Inbox panel lists ONLY the current desk\'s notices — the other desk\'s rows never render, and the scoping is STATED in the copy', () => {
+    const state = twoDeskState();
+    expect(state.inbox.notices).toHaveLength(2); // the STATE keeps both desks' notices (append-only)
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'inbox' }));
+    expect(bytes).toContain('data-row="notice:');                       // the row grammar renders
+    expect(bytes).not.toContain('job-desk-a');                          // desk A's notice NEVER renders in desk B's inbox
+    expect(bytes).toContain('job-desk-b');                              // desk B's own notice renders
+    expect(bytes).toContain('data-inbox-scope="proj-b"');               // the scoping is disclosed
+    expect(bytes).toContain('Notices for this project (proj-b)');       // in plain-English copy
+    expect(bytes).toContain('data-unread="1"');                         // the panel's own count is the scoped one
+  });
+
+  it('the bell badge and Home\'s unread tile + activity timeline follow the SAME scoped fold (another desk\'s notices never badge this desk)', () => {
+    const state = twoDeskState();
+    const homeBytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
+    expect(homeBytes).toContain('data-unread="1"');          // the bell badge: ONE unread (desk B's own)
+    expect(homeBytes).not.toContain('data-unread="2"');      // never the two-desk total
+    expect(homeBytes).toContain('UNREAD NOTICES');           // the Home tile
+    expect(homeBytes).toContain('job-desk-b');               // the activity timeline carries desk B's notice
+    expect(homeBytes).not.toContain('job-desk-a');           // never desk A's
+  });
+
+  it('switching BACK to the first desk restores ITS notices (the state kept them; each desk sees its own)', () => {
+    const state = reduceAll(twoDeskState(), [{ kind: 'project-adopted', at: T0 + 60, projectId: 'proj-a' }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 70, { ...defaultShellView(state), accountView: 'inbox' }));
+    expect(bytes).toContain('job-desk-a');          // desk A's notice is back in ITS inbox
+    expect(bytes).not.toContain('job-desk-b');      // desk B's never renders here
+    expect(bytes).toContain('data-inbox-scope="proj-a"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-17 (W-29) — THE JOB DIALOG'S ELASTIC ELAPSED, FIXED AT THE RECORD. The
+// dialog's METRICS showed "elapsed: pending" for COMPLETE jobs with BOTH
+// timestamps present — the seed job:57d1815d (L2) and the Lead's fresh
+// kickoff job:1f7a71dc — because the sheet derived it from renderJobProgress
+// over the SESSION's observation points (empty for every non-tracked job and
+// after every reload). The sheet now derives it from the record's own
+// timestamps; 'pending' shows ONLY while the record genuinely carries no
+// completedAt.
+// ---------------------------------------------------------------------------
+
+describe('render model: D-17 — the job sheet\'s elapsed derives from the RECORD', () => {
+  /** A COMPLETE job with both timestamps — the D-17 shape (NO session launch tracking anywhere, the reload/seed reality). */
+  function completeSeededJob(): JobRecord {
+    return { jobId: 'job:57d1815d', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: T0 + 20, completedAt: T0 + 28, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1 } };
+  }
+
+  it('a COMPLETE job with timestamps renders its elapsed — no session launch tracking anywhere (the exact persona/Lead shape)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 30, job: completeSeededJob() },
+      { kind: 'view-live', at: T0 + 40 },
+    ]);
+    expect(state.launch.jobId).toBeNull(); // no tracked launch — the pre-fix sheet rendered 'pending' exactly here
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', sheet: { kind: 'job', id: 'job:57d1815d' } }));
+    expect(bytes).toContain('job:57d1815d');
+    expect(bytes).toContain('completed at');      // the record's completion instant renders
+    // the METRICS pair carries the derived duration (8ms — the record's own arithmetic)
+    expect(bytes).toContain('8ms');
+  });
+
+  it('a RUNNING job (genuinely incomplete — no completedAt on the record) still renders pending', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 30, job: { jobId: 'job-running-1', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'running', submittedAt: T0 + 20 } },
+      { kind: 'view-live', at: T0 + 40 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', sheet: { kind: 'job', id: 'job-running-1' } }));
+    expect(bytes).toContain('pending'); // the honest in-flight state
+  });
+
+  it('the Research section\'s row carries the duration meta for EVERY completed job (not only the tracked launch)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 30, job: completeSeededJob() },
+      { kind: 'section-selected', at: T0 + 31, section: 'research' },
+      { kind: 'view-live', at: T0 + 40 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('job:57d1815d');
+    expect(bytes).toContain('8ms'); // the row's meta — the record's own duration
+  });
+});

@@ -279,6 +279,35 @@ export function unreadCount(inbox: InboxState): number {
 }
 
 /**
+ * D-13 (W-29): THE PROJECT-SCOPED INBOX VIEW. The inbox STATE keeps every
+ * notice the session folded (append-only — a scope switch never un-happens
+ * a notice; the state-level pin in workspace.test.ts holds), but the inbox
+ * SURFACE is project-scoped like every section panel: a notice carries the
+ * project it was folded under (the fold's own scope stamp), and only the
+ * CURRENT scope's notices render in its inbox — a multi-desk tenant never
+ * sees the demo project's seed notices inside their own desk's inbox
+ * (M4/M5/L5's finding: 7 unread = 5 demo + 2 own). The read marks stay
+ * keyed per notice id (content-addressed per scope by construction), so a
+ * scoped view's marks apply exactly to the notices it lists.
+ *
+ * DISCLOSURE (audited against the fold): every one of the eight charter
+ * kinds folds from PROJECT-SCOPED reads (projects/jobs/knowledge/outcomes/
+ * organizations/execution — each record passes assertProjectScope), so
+ * there is NO legitimately tenant-wide notice class in the current fold;
+ * nothing is silently dropped by the project filter. Should a tenant-level
+ * system notice class ever be added, it must carry an explicit scope marker
+ * and this view must disclose it — not silently filter it.
+ */
+export function scopedInbox(inbox: InboxState, scope: { readonly tenantId: string; readonly projectId: string }): InboxState {
+  const notices = inbox.notices.filter((record) => record.tenantId === scope.tenantId && record.projectId === scope.projectId);
+  const inScope = new Set(notices.map((record) => record.noticeId));
+  return {
+    notices: Object.freeze(notices),
+    readNoticeIds: Object.freeze(inbox.readNoticeIds.filter((noticeId) => inScope.has(noticeId))),
+  };
+}
+
+/**
  * Merge newly folded notices into an inbox: idempotent by noticeId
  * (content-addressed — the same signal never doubles), the read set
  * preserved (a re-fold never marks read notices unread).
@@ -291,15 +320,31 @@ export function mergeNotices(inbox: InboxState, folded: readonly NoticeRecord[])
   return { notices: Object.freeze(merged), readNoticeIds: inbox.readNoticeIds };
 }
 
-/** Mark one notice read (idempotent; the read set stays sorted for byte-determinism). */
+/**
+ * Mark one notice read (idempotent; the read set stays sorted for byte-determinism).
+ */
 export function markNoticeRead(inbox: InboxState, noticeId: string): InboxState {
   if (inbox.readNoticeIds.includes(noticeId)) return inbox;
   return { notices: inbox.notices, readNoticeIds: Object.freeze([...inbox.readNoticeIds, noticeId].sort()) };
 }
 
-/** Mark every folded notice read (idempotent). */
-export function markAllNoticesRead(inbox: InboxState): InboxState {
-  return { notices: inbox.notices, readNoticeIds: Object.freeze(inbox.notices.map((record) => record.noticeId)) };
+/**
+ * Mark notices read, idempotently. D-13 (W-29): with a SCOPE, exactly the
+ * scope's own notices mark (the "Mark all read" the user pressed marked
+ * what the scoped inbox SHOWED — another desk's notices keep their marks
+ * and their unread state); without one, every folded notice marks (the
+ * pre-D-13 behavior, preserved for the unscoped callers). Either way the
+ * existing marks are preserved (a union, never a replacement) and the read
+ * set stays sorted for byte-determinism.
+ */
+export function markAllNoticesRead(inbox: InboxState, scope?: { readonly tenantId: string; readonly projectId: string }): InboxState {
+  const targets = scope === undefined
+    ? inbox.notices
+    : inbox.notices.filter((record) => record.tenantId === scope.tenantId && record.projectId === scope.projectId);
+  const marks = new Set(inbox.readNoticeIds);
+  for (const record of targets) marks.add(record.noticeId);
+  if (marks.size === inbox.readNoticeIds.length) return inbox; // nothing new to mark (idempotent)
+  return { notices: inbox.notices, readNoticeIds: Object.freeze([...marks].sort()) };
 }
 
 /** Guard used by the fold's tests: every record in the reads belongs to the scope (else the typed cross-tenant error fires inside the fold). */

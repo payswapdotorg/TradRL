@@ -35,7 +35,7 @@ import { assertProjectScope, type WorkspaceScope } from '../core/tenant';
 import { renderDecimal } from '../core/decimals';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { PolicyEnforcementError } from '../core/errors';
-import { renderJobProgress, LAUNCH_STEPS, type JobProgressView, type LaunchStep } from '../core/launch';
+import { elapsedMsOfJobRecord, renderJobProgress, LAUNCH_STEPS, type LaunchStep } from '../core/launch';
 import { formatNumberGrouped } from './numbers';
 import {
   EXECUTION_MODES,
@@ -47,7 +47,7 @@ import {
   type LaunchFieldName,
 } from '../core/launch-form';
 import type { SectionId } from '../core/sections';
-import { unreadCount, type InboxState } from '../core/notices';
+import { scopedInbox, unreadCount, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, type WorkspaceState } from '../core/workspace';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
@@ -340,22 +340,39 @@ function jobPillOf(job: JobRecord): { tone: PillTone; label: string } {
   return { tone: pillToneOfDomain(status), label: job.status };
 }
 
-/** Render one job with its progress view. */
-function jobCard(scope: WorkspaceScope, job: JobRecord, viewAt: number, progress: JobProgressView | null): VNode {
+/**
+ * Render one job as an interactive list row (§4.4). D-17 (W-29): the row's
+ * duration meta derives from the RECORD's own timestamps (completedAt −
+ * submittedAt) — never from the session's observation points, which exist
+ * only for the current launch's tracked job and die at every reload. Every
+ * complete job with timestamps carries its duration on the row.
+ */
+function jobCard(scope: WorkspaceScope, job: JobRecord, viewAt: number): VNode {
   assertProjectScope(scope, job);
   visibleAt(job, availabilityOfJob(job), viewAt, job.jobId);
+  const elapsed = elapsedMsOfJobRecord(job);
   return listRow({
     icon: 'flask',
     title: job.jobId,
     subtitle: `${job.kind} job`,
     pill: jobPillOf(job),
-    ...(progress !== null && progress.elapsedMs !== null ? { meta: formatDurationMs(progress.elapsedMs) } : {}),
+    ...(elapsed !== null ? { meta: formatDurationMs(elapsed) } : {}),
     rowId: `job:${job.jobId}`,
   });
 }
 
-/** The job's detail sheet (§4.5a) — the same availability + scope gates as the row. */
-function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, progress: JobProgressView | null): VNode[] {
+/**
+ * The job's detail sheet (§4.5a) — the same availability + scope gates as
+ * the row. D-17 (W-29): the METRICS elapsed derives from the RECORD's own
+ * timestamps (completedAt − submittedAt, elapsedMsOfJobRecord) — the
+ * root-cause fix for the "elapsed: pending" the personas and the Lead met
+ * on COMPLETE jobs with BOTH timestamps present (the seed job:57d1815d, the
+ * Lead's fresh kickoff job:1f7a71dc): the sheet used renderJobProgress over
+ * the SESSION's observation points (empty for every non-tracked job and
+ * after every reload), so the truth sitting in the record never rendered.
+ * 'pending' shows ONLY while the record genuinely carries no completedAt.
+ */
+function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number): VNode[] {
   assertProjectScope(scope, job);
   visibleAt(job, availabilityOfJob(job), viewAt, job.jobId);
   const status: DefinitionSection = {
@@ -366,9 +383,10 @@ function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, progres
       ...(job.completedAt !== undefined ? ([['completed at', formatInstantUtc(job.completedAt)]] as const) : []),
     ],
   };
+  const elapsed = elapsedMsOfJobRecord(job);
   const metrics: DefinitionSection = {
     eyebrow: 'METRICS',
-    pairs: [['elapsed', progress === null || progress.elapsedMs === null ? 'pending' : formatDurationMs(progress.elapsedMs)]],
+    pairs: [['elapsed', elapsed === null ? 'pending' : formatDurationMs(elapsed)]],
   };
   // THE RESULT SECTION (the R1 fix): when the job record carries its
   // completion payload, the deliverable renders READABLY here — the
@@ -562,13 +580,18 @@ function watchEventRow(scope: WorkspaceScope, event: WatchEvent, viewAt: number,
   });
 }
 
-/** The inbox panel (§4.10): the bell + list rows with read/unread state + mark-all-read + the per-notice read toggle (the W-14b J6 wiring — the workspace's own notice-read event, dispatched by the row's explicit affordance). */
+/** The inbox panel (§4.10): the bell + list rows with read/unread state + mark-all-read + the per-notice read toggle (the W-14b J6 wiring — the workspace's own notice-read event, dispatched by the row's explicit affordance). D-13 (W-29): the panel renders the PROJECT-SCOPED inbox — only this scope's own folded notices list here (the state keeps every session notice, append-only; another desk's notices stay in their own desk's inbox). */
 function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
-  const unread = unreadCount(state.inbox);
-  const projected = projectToView(state.inbox.notices, viewAt, (record) => record.at);
+  // D-13: the scoped view — the fold-scoping pattern every section panel
+  // follows (the section folds derive from the state's own scope-gated
+  // records; the inbox's records predate the current scope, so the scope
+  // gate applies at the view).
+  const inbox = scopedInbox(state.inbox, state.scope);
+  const unread = unreadCount(inbox);
+  const projected = projectToView(inbox.notices, viewAt, (record) => record.at);
   const rows = projected.map((record) => {
     const copy = noticeCopyOf(record.kind);
-    const isRead = state.inbox.readNoticeIds.includes(record.noticeId);
+    const isRead = inbox.readNoticeIds.includes(record.noticeId);
     return accordionRow({
       icon: copy.icon,
       title: record.title,
@@ -591,6 +614,9 @@ function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
   });
   return v('aside', { class: 'inbox', 'data-unread': String(unread) }, [
     v('h2', {}, [`Notifications${unread > 0 ? ` (${unread} unread)` : ''}`]),
+    // D-13: the scoping is STATED, not implied — each desk sees its own
+    // notices; cross-project notices never render in another desk's inbox.
+    v('p', { class: 'hint', 'data-inbox-scope': state.scope.projectId }, [`Notices for this project (${state.scope.projectId}) — each desk sees its own; cross-project notices stay in their own desk's inbox.`]),
     v('button', { class: 'inbox-read-all', 'data-action': 'notices-read-all', type: 'button' }, ['Mark all read']),
     ...rows,
     ...(projected.length === 0 ? [sectionEmpty('inbox')] : []),
@@ -679,18 +705,27 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
   // THE HERO'S LAUNCH AFFORDANCE (the J3 entry, Home shape): the
   // primary flow's own CTA when nothing is running; a resume hint
   // while the wizard is open (the wizard renders in the launch panel
-  // directly below); a progress note while a launch is in flight or
-  // has finished. Mirrors launchPanel's own states — never a dead
-  // button (a launch-start while a draft is open would be refused by
-  // the handler; the hero shows the honest state instead).
+  // directly below); a progress note ONLY while a launch is genuinely
+  // IN FLIGHT. Mirrors launchPanel's own states — never a dead button
+  // (a launch-start while a draft is open would be refused by the
+  // handler; the hero shows the honest state instead).
+  // D-11 (W-29): the banner is PHASE-DRIVEN, never progress-presence-
+  // driven. The pre-fix test (draft === null && progress.length === 0
+  // && error === null) stayed false FOREVER after any launch — the
+  // progress array is append-only and no event ever cleared it, so a
+  // COMPLETED launch kept the "A launch is in progress" banner and hid
+  // the launch-entry buttons (M4's finding: a second launch required a
+  // page reload). A concluded launch (launched/failed, no open wizard)
+  // now restores the CTA; the launch panel below keeps the concluded
+  // launch's own cards (result, progress, Start over).
   const launch = state.launch;
   const draftActive = launch.draft !== null && (launch.phase === 'draft' || launch.phase === 'idle');
-  const launchQuiet = launch.draft === null && launch.progress.length === 0 && launch.error === null;
+  const launchInFlight = launch.phase === 'launching';
   const heroCta: VNode | undefined = draftActive
     ? v('p', { class: 'hero-note', 'data-hero-launch': 'draft' }, ['The launch wizard is open — continue below.'])
-    : launchQuiet
-      ? v('button', { class: 'hero-cta', 'data-action': 'launch-start', type: 'button' }, ['Describe your goal'])
-      : v('p', { class: 'hero-note', 'data-hero-launch': launch.phase }, ['A launch is in progress — details below.']);
+    : launchInFlight
+      ? v('p', { class: 'hero-note', 'data-hero-launch': launch.phase }, ['A launch is in progress — details below.'])
+      : v('button', { class: 'hero-cta', 'data-action': 'launch-start', type: 'button' }, ['Describe your goal']);
   const hero = heroPanel(heroCta);
   if (state.connection === 'connecting' && fresh) {
     return v('section', { class: 'panel home', 'data-section': 'home' }, [hero, loadingState('stat-grid')]);
@@ -711,7 +746,10 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
   const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
   const snapshots = projectToView(state.orgSnapshots, viewAt, availabilityOfOrgSnapshot);
   const capsuleCount = outcomes.length + postMortems.length + knowledge.length + submissions.length;
-  const unread = unreadCount(state.inbox);
+  // D-13 (W-29): the unread tile + the activity timeline render the
+  // PROJECT-SCOPED inbox — another desk's notices never count here.
+  const scopedNotices = scopedInbox(state.inbox, state.scope);
+  const unread = unreadCount(scopedNotices);
   const running = jobs.filter((job) => job.status === 'running').length;
   const snapshot = snapshots.length > 0 ? snapshots[0] : null;
   const tiles = statGrid([
@@ -731,7 +769,7 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
       ['Instances', snapshot === null ? '0' : String(snapshot.instanceRefs.length)],
     ],
   });
-  const notices = projectToView(state.inbox.notices, viewAt, (record) => record.at);
+  const notices = projectToView(scopedNotices.notices, viewAt, (record) => record.at);
   const entries: TimelineEntry[] = notices.map((record) => ({
     at: record.at,
     title: record.title,
@@ -765,7 +803,7 @@ function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView):
     // fold mints one only for a COMPLETED job WITH a result; a pending or
     // failed job renders no capsule — nothing fabricated, L20).
     return [
-      ...jobSheet(state.scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : [])),
+      ...jobSheet(state.scope, job, viewAt),
       ...capsulesFromJobs(state.scope, [job]).map((capsule) => capsuleInline(capsule, viewAt, view.openCapsule)),
     ];
   }
@@ -900,7 +938,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       ]);
   } else if (selector === 'research') {
       const projected = projectToView(state.jobs.filter((job) => job.kind === 'research'), viewAt, availabilityOfJob);
-      const cards = projected.map((job) => jobCard(scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : [])));
+      const cards = projected.map((job) => jobCard(scope, job, viewAt));
       return v('section', { class: 'panel', 'data-section': 'research' }, [
         ...cards,
         ...(projected.length === 0 ? [sectionEmpty('research')] : []),
@@ -911,7 +949,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       for (const outcome of projectToView(state.outcomes, viewAt, availabilityOfOutcome)) {
         if (outcome.lineage.experiment !== null) experiments.set(outcome.lineage.experiment.experimentRef, outcome.lineage.experiment.trialRef);
       }
-      const cards = projected.map((job) => jobCard(scope, job, viewAt, null));
+      const cards = projected.map((job) => jobCard(scope, job, viewAt));
       return v('section', { class: 'panel', 'data-section': 'experiments' }, [
         v('div', { class: 'card' }, [
           v('div', { class: 'card-title' }, ['Experiment lineage']),

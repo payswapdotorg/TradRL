@@ -185,7 +185,8 @@ class FakeDocument {
   private readonly listeners = new Map<string, Array<(event: Record<string, unknown>) => void>>();
   /** Every element ever created (the export-workspace anchor is found here). */
   readonly created: FakeElement[] = [];
-  readonly activeElement: FakeElement | null = null;
+  /** The document's active element (the browser's focus surface — D-10's focus-preservation tests set it directly; null everywhere else, exactly the pre-D-10 harness behavior). */
+  activeElement: FakeElement | null = null;
   /** The harness's focus tracker (the browser's focus semantics — typeField/blurField move it like the real thing). */
   focused: FakeElement | null = null;
   /** The document head (the R8 supplement's injection target — W-19); a fake element with an id-based querySelector. */
@@ -220,7 +221,7 @@ class FakeDocument {
     return this.rootsById.get(id) ?? null;
   }
 
-  /** The focus traps' query surface: descendant selectors of .class and [data-action="value"] tokens. */
+  /** The focus traps' query surface: descendant selectors of .class and [data-action="value"] tokens. D-10 (W-29): the walk is LIVE-ONLY — the document-connected tree (a created element whose parent is EXTERNAL to the created set, like the rig's mount host) matches; a detached node's parent is null and never does, so a re-projection's stale trees can never answer a query the way the browser's document never would. */
   querySelectorAll(selector: string): FakeElement[] {
     const tokens = selector.split(' ').filter((part) => part.length > 0);
     const matchesToken = (element: FakeElement, token: string): boolean => {
@@ -245,8 +246,10 @@ class FakeDocument {
       if (matches(element, tokens)) found.push(element);
       for (const child of element.children) walk(child);
     };
+    const createdSet = new Set<FakeElement>(this.created);
+    const isLiveRoot = (element: FakeElement): boolean => element.parent !== null && !createdSet.has(element.parent);
     for (const element of this.created) {
-      if (element.parent === null) walk(element);
+      if (isLiveRoot(element)) walk(element);
     }
     return found;
   }
@@ -3438,3 +3441,141 @@ describe('executed boot: D-6d (W-25C) — the documentElement data-theme at pain
     expect(shellOf(rig.root).getAttribute('data-theme')).toBe('light');
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-10 (W-29) — THE KEYBOARD PATH SURVIVES THE BEAT RE-PROJECTION. The
+// persona finding (L5, even at 1440x900): "keyboard focus+Enter failed
+// to activate" the Settings nav item — Tab lands the focus, the ~1s
+// beat re-projection replaces the WHOLE tree (the focused button is a
+// detached node), the focus falls back to <body> and Enter activates
+// nothing. The render pass now captures the focused affordance's
+// delegated-vocabulary identity and re-focuses its equivalent node on
+// the fresh projection. (The layout half of D-10 — the sidebar's
+// single scroll flow so nothing covers the nav's tail — is pinned as
+// CSS-as-data in src/shell/sidebar-layout.test.ts; the two together
+// are the fix.)
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-10 (W-29) — the keyboard focus survives the beat re-projection', () => {
+  it('a focused NAV ITEM re-gains focus on the next re-projection: Tab -> beat -> Enter stays on the Settings item (the persona path)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    // the keyboard user Tabs to the Settings nav item (the browser's focus surface carries it)
+    const settingsItem = elementsOf(rig.root).find((element) => element.getAttribute('data-target') === 'settings' && element.hasClass('nav-item'));
+    if (settingsItem === undefined) throw new Error('no Settings nav item in the tree');
+    rig.doc.activeElement = settingsItem;
+    // a beat lands (the poll cadence re-observes now and re-projects the whole tree — the focused element is replaced)
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 2000 });
+    // the fresh projection's Settings item received the focus restore
+    const freshItem = elementsOf(rig.root).find((element) => element.getAttribute('data-target') === 'settings' && element.hasClass('nav-item'));
+    if (freshItem === undefined) throw new Error('no Settings nav item on the fresh projection');
+    expect(freshItem.focusCount, 'the replaced Settings item was re-focused').toBeGreaterThan(0);
+    expect(freshItem).not.toBe(settingsItem); // the beat really replaced the node (the pin is not vacuous)
+  });
+
+  it('a focused notice READ TOGGLE restores by its UNIQUE notice id (never a sibling that shares the action class)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 21, job: FAILED_JOB_2 });
+    clickNav(rig, 'inbox');
+    const notices = rig.handle.state().inbox.notices;
+    expect(notices.length).toBe(2); // two failed_evaluation notices (distinct content-addressed ids)
+    const second = notices[1];
+    if (second === undefined) throw new Error('fixture: two notices required');
+    const secondToggle = findByData(rig.root, 'data-notice-read', second.noticeId);
+    if (secondToggle === null) throw new Error('the second notice carries no read toggle');
+    rig.doc.activeElement = secondToggle;
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 2000 }); // the beat's re-projection
+    // the restore landed on the SECOND notice's toggle — its own id — not the first sibling's
+    const freshSecond = findByData(rig.root, 'data-notice-read', second.noticeId);
+    const freshFirst = findByData(rig.root, 'data-notice-read', (notices[0] as { readonly noticeId: string }).noticeId);
+    if (freshSecond === null || freshFirst === null) throw new Error('the fresh projection carries both toggles');
+    expect(freshSecond.focusCount).toBeGreaterThan(0);
+    expect(freshFirst.focusCount).toBe(0); // the sibling was never focused
+  });
+
+  it('a re-projection with NOTHING focused restores nothing (the pass never invents a focus)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    rig.doc.activeElement = null; // the browser's <body> — no affordance carried the focus
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 2000 });
+    for (const element of elementsOf(rig.root)) {
+      expect(element.focusCount, `an unfocused beat must focus nothing (${element.tagName})`).toBe(0);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-13 (W-29) — THE PROJECT-SCOPED INBOX, executed. The persona finding
+// (M4/M5/L5): the Inbox was tenant-scoped while every section panel was
+// project-scoped — a multi-desk tenant saw the demo project's seed notices
+// inside their own desk's inbox (7 unread = 5 demo + 2 own). The inbox
+// SURFACE is now project-scoped (the state keeps every session notice,
+// append-only); the bell badge, the toast and mark-all-read follow the same
+// scoped fold.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-13 (W-29) — the project-scoped inbox across a desk switch', () => {
+  /** A second desk's failed job (the failed_evaluation signal, scoped to proj-b). */
+  const FAILED_JOB_B: JobRecord = {
+    jobId: 'job-desk-b',
+    kind: 'research',
+    tenant: 'tenant-a',
+    project: 'prj-b',
+    status: 'failed',
+    submittedAt: T0 + 40,
+  };
+
+  it('the Inbox lists ONLY the current desk\'s notices after a scope switch; mark-all-read marks the CURRENT desk only; switching back restores the other desk\'s unread state', async () => {
+    const noticeReadStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { noticeReadStorage });
+    // desk A (prj-a, the booted scope) folds its notice
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    expect(rig.handle.state().inbox.notices).toHaveLength(1);
+    // the switcher adopts desk B (prj-b) — the same reset+switch transition a launch rides
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 30, projectId: 'prj-b' });
+    // desk B folds its own notice (the state now carries BOTH desks' notices)
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 41, job: FAILED_JOB_B });
+    expect(rig.handle.state().inbox.notices).toHaveLength(2); // the STATE keeps both (append-only)
+
+    clickNav(rig, 'inbox');
+    // the panel renders ONLY desk B's row — the demo/desk-A notice never renders here
+    expect(findByData(rig.root, 'data-notice-read', (rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-b') as { readonly noticeId: string }).noticeId)).not.toBeNull();
+    expect(findByData(rig.root, 'data-notice-read', (rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-a') as { readonly noticeId: string }).noticeId)).toBeNull(); // desk A's row is not in THIS desk's inbox
+    expect(findByData(rig.root, 'data-inbox-scope', 'prj-b')).not.toBeNull(); // the scoping is stated in the copy
+    const aside = elementsOf(rig.root).find((element) => element.hasClass('inbox'));
+    if (aside === undefined) throw new Error('no inbox aside');
+    expect(aside.getAttribute('data-unread')).toBe('1'); // the scoped count, never the two-desk total
+
+    // "Mark all read" on desk B's inbox marks desk B's notice ONLY
+    clickAction(rig, 'notices-read-all');
+    const deskANotice = rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-a');
+    const deskBNotice = rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-b');
+    if (deskANotice === undefined || deskBNotice === undefined) throw new Error('fixture: both desks folded');
+    expect(rig.handle.state().inbox.readNoticeIds).toContain(deskBNotice.noticeId); // desk B marked
+    expect(rig.handle.state().inbox.readNoticeIds).not.toContain(deskANotice.noticeId); // desk A KEEPS its unread state
+
+    // switching BACK to desk A: its notice is still there and still unread
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 50, projectId: 'prj-a' });
+    clickNav(rig, 'inbox');
+    const restoredToggle = findByData(rig.root, 'data-notice-read', deskANotice.noticeId);
+    expect(restoredToggle).not.toBeNull(); // desk A's row is back in ITS inbox, still unread (the toggle renders on unread rows)
+    expect(findByData(rig.root, 'data-inbox-scope', 'prj-a')).not.toBeNull();
+  });
+
+  it('the read-state write-through persists exactly the marks the SCOPED mark-all applied (another desk\'s notice stays unread across reloads)', async () => {
+    const noticeReadStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { noticeReadStorage });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 30, projectId: 'prj-b' });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 41, job: FAILED_JOB_B });
+    clickNav(rig, 'inbox');
+    clickAction(rig, 'notices-read-all'); // marks desk B's notice only
+    const stored = noticeReadStorage.map.get('tradrl_notice_read');
+    if (stored === undefined) throw new Error('the mark-all write-through persisted nothing');
+    const marks = JSON.parse(stored) as Record<string, 1>;
+    const deskAKey = `tenant-a/prj-a/${(rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-a') as { readonly noticeId: string }).noticeId}`;
+    const deskBKey = `tenant-a/prj-b/${(rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-b') as { readonly noticeId: string }).noticeId}`;
+    expect(marks[deskBKey]).toBe(1);  // desk B's mark persisted
+    expect(marks[deskAKey]).toBeUndefined(); // desk A's notice was never marked by desk B's action
+  });
+});
+
