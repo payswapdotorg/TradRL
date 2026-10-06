@@ -21,13 +21,18 @@
 //     LIVE submission the demo gateway has routed for the project.
 //
 //   GET /v1/projects/:projectId/goal
-//     THE SEEDED GOAL + CONSTRAINT SET (R5 — "a limit without a number
-//     is not a limit"): the demo project's goal statement and
-//     constraint set with NUMERIC predicate bounds end-to-end. Serves
-//     the DEMO project's seeded goal; any other project answers the
-//     typed not-found (only the demo project has a host-seeded goal —
-//     launched projects carry their goal/constraint set in their own
-//     create request, which the console already holds).
+//     EVERY PROJECT'S OWN GOAL + CONSTRAINT SET (R5 — "a limit without
+//     a number is not a limit"; W-25B, D-4): the demo project's goal
+//     statement and constraint set with NUMERIC predicate bounds
+//     end-to-end (the seeded records, byte-identical to the pre-W-25B
+//     behavior), and EVERY OTHER project's own goal + constraint set —
+//     the create-project records the demo backing retained at the
+//     control-plane port seam (runtime/demo.ts's demoControlPlane:
+//     every create rides the same port the demo seed's own create
+//     rides, so a LAUNCHED project's goal is on record the moment it
+//     exists — D-4's root cause was that the route never read them
+//     back). A project with no goal on record still answers the typed
+//     not-found (unknown and cross-tenant indistinguishable).
 //
 //   GET /v1/jobs?project=<projectId>   (W-25A, D-3)
 //     THE JOBS LIST: one page of JobRecord rows — the backing's
@@ -67,7 +72,9 @@
 // (serveDurableGoalRoute below) — the create-project input's goal +
 // constraint set, persisted at createProject time and rehydrated at every
 // cold start. The two backings serve their own data with the same
-// envelope discipline (never merged). The jobs list route (W-25A) is
+// envelope discipline (never merged); since W-25B the DEMO backing serves
+// the same story from its per-instance capture (above) — durable there,
+// in-memory here, one law. The jobs list route (W-25A) is
 // DEMO-BACKING-ONLY by the same construction: the durable job store
 // remains per-instance (PR #50's honest limitation — the async Apify
 // bridge is a later seam, NOT this wave's Neon scope), so under the
@@ -76,7 +83,7 @@
 //
 // Zero-dep law: platform APIs only. Spec anchors: R43 (the composed
 // API surface — additive), L12, L20, R46, phase2-competitive-report
-// R2/R5, D-5, D-3 (W-25A).
+// R2/R5, D-5, D-3 (W-25A), D-4 (W-25B).
 
 import {
   apiError,
@@ -92,7 +99,7 @@ import {
   type JobRecord,
   type RequestId,
 } from '../../../services/api/src/index';
-import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalStatement, demoSubmissionsOf, type DemoPorts } from './demo';
+import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, type DemoPorts } from './demo';
 import type { DurableBackingHandle } from './durable';
 
 /** The host auth's verdict: the credential tenant + principal behind the presented token. */
@@ -188,19 +195,41 @@ function matchProjectGoalPath(path: string): string | null {
   return isProjectId(projectId) ? projectId : null;
 }
 
-/** GET /v1/projects/:projectId/goal — the demo project's seeded goal + constraint set (R5). */
+/**
+ * GET /v1/projects/:projectId/goal (R5, W-25B/D-4) — the project's OWN goal
+ * + constraint set under the DEMO backing:
+ *   - the DEMO project -> the seeded records (the hard-coded
+ *     demoGoalStatement/demoConstraintSet exports — byte-identical to
+ *     the pre-W-25B behavior);
+ *   - a LAUNCHED project -> ITS OWN goal + constraint set, the create-input
+ *     records the backing retained at the control-plane port seam
+ *     (runtime/demo.ts's demoControlPlane — every create rides the same
+ *     port the demo seed's own create rides, so the capture holds them);
+ *   - a project with no goal on record (unknown ids, cross-tenant, a
+ *     refused create, a record lost to a serverless cold start) -> the
+ *     typed not-found (unchanged; unknown and cross-tenant stay
+ *     indistinguishable, the boundary's own law).
+ * L12 by construction: the served records are the AUTHORIZED tenant's
+ * own (the fold keys on `authorization.tenant`, never a request value —
+ * a foreign tenant's goal never crosses).
+ */
 function projectGoalRoute(input: DemoSubstanceRouteInput, request: DemoSubstanceRequest, requestId: RequestId, projectId: string): ApiResponse {
   const authorization = input.verifyDeveloperAuthorization(request.headers.authorization);
   if (authorization === null) {
     return demoRouteError(requestId, apiError('unauthenticated', 'a Bearer credential token is required on every route of this boundary'));
   }
-  if (projectId !== DEMO_PROJECT_ID) {
-    // Only the demo project has a host-seeded goal statement — honest typed
-    // not-found for every other project (unknown and cross-tenant stay
-    // indistinguishable, the boundary's own law).
-    return demoRouteError(requestId, apiError('not_found', `no seeded goal statement exists for ${JSON.stringify(projectId)} at this host (the goal read serves the demo project's seeded goal)`));
+  if (projectId === DEMO_PROJECT_ID) {
+    // The seeded records — byte-identical to the pre-W-25B serve (the demo
+    // project's goal stays the fixed seed whatever the capture holds).
+    return demoRouteSuccess(requestId, deepFreeze({ goal: demoGoalStatement(authorization.tenant), constraintSet: demoConstraintSet(authorization.tenant) }));
   }
-  return demoRouteSuccess(requestId, deepFreeze({ goal: demoGoalStatement(authorization.tenant), constraintSet: demoConstraintSet(authorization.tenant) }));
+  const captured = demoGoalSetOf(input.ports, authorization.tenant, projectId);
+  if (captured === null) {
+    // No goal on record for this project at this host (unknown and
+    // cross-tenant stay indistinguishable, the boundary's own law).
+    return demoRouteError(requestId, apiError('not_found', `no goal statement exists for ${JSON.stringify(projectId)} at this host (the goal read serves each project's own create-project records; nothing is on record for this one)`));
+  }
+  return demoRouteSuccess(requestId, deepFreeze({ goal: captured.goal, constraintSet: captured.constraintSet }));
 }
 
 // ---------------------------------------------------------------------------

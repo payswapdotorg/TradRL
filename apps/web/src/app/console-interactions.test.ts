@@ -55,6 +55,7 @@ import type { ConsoleHandle } from './console';
 import { bootConsole, readStoredScopeProject, SCOPE_STORAGE_KEY } from './console';
 import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
+import { toCreateProjectInput } from '../core/launch';
 import type { JobRecord, OutcomeRecord } from '../api/contracts';
 import { verifyWorkspaceExport, viewAtOf } from '../core/workspace';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
@@ -2412,6 +2413,71 @@ describe('executed boot: D-1 — the goal boot seam (the goal/constraint-set fet
     expect(rig.handle.state().constraintSet?.id).toBe('cs-tradrl-demo');
     clickNav(rig, 'goal');
     expect(elementsOf(rig.root).some((element) => textOf(element) === 'Goal statement')).toBe(true); // the card renders again
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+  });
+
+  it("D-4/W-25B — a LAUNCHED project's OWN goal (the create-project records the demo backing now serves): the boot read loads THEM, and the Goal/Risk cards render the DRAFTED numeric bounds after the reload", async () => {
+    // The launched project's create-project records, built by the REAL
+    // launch-flow builder (toCreateProjectInput over the rig's own valid
+    // draft — the exact records the launch wizard sends on POST
+    // /v1/projects). The host-owned goal route serves them back since
+    // W-25B (deploy/vercel — the demo backing retains every create's
+    // goal + constraint set); this rig pins the CONSOLE's half: the W-23
+    // boot read — the path a reload takes — dispatches goal-loaded with
+    // THEM and the cards render the drafted numeric bounds (no console
+    // change: the seam was already wired; the route finally answers 200).
+    const ids = { projectId: 'prj-launched', goalId: 'goal-launched-1', constraintSetId: 'cs-launched-1' };
+    const created = toCreateProjectInput(VALID_DRAFT, ids, 'tenant-a', T0);
+    const goalReads = { count: 0, projects: [] as string[] };
+    const project = {
+      id: 'prj-launched', tenantId: 'tenant-a', name: created.name, executionMode: 'simulation',
+      lifecycle: { projectId: 'prj-launched', status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+      lineage: { projectId: 'prj-launched', createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: ids.goalId, version: 1 }, constraintSet: { id: ids.constraintSetId, version: 1 } },
+      createdAt: T0, updatedAt: T0,
+    };
+    const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      const key = `${request.method} ${path}`;
+      if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+      if (key === 'GET /v1/projects') return ok({ items: [project] });
+      if (key === 'GET /v1/projects/prj-launched') return ok(project);
+      if (path === '/v1/projects/prj-launched/goal') {
+        goalReads.count += 1;
+        goalReads.projects.push(decodeURIComponent(request.path.split('?project=')[1] ?? ''));
+        return ok({ goal: created.goal, constraintSet: created.constraintSet }); // THE LAUNCHED PROJECT'S OWN RECORDS (the W-25B serve)
+      }
+      if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+      if (key === 'GET /v1/execution/submissions') return ok({ items: [] });
+      if (key === 'GET /v1/jobs') return ok({ items: [] });
+      return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
+    };
+    // THE RELOAD: boot straight into the LAUNCHED scope (the page-reload path — no launch event ever fires in this session).
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, transport, 'prj-launched');
+    expect(goalReads.count).toBeGreaterThan(0); // the boot goal read fired for the LAUNCHED scope
+    expect(goalReads.projects.every((readProject) => readProject === 'prj-launched')).toBe(true);
+    expect(rig.handle.state().goal?.id).toBe('goal-launched-1'); // ITS OWN goal, never the demo seed's
+    expect(rig.handle.state().goal?.objective).toBe('Find and keep an edge in momentum.'); // the drafted objective
+    expect(rig.handle.state().constraintSet?.id).toBe('cs-launched-1');
+    expect(rig.handle.state().constraintSet?.constraints.map((constraint) => constraint.id)).toEqual(['c-1', 'k-capital-budget', 'k-risk-budget']); // the drafted constraint + the launch flow's own budget pair
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+
+    // the Goal section renders the "Goal statement" card with the DRAFTED objective + criteria (numeric bounds included)
+    clickNav(rig, 'goal');
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Goal statement')).toBe(true);
+    const goalTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(goalTexts).toContain('Find and keep an edge in momentum.'); // the drafted objective
+    expect(goalTexts).toContain('criterion sc-1'); // the drafted criterion
+    expect(goalTexts).toContain('pnl.net limit.min 0'); // WITH the drafted numeric bound
+
+    // the Risk section renders its "Constraint set" card with the DRAFTED numeric bounds
+    clickNav(rig, 'risk');
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'Constraint set')).toBe(true);
+    const riskTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(riskTexts).toContain('blocking c-1'); // the drafted constraint
+    expect(riskTexts).toContain('outcome.risk.maxDrawdown limit.max 0.2'); // the DRAFTED numeric bound (R5)
+    expect(riskTexts).toContain('blocking k-capital-budget'); // the launch flow's own budget constraint
+    expect(riskTexts).toContain('outcome.capital.budget equals 10000.00'); // the exact decimal string the draft carried
     expect(rig.handle.state().degraded).toEqual([]); // honest throughout
   });
 });
