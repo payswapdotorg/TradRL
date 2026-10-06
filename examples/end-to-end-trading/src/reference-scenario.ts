@@ -65,7 +65,7 @@ function quoteEvent(
   };
 }
 
-function newsEvent(sequence: number, instrument: string, minutesOffset: number, score: string, headline: string): TradingScenario['marketEvents'][number] {
+function newsEvent(sequence: number, instrument: string, minutesOffset: number, headline: string): TradingScenario['marketEvents'][number] {
   const at = T0 + minutesOffset * MINUTE;
   return {
     event_id: `ev-news-${sequence.toString().padStart(3, '0')}`,
@@ -80,11 +80,11 @@ function newsEvent(sequence: number, instrument: string, minutesOffset: number, 
     sequence,
     provider: 'refsim-news',
     provenance: { origin: 'historical', adapter: { id: 'adapter-example-news', version: '0.0.0' }, derived_from: [], transform: null },
-    payload: { headline, sentiment_score: score, source: 'reference-wire' },
+    payload: { headline, symbols: [instrument], source: 'reference-wire' },
   };
 }
 
-function socialEvent(sequence: number, instrument: string, minutesOffset: number, score: string, mentions: number): TradingScenario['marketEvents'][number] {
+function socialEvent(sequence: number, instrument: string, minutesOffset: number, score: string): TradingScenario['marketEvents'][number] {
   const at = T0 + minutesOffset * MINUTE;
   return {
     event_id: `ev-social-${sequence.toString().padStart(3, '0')}`,
@@ -99,11 +99,11 @@ function socialEvent(sequence: number, instrument: string, minutesOffset: number
     sequence,
     provider: 'refsim-social',
     provenance: { origin: 'historical', adapter: { id: 'adapter-example-alternative', version: '0.0.0' }, derived_from: [], transform: null },
-    payload: { platform: 'reference-forum', sentiment_score: score, mention_count: mentions },
+    payload: { platform: 'reference-forum', metric: 'sentiment-score', value: score },
   };
 }
 
-function fundamentalEvent(sequence: number, instrument: string, minutesOffset: number, series: string, score: string): TradingScenario['marketEvents'][number] {
+function fundamentalEvent(sequence: number, instrument: string, minutesOffset: number, period: string, value: string): TradingScenario['marketEvents'][number] {
   const at = T0 + minutesOffset * MINUTE;
   return {
     event_id: `ev-fund-${sequence.toString().padStart(3, '0')}`,
@@ -118,11 +118,11 @@ function fundamentalEvent(sequence: number, instrument: string, minutesOffset: n
     sequence,
     provider: 'refsim-fundamentals',
     provenance: { origin: 'historical', adapter: { id: 'adapter-example-equities', version: '0.0.0' }, derived_from: [], transform: null },
-    payload: { series, assessment_kind: 'valuation-level', surprise_score: score },
+    payload: { field: 'INDEX_LEVEL', period, value, unit: 'index' },
   };
 }
 
-function macroEvent(sequence: number, instrument: string, minutesOffset: number, indicator: string, surprise: string): TradingScenario['marketEvents'][number] {
+function macroEvent(sequence: number, instrument: string, minutesOffset: number, actual: string, forecast: string): TradingScenario['marketEvents'][number] {
   const at = T0 + minutesOffset * MINUTE;
   return {
     event_id: `ev-macro-${sequence.toString().padStart(3, '0')}`,
@@ -137,7 +137,7 @@ function macroEvent(sequence: number, instrument: string, minutesOffset: number,
     sequence,
     provider: 'refsim-macro',
     provenance: { origin: 'historical', adapter: { id: 'adapter-example-equities', version: '0.0.0' }, derived_from: [], transform: null },
-    payload: { indicator, surprise },
+    payload: { indicator: 'CPI_REFERENCE', region: 'US', period: 'm-1', actual, forecast },
   };
 }
 
@@ -224,43 +224,60 @@ export const REFERENCE_SCENARIO: TradingScenario = deepFreeze({
     { venue: 'REFSIM', instrument: 'ETH-USDT', assetClass: 'crypto', lotSize: '0.01', tickSize: '0.01' },
   ],
   marketEvents: [
-    // First window [5m, 20m] — the opening tape.
+    // ===== Window 1 [0, 20m] =====
     tradeEvent(1, 'BTC-USDT', 1, '50000', '0.30', 'buy'),
-    tradeEvent(2, 'ETH-USDT', 1, '3000', '6', 'buy'),
-    newsEvent(3, 'BTC-USDT', 2, '0.60', 'Reference exchange lists new institutional custody desk'),
-    socialEvent(4, 'ETH-USDT', 3, '0.20', 340),
-    fundamentalEvent(5, 'BTC-USDT', 4, 'INDEX_LEVEL', '0.10'),
-    macroEvent(6, 'ETH-USDT', 6, 'CPI_REFERENCE', '0.02'),
-    quoteEvent(7, 'BTC-USDT', 7, '50100', '50200'),
-    tradeEvent(8, 'BTC-USDT', 9, '50100', '0.25', 'buy'),
-    tradeEvent(9, 'ETH-USDT', 10, '3010', '5', 'buy'),
-    tradeEvent(10, 'BTC-USDT', 13, '50200', '0.40', 'buy'),
-    tradeEvent(11, 'ETH-USDT', 14, '3020', '4', 'buy'),
-    tradeEvent(12, 'BTC-USDT', 17, '50300', '0.20', 'buy'),
-    tradeEvent(13, 'ETH-USDT', 18, '3030', '7', 'sell'),
-    quoteEvent(14, 'ETH-USDT', 19, '3035', '3045'),
-    // Second window [25m, 40m].
-    tradeEvent(15, 'BTC-USDT', 25, '51000', '0.35', 'buy'),
-    tradeEvent(16, 'ETH-USDT', 26, '3060', '5', 'buy'),
-    newsEvent(17, 'BTC-USDT', 28, '0.55', 'Reference custody desk inflows hit a record'),
-    socialEvent(18, 'ETH-USDT', 29, '0.25', 410),
-    tradeEvent(19, 'BTC-USDT', 30, '51300', '0.30', 'buy'),
-    tradeEvent(20, 'ETH-USDT', 31, '3075', '6', 'buy'),
-    fundamentalEvent(21, 'BTC-USDT', 33, 'INDEX_LEVEL', '0.12'),
-    tradeEvent(22, 'BTC-USDT', 35, '51600', '0.28', 'buy'),
-    tradeEvent(23, 'ETH-USDT', 36, '3090', '5', 'buy'),
-    macroEvent(24, 'ETH-USDT', 38, 'CPI_REFERENCE', '0.03'),
-    // Third window [45m, 60m].
-    tradeEvent(25, 'BTC-USDT', 45, '51800', '0.33', 'buy'),
-    tradeEvent(26, 'ETH-USDT', 46, '3100', '6', 'buy'),
-    newsEvent(27, 'BTC-USDT', 48, '0.58', 'Reference desk announces expanded coverage'),
-    socialEvent(28, 'ETH-USDT', 49, '0.30', 380),
-    tradeEvent(29, 'BTC-USDT', 50, '52000', '0.29', 'buy'),
-    tradeEvent(30, 'ETH-USDT', 51, '3110', '5', 'buy'),
-    fundamentalEvent(31, 'BTC-USDT', 53, 'INDEX_LEVEL', '0.09'),
-    tradeEvent(32, 'BTC-USDT', 55, '52200', '0.26', 'buy'),
-    tradeEvent(33, 'ETH-USDT', 56, '3120', '4', 'buy'),
-    macroEvent(34, 'ETH-USDT', 58, 'CPI_REFERENCE', '0.01'),
+    tradeEvent(2, 'ETH-USDT', 1.1, '3000', '6', 'buy'),
+    newsEvent(3, 'BTC-USDT', 2, 'Reference exchange lists new institutional custody desk'),
+    socialEvent(4, 'BTC-USDT', 3, '0.60'),
+    socialEvent(5, 'ETH-USDT', 3.5, '0.20'),
+    fundamentalEvent(6, 'BTC-USDT', 4, 'w-2', '1000.00'),
+    fundamentalEvent(7, 'BTC-USDT', 4.5, 'w-1', '1030.00'),
+    macroEvent(8, 'ETH-USDT', 6, '2.50', '2.20'),
+    tradeEvent(9, 'BTC-USDT', 9, '50100', '0.25', 'buy'),
+    tradeEvent(10, 'ETH-USDT', 9.2, '3010', '5', 'buy'),
+    tradeEvent(11, 'BTC-USDT', 9.5, '50600', '0.28', 'buy'),
+    tradeEvent(12, 'ETH-USDT', 9.7, '3040', '6', 'buy'),
+    tradeEvent(13, 'BTC-USDT', 13, '50700', '0.30', 'buy'),
+    tradeEvent(14, 'ETH-USDT', 13.2, '3050', '5', 'buy'),
+    tradeEvent(15, 'BTC-USDT', 13.5, '51200', '0.26', 'buy'),
+    tradeEvent(16, 'ETH-USDT', 13.7, '3080', '4', 'buy'),
+    quoteEvent(17, 'BTC-USDT', 15, '51250', '51350'),
+    tradeEvent(18, 'BTC-USDT', 17, '51300', '0.20', 'buy'),
+    tradeEvent(19, 'ETH-USDT', 18, '3090', '7', 'buy'),
+    // ===== Window 2 [25m, 40m] =====
+    tradeEvent(20, 'BTC-USDT', 25, '51400', '0.35', 'buy'),
+    tradeEvent(21, 'ETH-USDT', 25.2, '3100', '5', 'buy'),
+    tradeEvent(22, 'BTC-USDT', 25.5, '51900', '0.31', 'buy'),
+    tradeEvent(23, 'ETH-USDT', 25.7, '3130', '6', 'buy'),
+    newsEvent(24, 'BTC-USDT', 28, 'Reference custody desk inflows hit a record'),
+    socialEvent(25, 'BTC-USDT', 29, '0.55'),
+    socialEvent(26, 'ETH-USDT', 29.5, '0.25'),
+    tradeEvent(27, 'BTC-USDT', 30, '52000', '0.30', 'buy'),
+    tradeEvent(28, 'ETH-USDT', 30.2, '3140', '5', 'buy'),
+    tradeEvent(29, 'BTC-USDT', 30.5, '52500', '0.27', 'buy'),
+    tradeEvent(30, 'ETH-USDT', 30.7, '3170', '6', 'buy'),
+    fundamentalEvent(31, 'BTC-USDT', 33, 'w-1', '1030.00'),
+    fundamentalEvent(32, 'BTC-USDT', 33.5, 'w-0', '1055.00'),
+    tradeEvent(33, 'BTC-USDT', 35, '52600', '0.33', 'buy'),
+    tradeEvent(34, 'ETH-USDT', 36, '3180', '5', 'buy'),
+    macroEvent(35, 'ETH-USDT', 38, '2.60', '2.30'),
+    // ===== Window 3 [45m, 60m] =====
+    tradeEvent(36, 'BTC-USDT', 45, '52700', '0.33', 'buy'),
+    tradeEvent(37, 'ETH-USDT', 45.2, '3190', '6', 'buy'),
+    tradeEvent(38, 'BTC-USDT', 45.5, '53200', '0.29', 'buy'),
+    tradeEvent(39, 'ETH-USDT', 45.7, '3220', '5', 'buy'),
+    newsEvent(40, 'BTC-USDT', 48, 'Reference desk announces expanded coverage'),
+    socialEvent(41, 'BTC-USDT', 49, '0.58'),
+    socialEvent(42, 'ETH-USDT', 49.5, '0.30'),
+    tradeEvent(43, 'BTC-USDT', 50, '53300', '0.26', 'buy'),
+    tradeEvent(44, 'ETH-USDT', 50.2, '3230', '5', 'buy'),
+    tradeEvent(45, 'BTC-USDT', 50.5, '53800', '0.24', 'buy'),
+    tradeEvent(46, 'ETH-USDT', 50.7, '3260', '4', 'buy'),
+    fundamentalEvent(47, 'BTC-USDT', 53, 'w-1', '1055.00'),
+    fundamentalEvent(48, 'BTC-USDT', 53.5, 'w-0', '1080.00'),
+    tradeEvent(49, 'BTC-USDT', 55, '53900', '0.21', 'buy'),
+    tradeEvent(50, 'ETH-USDT', 56, '3270', '5', 'buy'),
+    macroEvent(51, 'ETH-USDT', 58, '2.40', '2.35'),
   ],
   bookSeeds: [
     {
@@ -313,7 +330,7 @@ export const REFERENCE_SCENARIO: TradingScenario = deepFreeze({
       grantScopeRef: 'grant:e2e-execute-limit@1',
       orderKinds: ['limit'],
       rateBudget: { windowMs: 45 * MINUTE, maxOrders: 10 },
-      grantRateBudget: { windowMs: 45 * MINUTE, maxOrders: 2 },
+      grantRateBudget: { windowMs: 45 * MINUTE, maxOrders: 3 },
       credentialRef: 'cred:e2e-main@1',
       adapterRef: 'adapter:adapter-example-paper@0.0.0',
       channelRef: 'chan:newOrderSingle',

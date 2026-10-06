@@ -14,7 +14,7 @@
 // canonical form WITHOUT the id field.
 
 import {
-  add, compare, decimalDispersionHalfEven, decimalMeanHalfEven, divideRoundHalfEven,
+  add, compare, decimalDispersionAt, decimalMeanAt, decimalRatioAt, divideRoundHalfEven,
   signedSubtract, subtract,
 } from './decimals';
 import { canonicalJson, deepFreeze, stableDigest16Json, type JsonValue } from './primitives';
@@ -56,6 +56,8 @@ const EMPTY_COVERAGE: IntakeCoverageMirror = {
 };
 
 function coverageOf(offered: number, admitted: number): IntakeCoverageMirror {
+  // The lane is offered only ITS observation kinds; everything offered is
+  // either admitted or explicitly bucketed (nothing silently dropped).
   return { ...EMPTY_COVERAGE, observationsOffered: offered, observationsAdmitted: admitted };
 }
 
@@ -99,8 +101,13 @@ export function runSentimentResearch(world: ReactiveWorld, config: ResearchRunCo
     (event): event is Extract<MarketEventMirror, { event_type: 'news' | 'social_signal' }> =>
       event.event_type === 'news' || event.event_type === 'social_signal',
   );
-  const groups = new Map<string, typeof sentimentEvents>();
-  for (const event of sentimentEvents) {
+  // THE REAL LAW: readings derive from social_signal scores only
+  // (payload.value); news feeds event-detection digests and coverage.
+  const scoreEvents = sentimentEvents.filter(
+    (event): event is Extract<MarketEventMirror, { event_type: 'social_signal' }> => event.event_type === 'social_signal',
+  );
+  const groups = new Map<string, typeof scoreEvents>();
+  for (const event of scoreEvents) {
     const key = `${event.instrument}|${event.venue}`;
     const bucket = groups.get(key);
     if (bucket === undefined) groups.set(key, [event]);
@@ -111,9 +118,9 @@ export function runSentimentResearch(world: ReactiveWorld, config: ResearchRunCo
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([key, bucket]) => {
       const [instrument, venue] = key.split('|') as [string, string];
-      const scores = bucket.map((event) => (event.event_type === 'news' ? event.payload.sentiment_score : event.payload.sentiment_score));
-      const mean = decimalMeanHalfEven(scores, OUTPUT_SCALE)!;
-      const dispersion = decimalDispersionHalfEven(scores, OUTPUT_SCALE);
+      const scores = bucket.map((event) => event.payload.value);
+      const mean = decimalMeanAt(scores, OUTPUT_SCALE)!;
+      const dispersion = decimalDispersionAt(scores, OUTPUT_SCALE);
       // Polarity — the validator law: neutral scores MUST be exactly zero.
       let direction: 'positive' | 'negative' | 'mixed' | 'neutral';
       let recordedScore: string;
@@ -154,10 +161,12 @@ export function runSentimentResearch(world: ReactiveWorld, config: ResearchRunCo
       return deepFreeze({ ...content, readingId: deriveId('sr', content, 'readingId') });
     });
 
-  // Event digests: one per event kind over the window.
-  const kinds = [...new Set(sentimentEvents.map((event) => event.event_type))].sort();
+  // Event digests: one per closed-vocabulary event kind over the window.
+  const kindOf = (eventType: string): string =>
+    eventType === 'news' ? 'coverage-burst' : 'sentiment-spike';
+  const kinds = [...new Set(sentimentEvents.map((event) => kindOf(event.event_type)))].sort();
   const digests: EventDigestMirror[] = kinds.map((kind) => {
-    const bucket = sentimentEvents.filter((event) => event.event_type === kind);
+    const bucket = sentimentEvents.filter((event) => kindOf(event.event_type) === kind);
     const content = {
       kind,
       instruments: [...new Set(bucket.map((event) => event.instrument))].sort(),
@@ -193,8 +202,8 @@ export function runSentimentResearch(world: ReactiveWorld, config: ResearchRunCo
     digestCount: digests.length,
     instrumentCount: instruments.size,
     dominantPolarity: dominant,
-    meanPolarityScore: decimalMeanHalfEven(readings.map((reading) => reading.polarity.score), OUTPUT_SCALE),
-    coverage: coverageOf(events.length, sentimentEvents.length),
+    meanPolarityScore: decimalMeanAt(readings.map((reading) => reading.polarity.score), OUTPUT_SCALE),
+    coverage: coverageOf(sentimentEvents.length, sentimentEvents.length),
     dataGaps: readings.length === 0 ? [{ kind: 'no-sentiment-observations', instrument: '*' }] : [],
   };
   const content = {
@@ -244,19 +253,19 @@ export function runRegimeResearch(world: ReactiveWorld, config: ResearchRunConfi
       const first = prices[0]!;
       const last = prices[prices.length - 1]!;
       const netMove = signedSubtract(last, first);
-      const netMoveRatio = divideRoundHalfEven(netMove, first, OUTPUT_SCALE);
+      const netMoveRatio = decimalRatioAt(netMove, first, OUTPUT_SCALE);
       const absoluteChanges: string[] = [];
       for (let index = 1; index < prices.length; index++) {
         const change = signedSubtract(prices[index]!, prices[index - 1]!);
         absoluteChanges.push(change.startsWith('-') ? change.slice(1) : change);
       }
-      const meanAbsChange = decimalMeanHalfEven(absoluteChanges, OUTPUT_SCALE) ?? '0';
-      const meanAbsChangeRatio = divideRoundHalfEven(meanAbsChange, first, OUTPUT_SCALE);
+      const meanAbsChange = decimalMeanAt(absoluteChanges, OUTPUT_SCALE) ?? '0.0000';
+      const meanAbsChangeRatio = decimalRatioAt(meanAbsChange, first, OUTPUT_SCALE);
       const label = classifyRegimeWindow(netMoveRatio, meanAbsChangeRatio);
       type RegimeLabel = (typeof REGIME_TAXONOMY)[number];
       const typedLabel: RegimeLabel = label as RegimeLabel;
-      const dispersionPrices = decimalDispersionHalfEven(prices, OUTPUT_SCALE);
-      const dispersionRatio = dispersionPrices === null ? null : divideRoundHalfEven(dispersionPrices, first, OUTPUT_SCALE);
+      const dispersionPrices = decimalDispersionAt(prices, OUTPUT_SCALE);
+      const dispersionRatio = dispersionPrices === null ? null : decimalRatioAt(dispersionPrices, first, OUTPUT_SCALE);
       const evidenceCount = bucket.length;
       const confidenceLevel: 'high' | 'moderate' | 'low' =
         evidenceCount >= 5 && dispersionRatio !== null && compare(dispersionRatio, '0.2') <= 0
@@ -301,8 +310,8 @@ export function runRegimeResearch(world: ReactiveWorld, config: ResearchRunConfi
     instrumentCount: new Set(classifications.map((c) => c.scope.instrument)).size,
     windowCount: classifications.length,
     dominantRegime: dominant,
-    meanNetMoveRatio: decimalMeanHalfEven(classifications.map((c) => c.netMoveRatio), OUTPUT_SCALE),
-    coverage: coverageOf(events.length, tradeEvents.length),
+    meanNetMoveRatio: decimalMeanAt(classifications.map((c) => c.netMoveRatio), OUTPUT_SCALE),
+    coverage: coverageOf(tradeEvents.length, tradeEvents.length),
     dataGaps: classifications.length === 0 ? [{ kind: 'no-market-observations', instrument: '*' }] : [],
   };
   const content = {
@@ -332,30 +341,62 @@ export function runFundamentalResearch(world: ReactiveWorld, config: ResearchRun
       event.event_type === 'fundamental' || event.event_type === 'macro_release',
   );
 
-  const assessments: FundamentalAssessmentMirror[] = fundamentalEvents
-    .map((event) => {
-      const isMacro = event.event_type === 'macro_release';
-      const series = isMacro ? event.payload.indicator : event.payload.series;
-      const assessmentKind = isMacro ? 'macro-surprise' : event.payload.assessment_kind;
-      const score = isMacro ? event.payload.surprise : event.payload.surprise_score;
-      const thresholds = isMacro ? { positive: '0.005', negative: '-0.005' } : { positive: '0.02', negative: '-0.02' };
-      const direction: 'positive' | 'negative' | 'neutral' = compare(score, thresholds.positive) >= 0 ? 'positive' : compare(score, thresholds.negative) <= 0 ? 'negative' : 'neutral';
-      const method = isMacro ? M.fundamentalMacro : M.fundamentalValuation;
-      const content = {
-        scope: { instrument: event.instrument, series },
-        assessmentKind,
-        stance: { ...method, direction, score },
-        confidence: { ...M.fundamentalConfidence, level: 'moderate' as const, evidenceCount: 1, dispersion: null },
-        evidence: [citationOf(event)],
-        asOf: config.asOf,
-        bodyVersion: 'fundamental-researcher@1.0.0',
-        tenantId: config.tenant,
-        projectId: config.project,
-        seed: config.seed,
-      };
-      return deepFreeze({ ...content, assessmentId: deriveId('fa', content, 'assessmentId') });
-    })
-    .sort((a, b) => (a.assessmentId < b.assessmentId ? -1 : 1));
+  // Fundamental events: surprise = (current - prior) / prior per (instrument, field).
+  const valuationGroups = new Map<string, Extract<MarketEventMirror, { event_type: 'fundamental' }>[]>();
+  for (const event of fundamentalEvents) {
+    if (event.event_type !== 'fundamental') continue;
+    const key = `${event.instrument}|${event.payload.field}`;
+    const bucket = valuationGroups.get(key);
+    if (bucket === undefined) valuationGroups.set(key, [event]);
+    else bucket.push(event);
+  }
+  const assessments: FundamentalAssessmentMirror[] = [];
+  for (const [key, bucket] of [...valuationGroups.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const sorted = [...bucket].sort((a, b) => a.available_time - b.available_time);
+    if (sorted.length < 2) continue; // a surprise needs a pair
+    const [instrument, field] = key.split('|') as [string, string];
+    const prior = sorted[sorted.length - 2]!;
+    const current = sorted[sorted.length - 1]!;
+    const score = decimalRatioAt(signedSubtract(current.payload.value, prior.payload.value), prior.payload.value, OUTPUT_SCALE);
+    const direction: 'positive' | 'negative' | 'neutral' =
+      compare(score, '0.02') >= 0 ? 'positive' : compare(score, '-0.02') <= 0 ? 'negative' : 'neutral';
+    const content = {
+      scope: { instrument, series: field },
+      assessmentKind: 'valuation-level' as const,
+      stance: { ...M.fundamentalValuation, direction, score },
+      confidence: { ...M.fundamentalConfidence, level: 'moderate' as const, evidenceCount: sorted.length, dispersion: null },
+      evidence: [citationOf(prior), citationOf(current)],
+      asOf: config.asOf,
+      bodyVersion: 'fundamental-researcher@1.0.0',
+      tenantId: config.tenant,
+      projectId: config.project,
+      seed: config.seed,
+    };
+    assessments.push(deepFreeze({ ...content, assessmentId: deriveId('fa', content, 'assessmentId') }));
+  }
+
+  // Macro releases: surprise = (actual - forecast) / forecast.
+  for (const event of fundamentalEvents) {
+    if (event.event_type !== 'macro_release') continue;
+    if (event.payload.forecast === undefined) continue;
+    const score = decimalRatioAt(signedSubtract(event.payload.actual, event.payload.forecast), event.payload.forecast, OUTPUT_SCALE);
+    const direction: 'positive' | 'negative' | 'neutral' =
+      compare(score, '0.005') >= 0 ? 'positive' : compare(score, '-0.005') <= 0 ? 'negative' : 'neutral';
+    const content = {
+      scope: { instrument: event.instrument, series: event.payload.indicator },
+      assessmentKind: 'macro-surprise' as const,
+      stance: { ...M.fundamentalMacro, direction, score },
+      confidence: { ...M.fundamentalConfidence, level: 'moderate' as const, evidenceCount: 1, dispersion: null },
+      evidence: [citationOf(event)],
+      asOf: config.asOf,
+      bodyVersion: 'fundamental-researcher@1.0.0',
+      tenantId: config.tenant,
+      projectId: config.project,
+      seed: config.seed,
+    };
+    assessments.push(deepFreeze({ ...content, assessmentId: deriveId('fa', content, 'assessmentId') }));
+  }
+  assessments.sort((a, b) => (a.assessmentId < b.assessmentId ? -1 : 1));
 
   const actionDigests: CorporateActionDigestMirror[] = []; // no corporate-action events in the reference scenario
   const counts = new Map<string, number>();
@@ -374,8 +415,8 @@ export function runFundamentalResearch(world: ReactiveWorld, config: ResearchRun
     actionDigestCount: actionDigests.length,
     instrumentCount: new Set(assessments.map((a) => a.scope.instrument)).size,
     dominantStance: dominant,
-    meanStanceScore: decimalMeanHalfEven(assessments.map((a) => a.stance.score), OUTPUT_SCALE),
-    coverage: coverageOf(events.length, fundamentalEvents.length),
+    meanStanceScore: decimalMeanAt(assessments.map((a) => a.stance.score), OUTPUT_SCALE),
+    coverage: coverageOf(fundamentalEvents.length, fundamentalEvents.length),
     dataGaps: assessments.length === 0 ? [{ kind: 'no-fundamental-observations', instrument: '*' }] : [],
   };
   const content = {
@@ -424,7 +465,7 @@ export function runCrossMarketResearch(world: ReactiveWorld, config: ResearchRun
         if (trades.length < 2) return null;
         const first = trades[0]!.payload.price;
         const last = trades[trades.length - 1]!.payload.price;
-        const move = divideRoundHalfEven(signedSubtract(last, first), first, OUTPUT_SCALE);
+        const move = decimalRatioAt(signedSubtract(last, first), first, OUTPUT_SCALE);
         return { move };
       };
       windows.push({ start, left: inWindow(leftPrices)?.move ?? null, right: inWindow(rightPrices)?.move ?? null });
@@ -442,7 +483,7 @@ export function runCrossMarketResearch(world: ReactiveWorld, config: ResearchRun
         const rightSign = compare(window.right!, '0') >= 0 ? 1 : -1;
         if (leftSign === rightSign) matches += 1;
       }
-      const agreement = divideRoundHalfEven(
+      const agreement = decimalRatioAt(
         signedSubtract(String(matches), String(compared.length - matches)),
         String(compared.length),
         OUTPUT_SCALE,
@@ -488,8 +529,8 @@ export function runCrossMarketResearch(world: ReactiveWorld, config: ResearchRun
     pairCount: relationships.length,
     instrumentCount: new Set(relationships.flatMap((r) => [r.pair.left.instrument, r.pair.right.instrument])).size,
     dominantRelationKind: dominant,
-    meanMeasureScore: decimalMeanHalfEven(relationships.map((r) => r.measure.score), OUTPUT_SCALE),
-    coverage: coverageOf(events.length, tradeEvents.length),
+    meanMeasureScore: decimalMeanAt(relationships.map((r) => r.measure.score), OUTPUT_SCALE),
+    coverage: coverageOf(tradeEvents.length, tradeEvents.length),
     dataGaps: relationships.length === 0 ? [{ kind: 'no-relationship-observations', instrument: '*' }] : [],
   };
   const content = {

@@ -240,11 +240,17 @@ export function decimalDispersionHalfEven(values: readonly string[], scale: numb
   return render(false, max - min, scale);
 }
 
-/** True when `value` is an exact multiple of the positive decimal `grid`. */
+/** True when `value` is an exact multiple of the positive decimal `grid`
+ * (EXACT BigInt divisibility at the common scale — never rounded). */
 export function isAlignedToGrid(value: string, grid: string): boolean {
-  const quotient = divideRoundHalfUp(value, grid, 18);
-  const product = multiply(quotient, grid);
-  return isEqual(product, value);
+  const negative = value.startsWith('-');
+  const body = negative ? value.slice(1) : value;
+  const [vInt = '0', vFrac = ''] = body.split('.');
+  const [gInt = '0', gFrac = ''] = grid.split('.');
+  const scale = Math.max(vFrac.length, gFrac.length);
+  const v = BigInt(vInt + vFrac.padEnd(scale, '0'));
+  const g = BigInt(gInt + gFrac.padEnd(scale, '0'));
+  return g !== 0n && v % g === 0n;
 }
 
 /** Largest grid-aligned value <= `value` (lot-size flooring). */
@@ -262,4 +268,99 @@ export function floorToGrid(value: string, grid: string): string {
 /** Sum of a list of canonical decimals ('0' when empty). */
 export function sum(values: readonly string[]): string {
   return values.reduce((acc, value) => add(acc, value), '0');
+}
+
+
+// ---------------------------------------------------------------------------
+// Fixed-scale rendering (the bodies' law: values render at the declared
+// scale WITH trailing zeros — '0.6' at scale 4 is '0.6000')
+// ---------------------------------------------------------------------------
+
+/** Scales a canonical decimal to a BigInt at `scale` (half-even when narrowing). */
+function scaledBigIntOf(value: string, scale: number): bigint {
+  const negative = value.startsWith('-');
+  const body = negative ? value.slice(1) : value;
+  const [int = '0', frac = ''] = body.split('.');
+  if (frac.length <= scale) return (negative ? -1n : 1n) * BigInt(int + frac.padEnd(scale, '0'));
+  const kept = frac.slice(0, scale);
+  const rest = BigInt(frac.slice(scale));
+  const half = 5n * 10n ** BigInt(frac.length - scale - 1);
+  let magnitude = BigInt(int + kept);
+  if (rest > half || (rest === half && BigInt(int + kept) % 2n === 1n)) magnitude += 1n;
+  return (negative ? -1n : 1n) * magnitude;
+}
+
+/** Renders a scaled BigInt at exactly `scale` fractional digits (trailing zeros kept). */
+export function renderAtScale(scaled: bigint, scale: number): string {
+  const negative = scaled < 0n;
+  const abs = negative ? -scaled : scaled;
+  const text = abs.toString().padStart(scale + 1, '0');
+  const cut = text.length - scale;
+  const int = text.slice(0, cut);
+  const frac = scale === 0 ? '' : `.${text.slice(cut)}`;
+  const body = scale === 0 ? int : `${int}${frac}`;
+  return negative ? `-${body}` : body;
+}
+
+/** The bodies' decimalMean, rendered at the declared scale. */
+export function decimalMeanAt(values: readonly string[], scale: number): string | null {
+  if (values.length === 0) return null;
+  let sum = 0n;
+  for (const value of values) sum += scaledBigIntOf(value, scale);
+  const negative = sum < 0n;
+  const magnitude = negative ? -sum : sum;
+  const count = BigInt(values.length);
+  const quotient = magnitude / count;
+  const remainder = magnitude % count;
+  const twice = remainder * 2n;
+  let rounded = quotient;
+  if (twice > count || (twice === count && quotient % 2n === 1n)) rounded += 1n;
+  return renderAtScale(negative ? -rounded : rounded, scale);
+}
+
+/** The bodies' decimalDispersion, rendered at the declared scale. */
+export function decimalDispersionAt(values: readonly string[], scale: number): string | null {
+  if (values.length < 2) return null;
+  const scaled = values.map((value) => scaledBigIntOf(value, scale));
+  const max = scaled.reduce((a, b) => (a > b ? a : b));
+  const min = scaled.reduce((a, b) => (a < b ? a : b));
+  return renderAtScale(max - min, scale);
+}
+
+/** The bodies' decimalRatio: scaled BigInt division (half-even), rendered at the scale. */
+export function decimalRatioAt(numerator: string, denominator: string, scale: number): string {
+  const num = parseParts(numerator);
+  const den = parseParts(denominator);
+  if (den.digits === 0n) throw new Error('decimalRatioAt: zero denominator');
+  const negative = num.negative !== den.negative;
+  const exponent = den.fracLength + scale - num.fracLength;
+  let top: bigint;
+  let bottom: bigint;
+  if (exponent >= 0) {
+    top = num.digits * 10n ** BigInt(exponent);
+    bottom = den.digits;
+  } else {
+    top = num.digits;
+    bottom = den.digits * 10n ** BigInt(-exponent);
+  }
+  const magnitude = divRoundedHalfEven(top, bottom);
+  return renderAtScale(negative ? -magnitude : magnitude, scale);
+}
+
+function parseParts(value: string): { negative: boolean; digits: bigint; fracLength: number } {
+  const negative = value.startsWith('-');
+  const body = negative ? value.slice(1) : value;
+  const [int = '0', frac = ''] = body.split('.');
+  return { negative, digits: BigInt(int + frac), fracLength: frac.length };
+}
+
+function divRoundedHalfEven(numerator: bigint, denominator: bigint): bigint {
+  const negative = numerator < 0n;
+  const n = negative ? -numerator : numerator;
+  const q = n / denominator;
+  const r = n % denominator;
+  let result = q;
+  const twice = r * 2n;
+  if (twice > denominator || (twice === denominator && q % 2n === 1n)) result = q + 1n;
+  return negative ? -result : result;
 }

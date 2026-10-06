@@ -52,29 +52,37 @@ export interface QuotePayloadMirror {
 
 export interface NewsPayloadMirror {
   readonly headline: string;
-  /** Signed sentiment score in [-1, 1], canonical decimal string. */
-  readonly sentiment_score: string;
-  readonly source: string;
+  readonly body?: string;
+  readonly source?: string;
+  readonly symbols: readonly string[];
+  readonly url?: string;
+  readonly tags?: readonly string[];
 }
 
 export interface SocialSignalPayloadMirror {
   readonly platform: string;
-  /** Signed sentiment score in [-1, 1], canonical decimal string. */
-  readonly sentiment_score: string;
-  readonly mention_count: number;
+  readonly metric: string;
+  readonly value: string;
+  readonly author?: string;
+  readonly url?: string;
 }
 
 export interface FundamentalPayloadMirror {
-  readonly series: string;
-  readonly assessment_kind: 'valuation-level' | 'macro-surprise' | 'health-indicator';
-  /** Signed surprise score, canonical decimal string. */
-  readonly surprise_score: string;
+  readonly field: string;
+  readonly period: string;
+  readonly value: string;
+  readonly unit?: string;
+  readonly source?: string;
 }
 
 export interface MacroReleasePayloadMirror {
   readonly indicator: string;
-  /** Signed surprise vs consensus, canonical decimal string. */
-  readonly surprise: string;
+  readonly region: string;
+  readonly period: string;
+  readonly actual: string;
+  readonly forecast?: string;
+  readonly prior?: string;
+  readonly unit?: string;
 }
 
 /** The market event envelope — the availability quartet carried verbatim. */

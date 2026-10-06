@@ -123,9 +123,21 @@ const FNV_OFFSET_32 = 0x811c9dc5;
 const FNV_PRIME_32 = 0x01000193;
 
 function fnv1aRound(hash: number, unit: number): number {
-  hash ^= unit;
-  hash = Math.imul(hash, FNV_PRIME_32);
-  return hash >>> 0;
+  // UTF-8 denormalization of the UTF-16 code unit — the bodies' law.
+  const bytes: number[] = [];
+  if (unit < 0x80) {
+    bytes.push(unit);
+  } else if (unit < 0x800) {
+    bytes.push(0xc0 | (unit >> 6), 0x80 | (unit & 0x3f));
+  } else {
+    bytes.push(0xe0 | (unit >> 12), 0x80 | ((unit >> 6) & 0x3f), 0x80 | (unit & 0x3f));
+  }
+  let h = hash;
+  for (const byte of bytes) {
+    h ^= byte;
+    h = Math.imul(h, FNV_PRIME_32) >>> 0;
+  }
+  return h;
 }
 
 /** FNV-1a 32-bit of a string, as zero-padded lowercase hex (the 8-hex width). */
@@ -182,13 +194,18 @@ export function isDigest16(v: unknown): v is string {
 // Freeze discipline
 // ---------------------------------------------------------------------------
 
-/** Iterative whole-tree `Object.freeze` (mirror of the program-wide `deepFreeze`). */
+/** Whole-tree `Object.freeze` (mirror of the program-wide `deepFreeze`).
+ * FUNCTIONS ARE SKIPPED: freezing a constructible function would walk its
+ * `prototype.constructor` cycle; the injected engine drivers (real
+ * exchange-sim functions among them) stay as-is. */
 export function deepFreeze<T>(value: T): T {
-  if (value !== null && (typeof value === 'object' || typeof value === 'function')) {
-    for (const key of Object.getOwnPropertyNames(value)) {
-      deepFreeze((value as Record<string, unknown>)[key]);
+  if (value !== null && typeof value === 'object') {
+    if (!Object.isFrozen(value)) {
+      for (const key of Object.getOwnPropertyNames(value)) {
+        deepFreeze((value as Record<string, unknown>)[key]);
+      }
+      Object.freeze(value);
     }
-    Object.freeze(value);
   }
   return value;
 }
