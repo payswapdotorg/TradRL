@@ -242,6 +242,7 @@ function seamTransport(): ApiTransport {
     if (key === 'POST /v1/outcomes/query') return ok({ items: [shadowOutcome] });
     if (key === 'GET /v1/organizations/org:seam/status') return ok(snapshot);
     if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/jobs') return ok({ items: [] }); // the W-25A jobs-list read: no seeded jobs under this rig
     if (key === 'GET /v1/projects') return ok({ items: [] }); // the W-22 project-directory read: no projects under this rig
     return { status: 404, headers: {}, body: { requestId: 'req-seam', error: { code: 'not_found', message: 'no route', status: 404 } } };
   };

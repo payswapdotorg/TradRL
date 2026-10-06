@@ -714,6 +714,7 @@ function launchDemoTransport(): { readonly transport: ApiTransport; readonly pol
       const body = request.body as { readonly projectId: string };
       return ok(jobOf('submitted', body.projectId));
     }
+    if (key === 'GET /v1/jobs') return ok({ items: [] }); // the W-25A jobs-list read: no pre-existing jobs under this rig (the launch's own kickoff arrives via POST + poll)
     if (key.startsWith('GET /v1/jobs/')) {
       polls.count += 1;
       return ok(jobOf(polls.count === 1 ? 'running' : 'complete', createdProjectIds[0] ?? 'prj-a'));
@@ -754,6 +755,7 @@ function deployedClockLaunchTransport(): {
     if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Console Test Project', T0)); // the seeded demo: stamped in the PAST (before every session's boot)
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
     if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/jobs') return ok({ items: [] }); // the W-25A jobs-list read: no pre-existing jobs under this rig
     if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-a', 'Console Test Project', T0)] }); // the W-22 project-directory read
     if (key === 'POST /v1/projects') {
       const body = request.body as { readonly id: string; readonly name: string; readonly at: number };
@@ -1518,6 +1520,7 @@ function toggleTransport(): { readonly transport: ApiTransport; block(): void; u
     if (key === 'GET /v1/projects/prj-a') return ok(project);
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
     if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/jobs') return ok({ items: [] }); // the W-25A jobs-list read: no seeded jobs under this rig
     if (key === 'GET /v1/projects') return ok({ items: [project] }); // the W-22 project-directory read
     return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
   };
@@ -1533,6 +1536,7 @@ function typedFailureTransport(): ApiTransport {
     if (key === 'GET /v1/projects/prj-a') return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'the project does not exist', status: 404 } } };
     if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
     if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/jobs') return ok({ items: [] }); // the W-25A jobs-list read: no seeded jobs under this rig
     if (key === 'GET /v1/projects') return ok({ items: [] }); // the W-22 project-directory read: no projects under this rig
     return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
   };
@@ -1813,6 +1817,7 @@ function scopeChangeTransport(): {
     if (key === 'POST /v1/knowledge/query') { reads.knowledgeReads.push(String((request.body as { project: string }).project)); return ok({ items: [] }); }
     if (key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
     if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/jobs') return ok({ items: [] }); // the W-25A jobs-list read: no pre-existing jobs under this rig (the launch's own kickoff arrives via POST + poll)
     if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-a', 'org:seeded'), ...(created === null ? [] : [projectOf(created, null)])] }); // the W-22 project-directory read (the created project joins the directory once it exists — the deployed law)
     if (key === 'POST /v1/projects') { created = (request.body as { id: string }).id; return ok(projectOf(created, null)); } // created WITHOUT an org (the deployed law)
     if (key === 'POST /v1/jobs/research') return ok(jobOf('submitted', (request.body as { projectId: string }).projectId));
@@ -2062,6 +2067,7 @@ function demoSubstanceTransport(): { readonly transport: ApiTransport; readonly 
       blotterReads.projects.push(decodeURIComponent((request.path.split('?project=')[1] ?? '')));
       return ok({ items: request.path.includes('prj-other') ? [] : seededSubmissions() }); // the demo project's blotter; a switched-to project serves none
     }
+    if (key === 'GET /v1/jobs') return ok({ items: [] }); // the W-25A jobs-list read: no seeded jobs under this rig (the jobs seam's own rig carries them)
     if (key === 'GET /v1/projects') return ok({ items: [project, { ...project, id: 'prj-other', name: 'The Other Project', lifecycle: { ...project.lifecycle, projectId: 'prj-other' }, lineage: { ...project.lineage, projectId: 'prj-other' } }] }); // the W-22 project-directory read: two readable projects
     if (key === 'GET /v1/projects/prj-other') return ok({ ...project, id: 'prj-other', name: 'The Other Project', lifecycle: { ...project.lifecycle, projectId: 'prj-other' }, lineage: { ...project.lineage, projectId: 'prj-other' } });
     if (key === 'GET /v1/organizations/org:seeded/status') {
@@ -2407,6 +2413,201 @@ describe('executed boot: D-1 — the goal boot seam (the goal/constraint-set fet
     clickNav(rig, 'goal');
     expect(elementsOf(rig.root).some((element) => textOf(element) === 'Goal statement')).toBe(true); // the card renders again
     expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-3 (W-25A) — THE JOBS SEAM, executed: the backing serves the project's
+// job records at GET /v1/jobs?project=<id> (the W-25A host route — the
+// backing's API-owned job store, the same store the per-id GET reads),
+// but the console never READ them: state.jobs populated ONLY from
+// session-local events (job-submitted on the launch kickoff, job-updated
+// from pollJobs of jobs ALREADY in state), so on every boot/reload/
+// scope-switch state.jobs reset to [] and NEVER refilled — the Research
+// section and the palette's JOB group stayed empty forever ("JOB: not
+// searchable in any scope", the J8-spec goal unreachable). These journeys
+// pin the read half (the boot bundle + the beat's scope refetch dispatch
+// the EXISTING job-updated event per served row) and the palette's J8
+// OPEN: a JOB entry's selection navigates to Research AND opens that
+// job's detail sheet in the same action (keyboard + click).
+// ---------------------------------------------------------------------------
+
+/** The jobs-seam fixture: the demo project's two SEEDED jobs (the W-25A host seed's own shape — one research + one learning, frozen at their fresh-boot state), a launched project's completed kickoff job, and a project with NO jobs. The per-id poll route answers the same records (idempotent — the poll cadence's own law). */
+function jobsSeamTransport(): {
+  readonly transport: ApiTransport;
+  readonly jobsReads: { count: number; projects: string[] };
+} {
+  const jobsReads = { count: 0, projects: [] as string[] };
+  const seededJobs: readonly JobRecord[] = [
+    { jobId: 'job:a1b2c3d4', kind: 'research', tenant: 'tenant-a', project: 'prj-a', status: 'submitted', submittedAt: T0 + 10 },
+    { jobId: 'job:b2c3d4e5', kind: 'learning', tenant: 'tenant-a', project: 'prj-a', status: 'running', submittedAt: T0 + 20 },
+  ];
+  const kickoffJob: JobRecord = {
+    jobId: 'job:c3d4e5f6', kind: 'research', tenant: 'tenant-a', project: 'prj-launched-1', status: 'complete', submittedAt: T0 + 100,
+    completedAt: T0 + 200, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'prj-launched-1' },
+  };
+  const everyJob: readonly JobRecord[] = [...seededJobs, kickoffJob];
+  const projectOf = (id: string, name: string): Record<string, unknown> => ({
+    id, tenantId: 'tenant-a', name, executionMode: 'simulation',
+    lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+    lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  });
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+  const notFound = () => ({ status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } });
+  const transport: ApiTransport = async (request) => {
+    const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+    const key = `${request.method} ${path}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Seeded Demo Project'));
+    if (key === 'GET /v1/projects/prj-launched-1') return ok(projectOf('prj-launched-1', 'Launched Project'));
+    if (key === 'GET /v1/projects/prj-empty-1') return ok(projectOf('prj-empty-1', 'Empty Project'));
+    if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: [] }); // the W-22 blotter read: no seeded rows under this rig
+    if (key === 'GET /v1/jobs') {
+      // THE W-25A HOST ROUTE (the jobs list): every request lands in the
+      // network log's own record; the rows served are the requested
+      // project's own (the route's project scoping — a foreign project
+      // serves the empty page, never another project's rows).
+      jobsReads.count += 1;
+      const project = decodeURIComponent(request.path.split('?project=')[1] ?? '');
+      jobsReads.projects.push(project);
+      const rows = project === 'prj-a' ? seededJobs : project === 'prj-launched-1' ? [kickoffJob] : [];
+      return ok({ items: rows });
+    }
+    if (path.startsWith('/v1/jobs/')) {
+      const jobId = path.slice('/v1/jobs/'.length);
+      const job = everyJob.find((candidate) => candidate.jobId === jobId);
+      return job === undefined ? notFound() : ok(job);
+    }
+    if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-a', 'Seeded Demo Project'), projectOf('prj-launched-1', 'Launched Project'), projectOf('prj-empty-1', 'Empty Project')] }); // the W-22 project-directory read
+    return notFound(); // the goal route answers the typed 404 -> the D-1 silent skip (host-owned, demo-backing-only)
+  };
+  return { transport, jobsReads };
+}
+
+describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills state.jobs; the palette opens the job)', () => {
+  it('a FRESH boot in the demo scope READS GET /v1/jobs?project=<scope> and state.jobs carries the seeded jobs — the Research section lists them on FIRST render (no session-local submission anywhere)', async () => {
+    const api = jobsSeamTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    // the boot network log now carries the jobs-list read (the D-3 seam: it never did before)
+    expect(api.jobsReads.count).toBeGreaterThan(0);
+    expect(api.jobsReads.projects.every((project) => project === 'prj-a')).toBe(true); // scoped to the workspace project
+    // the served rows entered the state through the EXISTING job-updated event (the reducer's dedup-by-jobId merge)
+    expect(rig.handle.state().jobs.map((job) => job.jobId).sort()).toEqual(['job:a1b2c3d4', 'job:b2c3d4e5']);
+    expect(rig.handle.state().jobs.every((job) => job.project === 'prj-a')).toBe(true);
+    expect(rig.handle.state().connection).toBe('connected'); // the read answered — no degradation anywhere
+    expect(rig.handle.state().degraded).toEqual([]);
+
+    // the Research section renders the seeded RESEARCH job's row on the first render after boot
+    clickNav(rig, 'research');
+    const row = findByData(rig.root, 'data-row', 'job:job:a1b2c3d4');
+    if (row === null) throw new Error('the Research section did not render the seeded research job (D-3: empty on every reload before the seam)');
+    expect(elementsOf(row).some((element) => textOf(element) === 'job:a1b2c3d4')).toBe(true); // the row's title is the job id
+    expect(elementsOf(row).some((element) => textOf(element) === 'research job')).toBe(true); // the kind subtitle
+    expect(elementsOf(row).some((element) => textOf(element) === 'submitted')).toBe(true); // the status pill
+
+    // a re-refresh is idempotent: the read re-fires and the reducer's dedup-by-jobId merge keeps the state at two rows
+    const readsBefore = api.jobsReads.count;
+    await rig.handle.refresh();
+    expect(api.jobsReads.count).toBeGreaterThan(readsBefore); // the read re-rode the wire
+    expect(rig.handle.state().jobs).toHaveLength(2); // no duplicates — the same merge the poll cadence rides
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+  });
+
+  it('the palette finds a JOB entry by id, kind AND status — and ENTER opens the job\'s detail sheet (not just the section): the J8 goal, the keyboard path', async () => {
+    const api = jobsSeamTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickAction(rig, 'palette-open');
+    expect(countByClass(rig.root, 'palette-item')).toBe(18); // 15 navigation + the project + the TWO seeded jobs (the JOB group has entries to find)
+    expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(true); // the JOB group renders in the grouped results
+
+    // by ID: the exact job the operator typed
+    typePaletteQuery(rig, 'a1b2c3d4');
+    let items = elementsOf(rig.root).filter((element) => element.hasClass('palette-item'));
+    expect(items).toHaveLength(1);
+    expect((items[0] as FakeElement).getAttribute('data-palette-ref')).toBe('job:job:a1b2c3d4'); // the entry carries the job's sheet ref
+    expect((items[0] as FakeElement).getAttribute('data-target')).toBe('research'); // ...and its section target
+
+    // by KIND and by STATUS too (the haystack covers id + kind + status — "searchable in any scope")
+    typePaletteQuery(rig, 'learning');
+    expect(elementsOf(rig.root).some((element) => element.hasClass('palette-item') && element.getAttribute('data-palette-ref') === 'job:job:b2c3d4e5')).toBe(true);
+    typePaletteQuery(rig, 'running');
+    expect(elementsOf(rig.root).some((element) => element.hasClass('palette-item') && element.getAttribute('data-palette-ref') === 'job:job:b2c3d4e5')).toBe(true);
+
+    // THE J8 OPEN (keyboard): Enter on the JOB entry navigates to Research AND opens that job's sheet in the same action
+    typePaletteQuery(rig, 'a1b2c3d4');
+    items = elementsOf(rig.root).filter((element) => element.hasClass('palette-item'));
+    if (items.length !== 1) throw new Error('the filtered palette lost the job entry');
+    rig.doc.fire('keydown', { target: null, key: 'Enter' });
+    expect(elementsOf(rig.root).some((element) => element.hasClass('palette-backdrop'))).toBe(false); // the palette closed
+    expect(shellOf(rig.root).getAttribute('data-active-target')).toBe('research'); // navigated to the Research section
+    const sheet = findByData(rig.root, 'data-sheet', 'job:job:a1b2c3d4'); // ...AND the job's DETAIL SHEET opened (not just the section)
+    if (sheet === null) throw new Error('Enter on a JOB entry opened no job sheet (the J8 goal: navigate to a job via the palette alone)');
+    expect(elementsOf(sheet).some((element) => textOf(element) === 'job:a1b2c3d4')).toBe(true); // the sheet's title is the job id
+    expect(elementsOf(sheet).some((element) => textOf(element) === 'research job')).toBe(true); // the sheet's kind subtitle
+    expect(findByData(rig.root, 'data-action', 'sheet-close')).not.toBeNull(); // the sheet's close affordance (the focus trap's entry point) rendered
+
+    // Escape closes the sheet again (the keyboard contract holds around the new open)
+    rig.doc.fire('keydown', { target: null, key: 'Escape' });
+    expect(findByData(rig.root, 'data-sheet', 'job:job:a1b2c3d4')).toBeNull();
+  });
+
+  it('the CLICK path opens the same job sheet: a click on a palette JOB entry navigates AND opens the dialog (the modal selection law)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, jobsSeamTransport().transport, 'prj-a');
+    clickAction(rig, 'palette-open');
+    typePaletteQuery(rig, 'a1b2c3d4');
+    const item = elementsOf(rig.root).find((element) => element.hasClass('palette-item'));
+    if (item === undefined) throw new Error('no filtered palette item to click');
+    click(rig, item);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('palette-backdrop'))).toBe(false); // the dialog closed
+    expect(shellOf(rig.root).getAttribute('data-active-target')).toBe('research'); // navigated
+    expect(findByData(rig.root, 'data-sheet', 'job:job:a1b2c3d4')).not.toBeNull(); // AND the job's sheet opened — the same open path a row click takes
+  });
+
+  it('a LAUNCHED scope survives the reload: the fresh boot\'s jobs read refills the kickoff job — Research lists it and the palette finds it (no session-local submission anywhere)', async () => {
+    const api = jobsSeamTransport();
+    // THE RELOAD: a fresh console scoped to the previously-launched project (the prior session's kickoff job lives in the backing's store)
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-launched-1');
+    expect(api.jobsReads.projects).toContain('prj-launched-1'); // the read fired for the launched scope
+    expect(rig.handle.state().jobs.map((job) => job.jobId)).toEqual(['job:c3d4e5f6']); // the kickoff job refilled
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+
+    // the Research section lists the kickoff job on the first render after the reload
+    clickNav(rig, 'research');
+    const row = findByData(rig.root, 'data-row', 'job:job:c3d4e5f6');
+    if (row === null) throw new Error('the Research section lost the kickoff job across the reload (the D-3 defect)');
+    expect(elementsOf(row).some((element) => textOf(element) === 'complete')).toBe(true); // its terminal state renders
+
+    // and the palette finds it (the J8 goal holds for the launched scope too)
+    clickAction(rig, 'palette-open');
+    typePaletteQuery(rig, 'c3d4e5f6');
+    const item = elementsOf(rig.root).find((element) => element.hasClass('palette-item'));
+    if (item === undefined) throw new Error('the palette lost the kickoff job entry (JOB: not searchable — the M3 report)');
+    expect(item.getAttribute('data-palette-ref')).toBe('job:job:c3d4e5f6');
+    rig.doc.fire('keydown', { target: null, key: 'Enter' });
+    expect(findByData(rig.root, 'data-sheet', 'job:job:c3d4e5f6')).not.toBeNull(); // the sheet opens here too
+  });
+
+  it('an EMPTY page is byte-identical to the pre-fix absence: a project with no jobs serves the empty list — no fabricated entries, no empty-state regression, no degradation', async () => {
+    const api = jobsSeamTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-empty-1');
+    expect(api.jobsReads.projects).toContain('prj-empty-1'); // the read fired for this scope too
+    expect(rig.handle.state().jobs).toEqual([]); // no fabricated entries
+    expect(rig.handle.state().connection).toBe('connected');
+    expect(rig.handle.state().degraded).toEqual([]); // the empty page is an ANSWER, never a failure
+
+    // the Research section renders its teaching empty state exactly as before (§4.12 — never a blank region)
+    clickNav(rig, 'research');
+    expect(findByData(rig.root, 'data-row', 'job:job:a1b2c3d4')).toBeNull(); // no foreign project's rows leaked in
+    const empty = elementsOf(rig.root).find((element) => element.hasClass('empty-state'));
+    if (empty === undefined) throw new Error('the Research section renders no empty state');
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'No research jobs at this view instant.')).toBe(true);
+
+    // the palette carries no JOB entries (15 navigation + the project — the pre-fix shape)
+    clickAction(rig, 'palette-open');
+    expect(countByClass(rig.root, 'palette-item')).toBe(16);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(false);
   });
 });
 

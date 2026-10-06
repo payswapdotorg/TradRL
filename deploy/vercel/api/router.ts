@@ -23,10 +23,12 @@
 // failed write is the typed 503 — the ordering law, runtime/durable.ts).
 //
 // THE HOST-OWNED DEMO-SUBSTANCE READ ROUTES (W-8, additive): under the
-// demo backing, two read-only routes are served from the seeded demo
+// demo backing, three read-only routes are served from the seeded demo
 // data BEFORE the boundary wrap (GET /v1/execution/submissions — the
 // execution blotter, R2; GET /v1/projects/:id/goal — the seeded goal +
-// constraint set, R5). The paths are declared nowhere in the frozen
+// constraint set, R5; GET /v1/jobs?project=<id> — the jobs list, D-3 the
+// W-25A seam: the backing's API-owned job store, the same store the
+// per-id GET reads). The paths are declared nowhere in the frozen
 // route table, so every other backing/shape keeps the exact pre-W-8
 // behavior (the typed not-found). See runtime/routes.ts.
 //
@@ -37,6 +39,7 @@
 // timeout) lives in deploy/vercel/vercel.json.
 
 import { getDeploymentService, type DeploymentComposition } from '../runtime/compose';
+import { demoJobsOf } from '../runtime/demo';
 import { toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
 import { drainedFailureResponse, serveDemoSubstanceRoute, serveDurableGoalRoute } from '../runtime/routes';
 
@@ -90,10 +93,18 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
   //    them; every other request (and every other backing) falls through
   //    to the boundary unchanged. Under the DURABLE backing the same goal
   //    path serves the seam's hydrated goal set (W-25D, D-5) — every other
-  //    durable request falls through to the boundary.
+  //    durable request falls through to the boundary. The jobs list
+  //    (W-25A, D-3) is demo-backing-only: the jobsOf seam reads the
+  //    composed service's API-owned job store (the same store the per-id
+  //    GET serves), folded to the authorized tenant's rows for the
+  //    project (runtime/demo.ts's demoJobsOf).
   if (deployment.demo !== null) {
     const hostRoute = serveDemoSubstanceRoute(
-      { ports: deployment.demo.ports, verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization },
+      {
+        ports: deployment.demo.ports,
+        verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization,
+        jobsOf: (tenant, project) => demoJobsOf(deployment.service, tenant, project),
+      },
       wrapped.request,
       demoSubstanceSerial++,
     );

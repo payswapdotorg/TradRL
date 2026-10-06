@@ -284,6 +284,15 @@ export interface PostMortemRecord {
 // ---------------------------------------------------------------------------
 // The jobs mirror (the async submitted/running/complete pattern)
 // ---------------------------------------------------------------------------
+//
+// THE W-25A LIST AMENDMENT (D-3): the project's JOB LIST rides the same
+// JobRecord shape at the HOST-OWNED route `GET /v1/jobs?project=<id>`
+// (the backing's API-owned job store, the same store the per-id GET
+// reads — served from the deployed backing BEFORE the boundary wrap, so
+// the frozen SDK surface does not carry it; the console's mirror
+// extends the family for its boot read and interop.test.ts documents
+// the amendment). The served body is the Page listing shape above.
+// ---------------------------------------------------------------------------
 
 /** The job kinds. */
 export type JobKind = 'research' | 'learning';
