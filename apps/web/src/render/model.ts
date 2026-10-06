@@ -35,7 +35,7 @@ import { assertProjectScope, isLaunchpadScope, type WorkspaceScope } from '../co
 import { renderDecimal } from '../core/decimals';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { PolicyEnforcementError } from '../core/errors';
-import { elapsedMsOfJobRecord, renderJobProgress, LAUNCH_STEPS, researchFormValuesOf, type LaunchStep } from '../core/launch';
+import { elapsedMsOfJobRecord, initialLaunchState, renderJobProgress, LAUNCH_STEPS, researchFormValuesOf, type LaunchState, type LaunchStep } from '../core/launch';
 import { formatNumberGrouped } from './numbers';
 import {
   EXECUTION_MODES,
@@ -718,7 +718,10 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
   // page reload). A concluded launch (launched/failed, no open wizard)
   // now restores the CTA; the launch panel below keeps the concluded
   // launch's own cards (result, progress, Start over).
-  const launch = state.launch;
+  // D-15 (W-29 wave 2): the hero reads the SCOPE-GUARDED launch slice —
+  // another desk's concluded launch never drives this desk's hero (the
+  // CTA renders there; the launched desk keeps its own banner/cards).
+  const launch = launchOfScope(state);
   const draftActive = launch.draft !== null && (launch.phase === 'draft' || launch.phase === 'idle');
   const launchInFlight = launch.phase === 'launching';
   const heroCta: VNode | undefined = draftActive
@@ -849,6 +852,70 @@ function researchSubmitCard(state: WorkspaceState, view: ShellView): VNode | nul
   ]);
 }
 
+/**
+ * D-15 (W-29 wave 2): THE LAUNCH SLICE'S SCOPE GUARD. The launch flow
+ * leaves its CONCLUDED state (the launched params card, the progress
+ * card, the failure card) on the launch slice forever — and the
+ * workspace resets every record on a scope switch but NEVER the launch
+ * slice, so a desk switch rendered the PREVIOUS desk's launch params
+ * inside the OTHER scope's sections (M4/M5/L5/S1's finding; the Lead's
+ * W-28 note: the Market World panel showed the transient launch
+ * context's capital in another desk's view). The guard: the launch
+ * slice renders only within its OWN scope — launch.projectId (set by
+ * launch-submitted) equals the current scope. An open WIZARD DRAFT
+ * (projectId null — pre-project, the draft is what the user is typing
+ * now) renders everywhere: the primary flow is scope-independent and
+ * wiping it on a switch would lose the user's work. A foreign-scope
+ * concluded launch renders as the QUIET initial state in this desk's
+ * view — the hero shows its CTA, the launch panel its idle card — and
+ * switching BACK to the launched desk restores its own concluded cards.
+ */
+function launchOfScope(state: WorkspaceState): LaunchState {
+  const launch = state.launch;
+  if (launch.projectId === null) return launch;
+  return launch.projectId === state.scope.projectId ? launch : initialLaunchState();
+}
+
+/**
+ * D-15 (W-29 wave 2): THE ONE LIFECYCLE READ. The Goal section and the
+ * export both read the PROJECT RECORD's own lifecycle.status (the
+ * boundary's stamp — one source of truth); the ORGANIZATION's operating
+ * status is a DIFFERENT entity's own truth (the compiled team working
+ * the goal — Home's organization tile reads the same snapshot). The
+ * defect was the unexplained juxtaposition: a launched desk showed
+ * lifecycle 'draft' on Goal while Home/Organization showed 'active',
+ * with nothing telling the reader these are two different states (the
+ * frozen backing binds the organization without a lifecycle event —
+ * bindOrganization sets organizationRef and never the status; the
+ * lifecycle moves only through an explicit transition). The rows below
+ * render BOTH truths, each labeled as its own entity, and the note
+ * states the seam in plain words — never a fabricated 'active'.
+ */
+function lifecycleRowsOf(state: WorkspaceState, viewAt: number): { readonly rows: readonly (readonly [string, string])[]; readonly note: string | null } {
+  const project = state.project;
+  if (project === null) return { rows: [], note: null };
+  const bound = project.lifecycle.organizationRef;
+  let organization = 'not bound';
+  if (bound !== null) {
+    // The LATEST visible snapshot for the bound organization (the erasable-
+    // subset law: no call-site type arguments — a plain accumulator walk).
+    let latest: OrgStatusSnapshot | null = null;
+    for (const candidate of state.orgSnapshots) {
+      if (candidate.organizationRef !== bound || availabilityOfOrgSnapshot(candidate) > viewAt) continue;
+      if (latest === null || candidate.at > latest.at) latest = candidate;
+    }
+    organization = latest === null ? 'bound (no snapshot at this view instant)' : `${latest.status} (observed ${formatTimeUtc(latest.at)})`;
+  }
+  const rows: readonly (readonly [string, string])[] = [
+    ['lifecycle', project.lifecycle.status],
+    ['organization', organization],
+  ];
+  const note = bound !== null
+    ? 'The project record\'s lifecycle and the organization\'s operating status are separate states — the record moves only through an explicit lifecycle event.'
+    : null;
+  return { rows, note };
+}
+
 /** The per-section panel — the selected section's projection at the view instant. */
 function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = defaultShellView(state)): VNode {
   const scope = state.scope;
@@ -857,16 +924,23 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       const rows: VNode[] = [];
       if (state.project !== null) {
         visibleAt(state.project, availabilityOfProject(state.project), viewAt, state.project.id);
+        // D-15 (W-29 wave 2): THE ONE LIFECYCLE READ — the project record's
+        // own lifecycle status (the boundary's stamp — the same source the
+        // export's workspace block carries verbatim) with the bound
+        // organization's own operating status beside it, each labeled as
+        // its own entity, plus the plain-words note on the seam.
+        const lifecycle = lifecycleRowsOf(state, viewAt);
         rows.push(v('div', { class: 'card' }, [
           v('div', { class: 'card-title' }, [state.project.name]),
           ...factRows([
             ['project', state.project.id],
             ['tenant', state.project.tenantId],
-            ['lifecycle', state.project.lifecycle.status],
+            ...lifecycle.rows,
             ['execution mode', state.project.executionMode],
             ['goal ref', `${state.project.lineage.goal.goalId}@${state.project.lineage.goal.version}`],
             ['constraint set', `${state.project.lineage.constraintSet.id}@${state.project.lineage.constraintSet.version}`],
           ]),
+          ...(lifecycle.note === null ? [] : [v('p', { class: 'card-note', 'data-lifecycle-note': 'true' }, [lifecycle.note])]),
         ]));
       }
       if (state.goal !== null) {
@@ -1151,7 +1225,7 @@ function nextStepOf(step: LaunchStep): LaunchStep {
 
 /** The launch panel (the primary flow: the wizard's full field set + the review step + the two-step confirm + progress). */
 function launchPanel(state: WorkspaceState, view: ShellView): VNode {
-  const launch = state.launch;
+  const launch = launchOfScope(state); // D-15 (W-29 wave 2): the slice renders only within its OWN scope
   const progress = renderJobProgress(launch.progress);
   const rows: VNode[] = [];
   const draftActive = launch.draft !== null && (launch.phase === 'draft' || launch.phase === 'idle');

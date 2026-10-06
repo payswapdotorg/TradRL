@@ -21,6 +21,7 @@ import type { ConnectionStatus, WorkspaceState } from '../core/workspace';
 import { scopedInbox, unreadCount } from '../core/notices';
 import type { ThemeName } from '../core/theme';
 import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellTarget } from '../core/nav';
+import { isLaunchpadScope } from '../core/tenant';
 import { formatInstantUtc } from '../core/format';
 import { notificationBell, toastRecord } from './flow';
 import { paletteAffordance, paletteOverlay } from '../core/palette';
@@ -352,9 +353,26 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
     // from GET /v1/projects). A committed choice ADOPTS that project —
     // every section refetches for it (the beat's scope-change refetch)
     // and the choice persists across reloads (the scope storage seam).
+    //
+    // D-15 (W-29 wave 2): THE SELECT'S RENDERED VALUE ALWAYS MIRRORS THE
+    // CURRENT SCOPE STATE. When the current scope is not among the
+    // directory's options — the boot window before the directory read
+    // lands, a project deleted upstream, the launchpad — a DISABLED
+    // current-scope option renders first and carries the `selected`
+    // attribute, so the DOM value never silently falls back to the first
+    // directory entry (the select "showing the wrong project" half of
+    // the rebind race: a mismatched value is either the truth or a lie,
+    // never a default).
     settingsRow('Project', 'Switch the workspace to another project; every section refetches for the project you choose, and your choice is remembered for future visits.', [
-      shellFactRow('current project', state.scope.projectId === '(launchpad)' ? 'the launchpad (no project yet)' : state.scope.projectId),
+      shellFactRow('current project', isLaunchpadScope(state.scope.projectId) ? 'the launchpad (no project yet)' : state.scope.projectId),
       v('select', { class: 'project-select', 'data-action': 'project-switch', 'data-project-select': 'true', 'aria-label': 'Switch the workspace to another project' }, [
+        ...(state.projectDirectory.some((project) => project.id === state.scope.projectId)
+          ? []
+          : [v('option', { value: state.scope.projectId, selected: 'selected', disabled: 'disabled' }, [
+              isLaunchpadScope(state.scope.projectId)
+                ? 'the launchpad (no project yet)'
+                : `${state.scope.projectId} — the current project (not in the readable list yet)`,
+            ])]),
         ...state.projectDirectory.map((project) => v('option', {
           value: project.id,
           ...(project.id === state.scope.projectId ? { selected: 'selected' } : {}),

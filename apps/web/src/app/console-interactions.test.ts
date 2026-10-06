@@ -3749,3 +3749,210 @@ function typeResearchField(rig: Rig, field: string, value: string): void {
   input.value = value;
   rig.doc.fire('input', { target: input });
 }
+
+// ---------------------------------------------------------------------------
+// D-15 (W-29 wave 2) — THE SESSION-SCOPE DISCIPLINE. Three symptoms, one
+// root theme — session state bleeding across scope boundaries: (a) the
+// concluded launch panel rendering the PREVIOUS desk's params inside
+// another scope's sections (the reducer resets every record on
+// project-adopted but never the launch slice); (b) the Goal section's
+// lifecycle reading the project record's 'draft' while Home/Organization
+// show the compiled organization's 'active' with nothing reconciling the
+// two (they are two DIFFERENT entities' truths — the frozen backing
+// binds the organization without a lifecycle event); (c) THE SWITCHER
+// REBIND RACE the Lead reproduced twice ("the first select change did
+// not take", the select snapping back to the boot scope): the boot
+// restore read the persisted scope LATE (inside the async projects
+// read), so a user-initiated scope change that landed before the boot
+// bundle settled raced the rehydration. The fix: the stored scope is
+// captured ONCE at boot; the restore applies ONLY at generation 0 (no
+// scope move this session — a switcher choice, a palette jump, a launch
+// adoption, or the restore's own adoption all advance the generation,
+// making the restore exactly-once and structurally unable to clobber a
+// user's choice); the select's rendered value always mirrors the
+// CURRENT scope (a disabled current-scope option when the scope is not
+// in the readable list); and the lifecycle reads one truth per entity.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-15 (W-29 wave 2) — the session-scope discipline', () => {
+  /** A third desk's project record (the launched-desk shape: draft lifecycle, a bound organization). */
+  const launchedProject = (id: string, status: string): Record<string, unknown> => ({
+    id, tenantId: 'tenant-a', name: 'The Launched Desk', executionMode: 'simulation',
+    lifecycle: { projectId: id, status, acceptanceCriteriaId: null, organizationRef: 'org:seeded' },
+    lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  });
+
+  /**
+   * THE EXACT REPRO SHAPE (c): a three-desk directory where the boot
+   * bundle's directory read (GET /v1/projects) is HELD until the test
+   * releases it — the user's select change lands DURING boot, before the
+   * boot-restore's check ever runs, exactly like the Lead's synthetic
+   * select against a mid-boot tree.
+   */
+  function gatedBootTransport(): {
+    readonly transport: ApiTransport;
+    readonly release: () => void;
+  } {
+    const base = demoSubstanceTransport();
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-g', data } });
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'GET' && path === '/v1/projects') {
+        await gate; // HELD: the boot bundle's directory read
+        const inner = await base.transport(request);
+        const body = (inner as { readonly body?: { readonly data?: { readonly items?: readonly Record<string, unknown>[] } } }).body;
+        const items = body?.data?.items ?? [];
+        return ok({ items: [...items, launchedProject('prj-launched', 'draft')] }); // THREE readable desks (the Page shape the client walks)
+      }
+      if (request.method === 'GET' && path === '/v1/projects/prj-launched') return ok(launchedProject('prj-launched', 'draft'));
+      if (request.method === 'GET' && path === '/v1/execution/submissions' && request.path.includes('prj-launched')) return ok({ items: [] }); // the launched desk serves no blotter rows (the seeded blotter belongs to prj-a — a cross-scope record is a typed error, never served here)
+      return base.transport(request);
+    };
+    return { transport, release: () => releaseGate() };
+  }
+
+  it('(c) the boot-restore NEVER clobbers a user-initiated scope change: a select change DURING boot (before the boot bundle settles) holds — the restore skips, the select mirrors the chosen scope, and the choice persists', async () => {
+    const gated = gatedBootTransport();
+    const scopeStorage = new MapStorage();
+    scopeStorage.map.set(SCOPE_STORAGE_KEY, 'prj-other'); // the PREVIOUS session's world (what the boot captured)
+    const handle = bootConsole({
+      baseUrl: 'http://scripted.invalid',
+      token: 'token-test',
+      scope: { tenantId: 'tenant-a', projectId: 'prj-a' }, // the env pin
+      transport: gated.transport,
+      instants: { nowMs: () => T0 + 1000 },
+      theme: 'light',
+      storage: scopeStorage,
+      onboardingStorage: scopeStorage,
+      simulated: true,
+      scopeStorage,
+    });
+    const storage = new MapStorage();
+    storage.map.set('tradrl_onboarded', 'true');
+    const doc = new FakeDocument();
+    const root = new FakeElement('div');
+    handle.mount(root as unknown as Parameters<ConsoleHandle['mount']>[0], doc as unknown as Parameters<ConsoleHandle['mount']>[1]);
+    // the boot bundle is held at the directory read; the Settings panel already renders
+    clickNav({ handle, doc, root, storage, scheduler: null }, 'settings');
+
+    // THE USER'S CHOICE, during boot (the synthetic-select pattern: set the value, dispatch the change)
+    const switcher = findByData(root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    switcher.value = 'prj-launched';
+    doc.fire('change', { target: switcher });
+    expect(handle.state().scope.projectId).toBe('prj-launched'); // the user is driving
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-launched'); // persisted by the write-through
+
+    // THE BOOT BUNDLE SETTLES — the pre-fix restore would adopt the
+    // captured stored scope ('prj-other') right here, snapping the desk
+    // back (the Lead's twice-reproduced symptom)
+    gated.release();
+    await handle.refresh(); // a fresh bundle for the user's chosen scope (the restore check runs again — generation > 0 skips it)
+    expect(handle.state().scope.projectId).toBe('prj-launched'); // NEVER clobbered
+    expect(handle.state().project?.id).toBe('prj-launched'); // the chosen desk's world read
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-launched'); // still the user's choice
+
+    // the select's rendered value mirrors the CURRENT scope (not stale state)
+    clickNav({ handle, doc, root, storage, scheduler: null }, 'settings');
+    const reprojected = findByData(root, 'data-action', 'project-switch');
+    if (reprojected === null) throw new Error('the switcher vanished');
+    const selected = elementsOf(reprojected).filter((element) => element.tagName === 'OPTION').find((element) => element.getAttribute('selected') === 'selected');
+    expect(selected?.getAttribute('value')).toBe('prj-launched');
+    expect(handle.state().degraded).toEqual([]); // honest throughout
+  });
+
+  it('(c) after boot settles the restore is DONE — a later refresh never re-adopts the boot-time stored scope over the user\'s later choices', async () => {
+    const api = demoSubstanceTransport();
+    const scopeStorage = new MapStorage();
+    scopeStorage.map.set(SCOPE_STORAGE_KEY, 'prj-other'); // the boot restore adopts this once
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    expect(rig.handle.state().scope.projectId).toBe('prj-other'); // the restore ran (generation 0 -> 1)
+
+    // the user switches back to the env pin's project AFTER boot settled
+    clickNav(rig, 'settings');
+    const switcher = findByData(rig.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    switcher.value = 'prj-a';
+    rig.doc.fire('change', { target: switcher });
+    expect(rig.handle.state().scope.projectId).toBe('prj-a');
+
+    // a later bundle (the beat's refetch, a manual refresh) re-runs the
+    // restore check with the SAME boot-captured stored scope — the
+    // generation guard keeps it from ever re-adopting 'prj-other'
+    await rig.handle.refresh();
+    expect(rig.handle.state().scope.projectId).toBe('prj-a'); // the user's choice holds
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-a');
+    await rig.handle.beat();
+    expect(rig.handle.state().scope.projectId).toBe('prj-a');
+    expect(rig.handle.state().degraded).toEqual([]);
+  });
+
+  it('(c) the select\'s rendered value ALWAYS mirrors the current scope — a scope not in the readable directory renders a disabled current-scope option, never a silent fallback to the first entry', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a'); // every read degrades — the directory never loads
+    clickNav(rig, 'settings');
+    const switcher = findByData(rig.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    const options = elementsOf(switcher).filter((element) => element.tagName === 'OPTION');
+    expect(options).toHaveLength(1); // the disabled current-scope option alone
+    expect(options[0]?.getAttribute('value')).toBe('prj-a'); // the CURRENT scope's id
+    expect(options[0]?.getAttribute('selected')).toBe('selected'); // selected — the DOM value mirrors the state
+    expect(options[0]?.getAttribute('disabled')).toBe('disabled'); // not selectable (there is nothing to re-choose)
+  });
+
+  it('(a) the concluded launch panel renders ONLY within its OWN scope — a desk switch clears it from the other desk\'s view; switching back restores it', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a');
+    // a CONCLUDED launch on prj-a, seeded through the handle's sanctioned dispatch path
+    rig.handle.dispatch({ kind: 'launch-draft-started', at: T0 + 5, draft: VALID_DRAFT });
+    rig.handle.dispatch({ kind: 'launch-submitted', at: T0 + 10, projectId: 'prj-a', jobId: 'job-kickoff' });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-kickoff', kind: 'research', tenant: 'tenant-a', project: 'prj-a', status: 'complete', submittedAt: T0 + 10, completedAt: T0 + 20 } });
+    expect(rig.handle.state().launch.phase).toBe('launched'); // the D-11 terminal-record close
+    expect(rig.handle.state().launch.projectId).toBe('prj-a'); // the slice knows its OWN scope
+    const launchedTexts = () => elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(launchedTexts()).toContain('Launch (launched)'); // the concluded card renders in its own scope
+    expect(findByData(rig.root, 'data-launch-idle', 'true')).toBeNull(); // the panel is NOT idle here
+
+    // THE SWITCH: another desk — the previous desk's launch params must NOT bleed into it
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 30, projectId: 'prj-b' });
+    const foreignTexts = launchedTexts();
+    expect(foreignTexts).not.toContain('Launch (launched)'); // the concluded card is GONE in the other desk's view
+    expect(findByData(rig.root, 'data-launch-idle', 'true')).not.toBeNull(); // the panel renders its own idle state
+    expect(findByData(rig.root, 'data-action', 'launch-start')).not.toBeNull(); // the hero shows its CTA (the guarded slice reads idle)
+
+    // switching BACK restores the launched desk's own concluded cards
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 40, projectId: 'prj-a' });
+    expect(launchedTexts()).toContain('Launch (launched)');
+  });
+
+  it('(b) the lifecycle reads ONE truth per entity: the Goal section renders the project record\'s own lifecycle beside the bound organization\'s operating status, each labeled, with the plain-words note on the seam', async () => {
+    // The deployed backing's real shape for a launched desk: the
+    // organization binds (organizationRef set, snapshot active) while the
+    // project record's lifecycle stays 'draft' (bindOrganization never
+    // transitions the lifecycle — the frozen contract's own law).
+    const base = demoSubstanceTransport();
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'GET' && path === '/v1/projects/prj-a') {
+        const inner = await base.transport(request);
+        const body = (inner as { readonly body?: { readonly data?: Record<string, unknown> } }).body;
+        const project = body?.data;
+        if (project !== undefined && (project.lifecycle as Record<string, unknown>) !== undefined) {
+          return { ...inner, body: { ...body, data: { ...project, lifecycle: { ...(project.lifecycle as Record<string, unknown>), status: 'draft' } } } };
+        }
+      }
+      return base.transport(request);
+    };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, transport, 'prj-a');
+    expect(rig.handle.state().project?.lifecycle.status).toBe('draft'); // the record's own truth
+    expect(rig.handle.state().orgSnapshots.map((snapshot) => snapshot.status)).toContain('active'); // the organization's own truth
+
+    clickNav(rig, 'goal');
+    const goalTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(goalTexts).toContain('draft'); // the record's lifecycle — verbatim, never fabricated 'active'
+    expect(goalTexts).toMatch(/active \(observed/); // the organization's status beside it, labeled as its own entity
+    expect(findByData(rig.root, 'data-lifecycle-note', 'true')).not.toBeNull(); // the seam is STATED in plain words
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'The project record\'s lifecycle and the organization\'s operating status are separate states — the record moves only through an explicit lifecycle event.')).toBe(true);
+  });
+});

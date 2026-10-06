@@ -232,6 +232,24 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   const client: ConsoleClient = createConsoleClient({ transport, token: options.token });
   const scope: WorkspaceScope = { tenantId: options.scope.tenantId, projectId: options.scope.projectId.length > 0 ? options.scope.projectId : LAUNCHPAD_PROJECT_ID };
   const beatMs = options.beatMs ?? 1000;
+  // D-15 (W-29 wave 2) — THE SESSION-SCOPE DISCIPLINE, part 1: the
+  // persisted scope is captured ONCE, synchronously, at boot — BEFORE
+  // any user interaction can happen and BEFORE the first read resolves.
+  // The pre-fix restore read the storage LATE (inside the async projects
+  // read), so a user-initiated scope change that landed between boot and
+  // that resolution raced the rehydration; the captured value plus the
+  // generation guard below make the restore exactly-once, boot-scoped,
+  // and structurally unable to clobber a user's choice.
+  const bootStoredScope = options.scopeStorage === undefined ? null : readStoredScopeProject(options.scopeStorage);
+  // D-15 part 2 — THE SCOPE GENERATION: 0 until the first scope move
+  // this session (a switcher choice, a palette jump, a launch adoption,
+  // or the boot-restore's own adoption — every one rides dispatch). The
+  // boot-restore applies ONLY at generation 0: once ANY scope move
+  // happened, the restore is done forever (the user is driving; the
+  // rehydration must never overwrite them — the switcher-rebind race
+  // the Lead reproduced twice: "the first select change did not take",
+  // the select snapping back to the boot scope).
+  let scopeGeneration = 0;
 
   let state: WorkspaceState = openWorkspace(scope, instants.nowMs());
   const listeners: WorkspaceListener[] = [];
@@ -248,6 +266,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   function dispatch(event: WorkspaceEvent): void {
     const scopeBefore = state.scope.projectId;
     state = reduceWorkspace(state, event);
+    // D-15 (W-29 wave 2): every scope move advances the generation — the
+    // boot-restore's own adoption included (one-shot by construction).
+    if (state.scope.projectId !== scopeBefore) scopeGeneration += 1;
     // THE SCOPE PERSISTENCE WRITE-THROUGH (R6b, W-22): the workspace
     // moved to another project (a launch adoption, a switcher choice,
     // a stored-scope restore) — persist the current project id so a
@@ -373,13 +394,29 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       await read('GET /v1/projects', async () => {
         const records = await client.projects.listAll();
         dispatch({ kind: 'projects-listed', at: instants.nowMs(), records: [...records] });
-        const stored = options.scopeStorage === undefined ? null : readStoredScopeProject(options.scopeStorage);
-        if (stored !== null && stored !== state.scope.projectId) {
-          if (records.some((record) => record.id === stored)) {
-            dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
-          } else if (options.scopeStorage !== undefined) {
-            persistScopeProject(options.scopeStorage, ''); // stale (deleted upstream) — clear it and keep the env pin
-          }
+        // THE STORED-SCOPE RESTORE (R6b/R6c, W-22) — D-15 (W-29 wave 2):
+        // the persisted scope was captured ONCE at boot (bootStoredScope);
+        // the restore applies ONLY while NO scope move has happened this
+        // session (the generation guard — the Lead's twice-reproduced
+        // switcher-rebind race: a user-initiated switch that lands during
+        // or immediately after boot must NEVER be overwritten by the
+        // async rehydration, and the rehydration itself must run exactly
+        // once, never again on a later beat-triggered refresh). When a
+        // stored project id exists in the directory and differs from the
+        // booted scope, the workspace ADOPTS it (the same reset+switch
+        // transition a launch rides; this bundle's captured-scope reads
+        // then drop through the dispatchIfCurrent guard and the beat
+        // refetches for the adopted scope). A stored id that no longer
+        // exists is stale — cleared and ignored, falling back to the env
+        // pin EXACTLY as the pre-W-22 boot behaved.
+        const stored = bootStoredScope;
+        if (stored === null) return;
+        if (scopeGeneration !== 0) return; // a scope move already happened — the user (or the restore itself) is driving
+        if (stored === state.scope.projectId) return;
+        if (records.some((record) => record.id === stored)) {
+          dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
+        } else if (options.scopeStorage !== undefined) {
+          persistScopeProject(options.scopeStorage, ''); // stale (deleted upstream) — clear it and keep the env pin
         }
       });
       const projectId = bundleScope;
