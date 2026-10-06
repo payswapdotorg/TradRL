@@ -3579,3 +3579,173 @@ describe('executed boot: D-13 (W-29) — the project-scoped inbox across a desk 
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// D-12 (W-29 wave 2) — THE STANDALONE RESEARCH-SUBMIT AFFORDANCE. The
+// launch flow was the ONLY path to submit a research job (S4's P03
+// finding: "no direct submit-job control in Research"); the Research
+// section now carries its own submit affordance — a card with ONE
+// primary action opening a two-field form (objective + notes) that
+// rides the SAME beat-safe data-field pattern as the launch wizard and
+// submits through the SAME frozen POST /v1/jobs/research plumbing into
+// the CURRENT project. Pinned here end to end: the affordance renders
+// per scope (never on the launchpad), the submission flows through the
+// client (the transport log carries the POST with the current
+// project's id + the console-research spec), the returned job lands in
+// the tracked list + the Research section renders it, and the beat's
+// poll advances it through the async pattern (submitted -> running ->
+// complete) exactly like a launch's kickoff job.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-12 (W-29 wave 2) — the standalone research-submit affordance', () => {
+  /**
+   * A research-jobs transport wrapper: serves POST /v1/jobs/research
+   * (returning a submitted record for the REQUESTING project — the
+   * route's own law) and GET /v1/jobs/:id with a status that advances
+   * per read (submitted -> running -> complete), so the tests pin the
+   * async pattern end to end. Everything else delegates to the wrapped
+   * backing.
+   */
+  function researchJobsTransport(inner: ApiTransport): {
+    readonly transport: ApiTransport;
+    readonly submissions: { count: number; projects: string[]; specs: unknown[] };
+    readonly polls: { count: number; jobIds: string[] };
+  } {
+    const submissions = { count: 0, projects: [] as string[], specs: [] as unknown[] };
+    const polls = { count: 0, jobIds: [] as string[] };
+    const jobs = new Map<string, { readonly jobId: string; readonly project: string; reads: number }>();
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'POST' && path === '/v1/jobs/research') {
+        submissions.count += 1;
+        const body = request.body as { readonly projectId: string; readonly spec: unknown };
+        submissions.projects.push(body.projectId);
+        submissions.specs.push(body.spec);
+        const jobId = `job:research-${submissions.count}`;
+        jobs.set(jobId, { jobId, project: body.projectId, reads: 0 });
+        return { status: 200, headers: {}, body: { requestId: 'req-r', data: { jobId, kind: 'research', tenant: 'tenant-a', project: body.projectId, status: 'submitted', submittedAt: T0 + 500 } } };
+      }
+      const jobMatch = /^\/v1\/jobs\/([^/]+)$/.exec(path);
+      if (request.method === 'GET' && jobMatch !== null && jobs.has(jobMatch[1] ?? '')) {
+        const entry = jobs.get(jobMatch[1] ?? '') as { readonly jobId: string; readonly project: string; reads: number };
+        entry.reads += 1;
+        polls.count += 1;
+        polls.jobIds.push(entry.jobId);
+        const status = entry.reads === 1 ? 'running' : 'complete';
+        return {
+          status: 200,
+          headers: {},
+          body: {
+            requestId: 'req-r',
+            data: {
+              jobId: entry.jobId, kind: 'research', tenant: 'tenant-a', project: entry.project, status, submittedAt: T0 + 500,
+              ...(status === 'complete' ? { completedAt: T0 + 900, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: entry.project, summary: 'a standalone research run' } } : {}),
+            },
+          },
+        };
+      }
+      return inner(request);
+    };
+    return { transport, submissions, polls };
+  }
+
+  it('the affordance renders ONLY inside a project scope — the launchpad (no project yet) keeps the wizard as the only path', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    expect(findByData(rig.root, 'data-research-submit', 'closed')).not.toBeNull(); // the closed affordance card
+    expect(findByData(rig.root, 'data-action', 'research-submit-open')).not.toBeNull(); // with its single primary action
+    const texts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(texts).toContain('Run a research job in this project (prj-a) directly'); // the card STATES the scope it submits into
+
+    // the launchpad: no project exists — the affordance stays away and the teaching empty state keeps its wizard CTA
+    const launchpad = await bootRig({ tradrl_onboarded: 'true' }, api.transport, '');
+    clickNav(launchpad, 'research');
+    expect(findByData(launchpad.root, 'data-research-submit', 'closed')).toBeNull();
+    expect(findByData(launchpad.root, 'data-research-submit', 'open')).toBeNull();
+    expect(findByData(launchpad.root, 'data-empty', 'No research jobs at this view instant.')).not.toBeNull(); // the teaching empty state (unchanged copy — the wizard is the only path from the launchpad, by design)
+  });
+
+  it('the submission flows through the EXISTING plumbing: open -> type (beat-safe) -> submit posts /v1/jobs/research with the CURRENT project + the console-research spec, and the job lands in the tracked Research list', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    clickAction(rig, 'research-submit-open'); // the card opens the form
+    expect(findByData(rig.root, 'data-research-submit', 'open')).not.toBeNull();
+    expect(findByData(rig.root, 'data-research-field', 'objective')).not.toBeNull();
+    expect(findByData(rig.root, 'data-research-field', 'notes')).not.toBeNull();
+
+    // THE BEAT-SAFE DATA-FIELD PATTERN: a re-projection between keystrokes
+    // never reverts the text — the buffered edit rides the render (the
+    // same J3 law the launch fields follow; a click on the section's own
+    // nav item is the harness's user-realistic re-projection)
+    typeResearchField(rig, 'objective', 'Investigate the momentum edge under higher volatility.');
+    clickNav(rig, 'research'); // re-project the whole tree
+    const objectiveAfter = findByData(rig.root, 'data-research-field', 'objective');
+    if (objectiveAfter === null) throw new Error('the research form vanished on the re-projection');
+    expect(objectiveAfter.getAttribute('value')).toBe('Investigate the momentum edge under higher volatility.'); // the buffered edit survived
+    typeResearchField(rig, 'notes', 'Focus on the last 30 days.');
+
+    // SUBMIT: the frozen route receives the CURRENT project's id + the spec
+    clickAction(rig, 'research-submit');
+    await settle();
+    expect(api.submissions.count).toBe(1); // exactly one POST
+    expect(api.submissions.projects).toEqual(['prj-a']); // the CURRENT project — the same scope law the launch's kickoff job follows
+    expect(api.submissions.specs[0]).toEqual({ kind: 'console-research', objective: 'Investigate the momentum edge under higher volatility.', notes: 'Focus on the last 30 days.' }); // the spec carries the objective + notes, marked with its own kind
+
+    // the returned record landed through the EXISTING reducer merge and the section renders it
+    expect(rig.handle.state().jobs.map((job) => job.jobId)).toContain('job:research-1');
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('submitted');
+    expect(findByData(rig.root, 'data-research-submit', 'open')).toBeNull(); // success closes the form
+    expect(findByData(rig.root, 'data-research-submit', 'closed')).not.toBeNull(); // the affordance returns to its closed state
+    expect(findByData(rig.root, 'data-row', 'job:job:research-1')).not.toBeNull(); // the job row renders in the Research list
+  });
+
+  it('the submitted job ANIMATES through the async pattern on the beat (submitted -> running -> complete with its result + elapsed)', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    clickAction(rig, 'research-submit-open');
+    typeResearchField(rig, 'objective', 'Investigate the momentum edge.');
+    clickAction(rig, 'research-submit');
+    await settle();
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('submitted');
+
+    await rig.handle.beat(); // the beat's poll cadence (the SAME cadence a launch's kickoff job rides)
+    expect(api.polls.jobIds).toEqual(['job:research-1']); // the poll read the submitted job
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('running');
+
+    await rig.handle.beat();
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('complete');
+    const completed = rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1');
+    if (completed === undefined) throw new Error('fixture: the completed job record is missing');
+    expect(completed.completedAt).toBe(T0 + 900); // the record's own timestamps (D-17's derivation reads these)
+    clickNav(rig, 'research');
+    const row = findByData(rig.root, 'data-row', 'job:job:research-1');
+    if (row === null) throw new Error('the completed job row is missing from the Research list');
+    const rowTexts = elementsOf(row).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(rowTexts).toContain('complete');
+    expect(rowTexts).toContain('400ms'); // D-17's record-derived elapsed (T0+900 - T0+500)
+  });
+
+  it('the typed validation gate: an empty objective renders the inline error in the form card and NEVER fires the route; a failed POST renders the transport error and keeps the user\'s text', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    clickAction(rig, 'research-submit-open');
+    clickAction(rig, 'research-submit'); // no objective typed
+    await settle();
+    expect(api.submissions.count).toBe(0); // the gate fired BEFORE any API call
+    const error = findByData(rig.root, 'data-research-error', 'objective: the objective statement is required (one sentence — what this research run should investigate)');
+    expect(error).not.toBeNull(); // the typed error renders inline, in the form's own card
+    expect(findByData(rig.root, 'data-research-submit', 'open')).not.toBeNull(); // the form stays open for the fix
+  });
+});
+
+/** Type into a standalone research form field (the browser's semantics, mirroring typeField: the live value rides the DOM property, the input event carries it into the buffer). */
+function typeResearchField(rig: Rig, field: string, value: string): void {
+  const input = findByData(rig.root, 'data-research-field', field);
+  if (input === null) throw new Error(`no research field ${field} in the current tree`);
+  input.value = value;
+  rig.doc.fire('input', { target: input });
+}

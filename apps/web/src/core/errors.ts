@@ -23,6 +23,7 @@ export const CONSOLE_ERROR_CODES = [
   'wall_clock_read',
   'policy_enforcement_attempt',
   'invalid_launch_draft',
+  'invalid_research_submission',
   'loader_failure',
 ] as const;
 
@@ -136,6 +137,23 @@ export class InvalidLaunchDraftError extends ConsoleLawError {
     super('invalid_launch_draft', `${path}: ${message}`);
     this.name = 'InvalidLaunchDraftError';
     this.path = path;
+  }
+}
+
+/**
+ * The standalone research submission's validation failures (D-12, W-29
+ * wave 2 — the Research section's own submit affordance). Same law as
+ * the launch draft: the input is validated LOCALLY, typed, BEFORE any
+ * API call — never an unhandled rejection, never a wrong submission.
+ */
+export class InvalidResearchSubmissionError extends ConsoleLawError {
+  /** The offending field name. */
+  readonly field: string;
+
+  constructor(field: string, message: string) {
+    super('invalid_research_submission', `${field}: ${message}`);
+    this.name = 'InvalidResearchSubmissionError';
+    this.field = field;
   }
 }
 

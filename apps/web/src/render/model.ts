@@ -31,11 +31,11 @@
 import type { CriterionPredicate, GatewayRefusal, GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
 import { withRenderGuard } from '../core/clock';
 import { assertVisible, availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfProject, availabilityOfSubmission, projectToView } from '../core/availability';
-import { assertProjectScope, type WorkspaceScope } from '../core/tenant';
+import { assertProjectScope, isLaunchpadScope, type WorkspaceScope } from '../core/tenant';
 import { renderDecimal } from '../core/decimals';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { PolicyEnforcementError } from '../core/errors';
-import { elapsedMsOfJobRecord, renderJobProgress, LAUNCH_STEPS, type LaunchStep } from '../core/launch';
+import { elapsedMsOfJobRecord, renderJobProgress, LAUNCH_STEPS, researchFormValuesOf, type LaunchStep } from '../core/launch';
 import { formatNumberGrouped } from './numbers';
 import {
   EXECUTION_MODES,
@@ -812,6 +812,43 @@ function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView):
   return snapshotSheet(state.scope, snapshot, viewAt);
 }
 
+/**
+ * D-12 (W-29 wave 2): THE STANDALONE RESEARCH-SUBMIT CARD — the
+ * Research section's own submission affordance. Closed: ONE primary
+ * action ("Submit research") in a card that states the scope it will
+ * submit into. Open: the two-field form (objective + notes) riding the
+ * SAME labeled-input scaffold and beat-safe data-field pattern as the
+ * launch wizard, an inline error line for the typed validation gate or
+ * a failed submission (rendered in the form's own card — an error the
+ * user must read to fix is never a toast), and exactly TWO actions
+ * (Submit / Cancel). Null on the launchpad (no project exists — the
+ * launch wizard is the only path there, by design).
+ */
+function researchSubmitCard(state: WorkspaceState, view: ShellView): VNode | null {
+  if (isLaunchpadScope(state.scope.projectId)) return null;
+  if (view.researchSubmit === null) {
+    return v('div', { class: 'card research-submit', 'data-research-submit': 'closed' }, [
+      v('div', { class: 'card-title' }, ['Submit research']),
+      v('p', { class: 'card-note' }, [`Run a research job in this project (${state.scope.projectId}) directly — no launch wizard required. The job lists below and advances like any other.`]),
+      v('div', { class: 'tm-playback' }, [
+        v('button', { class: 'tm-button', 'data-action': 'research-submit-open', type: 'button' }, ['Submit research']),
+      ]),
+    ]);
+  }
+  const form = researchFormValuesOf(view.researchSubmit.edits);
+  return v('div', { class: 'card research-submit', 'data-research-submit': 'open' }, [
+    v('div', { class: 'card-title' }, ['Submit research']),
+    v('p', { class: 'card-note' }, [`The job submits into the current project (${state.scope.projectId}) through the same research route a launch's kickoff job rides.`]),
+    ...labeledInput({ label: 'Objective', name: 'objective', value: form.objective, required: true, hint: 'One sentence — what this research run should investigate.', vocabulary: 'research' }),
+    ...labeledInput({ label: 'Notes', name: 'notes', value: form.notes, hint: 'Optional context for the run.', vocabulary: 'research' }),
+    ...(view.researchSubmit.error === null ? [] : [v('p', { class: 'field-error', role: 'alert', 'data-research-error': view.researchSubmit.error }, [view.researchSubmit.error])]),
+    v('div', { class: 'tm-playback' }, [
+      v('button', { class: 'tm-button', 'data-action': 'research-submit', type: 'button' }, ['Submit research job']),
+      v('button', { class: 'tm-button', 'data-action': 'research-submit-cancel', type: 'button' }, ['Cancel']),
+    ]),
+  ]);
+}
+
 /** The per-section panel — the selected section's projection at the view instant. */
 function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = defaultShellView(state)): VNode {
   const scope = state.scope;
@@ -939,9 +976,30 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
   } else if (selector === 'research') {
       const projected = projectToView(state.jobs.filter((job) => job.kind === 'research'), viewAt, availabilityOfJob);
       const cards = projected.map((job) => jobCard(scope, job, viewAt));
+      // D-12 (W-29 wave 2): THE STANDALONE RESEARCH-SUBMIT AFFORDANCE —
+      // the launch flow was the ONLY path to submit a research job
+      // (S4's P03 finding: "no direct submit-job control in Research —
+      // new jobs only originate from the launch wizard"). The
+      // affordance follows the section-action pattern (a card with ONE
+      // primary action, like the sibling sections' Refresh) and opens a
+      // two-field form that rides the SAME beat-safe data-field pattern
+      // as the launch wizard (buffered edits, committed on submit). It
+      // renders ONLY inside a project scope (the launchpad has no
+      // project to submit into — the wizard is the only path there, by
+      // design), and it submits into the CURRENT project through the
+      // frozen POST /v1/jobs/research route — the same plumbing the
+      // launch's kickoff job rides.
+      const submitCard = researchSubmitCard(state, view);
       return v('section', { class: 'panel', 'data-section': 'research' }, [
+        ...(submitCard === null ? [] : [submitCard]),
         ...cards,
-        ...(projected.length === 0 ? [sectionEmpty('research')] : []),
+        ...(projected.length === 0
+          ? [submitCard === null
+              ? sectionEmpty('research')
+              // The affordance changes what the teaching sentence must
+              // say: a research job no longer requires a launch.
+              : emptyState({ icon: 'flask', title: 'No research jobs at this view instant.', sentence: 'Research jobs start when a project launches — or submit one directly with the button above.', action: { label: 'Launch from Goal', target: 'goal' } })]
+          : []),
       ]);
   } else if (selector === 'experiments') {
       const projected = projectToView(state.jobs, viewAt, availabilityOfJob);

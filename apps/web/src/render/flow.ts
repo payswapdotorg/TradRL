@@ -331,7 +331,14 @@ export function fieldError(field: FieldValidation): VNode | null {
   return v('p', { class: 'field-error', role: 'alert' }, [field.message]);
 }
 
-/** One labeled input (§4.11: the label sits ABOVE the input; validation rides under it). */
+/**
+ * One labeled input (§4.11: the label sits ABOVE the input; validation
+ * rides under it). The `vocabulary` picks the delegated data-field
+ * attribute — 'launch' (the wizard's data-launch-field, the default)
+ * or 'research' (the D-12 standalone research form's
+ * data-research-field) — so each form's inputs bind to their OWN
+ * beat-safe edit buffer.
+ */
 export function labeledInput(options: {
   readonly label: string;
   readonly name: string;
@@ -341,20 +348,23 @@ export function labeledInput(options: {
   readonly hint?: string;
   readonly validation?: FieldValidation;
   readonly required?: boolean;
+  readonly vocabulary?: 'launch' | 'research';
 }): VNode[] {
   const invalid = options.validation?.touched === true && (options.validation?.message.length ?? 0) > 0;
+  const idPrefix = options.vocabulary === 'research' ? 'research' : 'launch';
+  const fieldAttr = options.vocabulary === 'research' ? 'data-research-field' : 'data-launch-field';
   return [
     v('div', { class: `field${invalid ? ' field-invalid' : ''}`, 'data-field': options.name }, [
-      v('label', { class: 'field-label', for: `launch-${options.name}` }, [options.label, ...(options.required === true ? [' *'] : [])]),
+      v('label', { class: 'field-label', for: `${idPrefix}-${options.name}` }, [options.label, ...(options.required === true ? [' *'] : [])]),
       v('input', {
         class: 'field-input',
-        id: `launch-${options.name}`,
+        id: `${idPrefix}-${options.name}`,
         name: options.name,
         type: options.type ?? 'text',
         value: options.value,
         ...(options.placeholder === undefined ? {} : { placeholder: options.placeholder }),
         ...(invalid ? { 'aria-invalid': 'true' } : {}),
-        'data-launch-field': options.name,
+        [fieldAttr]: options.name,
       }, []),
       ...(options.hint === undefined ? [] : [v('p', { class: 'field-hint' }, [options.hint])]),
       ...(options.validation === undefined ? [] : [fieldError(options.validation)]),

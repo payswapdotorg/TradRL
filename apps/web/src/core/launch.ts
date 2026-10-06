@@ -25,7 +25,7 @@ import type {
   ProjectGoalWorldSpec,
   SuccessCriterion,
 } from '../api/contracts';
-import { InvalidLaunchDraftError } from './errors';
+import { InvalidLaunchDraftError, InvalidResearchSubmissionError } from './errors';
 import { isNonNegativeDecimal } from './decimals';
 
 /** The launch wizard's steps (the primary flow's own order). */
@@ -260,6 +260,83 @@ export function renderJobProgress(points: readonly JobProgressPoint[]): JobProgr
     completedAt,
     elapsedMs: submittedAt !== null && completedAt !== null ? completedAt - submittedAt : null,
     observations: Object.freeze(ordered),
+  };
+}
+
+/**
+ * D-12 (W-29 wave 2): THE STANDALONE RESEARCH SUBMISSION'S INPUT — the
+ * Research section's own submit affordance. Before this, the launch
+ * wizard was the ONLY path to submit a research job (S4's finding:
+ * "no direct submit-job control in Research — new research jobs only
+ * come from the launch wizard"); the frozen POST /v1/jobs/research
+ * route takes an OPAQUE spec, so the console can submit one for the
+ * CURRENT project directly. The spec is marked with its own kind
+ * (`console-research`) so the boundary and any auditor can tell a
+ * standalone submission from a launch's kickoff job
+ * (`console-launch`) — the job machinery owns the semantics either
+ * way (it advances every research job through submitted -> running ->
+ * complete identically).
+ */
+export interface StandaloneResearchInput {
+  /** What this research run should investigate — one sentence. */
+  readonly objective: string;
+  /** Optional context for the run (free text; empty string = none). */
+  readonly notes: string;
+}
+
+/** The standalone research form's field names (the beat-safe data-field vocabulary mirrors these). */
+export const RESEARCH_FIELDS = ['objective', 'notes'] as const;
+
+/** One standalone research form field name. */
+export type ResearchFieldName = (typeof RESEARCH_FIELDS)[number];
+
+/** Guard: a standalone research form field name. */
+export function isResearchFieldName(value: string): value is ResearchFieldName {
+  return (RESEARCH_FIELDS as readonly string[]).includes(value);
+}
+
+/** The standalone research form's live values (the buffered edits ARE the form — there is no committed draft, so nothing else to merge). */
+export interface ResearchFormValues {
+  readonly objective: string;
+  readonly notes: string;
+}
+
+/** The form's live values from its buffered edits (the J3 pattern: a re-render never reverts the user's text). */
+export function researchFormValuesOf(edits: Readonly<Record<string, string>>): ResearchFormValues {
+  return {
+    objective: typeof edits.objective === 'string' ? edits.objective : '',
+    notes: typeof edits.notes === 'string' ? edits.notes : '',
+  };
+}
+
+/**
+ * Validate a standalone research submission — the typed gate before any
+ * API call (the same law as validateLaunchDraft: an invalid input
+ * surfaces inline, never as a wrong submission).
+ */
+export function validateStandaloneResearch(input: StandaloneResearchInput): void {
+  if (typeof input.objective !== 'string' || input.objective.trim().length === 0) {
+    throw new InvalidResearchSubmissionError('objective', 'the objective statement is required (one sentence — what this research run should investigate)');
+  }
+  if (typeof input.notes !== 'string') {
+    throw new InvalidResearchSubmissionError('notes', 'the notes must be text (empty is fine)');
+  }
+}
+
+/**
+ * Build the standalone research job's spec from a validated input
+ * (D-12): the same opaque-spec carrier the launch's kickoff job rides
+ * (POST /v1/jobs/research takes `spec: unknown`), marked with its own
+ * kind so a standalone submission is distinguishable from a launch's
+ * kickoff job on any audit trail. Notes ride verbatim only when
+ * non-empty — an empty field fabricates nothing.
+ */
+export function toStandaloneResearchSpec(input: StandaloneResearchInput): Record<string, unknown> {
+  validateStandaloneResearch(input);
+  return {
+    kind: 'console-research',
+    objective: input.objective,
+    ...(input.notes.trim().length === 0 ? {} : { notes: input.notes }),
   };
 }
 

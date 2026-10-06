@@ -25,9 +25,9 @@ import type { ApiTransport, FetchLike } from '../api/transport';
 import { createFetchTransport } from '../api/transport';
 import { createConsoleClient, type ConsoleClient } from '../api/client';
 import type { ApiConsoleError } from '../api/errors';
-import type { LaunchDraft, LaunchIds } from '../core/launch';
-import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, toLaunchWorldSpec, validateLaunchDraft } from '../core/launch';
-import { InvalidLaunchDraftError } from '../core/errors';
+import type { LaunchDraft, LaunchIds, StandaloneResearchInput } from '../core/launch';
+import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, toLaunchWorldSpec, toStandaloneResearchSpec, validateLaunchDraft, validateStandaloneResearch, isResearchFieldName } from '../core/launch';
+import { InvalidLaunchDraftError, InvalidResearchSubmissionError } from '../core/errors';
 import { absorbedEdit, blankLaunchDraft, editLaunchField, isLaunchFieldName, launchFormValuesOfDraft, type LaunchFieldName } from '../core/launch-form';
 import { digestOf } from '../core/digest';
 import type { InstantSource, TickScheduler } from '../core/clock';
@@ -37,6 +37,7 @@ import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
 import { openWorkspace, reduceWorkspace, serializeWorkspaceExport } from '../core/workspace';
 import type { WorkspaceScope } from '../core/tenant';
+import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
 import { persistTheme } from '../core/theme';
 import { isShellTarget } from '../core/nav';
@@ -203,8 +204,8 @@ export interface MountDocument {
   readonly documentElement?: Element | null;
 }
 
-/** The launchpad project id — the workspace's pre-launch scope placeholder. */
-export const LAUNCHPAD_PROJECT_ID = '(launchpad)';
+/** The launchpad project id — the workspace's pre-launch scope placeholder (core/tenant.ts owns the constant; re-exported for the existing imports). */
+export { LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 
 /** The persisted-scope storage key (R6b, W-22 — localStorage `tradrl_scope_project` in production). */
 export const SCOPE_STORAGE_KEY = 'tradrl_scope_project';
@@ -701,6 +702,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       confirm: null,
       touchedFields: [],
       launchEdits: {},
+      researchSubmit: null,
       openCapsule: null,
     };
     let paletteResults: readonly PaletteEntry[] = [];
@@ -745,6 +747,22 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const value = typeof element.value === 'string' ? element.value : '';
       return { field: name, value };
     };
+    /**
+     * D-12 (W-29 wave 2): read the standalone research form's field of an
+     * event target (null when the target is not one of its inputs) — the
+     * SAME delegated-vocabulary shape as launchFieldOf, on its own
+     * data-research-field attribute so each form buffers into its own
+     * edit map (a launch edit can never leak into the research form and
+     * vice versa).
+     */
+    const researchFieldOf = (target: unknown): { readonly field: string; readonly value: string } | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      const name = element.getAttribute('data-research-field');
+      if (name === null || !isResearchFieldName(name)) return null;
+      const value = typeof element.value === 'string' ? element.value : '';
+      return { field: name, value };
+    };
     /** Read the palette query of an event target (null when the target is not the palette input; the live value rides the DOM property). */
     const paletteQueryOf = (target: unknown): string | null => {
       const element = target as FieldEventTarget | null;
@@ -782,7 +800,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     const focusKeyOf = (element: unknown): { readonly attr: string; readonly value: string } | null => {
       const candidate = element as FieldEventTarget | null | undefined;
       if (candidate === null || candidate === undefined || typeof candidate.getAttribute !== 'function') return null;
-      for (const attr of ['data-row', 'data-notice-read', 'data-capsule-open', 'data-palette-ref', 'data-launch-field', 'data-palette-input', 'data-action', 'data-target']) {
+      for (const attr of ['data-row', 'data-notice-read', 'data-capsule-open', 'data-palette-ref', 'data-launch-field', 'data-research-field', 'data-palette-input', 'data-action', 'data-target']) {
         const value = candidate.getAttribute(attr);
         if (value !== null) return { attr, value };
       }
@@ -885,6 +903,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       let focusedSelection: { readonly start: number; readonly end: number } | null = null;
       let focusedPaletteInput = false;
       let focusedPaletteSelection: { readonly start: number; readonly end: number } | null = null;
+      // D-12 (W-29 wave 2): the focused standalone-research form field — the
+      // same capture/restore as the launch fields, on its own attribute
+      // (typing into the research form survives the beat re-projection).
+      let focusedResearchField: string | null = null;
+      let focusedResearchSelection: { readonly start: number; readonly end: number } | null = null;
       // D-10 (W-29): the focused INTERACTIVE affordance's identity (nav
       // items, the bell, notice toggles, capsule badges — anything in the
       // delegated vocabulary), restored after the re-projection so a
@@ -902,6 +925,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           focusedPaletteInput = true;
           if (typeof (active as { readonly selectionStart?: number | null }).selectionStart === 'number' && typeof (active as { readonly selectionEnd?: number | null }).selectionEnd === 'number') {
             focusedPaletteSelection = { start: (active as { readonly selectionStart: number }).selectionStart, end: (active as { readonly selectionEnd: number }).selectionEnd };
+          }
+        } else if (active.getAttribute('data-research-field') !== null) {
+          focusedResearchField = active.getAttribute('data-research-field');
+          if (typeof (active as { readonly selectionStart?: number | null }).selectionStart === 'number' && typeof (active as { readonly selectionEnd?: number | null }).selectionEnd === 'number') {
+            focusedResearchSelection = { start: (active as { readonly selectionStart: number }).selectionStart, end: (active as { readonly selectionEnd: number }).selectionEnd };
           }
         } else {
           focusedInteractiveKey = focusKeyOf(active);
@@ -924,6 +952,19 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           element.focus();
           if (focusedPaletteSelection !== null && element.setSelectionRange !== undefined) element.setSelectionRange(focusedPaletteSelection.start, focusedPaletteSelection.end);
           break;
+        }
+      }
+      // D-12 (W-29 wave 2): the research form's focused field survives the
+      // re-projection (the same law as the launch fields — typing never
+      // breaks across a beat).
+      if (focusedResearchField !== null && document.querySelectorAll !== undefined) {
+        for (const candidate of document.querySelectorAll('[data-research-field]')) {
+          const element = candidate as { focus(): void; getAttribute(name: string): string | null; setSelectionRange?(start: number, end: number): void };
+          if (element.getAttribute('data-research-field') === focusedResearchField) {
+            element.focus();
+            if (focusedResearchSelection !== null && element.setSelectionRange !== undefined) element.setSelectionRange(focusedResearchSelection.start, focusedResearchSelection.end);
+            break;
+          }
         }
       }
       // D-10 (W-29): the beat re-projection replaced the focused
@@ -1121,7 +1162,18 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
       const entry = launchFieldOf(event.target);
-      if (entry === null) return;
+      if (entry === null) {
+        // D-12 (W-29 wave 2): THE STANDALONE RESEARCH FORM'S EDIT BUFFER —
+        // the same J3 pattern as the launch edits: buffer ONLY, never a
+        // dispatch, never a render (the buffer IS the live form — the
+        // render merges it, so a beat re-projection never reverts the
+        // user's text; the submit commits it through the frozen route).
+        const researchEntry = researchFieldOf(event.target);
+        if (researchEntry !== null && view.researchSubmit !== null) {
+          view = { ...view, researchSubmit: { ...view.researchSubmit, edits: { ...view.researchSubmit.edits, [researchEntry.field]: researchEntry.value } } };
+        }
+        return;
+      }
       view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } }; // NO render — the buffer IS the live form (merged at render time)
     });
     document.addEventListener('change', (event) => {
@@ -1158,7 +1210,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
       const entry = launchFieldOf(event.target);
-      if (entry === null) return;
+      if (entry === null) {
+        // D-12: the research form's select/keyboard commit buffers the
+        // same way (the launch form's own change-arm law: buffer only —
+        // the flush belongs to the submit click).
+        const researchEntry = researchFieldOf(event.target);
+        if (researchEntry !== null && view.researchSubmit !== null) {
+          view = { ...view, researchSubmit: { ...view.researchSubmit, edits: { ...view.researchSubmit.edits, [researchEntry.field]: researchEntry.value } } };
+        }
+        return;
+      }
       // Buffer ONLY — never a flush here: the browser fires `change`
       // on the field being LEFT (before focusout) whenever its value
       // changed, and an immediate flush would re-render UNDER the
@@ -1424,6 +1485,94 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (kind === 'confirm-launch') {
           view = { ...view, confirm: null };
           if (state.launch.draft !== null) void submitLaunch(state.launch.draft);
+        }
+        // D-12 (W-29 wave 2): THE STANDALONE RESEARCH SUBMIT — the
+        // Research section's own affordance (the launch flow was the
+        // ONLY path before). The three actions follow the section's own
+        // design language: open (the closed card's single primary
+        // action), cancel (close + drop the buffered edits), and the
+        // submit itself — the typed validation gate FIRST (an invalid
+        // objective renders inline in the form's own card, never an
+        // API call), then the frozen POST /v1/jobs/research route with
+        // the CURRENT project's id (exactly what the launch's kickoff
+        // job submits into — the same plumbing, the same opaque-spec
+        // carrier, the same reducer merge by jobId). The returned
+        // record dispatches job-updated, so the job lands in the
+        // Research list immediately and the beat's poll cadence
+        // advances it through the async pattern (submitted -> running
+        // -> complete) like every other job.
+        if (kind === 'research-submit-open') {
+          if (view.researchSubmit === null) {
+            view = { ...view, researchSubmit: { edits: {}, error: null } };
+            render();
+          }
+          return;
+        }
+        if (kind === 'research-submit-cancel') {
+          if (view.researchSubmit !== null) {
+            view = { ...view, researchSubmit: null };
+            render();
+          }
+          return;
+        }
+        if (kind === 'research-submit') {
+          const form = view.researchSubmit;
+          if (form === null) {
+            render();
+            return;
+          }
+          const input: StandaloneResearchInput = {
+            objective: typeof form.edits.objective === 'string' ? form.edits.objective : '',
+            notes: typeof form.edits.notes === 'string' ? form.edits.notes : '',
+          };
+          try {
+            validateStandaloneResearch(input);
+          } catch (error) {
+            if (error instanceof InvalidResearchSubmissionError) {
+              view = { ...view, researchSubmit: { ...form, error: error.message } };
+              render();
+              return;
+            }
+            throw error;
+          }
+          // The scope THIS submission targets, captured at the click: a
+          // mid-flight desk switch supersedes the render but never the
+          // submission's own target (the job belongs to the project the
+          // user was looking at — the record carries it verbatim).
+          const projectId = state.scope.projectId;
+          if (isLaunchpadScope(projectId)) {
+            // The affordance never renders on the launchpad; a stale
+            // press landing here is refused honestly, never submitted
+            // into a scope that does not exist.
+            view = { ...view, researchSubmit: { ...form, error: 'There is no project yet — launch first; the wizard is the only path from the launchpad.' } };
+            render();
+            return;
+          }
+          view = { ...view, researchSubmit: { ...form, error: null } };
+          render();
+          void (async () => {
+            try {
+              const job = await client.jobs.submitResearch({ projectId, spec: toStandaloneResearchSpec(input) });
+              // Only the still-current scope receives the record (the
+              // reducer's cross-scope gate is the law; the other desk's
+              // refetch reads the job from GET /v1/jobs?project=… when
+              // the user returns to it — the W-25A seam).
+              if (state.scope.projectId === projectId) {
+                dispatch({ kind: 'job-updated', at: instants.nowMs(), job });
+              }
+              view = { ...view, researchSubmit: null }; // success closes the form
+              render();
+            } catch (error) {
+              const message = (error as Error)?.message ?? String(error);
+              // The form keeps the user's text (the edits buffer rides
+              // the view, and the CURRENT form state — whatever the
+              // user typed while the request was in flight — is the one
+              // the error renders into).
+              view = { ...view, researchSubmit: view.researchSubmit === null ? { edits: {}, error: message } : { ...view.researchSubmit, error: message } };
+              render();
+            }
+          })();
+          return;
         }
         // §4.9 capsule badges open their payload inline
         if (kind === 'capsule-open') {

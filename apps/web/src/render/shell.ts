@@ -55,6 +55,16 @@ export interface ShellView {
   readonly touchedFields: readonly string[];
   /** The launch form's PENDING edits (the J3 wiring): field -> the last typed string, not yet committed into the state machine — the render merges them so a re-render never reverts the user's text. */
   readonly launchEdits: Readonly<Record<string, string>>;
+  /**
+   * D-12 (W-29 wave 2): THE STANDALONE RESEARCH SUBMIT FORM — null =
+   * closed (the Research section renders its "Submit research" button);
+   * when open, the buffered field edits (the same J3 beat-safe pattern
+   * as launchEdits: the render merges them, the submit commits them)
+   * and the inline error state (a failed submission or the typed
+   * validation gate — rendered in the form's own card, never a toast
+   * for an error the user must read to fix).
+   */
+  readonly researchSubmit: { readonly edits: Readonly<Record<string, string>>; readonly error: string | null } | null;
   /** The inline-opened evidence capsule (§4.9): its data-capsule ref, or null. */
   readonly openCapsule: string | null;
 }
@@ -82,7 +92,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, openCapsule: null };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */
