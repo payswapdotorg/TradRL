@@ -138,14 +138,33 @@ describe('deploy/adapters/neon — the client request determinism', () => {
     expect(neonConnectionString({ ...FAKE_CONFIG, apiKey: 'p@ss:word/' })).toBe('postgresql://neondb_owner:p%40ss%3Aword%2F@ep-demo-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require');
   });
 
-  it('the SQL-over-HTTP request is byte-pinned: POST {host}/sql, the connection-string header, the JSON body', () => {
+  it('the SQL-over-HTTP request is byte-pinned: POST {host}/sql, the RAW connection-string header, the JSON body', () => {
     const request = buildNeonRequest(FAKE_CONFIG, 'SELECT payload FROM tradrl_knowledge WHERE tenant = $1', ['tenant-a']);
     expect(request.method).toBe('POST');
     expect(request.url).toBe('https://ep-demo-pooler.us-east-2.aws.neon.tech/sql');
     expect(request.headers['content-type']).toBe('application/json');
     expect(request.headers.accept).toBe('application/json');
-    expect(request.headers['neon-connection-string']).toBe('postgresql%3A%2F%2Fneondb_owner%3Afake-neon-key-demo%40ep-demo-pooler.us-east-2.aws.neon.tech%2Fneondb%3Fsslmode%3Drequire');
+    // RAW (W-26A): the live proxy parses the header value as a URL and
+    // REJECTS the whole-string-encoded form (HTTP 400 "invalid connection
+    // string: relative URL without a base"); the reference driver sends
+    // the serialized URL verbatim — scheme, ://, @, /, ? all literal.
+    expect(request.headers['neon-connection-string']).toBe('postgresql://neondb_owner:fake-neon-key-demo@ep-demo-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require');
     expect(request.body).toBe('{"query":"SELECT payload FROM tradrl_knowledge WHERE tenant = $1","params":["tenant-a"]}');
+  });
+
+  it('the RAW header percent-encodes a special-char password WITHIN the string while the structure stays literal (W-26A)', () => {
+    // A FAKE password carrying @ : / ? — the URL-structure characters.
+    // They MUST appear percent-encoded inside the header value; the
+    // postgresql://…@…/…?sslmode=require structure MUST stay literal
+    // (WHATWG URL serializer semantics — the live proxy's requirement).
+    const request = buildNeonRequest({ ...FAKE_CONFIG, apiKey: 'p@ss:word/?' }, 'SELECT 1', ['x']);
+    expect(request.headers['neon-connection-string']).toBe('postgresql://neondb_owner:p%40ss%3Aword%2F%3F@ep-demo-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require');
+    // The structure is never outer-encoded (the live 400 repro is pinned
+    // by absence): the scheme and separators appear LITERALLY.
+    const header = request.headers['neon-connection-string'];
+    expect(header.startsWith('postgresql://')).toBe(true);
+    expect(header).toContain('@ep-demo-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require');
+    expect(header).not.toContain('postgresql%3A');
   });
 
   it('identical inputs -> identical bytes (L9)', () => {
