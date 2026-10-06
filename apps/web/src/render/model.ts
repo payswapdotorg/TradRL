@@ -524,17 +524,21 @@ function outcomePostMortemCard(scope: WorkspaceScope, postMortem: PostMortemReco
   ]);
 }
 
-/** Render one knowledge entry. */
+/** Render one knowledge entry. D-18 (W-29 wave 2): the card leads with ONE human sentence — the claim in words + the confidence (L2's finding: the lessons rendered as raw field tuples; the Inbox's plain-English copy is the shape to follow) — with the full typed record beneath it. */
 function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt: number): VNode {
   assertProjectScope(scope, knowledge.record);
   visibleAt(knowledge, availabilityOfKnowledge(knowledge), viewAt, knowledge.record.knowledgeId);
-  return v('div', { class: 'card' }, [
+  const claim = knowledge.record.claim;
+  const dimension = claim.dimension === null || claim.dimension.length === 0 ? '' : ` (${claim.dimension})`;
+  const summary = `A ${claim.kind} lesson the firm treats as ${claim.polarity}${dimension} — confidence ${knowledge.record.confidence}, from ${knowledge.record.evidenceCount} piece${knowledge.record.evidenceCount === 1 ? '' : 's'} of evidence.`;
+  return v('div', { class: 'card lesson-card', 'data-lesson': knowledge.record.knowledgeId }, [
     v('div', { class: 'card-title' }, [knowledge.record.knowledgeId]),
     v('span', { class: `badge badge-knowledge-${knowledge.status}` }, [knowledge.status]),
+    v('p', { class: 'objective', 'data-lesson-summary': 'true' }, [summary]),
     ...factRows([
-      ['claim kind', knowledge.record.claim.kind],
-      ['polarity', knowledge.record.claim.polarity],
-      ['dimension', knowledge.record.claim.dimension ?? 'none'],
+      ['claim kind', claim.kind],
+      ['polarity', claim.polarity],
+      ['dimension', claim.dimension ?? 'none'],
       ['confidence', knowledge.record.confidence],
       ['evidence count', String(knowledge.record.evidenceCount)],
       ['valid from', formatInstantUtc(knowledge.record.validity.from)],
@@ -543,17 +547,19 @@ function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt
   ]);
 }
 
-/** Render one evidence capsule as the §4.9 inline surface: the monospace content-address badge (the open button) + the source kind; when open, the payload (mono) + the provenance line render inline (refs — never recomputed, L20). */
+/** Render one evidence capsule as the §4.9 inline surface: the monospace content-address badge (the open button) + the source kind; when open, the payload (mono) + the provenance line render inline (refs — never recomputed, L20). D-18 (W-29 wave 2): the refs line rides the payload's hover title (M5's truncated-refs finding) — the FULL refs are never hidden by wrapping or abbreviation. */
 function capsuleCard(capsule: EvidenceCapsule, viewAt: number, openCapsule: string | null): VNode {
   assertVisible({ datumRef: capsule.capsuleId, availableAt: capsule.availableAt }, viewAt);
+  const refsLine = capsule.refs.length === 0 ? 'refs: none' : `refs: ${capsule.refs.map((entry) => `${entry.kind}:${entry.ref}`).join(', ')}`;
   return capsuleSurface({
     capsuleId: capsule.capsuleId,
     sourceKind: capsule.sourceKind,
     open: openCapsule === capsule.capsuleId,
     payloadLines: [
       ...capsule.facts.map((entry) => `${entry.label}: ${entry.value}`),
-      capsule.refs.length === 0 ? 'refs: none' : `refs: ${capsule.refs.map((entry) => `${entry.kind}:${entry.ref}`).join(', ')}`,
+      refsLine,
     ],
+    refsLine,
     provenance: `read from ${capsule.sourceRoute} · ${capsule.sourceKind} ${capsule.sourceRef} · tenant ${capsule.tenantId} / project ${capsule.projectId} · available ${formatInstantUtc(capsule.availableAt)}`,
   });
 }
@@ -1045,6 +1051,10 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       ];
       return v('section', { class: 'panel', 'data-section': 'time-machine' }, [
         v('div', { class: 'card' }, [v('div', { class: 'card-title' }, ['Time Machine']), ...knowable]),
+        // D-18 (W-29 wave 2): the one-line explainer for the jargon labels
+        // (S2's finding: "T-x is cryptic pre-click") — the modes' meanings
+        // in plain words, right on the section that owns them.
+        v('p', { class: 'hint', 'data-tm-explainer': 'true' }, ['The modes: LIVE shows the world as the API serves it now; T-x views it as of x seconds before the latest datum; TIMESTAMP picks one explicit instant; PLAYBACK plays history forward, one knowable-then step at a time.']),
         v('p', { class: 'hint' }, ['Every visible datum above passed the availability projection for this view instant (L4).']),
       ]);
   } else if (selector === 'research') {
@@ -1106,7 +1116,14 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...decisionOutcomes.map((outcome) => v('div', { class: 'decision-block' }, [
           decisionCard(scope, outcome, viewAt, view.openCapsule),
         ])),
-        v('div', { class: 'watch' }, [v('h2', {}, ['Watch']), ...watchFeed.map((event) => watchEventRow(scope, event, viewAt, view.openCapsule))]),
+        // D-18 (W-29 wave 2): the "Watch" heading explains itself — the
+        // hover/aria description + ONE plain line beneath it (S2's finding:
+        // "'Watch' is unexplained jargon"; the heading alone named nothing).
+        v('div', { class: 'watch' }, [
+          v('h2', { class: 'watch-heading', title: 'Watch — the live decision stream: what each agent proposed and how the gateway answered', 'aria-label': 'Watch — the live decision stream' }, ['Watch']),
+          v('p', { class: 'hint', 'data-watch-explainer': 'true' }, ['The live decision stream — what each agent proposed, the evidence it consulted, and how the gateway answered.']),
+          ...watchFeed.map((event) => watchEventRow(scope, event, viewAt, view.openCapsule)),
+        ]),
         ...submissions.map((submission) => v('div', { class: 'decision-block' }, [
           submissionCard(scope, submission, viewAt),
           capsuleInline(capsuleFromSubmission(scope, submission), viewAt, view.openCapsule),

@@ -43,6 +43,7 @@ import {
   scrubberBoundsOf,
   streamCard,
   timeMachineControls,
+  TIME_MACHINE_MODE_DESCRIPTIONS,
   TIME_MACHINE_MODES,
   toastRecord,
   twoStepConfirm,
@@ -139,6 +140,27 @@ describe('flow §4.9: the evidence capsule badge', () => {
     expect(bytes).toContain('<pre class="capsule-mono">disposition: filled');
     expect(bytes).toContain('<div class="capsule-provenance">folded from GET /v1/outcomes/query out-1</div>');
   });
+
+  it('D-18 (W-29 wave 2): the badge carries the FULL ref as its hover title — an abbreviated label never hides the value (M5: "evidence ref labels are hard-truncated — full ref only in aria-label")', () => {
+    // M5's exact finding: a long ref abbreviates in the label ("shadow_o…001" style)...
+    expect(capsuleBadgeLabel('shadow_outcome:shadow_outcome_0001')).toBe('shadow_o…001');
+    // ...but the FULL ref now rides the hover tooltip, not the aria-label alone
+    const bytes = render(capsuleBadge('shadow_outcome', 'shadow_outcome_0001'));
+    expect(bytes).toContain('title="shadow_outcome:shadow_outcome_0001"');
+    expect(bytes).toContain('aria-label="Open evidence capsule shadow_outcome:shadow_outcome_0001"');
+  });
+
+  it('D-18 (W-29 wave 2): the opened payload carries the FULL refs line as the mono block\'s hover title (the refs line wraps in CSS — the title keeps the complete refs hoverable)', () => {
+    const refsLine = 'refs: job:558af789, outcome:out:demo0001';
+    const bytes = render(capsulePayload('evc:9f2ac41bde07', ['deliverable: release-candidate', refsLine], 'read from /v1/jobs/:jobId', refsLine));
+    expect(bytes).toContain('title="refs: job:558af789, outcome:out:demo0001"');
+    expect(bytes).toContain('data-refs-line="refs: job:558af789, outcome:out:demo0001"');
+    expect(bytes).toContain(`refs: job:558af789, outcome:out:demo0001`); // the line itself renders verbatim
+    // without a refs line the payload renders exactly as before (the optional prop adds nothing)
+    const bare = render(capsulePayload('evc:9f2ac41bde07', ['facts only'], 'provenance'));
+    expect(bare).not.toContain('data-refs-line');
+    expect(bare).not.toContain('title=');
+  });
 });
 
 describe('flow §4.8: the Time Machine control bar', () => {
@@ -181,6 +203,19 @@ describe('flow §4.8: the Time Machine control bar', () => {
     expect(projectionNoticeOf('live')).toContain('live');
     expect(projectionNoticeOf('t-minus')).toContain('not yet knowable');
     expect(projectionNoticeOf('playback')).toContain('Playing history');
+  });
+
+  it('D-18 (W-29 wave 2): every mode button carries its meaning BEFORE the click — the description rides the hover title + the aria-description (S2: "T-x is cryptic pre-click — no tooltips on mode buttons")', () => {
+    const bytes = render(bar);
+    for (const entry of TIME_MACHINE_MODES) {
+      const description = TIME_MACHINE_MODE_DESCRIPTIONS[entry.key];
+      expect(description, entry.key).toBeDefined();
+      expect(bytes).toContain(`title="${description}"`);
+      expect(bytes).toContain(`aria-description="${description}"`);
+    }
+    // the T-x description names the offset it arms (the console arms 60s) and the Watch word is nowhere near cryptic anymore
+    expect(TIME_MACHINE_MODE_DESCRIPTIONS['t-minus']).toContain('60 seconds before the latest datum');
+    expect(TIME_MACHINE_MODE_DESCRIPTIONS['t-minus']).toContain('x is the offset');
   });
 
   it('the playing state swaps the play/pause label + renders the progress', () => {

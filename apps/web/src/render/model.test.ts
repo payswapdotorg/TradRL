@@ -944,3 +944,87 @@ describe('render model: D-17 — the job sheet\'s elapsed derives from the RECOR
     expect(bytes).toContain('8ms'); // the row's meta — the record's own duration
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-18 (W-29 wave 2) — THE COPY POLISH. Three register items pinned at the
+// model layer: (1) the jargon labels explained in place — the Time Machine
+// section's one-line modes explainer (S2: "T-x is cryptic pre-click") and
+// the Watch heading's plain-words description (S2: "'Watch' is unexplained
+// jargon"); (2) the Lessons cards lead with ONE human sentence (L2: the
+// lessons rendered as raw field tuples) — the typed record still renders
+// beneath it; (3) the evidence capsule row's refs line rides the payload's
+// hover title (M5: "evidence ref labels are hard-truncated") — the badge
+// half of the fix is pinned in flow.test.ts. The fourth register item (a
+// risk-utilization view) is DISCLOSED-SKIPPED: the console surface carries
+// bounds only (constraint sets) and breach-time observed values (refusal
+// payloads) — no continuous consumption data exists to render, and
+// fabricating one is forbidden (L20).
+// ---------------------------------------------------------------------------
+
+describe('render model: D-18 — the copy polish (jargon explained, lessons in words, refs hoverable)', () => {
+  it('the Lessons card leads with ONE human sentence — the claim in words + confidence + evidence count (L2: field tuples only before), with the typed record still beneath it', () => {
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'lessons' },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    // the fixture: kind causal, polarity positive, dimension momentum, confidence 0.80, 2 pieces of evidence
+    expect(bytes).toContain('data-lesson-summary="true"');
+    expect(bytes).toContain('A causal lesson the firm treats as positive (momentum) — confidence 0.80, from 2 pieces of evidence.');
+    // the typed record still renders verbatim beneath the sentence (the summary ADDS, never replaces)
+    expect(bytes).toContain('claim kind');
+    expect(bytes).toContain('causal');
+    expect(bytes).toContain('polarity');
+    expect(bytes).toContain('momentum');
+    expect(bytes).toContain('0.80');
+  });
+
+  it('a dimension-less lesson renders its sentence WITHOUT the parenthetical — nothing fabricated', () => {
+    const dimensionless: ServedKnowledge = {
+      record: { ...knowledge().record, knowledgeId: 'knl-nodim', claim: { ...knowledge().record.claim, dimension: null } },
+      status: 'active', supersededBy: null,
+    } as unknown as ServedKnowledge;
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'knowledge-loaded', at: T0 + 32, records: [knowledge(), dimensionless] }, // both lessons — the reducer's list is per-read
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'lessons' },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('A causal lesson the firm treats as positive — confidence 0.80, from 2 pieces of evidence.');
+    expect(bytes).toContain('(momentum)'); // the dimensioned fixture still renders its own parenthetical
+  });
+
+  it('the Time Machine section explains its modes in ONE plain line (S2: "T-x is cryptic pre-click") — every mode named, T-x included', () => {
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'time-machine' },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-tm-explainer="true"');
+    expect(bytes).toContain('The modes: LIVE shows the world as the API serves it now; T-x views it as of x seconds before the latest datum; TIMESTAMP picks one explicit instant; PLAYBACK plays history forward, one knowable-then step at a time.');
+  });
+
+  it('the Decisions section\'s Watch heading explains itself — the hover title + ONE plain line (S2: "\'Watch\' is unexplained jargon")', () => {
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'decisions' },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-watch-explainer="true"');
+    expect(bytes).toContain('The live decision stream — what each agent proposed, the evidence it consulted, and how the gateway answered.');
+    expect(bytes).toContain('title="Watch — the live decision stream: what each agent proposed and how the gateway answered"');
+    expect(bytes).toContain('aria-label="Watch — the live decision stream"');
+  });
+
+  it('the opened evidence capsule\'s payload carries the FULL refs line as its hover title — a wrapped or long refs line never hides a ref (M5\'s finding)', () => {
+    const evidence = reduceAll(populatedWorkspace(), [
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'evidence' },
+    ]);
+    const capsule = capsuleFromOutcome(SCOPE, outcome());
+    const opened = serializeVNode(renderConsoleModel(evidence, T0 + 50, { ...defaultShellView(evidence), accountView: 'section', openCapsule: capsule.capsuleId }));
+    expect(opened).toContain('data-refs-line="refs: fill:fil-1"'); // the fixture outcome's own evidence ref, verbatim
+    expect(opened).toContain('title="refs: fill:fil-1"'); // the hover title carries it too
+    expect(opened).toContain('refs: fill:fil-1'); // and the line itself renders in the mono block
+  });
+});

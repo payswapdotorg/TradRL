@@ -102,7 +102,7 @@ export function streamCard(props: StreamCardProps): VNode {
           : props.evidenceConsulted.map((entry) => capsuleBadge(entry.kind, entry.ref, props.openRef === `${entry.kind}:${entry.ref}`))),
         ...(props.openRef === null || props.openRef === undefined || !props.evidenceConsulted.some((entry) => `${entry.kind}:${entry.ref}` === props.openRef)
           ? []
-          : [capsulePayload(props.openRef, [`ref ${props.openRef}`], 'rendered as a reference — the evidence read family owns its payload (L20)')]),
+          : [capsulePayload(props.openRef, [`ref ${props.openRef}`], 'rendered as a reference — the evidence read family owns its payload (L20)', `ref ${props.openRef}`)]),
       ]),
       v('div', { class: 'stream-line' }, [
         v('span', { class: 'stream-label' }, ['Proposal']),
@@ -139,19 +139,27 @@ export function capsuleBadgeLabel(capsuleId: string): string {
   return capsuleId.length <= 12 ? capsuleId : `${capsuleId.slice(0, 8)}…${capsuleId.slice(-3)}`;
 }
 
-/** One inline capsule badge (§4.9): rounded-lg, hairline, mono content address; opens the payload + provenance. */
+/** One inline capsule badge (§4.9): rounded-lg, hairline, mono content address; opens the payload + provenance. D-18 (W-29 wave 2): the badge's label is abbreviated by design (the content-address style) — the FULL ref rides the hover tooltip (title) so a truncated label never hides the value (M5's finding: "evidence ref labels are hard-truncated — full ref only in aria-label"). */
 export function capsuleBadge(kind: string, ref: string, open = false): VNode {
-  return v('button', { class: `capsule-badge${open ? ' open' : ''}`, 'data-capsule': `${kind}:${ref}`, 'data-action': 'capsule-open', 'data-capsule-open': `${kind}:${ref}`, type: 'button', 'aria-label': `Open evidence capsule ${kind}:${ref}`, 'aria-expanded': open ? 'true' : 'false' }, [
+  const fullRef = `${kind}:${ref}`;
+  return v('button', { class: `capsule-badge${open ? ' open' : ''}`, 'data-capsule': fullRef, 'data-action': 'capsule-open', 'data-capsule-open': fullRef, type: 'button', 'aria-label': `Open evidence capsule ${fullRef}`, 'aria-expanded': open ? 'true' : 'false', title: fullRef }, [
     iconOf('box', 'ci ci-14'),
-    v('span', { class: 'capsule-address' }, [capsuleBadgeLabel(`${kind}:${ref}`)]),
+    v('span', { class: 'capsule-address' }, [capsuleBadgeLabel(fullRef)]),
   ]);
 }
 
-/** The capsule's opened payload render (§4.9): mono for raw records + the provenance line. */
-export function capsulePayload(capsuleId: string, payloadLines: readonly string[], provenance: string): VNode {
+/**
+ * The capsule's opened payload render (§4.9): mono for raw records +
+ * the provenance line. D-18 (W-29 wave 2): the refs line rides the
+ * mono block's hover tooltip (`title`) — the line WRAPS in CSS
+ * (`.capsule-mono { white-space: pre-wrap }`) and now the FULL refs
+ * are also hoverable verbatim, so no wrapping or abbreviation ever
+ * hides a ref (M5's truncated-refs finding).
+ */
+export function capsulePayload(capsuleId: string, payloadLines: readonly string[], provenance: string, refsLine?: string): VNode {
   return v('div', { class: 'capsule-payload', 'data-capsule-open': capsuleId }, [
     v('div', { class: 'capsule-address' }, [capsuleId]),
-    v('pre', { class: 'capsule-mono' }, [...payloadLines.join('\n')]),
+    v('pre', { class: 'capsule-mono', ...(refsLine === undefined ? {} : { title: refsLine, 'data-refs-line': refsLine }) }, [...payloadLines.join('\n')]),
     v('div', { class: 'capsule-provenance' }, [provenance]),
   ]);
 }
@@ -166,6 +174,8 @@ export interface CapsuleSurfaceProps {
   readonly open: boolean;
   /** The payload's mono lines (the capsule's typed facts + refs — rendered verbatim, never recomputed). */
   readonly payloadLines: readonly string[];
+  /** D-18 (W-29 wave 2): the full refs line — carried as the mono block's hover title (never truncated, never recomputed; L20). */
+  readonly refsLine?: string;
   /** The provenance line (§4.9 + R45: the source route + identity + availability). */
   readonly provenance: string;
 }
@@ -184,7 +194,7 @@ export function capsuleSurface(props: CapsuleSurfaceProps): VNode {
       capsuleBadge('evc', hex, props.open),
       v('span', { class: 'capsule-kind' }, [props.sourceKind]),
     ]),
-    ...(props.open ? [capsulePayload(props.capsuleId, props.payloadLines, props.provenance)] : []),
+    ...(props.open ? [capsulePayload(props.capsuleId, props.payloadLines, props.provenance, props.refsLine)] : []),
   ]);
 }
 
@@ -202,6 +212,20 @@ export const TIME_MACHINE_MODES: readonly TmModeEntry[] = Object.freeze([
   { key: 'timestamp', label: 'TIMESTAMP' },
   { key: 'playback', label: 'PLAYBACK' },
 ]);
+
+/**
+ * D-18 (W-29 wave 2): each mode button's hover/aria explanation — the
+ * meaning exists BEFORE the click now (S2's finding: "T-x is cryptic
+ * pre-click — no tooltips on mode buttons; the meaning only appears in
+ * the post-click status line"). The copy is the product's own voice:
+ * plain, precise, one sentence per mode; T-x names the offset it arms.
+ */
+export const TIME_MACHINE_MODE_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
+  live: 'View the live world — every datum as the API serves it now.',
+  't-minus': 'T-x: view the world as of 60 seconds before the latest datum (x is the offset; Step back moves it further back).',
+  timestamp: 'View one explicit instant you pick — the availability projection decides what renders.',
+  playback: 'Play history forward — each step renders only what was knowable then.',
+});
 
 /** The projection state notice (§4.8): what the projection is doing at this view instant. */
 export function projectionNoticeOf(mode: string): string {
@@ -233,6 +257,11 @@ export function timeMachineControls(options: {
       'data-action': `tm-mode-${entry.key}`,
       type: 'button',
       'aria-pressed': options.mode === entry.key ? 'true' : 'false',
+      // D-18 (W-29 wave 2): the mode's meaning renders BEFORE the click —
+      // the hover tooltip + the screen-reader description (S2's finding:
+      // the labels alone were cryptic jargon).
+      title: TIME_MACHINE_MODE_DESCRIPTIONS[entry.key] ?? entry.label,
+      'aria-description': TIME_MACHINE_MODE_DESCRIPTIONS[entry.key] ?? entry.label,
     }, [entry.label]))),
     v('input', {
       class: 'tm-scrubber',
