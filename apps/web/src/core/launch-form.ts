@@ -183,26 +183,48 @@ function formatConstraint(constraint: ConstraintStatement): string {
   return `${constraint.id}:${constraint.domain}:${constraint.subject}:${predicate.kind}:${bound}${severity}`;
 }
 
+/** Parse ONE constraints-grammar entry; false when it is malformed (the per-entry half of the grammar — D-6b's offender-naming validation reads the same law). */
+function constraintEntryParses(entry: string): boolean {
+  const parts = entry.split(':');
+  if (parts.length < 5 || parts.length > 6) return false;
+  const [id, domain, subject, kind, boundText, severityText] = parts as [string, string, string, string, string, string | undefined];
+  if (id.length === 0) return false;
+  if (!(CONSTRAINT_DOMAINS as readonly string[]).includes(domain)) return false;
+  if (!isIdentifierPath(subject)) return false;
+  if (!CONSTRAINT_PREDICATE_KINDS.includes(kind as 'limit.max')) return false;
+  if (!Number.isFinite(Number(boundText))) return false;
+  if (severityText !== undefined && severityText !== 'advisory' && severityText !== 'blocking') return false;
+  return true;
+}
+
 /** Parse the constraints grammar; null when any entry is malformed (never a partial list). */
 export function parseConstraintsValue(value: string): readonly ConstraintStatement[] | null {
   const entries = parseListValue(value);
   const constraints: ConstraintStatement[] = [];
   for (const entry of entries) {
-    const parts = entry.split(':');
-    if (parts.length < 5 || parts.length > 6) return null;
-    const [id, domain, subject, kind, boundText, severityText] = parts as [string, string, string, string, string, string | undefined];
-    if (id.length === 0) return null;
-    if (!(CONSTRAINT_DOMAINS as readonly string[]).includes(domain)) return null;
-    if (!isIdentifierPath(subject)) return null;
-    if (!CONSTRAINT_PREDICATE_KINDS.includes(kind as 'limit.max')) return null;
+    if (!constraintEntryParses(entry)) return null;
+    const [id, domain, subject, kind, boundText, severityText] = entry.split(':') as [string, string, string, string, string, string | undefined];
     const bound = Number(boundText);
-    if (!Number.isFinite(bound)) return null;
-    if (severityText !== undefined && severityText !== 'advisory' && severityText !== 'blocking') return null;
     const severity: 'advisory' | 'blocking' = severityText === 'advisory' ? 'advisory' : 'blocking';
     const predicate: CriterionPredicate = (kind === 'equals' ? { kind: 'equals', value: bound } : { kind, bound }) as CriterionPredicate;
     constraints.push({ id, domain: domain as 'outcome', subject, predicate, severity });
   }
   return constraints;
+}
+
+/**
+ * The FIRST malformed constraints entry (D-6b, W-25C — the offender-
+ * naming validation): its 1-BASED index among the comma-separated
+ * entries plus the raw entry text. Null when every entry parses (an
+ * empty list is valid — nothing names nothing).
+ */
+export function firstBadConstraintEntry(value: string): { readonly index: number; readonly entry: string } | null {
+  const entries = parseListValue(value);
+  for (let position = 0; position < entries.length; position += 1) {
+    const entry = entries[position] as string;
+    if (!constraintEntryParses(entry)) return { index: position + 1, entry };
+  }
+  return null;
 }
 
 /** The legal execution modes (the select's options — the closed set). */
@@ -351,7 +373,19 @@ export function launchFieldValidation(values: LaunchFormValues, field: LaunchFie
   }
   if (field === 'executionMode') return (EXECUTION_MODES as readonly string[]).includes(values.executionMode.trim()) ? '' : 'Choose an execution mode.';
   if (field === 'preferences') return parsePreferencesValue(values.preferences) === null ? 'Preferences are key=value pairs, e.g. rebalance=daily.' : '';
-  return parseConstraintsValue(values.constraints) === null ? `Each constraint is id:domain:subject:kind:bound, e.g. ${CONSTRAINT_GRAMMAR_EXAMPLE}.` : '';
+  // D-6b (W-25C): the constraint-format message NAMES the offending
+  // entry — which one (1-based, among the comma-separated entries) and
+  // what it says — plus the expected grammar (UX-DESIGN's error-copy
+  // conventions: plain language, one sentence, the fix is in the
+  // sentence). The same message rides the field's inline blur
+  // validation AND the review banner's problem list, so the "FIX
+  // BEFORE LAUNCHING" card can no longer fire without naming its
+  // offender.
+  const badConstraint = firstBadConstraintEntry(values.constraints);
+  if (badConstraint !== null) {
+    return `Constraints entry ${badConstraint.index} ("${badConstraint.entry}") is malformed — each entry is id:domain:subject:kind:bound, e.g. ${CONSTRAINT_GRAMMAR_EXAMPLE}.`;
+  }
+  return '';
 }
 
 /**

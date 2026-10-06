@@ -42,6 +42,14 @@ import { persistTheme } from '../core/theme';
 import { isShellTarget } from '../core/nav';
 import { paletteIndex, paletteOverlay, rankPalette, type PaletteEntry } from '../core/palette';
 import {
+  NOTICE_READ_STORAGE_KEY,
+  noticeReadKey,
+  parseStoredNoticeReads,
+  serializeNoticeReads,
+  storedReadNoticeIds,
+} from '../core/notices';
+import type { NoticeRecord, StoredNoticeReads } from '../core/notices';
+import {
   advanceOnboarding,
   initialOnboarding,
   isOnboarded,
@@ -95,6 +103,22 @@ export interface ConsoleBootOptions {
   readonly simulated?: boolean;
   /** The onboarding storage seam (localStorage `tradrl_onboarded`; returning users skip the wizard — §4.13). */
   readonly onboardingStorage?: { getItem(key: string): string | null; setItem(key: string, value: string): void };
+  /**
+   * THE NOTICE READ-STATE SEAM (D-6c, W-25C): the browser's localStorage
+   * in production. When injected, the inbox's read-state persists per
+   * tenant/project/notice (localStorage `tradrl_notice_read`) and a
+   * reload rehydrates it — the unread badge + mark-read + mark-all-read
+   * survive scope-switch + reload for the same browser. Plain UI state,
+   * the same browser-trust-zone class as `tradrl_theme` /
+   * `tradrl_onboarded` / `tradrl_scope_project` (spec/SECURITY.md's
+   * trust zones place the browser first; UX-DESIGN.md sanctions
+   * localStorage for this class of state): no credentials, no notice
+   * content — only tenant/project/notice-id read marks, and the map is
+   * keyed by the full triple so one tenant's read-state never applies
+   * to another's notices (the tenant-isolation law, carried into the
+   * persisted shape).
+   */
+  readonly noticeReadStorage?: { getItem(key: string): string | null; setItem(key: string, value: string): void };
 }
 
 /** The live console handle. */
@@ -119,6 +143,20 @@ export interface ConsoleHandle {
 export interface ClickTarget {
   closest?(selector: string): { getAttribute(name: string): string | null; readonly tagName: string } | null;
   readonly tagName: string;
+}
+
+/**
+ * A captured press affordance (D-6a, W-25C — the beat-render click
+ * race): the element the pointer pressed at MOUSEDOWN (the resolved
+ * `[data-action]` / `BUTTON[data-target]`) plus which delegated
+ * vocabulary it resolved to. The click handler replays it only when
+ * the composed click itself resolved to NO affordance and the beat
+ * re-projection replaced the pressed element mid-press.
+ */
+export interface PendingPress {
+  readonly kind: 'action' | 'target';
+  readonly element: { getAttribute(name: string): string | null; readonly tagName: string };
+  readonly key: string;
 }
 
 /** The delegated-click listener's minimal event shape. */
@@ -160,6 +198,8 @@ export interface MountDocument {
   readonly activeElement?: Element | null;
   /** Optional: the document head (the browser binding provides it) — the R8 interaction supplement's injection target (W-19). */
   readonly head?: Element | null;
+  /** Optional: the document's root element (the browser binding provides it). D-6d (W-25C): the html element's `data-theme` is synced to the active theme at every paint — tokens.css keys the html background on it, so a stale attribute flashes the wrong color on overscroll. */
+  readonly documentElement?: Element | null;
 }
 
 /** The launchpad project id — the workspace's pre-launch scope placeholder. */
@@ -193,6 +233,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
 
   let state: WorkspaceState = openWorkspace(scope, instants.nowMs());
   const listeners: WorkspaceListener[] = [];
+  // THE DURABLE READ-STATE (D-6c, W-25C): the persisted read-mark map,
+  // read once at boot and held for the session — every mark-read /
+  // mark-all-read updates it in place (the dispatch write-through
+  // below) and the mount's rehydration pass applies it to every notice
+  // the workspace folds, so the unread badge + mark-read flows survive
+  // scope-switch + reload for the same browser.
+  let storedNoticeReads: StoredNoticeReads = options.noticeReadStorage === undefined
+    ? {}
+    : parseStoredNoticeReads(options.noticeReadStorage.getItem(NOTICE_READ_STORAGE_KEY));
 
   function dispatch(event: WorkspaceEvent): void {
     const scopeBefore = state.scope.projectId;
@@ -205,6 +254,34 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // The launchpad placeholder never persists (there is no project yet).
     if (state.scope.projectId !== scopeBefore && state.scope.projectId !== LAUNCHPAD_PROJECT_ID && options.scopeStorage !== undefined) {
       persistScopeProject(options.scopeStorage, state.scope.projectId);
+    }
+    // THE READ-STATE WRITE-THROUGH (D-6c, W-25C): a mark-read /
+    // mark-all-read persists the affected notices' read marks (keyed
+    // tenant/project/notice — the map is scope-safe by construction).
+    // A storage failure degrades silently: the session keeps the reads
+    // (the workspace state is already reduced), only the durability
+    // across reload is lost — exactly the pre-seam behavior.
+    if (options.noticeReadStorage !== undefined && (event.kind === 'notice-read' || event.kind === 'notices-read-all')) {
+      const marks: readonly NoticeRecord[] = event.kind === 'notice-read'
+        ? state.inbox.notices.filter((record) => record.noticeId === event.noticeId)
+        : state.inbox.notices;
+      const next: Record<string, 1> = { ...storedNoticeReads };
+      let changed = false;
+      for (const record of marks) {
+        const key = noticeReadKey(record.tenantId, record.projectId, record.noticeId);
+        if (next[key] !== 1) {
+          next[key] = 1;
+          changed = true;
+        }
+      }
+      if (changed) {
+        storedNoticeReads = next;
+        try {
+          options.noticeReadStorage.setItem(NOTICE_READ_STORAGE_KEY, serializeNoticeReads(next));
+        } catch {
+          // storage unavailable (private mode, quota): session-only read-state
+        }
+      }
     }
     for (const listener of [...listeners]) listener(state);
   }
@@ -415,14 +492,18 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       dispatch({ kind: 'anchor-advanced', at: observed });
     }
     // §4.8 controlled playback: the beat advances armed playback ONE
-    // controlled step — but never past the anchor. A tick beyond it is
-    // the pure machine's typed input error (the view instant may never
-    // point after "now"); the app layer guards the scheduled path so
-    // the beat loop simply STOPS at the anchor instead of spraying
+    // controlled step — but never past the anchor, and NEVER while
+    // PAUSED (R10, W-25C: the freeze is the pure machine's own law —
+    // tickPlayback no-ops on a paused state — and the beat also skips
+    // the dispatch so a paused session's history chain carries no
+    // no-op tick entries). A tick beyond the anchor is the pure
+    // machine's typed input error (the view instant may never point
+    // after "now"); the app layer guards the scheduled path so the
+    // beat loop simply STOPS at the anchor instead of spraying
     // unhandled rejections every beat (the browser would console-error
     // forever once playback catches up).
     const timeMachine = state.timeMachine;
-    if (timeMachine.mode === 'playback' && timeMachine.playback !== null) {
+    if (timeMachine.mode === 'playback' && timeMachine.playback !== null && !timeMachine.playback.paused) {
       const nextViewAt = timeMachine.playback.fromAt + (timeMachine.playback.ticks + 1) * timeMachine.playback.stepMs;
       if (nextViewAt <= timeMachine.anchorAt) {
         dispatch({ kind: 'playback-tick', at: instants.nowMs() });
@@ -678,6 +759,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // the slide transition survives between renders (the projected
       // tree is rebuilt per state change; the host is not).
       host.setAttribute('data-drawer', view.drawerOpen ? 'open' : 'closed');
+      // D-6d (W-25C) — THE HTML ELEMENT'S THEME AT PAINT: the active
+      // theme is synced onto documentElement on EVERY paint. The
+      // static shell's pre-paint script sets it once at load; before
+      // this sync the in-app toggle updated the .tradrl-shell root but
+      // left <html> at the boot value — stale after every change (the
+      // overscroll background flashed the wrong color and tokens.css's
+      // html[data-theme] rules never matched the live theme).
+      const documentElementOfDocument = (document as MountDocument).documentElement;
+      if (documentElementOfDocument !== null && documentElementOfDocument !== undefined) {
+        documentElementOfDocument.setAttribute('data-theme', view.theme);
+      }
       // FOCUS PRESERVATION ACROSS THE FULL RE-PROJECTION: the tree is
       // rebuilt per state change, which replaces a focused launch
       // input mid-typing (a poll beat, a notice toast) — capture the
@@ -772,6 +864,26 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           });
         }
       }
+      // THE READ-STATE REHYDRATION (D-6c, W-25C): every notice the
+      // workspace folds is checked against the persisted read marks —
+      // a stored-read notice the session has not yet marked dispatches
+      // its own notice-read (idempotent; converges in one extra pass).
+      // This is what makes mark-read + mark-all-read + the unread
+      // badge survive scope-switch + reload for the same browser: the
+      // marks were persisted on the first session, and every later
+      // session (this boot included) re-applies them as the notices
+      // fold. Each re-applied mark rides the SAME write-through (already
+      // stored — no write) and the SAME history chain as a fresh read.
+      if (options.noticeReadStorage !== undefined) {
+        const storedIds = storedReadNoticeIds(storedNoticeReads, next.inbox.notices);
+        if (storedIds.length > 0) {
+          for (const noticeId of storedIds) {
+            if (!next.inbox.readNoticeIds.includes(noticeId)) {
+              dispatch({ kind: 'notice-read', at: instants.nowMs(), noticeId });
+            }
+          }
+        }
+      }
     });
 
     /** Focus the drawer's first nav item (the trap's entry point). */
@@ -812,8 +924,51 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // mouseup would drop the click), and never on a click that lands
     // on a non-action element (the re-render would steal the focus
     // the browser just moved into the next input).
-    document.addEventListener('mousedown', () => {
+    //
+    // THE PENDING PRESS (D-6a, W-25C — the beat-render click race): the
+    // 500ms-1s beat re-projection rebuilds the WHOLE tree; when it
+    // lands between mousedown and mouseup, the browser composes the
+    // click on a common ANCESTOR of the replaced pair, and
+    // closest('[data-action]') from that ancestor resolves to NOTHING
+    // — the user's click silently no-ops (the M-persona finding:
+    // three clicks on "Next: world", nothing disabled, nothing fired;
+    // the stepper tab was the only reliable path). The press intent is
+    // captured HERE, at mousedown (the affordance under the pointer);
+    // the click handler below replays it ONLY when the composed click
+    // resolved to no affordance AND the pressed element left the
+    // mounted tree (the beat replaced it mid-press). A normal click —
+    // same element, still attached, or released over another
+    // interactive element — resolves by itself and is never
+    // double-dispatched; a press the user dragged away from (released
+    // over nothing interactive, element never replaced) stays cancelled
+    // exactly as the browser intended.
+    let pendingPress: PendingPress | null = null;
+    /** Whether an element still belongs to the mounted tree — a beat re-projection detaches the whole previous projection, so a mid-press replacement leaves the pressed element orphaned (its parent chain no longer reaches the mount root). */
+    const attachedToRoot = (element: unknown): boolean => {
+      let node: unknown = element;
+      while (node !== null && node !== undefined) {
+        if (node === root) return true;
+        const parentNode = (node as { readonly parentNode?: unknown }).parentNode;
+        node = parentNode !== null && parentNode !== undefined ? parentNode : (node as { readonly parent?: unknown }).parent;
+      }
+      return false;
+    };
+    document.addEventListener('mousedown', (event) => {
       pointerDown = true;
+      // D-6a: capture the press intent — the nearest [data-action]
+      // affordance, else the nearest BUTTON[data-target] (nav items,
+      // the bell, palette items; the delegated click handler's own
+      // precedence). Anything else (a press on inert chrome) presses
+      // nothing and can replay nothing.
+      const pressAction = event.target?.closest?.('[data-action]');
+      const pressTarget = event.target?.closest?.('[data-target]');
+      if (pressAction !== null && pressAction !== undefined) {
+        pendingPress = { kind: 'action', element: pressAction, key: pressAction.getAttribute('data-action') ?? '' };
+      } else if (pressTarget !== null && pressTarget !== undefined && pressTarget.tagName === 'BUTTON') {
+        pendingPress = { kind: 'target', element: pressTarget, key: pressTarget.getAttribute('data-target') ?? '' };
+      } else {
+        pendingPress = null;
+      }
     });
     document.addEventListener('input', (event) => {
       // §4.14 THE PALETTE QUERY (the W-14c fix — the J8 dead-input
@@ -936,10 +1091,35 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // before any [data-action] branch could run (the J1 hard block).
     document.addEventListener('click', (event) => {
       pointerDown = false; // the click concludes the press
-      const target = event.target?.closest?.('[data-target]');
-      const navResolved = target !== null && target !== undefined && target.tagName === 'BUTTON' && target.getAttribute('data-target') !== null && isShellTarget(target.getAttribute('data-target') as string);
-      const action = event.target?.closest?.('[data-action]');
-      const actionKind = action === null || action === undefined ? null : action.getAttribute('data-action');
+      let target = event.target?.closest?.('[data-target]');
+      let navResolved = target !== null && target !== undefined && target.tagName === 'BUTTON' && target.getAttribute('data-target') !== null && isShellTarget(target.getAttribute('data-target') as string);
+      let action = event.target?.closest?.('[data-action]');
+      let actionKind = action === null || action === undefined ? null : action.getAttribute('data-action');
+      const row = event.target?.closest?.('[data-row]');
+      const rowId = row === null || row === undefined ? null : row.getAttribute('data-row');
+      const sheetRef = rowId === null ? null : parseSheetRef(rowId);
+      // THE BEAT-RACE REPLAY (D-6a, W-25C): the composed click resolved
+      // to NOTHING interactive (no nav button, no action, no
+      // sheet-opening row) — the beat-render replacement class — so if
+      // a press is pending on an affordance the re-projection DETACHED
+      // mid-press, the press intent substitutes for the dead click and
+      // the handler's own branches execute it (action-keyed dispatch:
+      // the SAME code path a live click takes, flush included — the
+      // replayed action reads the full draft exactly like a landed
+      // click). The pending press is consumed either way: a click that
+      // resolves by itself (or a dead click with no stale press behind
+      // it) never replays.
+      const press = pendingPress;
+      pendingPress = null;
+      if (press !== null && !navResolved && actionKind === null && sheetRef === null && !attachedToRoot(press.element)) {
+        if (press.kind === 'action') {
+          action = press.element;
+          actionKind = press.key;
+        } else {
+          target = press.element;
+          navResolved = press.element.tagName === 'BUTTON' && isShellTarget(press.key);
+        }
+      }
       // THE FLUSH: a click that resolves to an interactive affordance
       // commits the buffered launch-field edits FIRST (the event's
       // target refs are already captured above — the re-render the
@@ -972,12 +1152,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           return;
         }
       }
-      const row = event.target?.closest?.('[data-row]');
       if (row !== null && row !== undefined) {
-        const rowId = row.getAttribute('data-row');
-        const sheet = rowId === null ? null : parseSheetRef(rowId);
-        if (sheet !== null) {
-          view = { ...view, sheet };
+        if (sheetRef !== null) {
+          view = { ...view, sheet: sheetRef };
           render();
           focusSheetStart();
           return;
@@ -1002,13 +1179,29 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         if (kind === 'view-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
         if (kind === 'view-tminus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
-        if (kind === 'playback-start') dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt: state.openedAt, stepMs: 500 });
+        // §4.8 + R10 (W-25C): the playback control's THREE faces — the
+        // same button arms playback (from any other mode), PAUSES it
+        // (while playing: the view instant FREEZES — no jump-back, no
+        // advance), and RESUMES it (while paused: continue from the
+        // frozen instant). Before R10 the pause face re-dispatched
+        // playback-start, which re-armed at the opened instant with
+        // zero ticks — the view jumped back to openedAt and the beat
+        // kept ticking it forward (the J5 symptom).
+        if (kind === 'playback-start' || kind === 'tm-mode-playback') {
+          const timeMachine = state.timeMachine;
+          if (timeMachine.mode === 'playback' && timeMachine.playback !== null && !timeMachine.playback.paused) {
+            dispatch({ kind: 'playback-paused', at: instants.nowMs() }); // renders via onState
+          } else if (timeMachine.mode === 'playback' && timeMachine.playback !== null && timeMachine.playback.paused) {
+            dispatch({ kind: 'playback-resumed', at: instants.nowMs() }); // renders via onState
+          } else {
+            dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt: state.openedAt, stepMs: 500 });
+          }
+        }
         // §4.8: the Time Machine mode select + playback stepping (pure dispatches —
         // the state machine owns the transitions; the L4 projection is upstream).
         if (kind === 'tm-mode-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
         if (kind === 'tm-mode-t-minus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
         if (kind === 'tm-mode-timestamp') dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: state.timeMachine.anchorAt - 60_000 });
-        if (kind === 'tm-mode-playback') dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt: state.openedAt, stepMs: 500 });
         if (kind === 'playback-step') dispatch({ kind: 'playback-tick', at: instants.nowMs() });
         if (kind === 'playback-step-back') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: state.timeMachine.tMinusMs + 500 });
         if (kind === 'refresh') void refreshWithShell();
@@ -1141,6 +1334,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // trapped inside whichever overlay is open (§4.5a / §2).
     document.addEventListener('keydown', (event) => {
       pointerDown = false; // a key press ends any pointer-press assumption
+      pendingPress = null; // D-6a: and consumes any pending press — a keyboard activation is never a pointer replay
       const key = event.key;
       // §4.14 Ctrl/Cmd+K opens (or closes) the palette from anywhere.
       const ctrlKey = (event as { readonly ctrlKey?: boolean }).ctrlKey === true;

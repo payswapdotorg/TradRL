@@ -14,6 +14,7 @@ import type { GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeReco
 import {
   NOTICE_FACT_LABELS,
   NOTICE_KINDS,
+  NOTICE_READ_STORAGE_KEY,
   NOTICE_TITLES,
   emptyInbox,
   foldNotices,
@@ -21,10 +22,15 @@ import {
   markAllNoticesRead,
   markNoticeRead,
   mergeNotices,
+  noticeReadKey,
+  parseStoredNoticeReads,
+  serializeNoticeReads,
+  storedReadNoticeIds,
   unreadCount,
   unreadNotices,
   type InboxState,
   type NoticeReads,
+  type NoticeRecord,
 } from './notices';
 import { CrossTenantRenderError } from './errors';
 
@@ -228,5 +234,48 @@ describe('notices: L12 — cross-tenant reads never fold', () => {
     expect(() => foldNotices(SCOPE, foreign)).toThrow(CrossTenantRenderError);
     const foreignJob = { jobs: [{ ...job('learning', 'complete'), tenant: 'tenant-b' }] };
     expect(() => foldNotices(SCOPE, foreignJob)).toThrow(CrossTenantRenderError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The durable read-state (D-6c, W-25C) — per-browser, per-scope UI state.
+// ---------------------------------------------------------------------------
+
+describe('notices: the durable read-state storage shape (D-6c)', () => {
+  it('the read key is the full tenant/project/notice triple (the tenant-isolation law carried into the persisted map)', () => {
+    expect(NOTICE_READ_STORAGE_KEY).toBe('tradrl_notice_read'); // the documented localStorage key
+    expect(noticeReadKey('tenant-a', 'proj-a', 'ntc:abc123')).toBe('tenant-a/proj-a/ntc:abc123');
+    expect(noticeReadKey('tenant-b', 'proj-a', 'ntc:abc123')).not.toBe(noticeReadKey('tenant-a', 'proj-a', 'ntc:abc123'));
+    expect(noticeReadKey('tenant-a', 'proj-b', 'ntc:abc123')).not.toBe(noticeReadKey('tenant-a', 'proj-a', 'ntc:abc123'));
+  });
+
+  it('serialize -> parse round-trips the stored map', () => {
+    const reads: Record<string, 1> = { 'tenant-a/proj-a/ntc:one': 1, 'tenant-a/proj-b/ntc:two': 1 };
+    expect(parseStoredNoticeReads(serializeNoticeReads(reads))).toEqual(reads);
+    expect(parseStoredNoticeReads(null)).toEqual({});
+    expect(parseStoredNoticeReads('')).toEqual({});
+  });
+
+  it('storage is UNTRUSTED input: garbage, foreign JSON shapes and non-1 marks degrade to the empty map', () => {
+    expect(parseStoredNoticeReads('not json at all')).toEqual({});
+    expect(parseStoredNoticeReads('[1,2,3]')).toEqual({});
+    expect(parseStoredNoticeReads('"a string"')).toEqual({});
+    expect(parseStoredNoticeReads('null')).toEqual({});
+    expect(parseStoredNoticeReads('{"tenant-a/proj-a/ntc:one": "yes"}')).toEqual({}); // a non-1 mark is not a read mark
+    expect(parseStoredNoticeReads('{"tenant-a/proj-a/ntc:one": 1, "junk": 2}')).toEqual({ 'tenant-a/proj-a/ntc:one': 1 }); // the valid mark survives
+  });
+
+  it('storedReadNoticeIds selects exactly the notices whose marks the map carries — derived from each record\'s OWN tenant/project', () => {
+    const folded = foldNotices(SCOPE, { jobs: [job('research', 'failed', undefined, T0 + 10), job('learning', 'complete', undefined, T0 + 20)] });
+    const first = folded[0] as NoticeRecord;
+    const second = folded[1] as NoticeRecord;
+    // marks for the first notice under ITS OWN scope key, plus a foreign-scope mark that must never match
+    const reads: Record<string, 1> = {
+      [noticeReadKey(first.tenantId, first.projectId, first.noticeId)]: 1,
+      [noticeReadKey(first.tenantId, 'proj-OTHER', first.noticeId)]: 1,
+    };
+    expect(storedReadNoticeIds(reads, folded)).toEqual([first.noticeId]);
+    expect(storedReadNoticeIds({}, folded)).toEqual([]);
+    expect(storedReadNoticeIds(reads, [second])).toEqual([]); // the second notice carries no mark
   });
 });

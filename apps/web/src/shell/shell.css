@@ -484,6 +484,25 @@
   gap: 6px;
   font-size: 0.8125rem;
 }
+/* D-6e (W-25C) — THE STICKY TM BAR NEVER PERMANENTLY COVERS INTERACTIVE
+   TARGETS. The bar itself stays sticky (§4.8's charter shape); the
+   scroll container reserves the bar's stuck height for every
+   programmatic scroll — focus, anchor navigation, scrollIntoView — so
+   a target the keyboard or an anchor navigates to lands BELOW the
+   bar, never behind it (the persona finding: on short viewports the
+   stuck bar sat over low-viewport click points and people had to hunt
+   for a scroll position that uncovered them). The reserve token covers
+   the bar's tallest wrapped layout (the modes row + the controls row +
+   the notice line + padding); manual scrolling was always able to move
+   content past a top-sticky bar, and the z-index ladder keeps every
+   overlay above it (sheet 40/41, toasts 60, palette 70/71, the
+   onboarding overlay 80). */
+:root { --tm-bar-reserve: 104px; }
+html { scroll-padding-top: calc(var(--tm-bar-reserve) + 8px); }
+@media (max-width: 767px) {
+  /* The mobile reserve adds the sticky 56px header (§2) to the bar's. */
+  html { scroll-padding-top: calc(var(--tm-bar-reserve) + 8px + 56px); }
+}
 .tm-mode { font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.7rem; color: var(--tradrl-live-text); }
 .tm-controls { display: flex; gap: 8px; margin-top: 4px; }
 .tm-button {
