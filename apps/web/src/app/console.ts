@@ -60,7 +60,7 @@ import {
   type OnboardingState,
 } from '../core/onboarding';
 import { noticeCopyOf } from '../render/flow';
-import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
+import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs } from '../core/evidence';
 import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission, projectToView } from '../core/availability';
 import { parseSheetRef, SHELL_INTERACTION_CSS, type SheetRef, type ShellView } from '../render/shell';
 import { renderConsoleModel, homeFresh } from '../render/model';
@@ -896,6 +896,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       ...workspace.postMortems.map((postMortem) => capsuleFromPostMortem(workspace.scope, postMortem)),
       ...workspace.knowledge.map((knowledge) => capsuleFromKnowledge(workspace.scope, knowledge)),
       ...workspace.submissions.map((submission) => capsuleFromSubmission(workspace.scope, submission)),
+      // D-9 (W-28): the jobs lane, the same fold the Evidence section
+      // renders — one capsule per COMPLETED job WITH a result, so the
+      // palette's EVIDENCE group reaches the job-derived capsules too
+      // (unprojected, mirroring the section's unprojected source list).
+      ...capsulesFromJobs(workspace.scope, workspace.jobs),
     ];
 
     /** The evidence capsules for the palette (the Evidence section's own fold). */

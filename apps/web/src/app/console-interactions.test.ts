@@ -56,7 +56,8 @@ import { bootConsole, readStoredScopeProject, SCOPE_STORAGE_KEY } from './consol
 import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
 import { toCreateProjectInput } from '../core/launch';
-import type { JobRecord, OutcomeRecord } from '../api/contracts';
+import type { GatewaySubmissionRecord, JobRecord, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
+import { capsuleFromJob, capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
 import { verifyWorkspaceExport, viewAtOf } from '../core/workspace';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
 
@@ -3002,6 +3003,145 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     clickAction(rig, 'palette-open');
     expect(countByClass(rig.root, 'palette-item')).toBe(16);
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-9 (W-28) — THE RESULT->JOB LINEAGE LEG, executed: the demo scope's
+// OWN seed shape (the re-run's exact observation surface — 6 seed capsules:
+// one outcome, one post-mortem, one knowledge, three submissions — plus the
+// two SEEDED demo jobs, both completed WITH results: the research
+// release-candidate and the learning training-summary). L2's P10 finding
+// was that a fresh release-candidate result minted ZERO capsules and NO
+// capsule referenced its job — the research result was a lineage leaf.
+// These journeys pin the fix at the executed-boot level: the Evidence
+// section lists the job-derived capsules ALONGSIDE the 6 unchanged seed
+// capsules, and the job capsule opens its payload + provenance inline
+// (route · entity id · tenant/project · available-at — the lineage leg).
+// ---------------------------------------------------------------------------
+
+/** The demo evidence transport: the demo scope's full capsule seed (outcome + post-mortem + knowledge + the 3-row blotter) + BOTH seeded demo jobs completed with their results (the jobs the W-25A seam serves — the same records GET /v1/jobs reads in EITHER backing; the durable lane hydrates through the same route). */
+function demoEvidenceTransport(): ApiTransport {
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+  const project = {
+    id: 'prj-a', tenantId: 'tenant-a', name: 'Console Test Project', executionMode: 'simulation',
+    lifecycle: { projectId: 'prj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+    lineage: { projectId: 'prj-a', createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  };
+  const postMortem = {
+    postMortemId: 'pmr:demo0001', ordinal: 1,
+    subject: { outcomeRecordRef: 'out:demo0001', decisionRef: 'xd:demo0001', intentRef: 'si:demo0001', outcomeClass: 'adverse_gap' },
+    expected: { expectedQuantity: '0.75', expectedRealized: '45.5', tolerance: '0.05' },
+    happened: { disposition: 'filled', filledQuantity: '0.75', realizedOutcome: '-12.5', feeTotal: '0.02', notionalTotal: '45750.375' },
+    gap: { quantityShortfall: '0', realizedGap: '-12.5', withinTolerance: false },
+    hypotheses: [{ class: 'decision', confidence: '0.8', detail: { dimension: 'timing' }, evidence: [{ kind: 'decision', ref: 'xd:demo0001' }], note: 'the demo hypothesis: the rebalance window was missed by the simulated venue lag' }],
+    evidence: [{ kind: 'shadow_outcome', ref: 'swo:demo0001' }],
+    lineage: { tenant: 'tenant-a', project: 'prj-a', shadowSessionRef: 'shs:demo0001', shadowOutcomeRef: 'swo:demo0001', trajectoryRef: null, experiment: null },
+    asOf: T0 + 150, priorChainHead: '00000000',
+  };
+  const knowledge = {
+    record: {
+      knowledgeId: 'fkr:ee46c14d', ordinal: 1, tenant: 'tenant-a', project: 'prj-a',
+      claim: { kind: 'decision_pattern', polarity: 'harmful', dimension: 'timing', lagBand: null },
+      confidence: '0.8', evidenceCount: 2,
+      provenance: { postMortemRefs: ['pmr:demo0001'], outcomeRefs: ['out:demo0001'], experimentRefs: [], trialRefs: [], trajectoryRefs: [], sessionRefs: [] },
+      validity: { from: T0, to: T0 + 10_000 }, asOf: T0 + 160, priorChainHead: '00000000',
+    },
+    status: 'active', supersededBy: null,
+  };
+  const demoJobs: readonly JobRecord[] = [
+    { jobId: 'job:57d1815d', kind: 'research', tenant: 'tenant-a', project: 'prj-a', status: 'complete', submittedAt: T0 + 100, completedAt: T0 + 200, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'prj-a' } },
+    { jobId: 'job:9c81a2b0', kind: 'learning', tenant: 'tenant-a', project: 'prj-a', status: 'complete', submittedAt: T0 + 110, completedAt: T0 + 210, result: { kind: 'training-summary', epochs: 3, project: 'prj-a' } },
+  ];
+  const transport: ApiTransport = async (request) => {
+    const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+    const key = `${request.method} ${path}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects/prj-a') return ok(project);
+    if (key === 'POST /v1/knowledge/query') return ok({ items: [knowledge] });
+    if (key === 'POST /v1/post-mortems/query') return ok({ items: [postMortem] });
+    if (key === 'POST /v1/outcomes/query') return ok({ items: [enrichedOutcome()] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: seededSubmissions() });
+    if (key === 'GET /v1/jobs') return ok({ items: demoJobs });
+    if (path.startsWith('/v1/jobs/')) {
+      const job = demoJobs.find((candidate) => candidate.jobId === path.slice('/v1/jobs/'.length));
+      if (job !== undefined) return ok(job);
+    }
+    if (key === 'GET /v1/projects') return ok({ items: [project] });
+    return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
+  };
+  return transport;
+}
+
+describe('executed boot: D-9 (W-28) — the result->job lineage leg (the Evidence section lists the job capsules beside the seed capsules)', () => {
+  it('the demo scope renders its 6 seed capsules UNCHANGED plus ONE capsule per completed job WITH a result — and the job capsule opens the lineage leg inline (the job ref + the provenance line)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, demoEvidenceTransport(), 'prj-a');
+    expect(rig.handle.state().degraded).toEqual([]); // every read answered — honest throughout
+    expect(rig.handle.state().jobs).toHaveLength(2); // both seeded demo jobs entered through the W-25A seam
+
+    // THE EVIDENCE SECTION: the fold lists every source family
+    clickNav(rig, 'evidence');
+    const scope = rig.handle.state().scope;
+    const state = rig.handle.state();
+    const seedIds = [
+      capsuleFromOutcome(scope, state.outcomes[0] as OutcomeRecord).capsuleId,
+      capsuleFromPostMortem(scope, state.postMortems[0] as PostMortemRecord).capsuleId,
+      capsuleFromKnowledge(scope, state.knowledge[0] as ServedKnowledge).capsuleId,
+      ...state.submissions.map((submission) => capsuleFromSubmission(scope, submission as GatewaySubmissionRecord).capsuleId),
+    ];
+    expect(seedIds).toHaveLength(6); // the demo scope's seed capsules: 1 outcome + 1 post-mortem + 1 knowledge + 3 submissions
+    const jobIds = state.jobs.map((job) => capsuleFromJob(scope, job).capsuleId);
+    expect(jobIds).toHaveLength(2); // one per completed job WITH a result (research + learning)
+    for (const capsuleId of [...seedIds, ...jobIds]) {
+      const badge = findByData(rig.root, 'data-capsule-open', capsuleId);
+      if (badge === null) throw new Error(`the Evidence section renders no capsule badge for ${capsuleId}`);
+    }
+    expect(countByData(rig.root, 'data-action', 'capsule-open')).toBeGreaterThanOrEqual(8); // 6 seed + 2 job capsules
+
+    // THE LINEAGE LEG: opening the research job's capsule renders its facts + the JOB REF + the provenance line
+    const researchJob = state.jobs.find((job) => job.kind === 'research');
+    if (researchJob === undefined) throw new Error('the fixture served no research job');
+    const researchCapsule = capsuleFromJob(scope, researchJob);
+    const badge = findByData(rig.root, 'data-capsule-open', researchCapsule.capsuleId) as FakeElement;
+    click(rig, badge);
+    const payload = elementsOf(rig.root).find((element) => element.hasClass('capsule-payload') && element.getAttribute('data-capsule-open') === researchCapsule.capsuleId);
+    if (payload === undefined) throw new Error('the opened job capsule rendered no inline payload');
+    const payloadTexts = elementsOf(payload).map((element) => textOf(element)).join(' ');
+    expect(payloadTexts).toContain('refs: job:job:57d1815d');            // the capsule references its job (the leg L2 asked for)
+    expect(payloadTexts).toContain('deliverable: release-candidate');   // the result payload's own facts
+    expect(payloadTexts).toContain('spec-id: spec-demo-director');
+    expect(payloadTexts).toContain('read from /v1/jobs/:jobId');        // the provenance line's route
+    expect(payloadTexts).toContain('job job:57d1815d');                 // the entity id in the provenance line
+    expect(payloadTexts).toContain(`tenant tenant-a / project prj-a`);  // the scope line (L12's own render)
+    expect(payloadTexts).toContain('available ');                       // the available-at stamp (L4)
+
+    // the LEARNING job's capsule carries its own deliverable marker (the training summary)
+    const learningJob = state.jobs.find((job) => job.kind === 'learning');
+    if (learningJob === undefined) throw new Error('the fixture served no learning job');
+    const learningCapsule = capsuleFromJob(scope, learningJob);
+    const learningBadge = findByData(rig.root, 'data-capsule-open', learningCapsule.capsuleId) as FakeElement;
+    click(rig, learningBadge);
+    const learningPayload = elementsOf(rig.root).find((element) => element.hasClass('capsule-payload') && element.getAttribute('data-capsule-open') === learningCapsule.capsuleId);
+    if (learningPayload === undefined) throw new Error('the opened learning capsule rendered no inline payload');
+    expect(elementsOf(learningPayload).map((element) => textOf(element)).join(' ')).toContain('epochs: 3');
+  });
+
+  it('a scope with NO completed jobs keeps the Evidence teaching empty state (no capsule fabricated for pending work)', async () => {
+    const transport = demoEvidenceTransport();
+    const pendingOnly: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'GET' && path === '/v1/jobs') {
+        return { status: 200, headers: {}, body: { requestId: 'req-1', data: { items: [{ jobId: 'job:pending01', kind: 'research', tenant: 'tenant-a', project: 'prj-a', status: 'running', submittedAt: T0 + 100 }] } } };
+      }
+      return transport(request);
+    };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, pendingOnly, 'prj-a');
+    clickNav(rig, 'evidence');
+    // the seed families still render their capsules (6 — the read families are untouched by the jobs fold)
+    const badges = elementsOf(rig.root).filter((element) => element.getAttribute('data-action') === 'capsule-open');
+    expect(badges).toHaveLength(6); // the running job minted NOTHING (a pending job proves nothing about a deliverable — L20)
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'No evidence capsules at this view instant.')).toBe(false); // the seed capsules render, not the empty state
   });
 });
 

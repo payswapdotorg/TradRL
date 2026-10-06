@@ -48,7 +48,7 @@ import {
 } from '../core/launch-form';
 import type { SectionId } from '../core/sections';
 import { unreadCount, type InboxState } from '../core/notices';
-import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, type EvidenceCapsule } from '../core/evidence';
+import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, type WorkspaceState } from '../core/workspace';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
 import type { WatchEvent } from '../core/watch';
@@ -758,7 +758,16 @@ function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView):
   if (sheet.kind === 'job') {
     const job = state.jobs.find((candidate) => candidate.jobId === sheet.id);
     if (job === undefined) return [];
-    return jobSheet(state.scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : []));
+    // D-9 (W-28): the completed job's OWN evidence capsule renders INLINE
+    // beside the sheet (the same §4.9 convention as the outcome's capsule
+    // under Outcomes and the submission's under Execution) — the
+    // bidirectional affordance: the result view links its capsule (the
+    // fold mints one only for a COMPLETED job WITH a result; a pending or
+    // failed job renders no capsule — nothing fabricated, L20).
+    return [
+      ...jobSheet(state.scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : [])),
+      ...capsulesFromJobs(state.scope, [job]).map((capsule) => capsuleInline(capsule, viewAt, view.openCapsule)),
+    ];
   }
   const snapshot = state.orgSnapshots.find((candidate) => candidate.organizationRef === sheet.id);
   if (snapshot === undefined) return [];
@@ -972,6 +981,15 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...projectToView(state.postMortems, viewAt, availabilityOfPostMortem).map((postMortem) => capsuleFromPostMortem(scope, postMortem)),
         ...projectToView(state.knowledge, viewAt, availabilityOfKnowledge).map((knowledge) => capsuleFromKnowledge(scope, knowledge)),
         ...projectToView(state.submissions, viewAt, availabilityOfSubmission).map((submission) => capsuleFromSubmission(scope, submission)),
+        // D-9 (W-28): the jobs lane — one capsule per COMPLETED job WITH a
+        // result (the fold's own law), so the Evidence section lists the
+        // job-derived capsules ALONGSIDE the read families: the research
+        // result is no longer a lineage LEAF (no capsule referenced its
+        // job; a fresh release-candidate result minted zero capsules — L2's
+        // P10 finding). The jobs read (GET /v1/jobs) serves BOTH backings'
+        // records (the durable lane hydrates through the same route), so
+        // this fold covers the demo and the durable backing by construction.
+        ...capsulesFromJobs(scope, projectToView(state.jobs, viewAt, availabilityOfJob)),
       ];
       return v('section', { class: 'panel', 'data-section': 'evidence' }, [
         ...capsules.map((capsule) => capsuleCard(capsule, viewAt, view.openCapsule)),

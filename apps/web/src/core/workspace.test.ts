@@ -32,7 +32,7 @@ import {
 import { WORKSPACE_SECTIONS } from './sections';
 import { CrossTenantRenderError } from './errors';
 import { canonicalJson, sha256Hex, sha256Of } from './digest';
-import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from './evidence';
+import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsuleFromJob } from './evidence';
 
 const SCOPE = { tenantId: 'tenant-a', projectId: 'proj-a' } as const;
 const T0 = 1_700_000_000_000;
@@ -731,6 +731,34 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
     for (const capsule of doc.capsules) {
       expect(capsule.capsuleId).toMatch(/^evc:[0-9a-f]{8}$/); // content-addressed, derivable from the capsule's own content
     }
+  });
+
+  it('D-9 (W-28): the export carries the JOB capsules too — one per COMPLETED job WITH a result, never for a resultless one; a re-read mints no duplicate', () => {
+    // richState's own job is 'complete' WITHOUT a result — it mints nothing
+    // (the fixture's pinned 5-capsule list above stays true unchanged).
+    const state = richState();
+    expect((state.jobs[0] as JobRecord).status).toBe('complete');
+    expect((state.jobs[0] as JobRecord).result).toBeUndefined();
+    // the completed job WITH a result: the research result mints its capsule
+    const resultJob: JobRecord = {
+      jobId: 'job-result-1', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete',
+      submittedAt: T0 + 20, completedAt: T0 + 25,
+      result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' },
+    };
+    const withResult = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 26, job: resultJob });
+    const doc = composeWorkspaceExport(withResult);
+    expect(doc.capsules.length).toBe(6); // the 5 read-family capsules + the job capsule
+    const jobCapsule = capsuleFromJob(SCOPE, resultJob);
+    expect(doc.capsules).toContainEqual(jobCapsule); // the lineage leg: a capsule that references its job
+    expect(doc.capsules[5]?.refs).toEqual([{ kind: 'job', ref: 'job-result-1' }]);
+    expect(doc.manifest.counts.capsules).toBe(6); // the manifest stays TRUE (self-describing completeness)
+    // the fold is IDEMPOTENT under re-reads: the reducer's replace-by-id
+    // merge keeps the listing deduped, and the content address derives the
+    // identical capsule — a hydration replay or a re-read mints no duplicate.
+    const reRead = reduceWorkspace(withResult, { kind: 'job-updated', at: T0 + 27, job: { ...resultJob } });
+    expect(reRead.jobs.filter((job) => job.jobId === 'job-result-1')).toHaveLength(1);
+    expect(composeWorkspaceExport(reRead).capsules.length).toBe(6);
+    expect(composeWorkspaceExport(reRead).capsules).toContainEqual(jobCapsule);
   });
 
   it('the export carries the DECISIONS (the watch records + the gateway\'s own records, exactly as the Decisions section renders)', () => {

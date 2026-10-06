@@ -62,6 +62,7 @@ import {
   capsuleFromOutcome,
   capsuleFromPostMortem,
   capsuleFromSubmission,
+  capsulesFromJobs,
   type EvidenceCapsule,
 } from './evidence';
 import {
@@ -682,13 +683,18 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
   // R9b: the evidence capsules — the same content-addressed bundles
   // the Evidence section renders (one per outcome, post-mortem,
   // served-knowledge entry and execution submission), in the
-  // section's order. Unprojected: the export is the complete record,
-  // and every capsule carries its own availability instant (L4).
+  // section's order. Since W-28 (D-9) also one per COMPLETED job WITH a
+  // result (the result->job lineage leg — the export's capsules
+  // collection is the audit pack; a research result that mints no
+  // capsule is a lineage leaf, exactly what L2's P19 recompute found).
+  // Unprojected: the export is the complete record, and every capsule
+  // carries its own availability instant (L4).
   const capsules: EvidenceCapsule[] = [
     ...state.outcomes.map((outcome) => capsuleFromOutcome(state.scope, outcome)),
     ...state.postMortems.map((postMortem) => capsuleFromPostMortem(state.scope, postMortem)),
     ...state.knowledge.map((knowledge) => capsuleFromKnowledge(state.scope, knowledge)),
     ...state.submissions.map((submission) => capsuleFromSubmission(state.scope, submission)),
+    ...capsulesFromJobs(state.scope, state.jobs),
   ];
 
   // R9b: the decisions — the seven-lens watch records (agent,
