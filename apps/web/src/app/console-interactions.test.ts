@@ -185,7 +185,8 @@ class FakeDocument {
   private readonly listeners = new Map<string, Array<(event: Record<string, unknown>) => void>>();
   /** Every element ever created (the export-workspace anchor is found here). */
   readonly created: FakeElement[] = [];
-  readonly activeElement: FakeElement | null = null;
+  /** The document's active element (the browser's focus surface — D-10's focus-preservation tests set it directly; null everywhere else, exactly the pre-D-10 harness behavior). */
+  activeElement: FakeElement | null = null;
   /** The harness's focus tracker (the browser's focus semantics — typeField/blurField move it like the real thing). */
   focused: FakeElement | null = null;
   /** The document head (the R8 supplement's injection target — W-19); a fake element with an id-based querySelector. */
@@ -220,7 +221,7 @@ class FakeDocument {
     return this.rootsById.get(id) ?? null;
   }
 
-  /** The focus traps' query surface: descendant selectors of .class and [data-action="value"] tokens. */
+  /** The focus traps' query surface: descendant selectors of .class and [data-action="value"] tokens. D-10 (W-29): the walk is LIVE-ONLY — the document-connected tree (a created element whose parent is EXTERNAL to the created set, like the rig's mount host) matches; a detached node's parent is null and never does, so a re-projection's stale trees can never answer a query the way the browser's document never would. */
   querySelectorAll(selector: string): FakeElement[] {
     const tokens = selector.split(' ').filter((part) => part.length > 0);
     const matchesToken = (element: FakeElement, token: string): boolean => {
@@ -245,8 +246,10 @@ class FakeDocument {
       if (matches(element, tokens)) found.push(element);
       for (const child of element.children) walk(child);
     };
+    const createdSet = new Set<FakeElement>(this.created);
+    const isLiveRoot = (element: FakeElement): boolean => element.parent !== null && !createdSet.has(element.parent);
     for (const element of this.created) {
-      if (element.parent === null) walk(element);
+      if (isLiveRoot(element)) walk(element);
     }
     return found;
   }
@@ -3438,3 +3441,65 @@ describe('executed boot: D-6d (W-25C) — the documentElement data-theme at pain
     expect(shellOf(rig.root).getAttribute('data-theme')).toBe('light');
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-10 (W-29) — THE KEYBOARD PATH SURVIVES THE BEAT RE-PROJECTION. The
+// persona finding (L5, even at 1440x900): "keyboard focus+Enter failed
+// to activate" the Settings nav item — Tab lands the focus, the ~1s
+// beat re-projection replaces the WHOLE tree (the focused button is a
+// detached node), the focus falls back to <body> and Enter activates
+// nothing. The render pass now captures the focused affordance's
+// delegated-vocabulary identity and re-focuses its equivalent node on
+// the fresh projection. (The layout half of D-10 — the sidebar's
+// single scroll flow so nothing covers the nav's tail — is pinned as
+// CSS-as-data in src/shell/sidebar-layout.test.ts; the two together
+// are the fix.)
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-10 (W-29) — the keyboard focus survives the beat re-projection', () => {
+  it('a focused NAV ITEM re-gains focus on the next re-projection: Tab -> beat -> Enter stays on the Settings item (the persona path)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    // the keyboard user Tabs to the Settings nav item (the browser's focus surface carries it)
+    const settingsItem = elementsOf(rig.root).find((element) => element.getAttribute('data-target') === 'settings' && element.hasClass('nav-item'));
+    if (settingsItem === undefined) throw new Error('no Settings nav item in the tree');
+    rig.doc.activeElement = settingsItem;
+    // a beat lands (the poll cadence re-observes now and re-projects the whole tree — the focused element is replaced)
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 2000 });
+    // the fresh projection's Settings item received the focus restore
+    const freshItem = elementsOf(rig.root).find((element) => element.getAttribute('data-target') === 'settings' && element.hasClass('nav-item'));
+    if (freshItem === undefined) throw new Error('no Settings nav item on the fresh projection');
+    expect(freshItem.focusCount, 'the replaced Settings item was re-focused').toBeGreaterThan(0);
+    expect(freshItem).not.toBe(settingsItem); // the beat really replaced the node (the pin is not vacuous)
+  });
+
+  it('a focused notice READ TOGGLE restores by its UNIQUE notice id (never a sibling that shares the action class)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 21, job: FAILED_JOB_2 });
+    clickNav(rig, 'inbox');
+    const notices = rig.handle.state().inbox.notices;
+    expect(notices.length).toBe(2); // two failed_evaluation notices (distinct content-addressed ids)
+    const second = notices[1];
+    if (second === undefined) throw new Error('fixture: two notices required');
+    const secondToggle = findByData(rig.root, 'data-notice-read', second.noticeId);
+    if (secondToggle === null) throw new Error('the second notice carries no read toggle');
+    rig.doc.activeElement = secondToggle;
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 2000 }); // the beat's re-projection
+    // the restore landed on the SECOND notice's toggle — its own id — not the first sibling's
+    const freshSecond = findByData(rig.root, 'data-notice-read', second.noticeId);
+    const freshFirst = findByData(rig.root, 'data-notice-read', (notices[0] as { readonly noticeId: string }).noticeId);
+    if (freshSecond === null || freshFirst === null) throw new Error('the fresh projection carries both toggles');
+    expect(freshSecond.focusCount).toBeGreaterThan(0);
+    expect(freshFirst.focusCount).toBe(0); // the sibling was never focused
+  });
+
+  it('a re-projection with NOTHING focused restores nothing (the pass never invents a focus)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    rig.doc.activeElement = null; // the browser's <body> — no affordance carried the focus
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 2000 });
+    for (const element of elementsOf(rig.root)) {
+      expect(element.focusCount, `an unfocused beat must focus nothing (${element.tagName})`).toBe(0);
+    }
+  });
+});
+

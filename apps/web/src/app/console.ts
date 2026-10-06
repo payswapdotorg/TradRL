@@ -774,11 +774,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       if (view.touchedFields.includes(field)) return;
       view = { ...view, touchedFields: [...view.touchedFields, field] };
     };
-    /** The focus-restore key of an element the browser was moving focus TO (its delegated-vocabulary identity), null when it carries none. */
+    /** The focus-restore key of an element the browser was moving focus TO (its delegated-vocabulary identity), null when it carries none. D-10 (W-29): the preference order puts the UNIQUE discriminators first (a row id, a notice id, a capsule id, a palette ref) so a restore never lands on a sibling that merely shares the action class. */
     const focusKeyOf = (element: unknown): { readonly attr: string; readonly value: string } | null => {
       const candidate = element as FieldEventTarget | null | undefined;
       if (candidate === null || candidate === undefined || typeof candidate.getAttribute !== 'function') return null;
-      for (const attr of ['data-launch-field', 'data-action', 'data-target']) {
+      for (const attr of ['data-row', 'data-notice-read', 'data-capsule-open', 'data-palette-ref', 'data-launch-field', 'data-palette-input', 'data-action', 'data-target']) {
         const value = candidate.getAttribute(attr);
         if (value !== null) return { attr, value };
       }
@@ -817,6 +817,33 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
     };
+    /**
+     * D-10 (W-29) — INTERACTIVE FOCUS SURVIVES THE BEAT RE-PROJECTION: the
+     * keyboard user's focused affordance (a nav item, the bell, a notice
+     * toggle, a capsule badge) is replaced by the ~1s beat re-projection,
+     * which used to strand the focus on <body> — the persona finding
+     * ("keyboard focus+Enter failed to activate" the Settings nav item:
+     * Tab lands the focus, the beat replaces the tree, Enter hits a dead
+     * document). The capture/restore mirrors the launch-field + palette
+     * pair below: the focused element's delegated-vocabulary identity is
+     * captured BEFORE the re-projection and the FIRST VISIBLE equivalent
+     * node re-focuses after it (a display:none match — the hidden mobile
+     * header's brand row — never steals the restore; elements without a
+     * geometry probe, like the test harness's fakes, count as visible).
+     */
+    const restoreInteractiveFocusByKey = (key: { readonly attr: string; readonly value: string } | null): void => {
+      if (key === null || document.querySelectorAll === undefined) return;
+      let fallback: { focus(): void } | null = null;
+      for (const candidate of document.querySelectorAll(`[${key.attr}="${key.value}"]`)) {
+        const element = candidate as { focus(): void } & Partial<{ getClientRects(): readonly unknown[] }>;
+        if (typeof element.getClientRects !== 'function' || element.getClientRects().length > 0) {
+          element.focus();
+          return;
+        }
+        if (fallback === null) fallback = element;
+      }
+      if (fallback !== null) fallback.focus(); // best effort — a hidden match no-ops in the browser
+    };
     /** Focus the palette's input (the dialog's entry point — opening the palette and Clear search both leave typing ready; §4.14's keyboard-first journey). */
     const focusPaletteInput = (): void => {
       if (document.querySelectorAll === undefined) return;
@@ -854,6 +881,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       let focusedSelection: { readonly start: number; readonly end: number } | null = null;
       let focusedPaletteInput = false;
       let focusedPaletteSelection: { readonly start: number; readonly end: number } | null = null;
+      // D-10 (W-29): the focused INTERACTIVE affordance's identity (nav
+      // items, the bell, notice toggles, capsule badges — anything in the
+      // delegated vocabulary), restored after the re-projection so a
+      // keyboard user's Tab position survives the beat (focus+Enter works).
+      let focusedInteractiveKey: { readonly attr: string; readonly value: string } | null = null;
       const active = document.activeElement as (FieldEventTarget & Partial<{ selectionStart: number | null; selectionEnd: number | null }>) | null | undefined;
       if (active !== null && active !== undefined && typeof active.getAttribute === 'function') {
         const name = active.getAttribute('data-launch-field');
@@ -867,6 +899,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           if (typeof (active as { readonly selectionStart?: number | null }).selectionStart === 'number' && typeof (active as { readonly selectionEnd?: number | null }).selectionEnd === 'number') {
             focusedPaletteSelection = { start: (active as { readonly selectionStart: number }).selectionStart, end: (active as { readonly selectionEnd: number }).selectionEnd };
           }
+        } else {
+          focusedInteractiveKey = focusKeyOf(active);
         }
       }
       mountVTree(document, root, renderConsoleModel(state, instants.nowMs(), view, paletteResults));
@@ -888,6 +922,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           break;
         }
       }
+      // D-10 (W-29): the beat re-projection replaced the focused
+      // interactive affordance — re-focus its equivalent node so the
+      // keyboard journey (Tab into the nav, Enter to activate) survives
+      // every poll beat.
+      if (focusedInteractiveKey !== null) restoreInteractiveFocusByKey(focusedInteractiveKey);
     };
 
     /** The evidence capsules for the palette (the Evidence section's own fold — mirrors render/model.ts's capsule list, unprojected). */
