@@ -77,7 +77,7 @@ export interface ShadowOutcomeRecordMirror {
   readonly outcomeId: string;
   readonly ordinal: number;
   readonly intentRef: string;
-  readonly decisionRef: string;
+  readonly decisionRef: string | null;
   readonly refusalRef: string | null;
   readonly disposition: ShadowDispositionMirror;
   readonly fills: readonly string[];
@@ -128,7 +128,7 @@ export interface GoalProgressRecordMirror {
   readonly maxDrawdownObserved: string;
   readonly verdict: OutcomeVerdictMirror;
   readonly attainment: {
-    readonly criteria: readonly { readonly criterionId: string; readonly metric: string; readonly satisfied: boolean; readonly observed: number | string }[];
+    readonly criteria: readonly { readonly criterionId: string; readonly metric: string; readonly satisfied: boolean; readonly observed: number | string | boolean }[];
     readonly satisfiedCount: number;
     readonly totalCount: number;
     readonly satisfactionShare: number;

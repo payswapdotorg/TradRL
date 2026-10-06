@@ -37,7 +37,11 @@ export type ExampleErrorCode =
   | 'universe_violation'
   | 'constraint_refused'
   | 'invalid_serialization'
-  | 'scenario_invalid';
+  | 'scenario_invalid'
+  | 'undeclared_method'
+  | 'risk_constraint_uncompilable'
+  | 'evidence_missing'
+  | 'future_evidence';
 
 /** One typed error — data, never a thrown class (the program-wide law). */
 export interface ExampleError {

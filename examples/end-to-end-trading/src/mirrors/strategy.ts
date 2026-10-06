@@ -233,5 +233,5 @@ export interface StrategyRunInputMirror {
   readonly goal: GoalStatementMirror;
   readonly seed: Seed;
   /** The director decision the run binds (L15/L16 strategic overlay). */
-  readonly directorDecision: { readonly decisionId: string; readonly directive: unknown };
+  readonly directorDecision: { readonly decisionId: string; readonly directive: import('./director').PortfolioDirectiveMirror };
 }

@@ -174,6 +174,72 @@ export function roundHalfUp(value: string, decimals: number): string {
   return render(p.negative, magnitude, decimals);
 }
 
+/** Half-EVEN rounding of a canonical decimal to `decimals` fractional digits. */
+export function roundHalfEven(value: string, decimals: number): string {
+  const p = parse(value);
+  const [int = '0', frac = ''] = p.digits.split('.');
+  if (frac.length <= decimals) return value;
+  const kept = frac.slice(0, decimals);
+  const rest = BigInt(frac.slice(decimals));
+  const half = 5n * 10n ** BigInt(frac.length - decimals - 1);
+  let magnitude = BigInt(int + kept);
+  if (rest > half || (rest === half && BigInt(int + kept) % 2n === 1n)) magnitude += 1n;
+  return render(p.negative, magnitude, decimals);
+}
+
+/** Half-even division at a caller-declared precision (the bodies' decimalRatio/decimalMean law). */
+export function divideRoundHalfEven(numerator: string, denominator: string, decimals: number): string {
+  if (isZeroDecimal(denominator)) throw new Error('divideRoundHalfEven: zero denominator');
+  const pn = parse(numerator);
+  const pd = parse(denominator);
+  const [nInt = '0', nFrac = ''] = pn.digits.split('.');
+  const [dInt = '0', dFrac = ''] = pd.digits.split('.');
+  const negative = pn.negative !== pd.negative;
+  const shift = decimals + dFrac.length - nFrac.length;
+  const scaledNumerator = BigInt(nInt + nFrac) * (shift >= 0 ? 10n ** BigInt(shift) : 1n);
+  const scaledDenominator = BigInt(dInt + dFrac) * (shift < 0 ? 10n ** BigInt(-shift) : 1n);
+  const quotient = scaledNumerator / scaledDenominator;
+  const remainder = ((scaledNumerator % scaledDenominator) + scaledDenominator) % scaledDenominator;
+  const twice = remainder * 2n;
+  let magnitude = quotient;
+  if (twice > scaledDenominator || (twice === scaledDenominator && quotient % 2n === 1n)) magnitude += 1n;
+  return render(negative, magnitude, decimals);
+}
+
+/** The bodies' decimalMean: scale each value, sum, divide half-even at `scale`. */
+export function decimalMeanHalfEven(values: readonly string[], scale: number): string | null {
+  if (values.length === 0) return null;
+  let sum = 0n;
+  for (const value of values) {
+    const negative = value.startsWith('-');
+    const body = negative ? value.slice(1) : value;
+    const [int = '0', frac = ''] = body.split('.');
+    const scaled = BigInt(int + frac.padEnd(scale, '0'));
+    sum += negative ? -scaled : scaled;
+  }
+  const negative = sum < 0n;
+  const magnitude = negative ? -sum : sum;
+  const count = BigInt(values.length);
+  const quotient = magnitude / count;
+  const remainder = magnitude % count;
+  const twice = remainder * 2n;
+  let rounded = quotient;
+  if (twice > count || (twice === count && quotient % 2n === 1n)) rounded += 1n;
+  return render(negative, rounded, scale);
+}
+
+/** The bodies' decimalDispersion: exact max - min at `scale`, null below two values. */
+export function decimalDispersionHalfEven(values: readonly string[], scale: number): string | null {
+  if (values.length < 2) return null;
+  const scaled = values.map((value) => {
+    const [int = '0', frac = ''] = value.split('.');
+    return BigInt(int + frac.padEnd(scale, '0'));
+  });
+  const max = scaled.reduce((a, b) => (a > b ? a : b));
+  const min = scaled.reduce((a, b) => (a < b ? a : b));
+  return render(false, max - min, scale);
+}
+
 /** True when `value` is an exact multiple of the positive decimal `grid`. */
 export function isAlignedToGrid(value: string, grid: string): boolean {
   const quotient = divideRoundHalfUp(value, grid, 18);
