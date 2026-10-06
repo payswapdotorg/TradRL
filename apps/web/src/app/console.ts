@@ -41,7 +41,7 @@ import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
 import { persistTheme } from '../core/theme';
 import { isShellTarget } from '../core/nav';
-import { paletteIndex, paletteOverlay, rankPalette, type PaletteEntry } from '../core/palette';
+import { capsuleRefOf, paletteIndex, paletteOverlay, projectRefOf, rankPalette, type PaletteEntry } from '../core/palette';
 import {
   NOTICE_READ_STORAGE_KEY,
   noticeReadKey,
@@ -1363,7 +1363,25 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           if (view.palette !== null) {
             const ref = target.getAttribute('data-palette-ref');
             openedSheet = ref === null ? null : parseSheetRef(ref);
-            view = { ...view, palette: null, ...(openedSheet === null ? {} : { sheet: openedSheet }) };
+            // D-16 (W-29 wave 2): EVERY ENTITY RESULT OPENS ITS ENTITY. An
+            // EVIDENCE entry's capsule opens INLINE (view.openCapsule is the
+            // §4.9 open key — the same one a capsule badge's click sets; a
+            // JOB entry already opened its dialog, and the inconsistency
+            // was S4's finding), and a cross-project JUMP entry adopts its
+            // project (the same user-initiated project-adopted the
+            // switcher rides — the D-15 generation guard counts it, so the
+            // boot restore can never clobber a palette jump).
+            const capsuleId = ref === null ? null : capsuleRefOf(ref);
+            const jumpTo = ref === null ? null : projectRefOf(ref);
+            view = {
+              ...view,
+              palette: null,
+              ...(openedSheet === null ? {} : { sheet: openedSheet }),
+              ...(capsuleId === null ? {} : { openCapsule: capsuleId }),
+            };
+            if (jumpTo !== null && jumpTo !== state.scope.projectId) {
+              dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: jumpTo }); // renders via onState (the palette is already closed)
+            }
             refreshPalette();
           }
           if (id === 'home' || id === 'inbox' || id === 'settings') {
@@ -1713,6 +1731,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           // no parsable sheet ref and navigate exactly as before.
           const openedSheet = parseSheetRef(selected.ref);
           if (openedSheet !== null) view = { ...view, sheet: openedSheet };
+          // D-16 (W-29 wave 2): an EVIDENCE entry's capsule opens INLINE
+          // (the §4.9 open key — Enter behaves exactly like the JOB
+          // entries' dialog open and the click path above), and a
+          // cross-project JUMP entry switches the desk through the same
+          // user-initiated adoption the switcher rides.
+          const capsuleId = capsuleRefOf(selected.ref);
+          if (capsuleId !== null) view = { ...view, openCapsule: capsuleId };
+          const jumpTo = projectRefOf(selected.ref);
+          if (jumpTo !== null && jumpTo !== state.scope.projectId) {
+            dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: jumpTo }); // renders via onState
+          }
           if (selected.target !== null) {
             if (selected.target === 'home' || selected.target === 'inbox' || selected.target === 'settings') {
               view = { ...view, accountView: selected.target };

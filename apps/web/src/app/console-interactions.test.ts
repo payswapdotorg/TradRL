@@ -1339,8 +1339,11 @@ describe('executed boot: J8 — the command palette query (the dead input wiring
     if (input === null) throw new Error('the palette input vanished mid-query');
     expect(input.getAttribute('value')).toBe('risk');
 
-    // every keystroke re-ranks live: a letter no haystack carries empties the list
-    typePaletteQuery(rig, 'risky');
+    // every keystroke re-ranks live: a letter no haystack carries empties
+    // the list ('risky' no longer qualifies — D-16's corrected pass
+    // legitimately reaches Risk at distance 1, which is the tolerance
+    // working as intended; pure garbage must still empty the palette)
+    typePaletteQuery(rig, 'zzzzz');
     expect(countByClass(rig.root, 'palette-item')).toBe(0);
   });
 
@@ -2917,7 +2920,7 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     const api = jobsSeamTransport();
     const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(18); // 15 navigation + the project + the TWO seeded jobs (the JOB group has entries to find)
+    expect(countByClass(rig.root, 'palette-item')).toBe(20); // 15 navigation + the project + the TWO seeded jobs + the TWO cross-project jump entries (D-16: the directory's other desks)
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(true); // the JOB group renders in the grouped results
 
     // by ID: the exact job the operator typed
@@ -3002,9 +3005,9 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     if (empty === undefined) throw new Error('the Research section renders no empty state');
     expect(elementsOf(rig.root).some((element) => textOf(element) === 'No research jobs at this view instant.')).toBe(true);
 
-    // the palette carries no JOB entries (15 navigation + the project — the pre-fix shape)
+    // the palette carries no JOB entries (15 navigation + the project + the two cross-project jump entries — the D-16 directory depth)
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(16);
+    expect(countByClass(rig.root, 'palette-item')).toBe(18);
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(false);
   });
 });
@@ -3954,5 +3957,101 @@ describe('executed boot: D-15 (W-29 wave 2) — the session-scope discipline', (
     expect(goalTexts).toMatch(/active \(observed/); // the organization's status beside it, labeled as its own entity
     expect(findByData(rig.root, 'data-lifecycle-note', 'true')).not.toBeNull(); // the seam is STATED in plain words
     expect(elementsOf(rig.root).some((element) => textOf(element) === 'The project record\'s lifecycle and the organization\'s operating status are separate states — the record moves only through an explicit lifecycle event.')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-16 (W-29 wave 2) — THE PALETTE DEPTH, executed: the cross-project
+// jump (search offers "jump to project X" entries for the tenant's other
+// desks — selecting one switches the scope through the same
+// user-initiated adoption the switcher rides), and EVERY ENTITY RESULT'S
+// ENTER OPENS ITS ENTITY (a JOB entry opens its dialog — the J8 fix; an
+// EVIDENCE entry now opens its capsule inline; a PROJECT entry switches
+// the desk — the pre-fix inconsistency was S4's finding: "palette
+// EVIDENCE Enter does NOT auto-open the capsule while JOB results
+// auto-open their dialog").
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-16 (W-29 wave 2) — the palette depth (the cross-project jump + the entity-open Enter)', () => {
+  /** Open the palette and type a query (the §4.14 wiring: the input event feeds the pure rank). */
+  function typePaletteQuery(rig: Rig, query: string): void {
+    clickAction(rig, 'palette-open');
+    const input = findByData(rig.root, 'data-palette-input', 'true');
+    if (input === null) throw new Error('the palette input is not rendered');
+    input.value = query;
+    rig.doc.fire('input', { target: input });
+  }
+
+  /** Press Enter in the palette (the keyboard contract's open action). */
+  function pressEnter(rig: Rig): void {
+    const input = findByData(rig.root, 'data-palette-input', 'true');
+    if (input === null) throw new Error('the palette input is not rendered');
+    rig.doc.fire('keydown', { key: 'Enter', target: input });
+  }
+
+  it('a project query offers the OTHER desk as a jump entry; Enter switches the scope (the beat refetches the adopted desk — the Settings select was the only path before)', async () => {
+    const api = demoSubstanceTransport();
+    const scopeStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    expect(rig.handle.state().projectDirectory.map((project) => project.id)).toEqual(['prj-a', 'prj-other']);
+
+    typePaletteQuery(rig, 'prj-other');
+    const jump = findByData(rig.root, 'data-palette-ref', 'project:prj-other');
+    if (jump === null) throw new Error('the palette offers no jump entry for the other desk');
+    expect(elementsOf(jump).map((element) => textOf(element)).join(' ')).toContain('switch desk'); // the entry states what it does
+    // the top result is the jump entry — Enter adopts the other desk
+    pressEnter(rig);
+    expect(rig.handle.state().scope.projectId).toBe('prj-other'); // THE SCOPE SWITCHED through the palette
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-other'); // the same write-through the switcher rides
+    expect(findByData(rig.root, 'data-palette-input', 'true')).toBeNull(); // the palette closed
+    expect(rig.handle.state().selectedSection).toBe('goal'); // it landed on the adopted desk's own surface
+
+    // the beat's scope-change refetch reads the adopted desk's world — no reload, no Settings trip
+    await rig.handle.beat();
+    expect(rig.handle.state().project?.id).toBe('prj-other');
+    expect(rig.handle.state().degraded).toEqual([]);
+  });
+
+  it('Enter on an EVIDENCE entry navigates to the Evidence section AND opens the matched capsule inline (the same open a badge click performs — the JOB entries\' dialog behavior, consistent now)', async () => {
+    const api = demoSubstanceTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    expect(rig.handle.state().outcomes).toHaveLength(1); // the enriched outcome carries the capsule the fold mints
+
+    // the capsule's content-address id, derived the same way the fold does
+    const capsule = capsuleFromOutcome(rig.handle.state().scope, rig.handle.state().outcomes[0] as unknown as OutcomeRecord);
+    const fragment = capsule.capsuleId.slice(0, 12); // a distinctive id fragment (S4's own navigation pattern)
+    typePaletteQuery(rig, fragment);
+    const evidenceEntry = findByData(rig.root, 'data-palette-ref', `capsule:${capsule.capsuleId}`);
+    if (evidenceEntry === null) throw new Error('the palette offers no evidence entry for the capsule');
+
+    pressEnter(rig);
+    expect(findByData(rig.root, 'data-palette-input', 'true')).toBeNull(); // the palette closed
+    expect(rig.handle.state().selectedSection).toBe('evidence'); // it navigated to the section
+    expect(findByData(rig.root, 'data-capsule-open', capsule.capsuleId)).not.toBeNull(); // AND the capsule's payload renders INLINE (the §4.9 open state)
+    const payload = elementsOf(rig.root).find((element) => element.hasClass('capsule-payload'));
+    if (payload === undefined) throw new Error('the opened capsule renders no payload block');
+    const payloadTexts = elementsOf(payload).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(payloadTexts).toContain('outcome-class: adverse_gap'); // the capsule's own facts render (L20 — verbatim)
+  });
+
+  it('a CLICK on a jump entry behaves exactly like Enter (the palette\'s click affordance switches the desk too)', async () => {
+    const api = demoSubstanceTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    typePaletteQuery(rig, 'prj-other');
+    const jump = findByData(rig.root, 'data-palette-ref', 'project:prj-other');
+    if (jump === null) throw new Error('the palette offers no jump entry for the other desk');
+    click(rig, jump);
+    expect(rig.handle.state().scope.projectId).toBe('prj-other'); // the click path adopts too
+    expect(findByData(rig.root, 'data-palette-input', 'true')).toBeNull(); // the palette closed
+    await rig.handle.beat();
+    expect(rig.handle.state().project?.id).toBe('prj-other');
+  });
+
+  it('the substitution-tolerant matcher, executed: the personas\' typo queries reach the sections through the live palette', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a');
+    typePaletteQuery(rig, 'evdance'); // S2's own typo — the pre-fix palette rendered the teaching no-match state
+    const evidence = findByData(rig.root, 'data-palette-ref', 'nav:evidence');
+    if (evidence === null) throw new Error('the typo query did not reach the Evidence section');
+    expect(findByData(rig.root, 'data-palette-empty', 'evdance')).toBeNull(); // no teaching empty state — a real result
   });
 });
