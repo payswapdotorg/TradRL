@@ -21,13 +21,24 @@ assertions). What the deployment does instead:
   T041's exact method names, parameter shapes and record envelopes,
   widened to async. Name-alignment and parameter-parity trip-wires
   fail at typecheck time if T041's ports drift.
-- **The seam:** the T041 composition root (`createApiService`) is
-  injected with SYNC adapters — at checkpoint 4 these are the typed
-  degraded stubs (`deploy_adapter_pending`); hydrating them from the
-  durable stores per instance (boot-time or read-through projection)
-  is the W-3e/lead step, and if T041 ever widens its ports to async
-  (a T041-side change; the deployment never edits it), the adapters
-  drop in unchanged.
+- **The seam (LANDED — W-25D, `deploy/vercel/runtime/durable.ts`):** the
+  T041 composition root (`createApiService`) is injected with SYNC
+  in-memory ports whose state is a PROJECTION of the durable stores:
+  at instance boot (the first request after a cold start) the seam
+  reads the Neon stores — the project REGISTRY (creation order), each
+  project's GOAL SET (the create-project input's goal + constraint
+  set, persisted at createProject time) + EVENT LOG, the KNOWLEDGE and
+  the OUTCOMES/POST-MORTEMS — and reconstructs every project through
+  the REAL T007 control plane's own domain law (the seam orchestrates,
+  never re-implements). Every mutation applies to the in-memory port
+  AND write-throughs to the durable store in dependency order, and the
+  HOST drains the durable writes BEFORE the response is served: a
+  failed durable write is the typed 503 (`unavailable`, the durable
+  failure's own code; the mutation is UNCONFIRMED) plus a full
+  re-projection from the durable truth — never a crash, never a silent
+  divergence (R46). If T041 ever widens its ports to async (a
+  T041-side change; the deployment never edits it), the adapters drop
+  in unchanged.
 - **The host-owned lanes are async-native today:** idempotency
   (Upstash), cache, evidence (R2), notice delivery (Resend) and
   ingestion (Apify) are consumed by the HOST around the sync boundary
@@ -52,8 +63,8 @@ assertions). What the deployment does instead:
 
 | What is absent/down | What the boundary does | What still works |
 | --- | --- | --- |
-| Neon (absent keys) | firm-memory + outcome routes answer the typed `deploy_adapter_absent` 503 | everything else — authn/authz, rate limits, metering, audit, meta, gateway, jobs |
-| Neon (down/unreachable) | the same routes answer the typed `neon_unreachable` 503 (per-request — no circuit state) | as above |
+| Neon (absent keys) | the control-plane (projects), firm-memory + outcome routes answer the typed `deploy_adapter_absent` 503 | everything else — authn/authz, rate limits, metering, audit, meta, gateway, jobs |
+| Neon (down/unreachable) | the same routes answer the typed `neon_unreachable` 503 (per-request — no circuit state; the W-25D seam retries the projection on every request while it is failed, so a Neon that recovers mid-instance heals the surfaces without a cold start) | as above |
 | Upstash absent | the host uses T041's in-memory idempotency (per instance — warm-start scoped) | everything (idempotency semantics identical, durability reduced) |
 | Upstash down | the idempotency check reports the typed `degraded` verdict; the host's fail-closed posture refuses the consequential call | non-consequential routes unaffected |
 | R2 absent/down | evidence uploads answer the typed failure; reads answer the typed not-found/unreachable | everything else |
@@ -66,8 +77,8 @@ assertions). What the deployment does instead:
 1. Read the provider env once (`readProviderEnv`) — the enabled matrix is computed, never re-read per request.
 2. Compose the adapters (`composeDeploymentAdapters`) with the platform fetch + a monotonic instant source; absent adapters yield their typed degraded ports (no throw at boot — a half-configured deployment still serves its configured surface).
 3. Compose the REAL control plane (T007) over the Neon persistence substrate and the REAL gateway (T040) — both carried verbatim.
-4. Inject the five ports + credentials + instants into T041's `createApiService` at the `deploy/vercel/runtime/compose.ts` seam (fail-closed: a malformed injection is the typed not-configured 503, never a crash).
-5. Memoize per instance; warm invocations reuse the composition.
+4. Inject the five ports + credentials + instants into T041's `createApiService` at the `deploy/vercel/runtime/compose.ts` seam (fail-closed: a malformed injection is the typed not-configured 503, never a crash). Under the DURABLE backing the Neon-backed ports are the W-25D seam's sync in-memory ports (`runtime/durable.ts`).
+5. Memoize per instance; warm invocations reuse the composition. The first request after a cold start awaits the seam's BOOT PROJECTION (the router's `settled()`); every request drains its pending durable writes before the response is served (`drain()` — the write-through ordering law).
 
 ## The CI smoketest
 

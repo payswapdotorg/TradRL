@@ -19,6 +19,8 @@ import {
   NeonFirmMemoryStore,
   NeonOutcomeLearningStore,
   NeonProjectStore,
+  goalSetGetStatement,
+  goalSetPutStatement,
   knowledgePutStatement,
   knowledgeSelectStatement,
   outcomePutStatement,
@@ -64,6 +66,7 @@ const TABLE_SPEC: Readonly<Record<string, { readonly payload: number; readonly o
   tradrl_post_mortems: { payload: 7, order: 3 },
   tradrl_projects: { payload: 6, order: 5 },
   tradrl_project_events: { payload: 5, order: 2 },
+  tradrl_project_goals: { payload: 2, order: 1 },
 };
 
 interface FakeCall {
@@ -172,8 +175,10 @@ describe('deploy/adapters/neon — L12 tenant scoping', () => {
       { label: 'event.scan', statement: projectNextOrdinalStatement('tenant-a', 'prj_a') },
       { label: 'event.append', statement: projectEventAppendStatement({ tenant: 'tenant-a', projectId: 'prj_a', event: 'activate', at: 1 }, 1) },
       { label: 'events.read', statement: projectEventsStatement('tenant-a', 'prj_a') },
+      { label: 'goalset.put', statement: requireOk(goalSetPutStatement('tenant-a', 'prj_a', { goal: { id: 'goal-1' }, constraintSet: { id: 'cs-1' } })) },
+      { label: 'goalset.get', statement: goalSetGetStatement('tenant-a', 'prj_a') },
     ];
-    expect(statements.length).toBe(11);
+    expect(statements.length).toBe(13);
     for (const { label, statement } of statements) {
       // The L12 law: the tenant is bind parameter 1 in EVERY statement —
       // `tenant = $1` in reads/scans, `VALUES ($1, ...)` in writes.
@@ -316,6 +321,26 @@ describe('deploy/adapters/neon — the stores', () => {
     if (mortems.ok) expect(mortems.value.length).toBe(1);
   });
 
+  it('goal sets: put/get round-trip faithfully; absent reads answer null; foreign tenants find nothing (W-25D)', async () => {
+    const fake = fakeNeon();
+    const store = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const goalSet = { goal: { id: 'goal-tenant-a', version: 1, tenantId: 'tenant-a' }, constraintSet: { id: 'cs-tenant-a', version: 1, tenantId: 'tenant-a' } };
+    expect((await store.putGoalSet('tenant-a', 'prj_a', goalSet)).ok).toBe(true);
+    const got = await store.goalSetOf('tenant-a', 'prj_a');
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.value).toEqual(goalSet);
+    const absent = await store.goalSetOf('tenant-a', 'prj_none');
+    expect(absent.ok).toBe(true);
+    if (absent.ok) expect(absent.value).toBeNull();
+    // L12: a foreign tenant's read finds NOTHING (the indistinguishable absence).
+    const foreign = await store.goalSetOf('tenant-b', 'prj_a');
+    expect(foreign.ok).toBe(true);
+    if (foreign.ok) expect(foreign.value).toBeNull();
+    // An empty project id is the typed malformed refusal (never a statement without scope).
+    const malformed = goalSetPutStatement('tenant-a', '', goalSet);
+    expect(malformed.ok).toBe(false);
+  });
+
   it('projects: put/get/list round-trip; the event log appends and reads back in order', async () => {
     const fake = fakeNeon();
     const store = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
@@ -352,14 +377,14 @@ describe('deploy/adapters/neon — the stores', () => {
 describe('deploy/adapters/neon — the DDL records', () => {
   it('every table referenced by the statement builders has a DDL record with a tenant-leading PRIMARY KEY', () => {
     const tables = new Set(NEON_DDL_RECORDS.map((record) => record.table));
-    expect([...tables].sort()).toEqual(['tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_project_events', 'tradrl_projects']);
+    expect([...tables].sort()).toEqual(['tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_project_events', 'tradrl_project_goals', 'tradrl_projects']);
     for (const record of NEON_DDL_RECORDS) {
       expect(record.ddl).toContain(`CREATE TABLE IF NOT EXISTS ${record.table}`);
       expect(record.ddl).toContain('PRIMARY KEY (tenant');
       expect(record.ddl).toMatch(/tenant\s+TEXT\s+NOT NULL/);
     }
     // Every table the statements reference is covered by a DDL record.
-    const referenced = new Set(['tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_projects', 'tradrl_project_events']);
+    const referenced = new Set(['tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_projects', 'tradrl_project_events', 'tradrl_project_goals']);
     for (const table of referenced) expect(tables.has(table)).toBe(true);
   });
 

@@ -15,9 +15,12 @@
 // provider keys) — the per-request demo machinery tick, which advances
 // non-terminal jobs through the REAL private plane so the async
 // pattern renders on the public console (honest under the SIMULATED
-// badge; see runtime/demo.ts). Under the DURABLE backing the ports
-// stay the typed pending stubs until the W-3e hydration seam
-// (deploy/wire/production.md) — those routes answer the typed 503.
+// badge; see runtime/demo.ts). Under the DURABLE backing the W-3e
+// hydration seam (W-25D, runtime/durable.ts) serves the Neon-backed
+// surfaces from the per-instance projection: this handler awaits the
+// boot-time projection before serving (settled) and drains every
+// request's pending durable writes before the response leaves (a
+// failed write is the typed 503 — the ordering law, runtime/durable.ts).
 //
 // THE HOST-OWNED DEMO-SUBSTANCE READ ROUTES (W-8, additive): under the
 // demo backing, two read-only routes are served from the seeded demo
@@ -35,9 +38,9 @@
 
 import { getDeploymentService, type DeploymentComposition } from '../runtime/compose';
 import { toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
-import { serveDemoSubstanceRoute } from '../runtime/routes';
+import { drainedFailureResponse, serveDemoSubstanceRoute, serveDurableGoalRoute } from '../runtime/routes';
 
-/** The demo-substance read routes' request serial (per instance — the minted request ids stay unique per invocation). */
+/** The demo-substance/durable-goal read routes' request serial (per instance — the minted request ids stay unique per invocation). */
 let demoSubstanceSerial = 0;
 
 /**
@@ -66,6 +69,15 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
     deployment.demo.tick(Date.now());
   }
 
+  // 2b. THE DURABLE SEAM (W-25D): await the boot-time projection (or any
+  //     in-flight re-projection — a failed projection retries per request,
+  //     no circuit state, so a Neon that recovers mid-instance heals the
+  //     surfaces). The first request after a cold start pays the hydration;
+  //     warm requests reuse the per-instance projection.
+  if (deployment.durable !== null) {
+    await deployment.durable.settled();
+  }
+
   // 3. Wrap the (req) into the ApiRequest contract.
   const wrapped = await toApiRequest(request);
   if (!wrapped.ok) {
@@ -76,10 +88,22 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
   // 4. The host-owned demo-substance read routes (W-8, additive): served
   //    from the demo backing's seeded data when the request is one of
   //    them; every other request (and every other backing) falls through
-  //    to the boundary unchanged.
+  //    to the boundary unchanged. Under the DURABLE backing the same goal
+  //    path serves the seam's hydrated goal set (W-25D, D-5) — every other
+  //    durable request falls through to the boundary.
   if (deployment.demo !== null) {
     const hostRoute = serveDemoSubstanceRoute(
       { ports: deployment.demo.ports, verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization },
+      wrapped.request,
+      demoSubstanceSerial++,
+    );
+    if (hostRoute !== null) {
+      writeApiResponse(response, hostRoute);
+      return;
+    }
+  } else if (deployment.durable !== null) {
+    const hostRoute = serveDurableGoalRoute(
+      { durable: deployment.durable, verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization },
       wrapped.request,
       demoSubstanceSerial++,
     );
@@ -91,6 +115,20 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
 
   // 5. One request through the whole T041 pipeline.
   const apiResponse = deployment.service.handle(wrapped.request);
+
+  // 5b. THE WRITE-THROUGH DRAIN (W-25D — the ordering law's second half):
+  //     the host awaits the request's pending durable writes BEFORE the
+  //     response is served. A failed write replaces the response with the
+  //     typed 503 (the caller learns the mutation is unconfirmed; the seam
+  //     re-projects from the durable truth — the unconfirmed mutation is
+  //     never served, never a silent divergence).
+  if (deployment.durable !== null) {
+    const drained = await deployment.durable.drain();
+    if (!drained.ok) {
+      writeApiResponse(response, drainedFailureResponse(apiResponse, drained.error));
+      return;
+    }
+  }
 
   // 6. Write the envelope out (no CORS — same-origin only).
   writeApiResponse(response, apiResponse);

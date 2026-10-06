@@ -163,12 +163,19 @@ discover, W-3k). The emitted tree:
   - **DURABLE — the moment any durable-provider key is configured**
     (overridable: `TRADRL_DEPLOY_BACKING=durable`). The durable
     adapters are built and tested in `deploy/adapters/` + `deploy/wire/`
-    (W-3b..W-3d), but T041's port methods are synchronous by design
-    while those adapters are async — the async-to-sync **hydration
-    seam is the documented W-3e/lead step** (`deploy/wire/production.md`
-    §the sync/async bridge). Until it lands, the durable backing
-    composes the typed degraded stubs (`deploy_adapter_pending` → the
-    typed 503 `unavailable`) — the honest pending state, R46.
+    (W-3b..W-3d), and the async-to-sync **hydration seam LANDED as
+    W-25D** (`deploy/vercel/runtime/durable.ts`;
+    `deploy/wire/production.md` §the sync/async bridge): the Neon-backed
+    surfaces (the control plane, firm memory, outcome learning) are SYNC
+    in-memory ports hydrated from the durable stores at every cold
+    start, with write-through on every mutation — a launched project +
+    its goal set, organization bindings and lifecycle events persist in
+    Neon and REHYDRATE on every instance (D-5). With the Neon keys
+    INCOMPLETE (or Neon down) those routes answer the typed degraded
+    503s (R46) while everything else keeps serving; the execution
+    gateway + Apify jobs keep their honest typed stubs (later seams).
+    The DEMO path stays byte-identical (the seam activates only on the
+    durable resolution).
   - An **invalid** `TRADRL_DEPLOY_BACKING` value is a host
     misconfiguration: the typed `deploy_not_configured` 503 naming the
     key and its two legal values (fail-closed; never the value).
@@ -176,9 +183,10 @@ discover, W-3k). The emitted tree:
 
 ### The Neon schema (apply once — the runbook's §neon paste block)
 
-`deploy/adapters/neon/schema.ts` carries the DDL records for the five
+`deploy/adapters/neon/schema.ts` carries the DDL records for the six
 tenant-scoped tables (`tradrl_knowledge`, `tradrl_outcomes`,
-`tradrl_post_mortems`, `tradrl_projects`, `tradrl_project_events` —
+`tradrl_post_mortems`, `tradrl_projects`, `tradrl_project_events`,
+`tradrl_project_goals` — the W-25D seam's create-project goal sets;
 every PRIMARY KEY leads with `tenant`). To apply, paste
 `NEON_DDL_RECORDS`' statements into the Neon SQL editor (or psql)
 once per database — `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF
@@ -262,7 +270,7 @@ every key the deployment reads, with its purpose. Summary:
 | `TRADRL_API_DEVELOPER_PRINCIPAL` | the credential's principal name (audit WHO) | you choose (e.g. `public-console`) |
 | `TRADRL_API_INTERNAL_TOKEN` | the private-plane (`/internal/*`) credential token — **optional**: absent = the internal plane stays closed (R46) | `openssl rand -hex 24` |
 | `TRADRL_API_INTERNAL_PRINCIPAL` | the internal service principal (required when the internal token is set) | you choose (e.g. `job-runner`) |
-| `TRADRL_DEPLOY_BACKING` | **optional** — which backing the data routes compose over: `demo` (the in-memory fixture-backed demo; per-instance state, honest under SIMULATED) or `durable` (the deploy/wire adapters' path; typed pending 503s until the W-3e hydration seam). **UNSET = auto**: `demo` when no `NEON_*`/`UPSTASH_*` key is configured (the public free-tier default), `durable` the moment any is. An invalid value fails closed (the typed 503 naming the key) | unset (auto) |
+| `TRADRL_DEPLOY_BACKING` | **optional** — which backing the data routes compose over: `demo` (the in-memory fixture-backed demo; per-instance state, honest under SIMULATED; byte-identical whether or not Neon keys are present) or `durable` (the W-25D hydration seam: the Neon-backed surfaces rehydrate per instance with write-through; incomplete Neon keys keep the typed `deploy_adapter_absent` 503s). **UNSET = auto**: `demo` when no `NEON_*`/`UPSTASH_*` key is configured (the public free-tier default), `durable` the moment any is. An invalid value fails closed (the typed 503 naming the key) | unset (auto) |
 
 ### Console shell substitution (Vercel BUILD-time env — consumed by build-console.mjs)
 
@@ -463,8 +471,8 @@ Rules of engagement:
 | --- | --- | --- |
 | **Demo backing** (the default: no `NEON_*`/`UPSTASH_*` key; the SIMULATED badge is the disclosure) | The data routes serve the seeded fixture demo data over the REAL in-memory fake ports (`runtime/demo.ts`) — per-instance state: a serverless cold start resets the demo world to its seed (projects/jobs created in the session drop; the seed itself re-lands at the next boot) | The data-backed journeys render real (if simulated) data; the SIMULATED badge stays on (UX-DESIGN §7 — do NOT set `TRADRL_CONSOLE_SIMULATED=false` under the demo backing) |
 | Demo backing + internal pair ABSENT | The org-status store stays empty (the honest typed `not_found` — only the private plane can write it) and the job machinery never ticks (submissions stay `submitted`) | The watch section folds the job/outcome/knowledge events; no org-snapshot events; the launch progress shows `submitted` |
-| **Durable backing** (any `NEON_*`/`UPSTASH_*` key, or `TRADRL_DEPLOY_BACKING=durable`) | The data routes answer the **typed 503 `unavailable`** (`deploy_adapter_pending` — the adapters are composed in deploy/wire; the async-to-sync hydration seam is the W-3e/lead step, `deploy/wire/production.md`); the pipeline, authn/authz, rate limits, metering and audit still run on every request | The affected sections render their **unavailable/degraded states** (availability model); the shell never blanks |
-| A provider down/misconfigured (once the W-3e seam wires the durable adapters) | The affected routes answer the provider's typed degraded code (per `deploy/wire/production.md` §the degradation matrix) — never a crash | as above (the T042 graceful-degradation contract) |
+| **Durable backing** (any `NEON_*`/`UPSTASH_*` key, or `TRADRL_DEPLOY_BACKING=durable`; with the Neon keys complete the W-25D hydration seam serves the Neon-backed surfaces from the per-instance projection — a launched project + its world rehydrates on every cold start, D-5) | With the Neon keys INCOMPLETE the Neon-backed routes answer the **typed 503 `unavailable`** (`deploy_adapter_absent`); with them complete but Neon DOWN they answer the typed `neon_unreachable` per request (a failed durable write is the typed 503 and the mutation is unconfirmed). The pipeline, authn/authz, rate limits, metering and audit still run on every request | The affected sections render their **unavailable/degraded states** (availability model); the shell never blanks |
+| A provider down/misconfigured (the W-25D seam wires the Neon-backed surfaces; the Upstash/R2/Resend/Apify lanes follow the matrix) | The affected routes answer the provider's typed degraded code (per `deploy/wire/production.md` §the degradation matrix) — never a crash | as above (the T042 graceful-degradation contract) |
 | An INVALID `TRADRL_DEPLOY_BACKING` value | Every request answers the **typed 503 `deploy_not_configured`** naming the KEY and its two legal values (never the value) | The console's connection block shows the API reachable-but-degraded |
 | `TRADRL_API_INTERNAL_TOKEN` unset | The `/internal/*` plane stays CLOSED (401/403 — the credentials registry simply has no internal registration) | — (the console never calls `/internal`) |
 | API env keys missing at function start | Every request answers the **typed 503 `deploy_not_configured`** naming the missing KEY NAMES (never values) | The console's connection block shows the API unreachable |
@@ -475,10 +483,15 @@ Rules of engagement:
 ## 7. Testing this tree
 
 ```
-corepack pnpm vitest run deploy     # 155 tests (runtime adaptation vectors,
+corepack pnpm vitest run deploy     # 181 tests (runtime adaptation vectors,
                                     # the backing-resolution matrix + the demo
                                     # data routes + the machinery tick + L12
-                                    # probes, the prebuilt-output laws —
+                                    # probes, the W-25D durable seam
+                                    # (cold-start survival, write-through,
+                                    # the ordering law, the degradation
+                                    # matrix, demo byte-identity —
+                                    # deploy/vercel/durable.test.ts),
+                                    # the prebuilt-output laws —
                                     # config.json routes === FUNCTION_MOUNT_PATH,
                                     # vercel.json carries NO routing keys,
                                     # the .func law (root package.json no-type,
@@ -599,9 +612,15 @@ fakes).
   `.func`) + a LIVE staging deployment (the seven-point smoke,
   runbook §4 step 5). All laws test-pinned
   (deploy/vercel/vercel.test.ts + the build tests).
-- **W-3e (the Lead step, unchanged): the async-to-sync hydration
-  seam.** T041's port methods are synchronous by design; the durable
-  adapters are async. Until T041 widens its ports (a frozen-sibling
-  change) or a Lead-owned projection layer lands, the DURABLE backing
-  keeps the typed pending stubs (`deploy/wire/production.md` §the
-  sync/async bridge). Everything durable is built and tested offline.
+- **W-3e → LANDED as W-25D: the async-to-sync hydration seam.** T041's
+  port methods are synchronous by design; the durable adapters are
+  async. The seam (`deploy/vercel/runtime/durable.ts`) bridges the two
+  without editing either frozen tree: the composition root is injected
+  with sync in-memory ports whose state is a projection of the durable
+  stores — hydrated at every cold start (the REAL T007 control plane
+  reconstructs each project through its own domain law) and
+  write-through'd on every mutation (the host drains the durable
+  writes before the response is served; a failed write is the typed
+  503 + a re-projection — never a silent divergence). If T041 ever
+  widens its ports to async (a frozen-sibling change), the adapters
+  drop in unchanged. Everything durable is built and tested offline.

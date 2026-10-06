@@ -12,6 +12,8 @@
 // R46 (a missing provider key is a typed degraded state, never a crash),
 // D-033 (the free-tier provider set is normative).
 
+import { readProviderEnv, type ProviderEnv } from '../../wire/composition';
+
 /** The API-plane environment the serverless functions consume. */
 export interface ApiDeploymentEnv {
   /** The public-plane developer credential token (host-minted, opaque). */
@@ -28,6 +30,13 @@ export interface ApiDeploymentEnv {
   readonly deployBacking: string | null;
   /** The durable-provider keys PRESENT in the source (NAMES only, never values) — the auto-resolution input for the backing. */
   readonly durableProviderKeysPresent: readonly string[];
+  /**
+   * The durable-provider environment (the VALUES — the wire's readProviderEnv,
+   * the single provider implementation). The W-25D hydration seam's input:
+   * which adapters are enabled and the Neon store configuration. The values
+   * never cross into any error message (the names-only law above holds).
+   */
+  readonly providers: ProviderEnv;
 }
 
 /** The console-build environment (consumed by deploy/vercel/build-console.mjs at build time). */
@@ -100,6 +109,7 @@ export function readApiEnv(env: EnvSource = process.env): ApiDeploymentEnv {
     apiInternalPrincipal: read(env, API_ENV_KEYS.apiInternalPrincipal),
     deployBacking: read(env, API_ENV_KEYS.deployBacking),
     durableProviderKeysPresent: DURABLE_PROVIDER_ENV_KEYS.filter((key) => read(env, key) !== null),
+    providers: readProviderEnv(env),
   };
 }
 

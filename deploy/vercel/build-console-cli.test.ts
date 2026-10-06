@@ -84,6 +84,14 @@ beforeAll(() => {
   copyFileSync(FUNCTION_TSCONFIG, join(FIXTURE_REPO, 'deploy', 'vercel', 'function.tsconfig.json'));
   copyDirTree(join(REPO_ROOT, 'deploy', 'vercel', 'api'), join(FIXTURE_REPO, 'deploy', 'vercel', 'api'));
   copyDirTree(join(REPO_ROOT, 'deploy', 'vercel', 'runtime'), join(FIXTURE_REPO, 'deploy', 'vercel', 'runtime'));
+  // The W-25D durable seam's entry-graph trees: the runtime composition now
+  // imports the wire composition (the provider env + the adapter fleet), the
+  // Neon adapters, and the REAL control plane over the control-domain package
+  // (frozen trees, imported never edited — the emit mirrors the repo layout).
+  copyDirTree(join(REPO_ROOT, 'deploy', 'wire'), join(FIXTURE_REPO, 'deploy', 'wire'));
+  copyDirTree(join(REPO_ROOT, 'deploy', 'adapters'), join(FIXTURE_REPO, 'deploy', 'adapters'));
+  copyDirTree(join(REPO_ROOT, 'services', 'control-plane', 'src'), join(FIXTURE_REPO, 'services', 'control-plane', 'src'));
+  copyDirTree(join(REPO_ROOT, 'packages', 'control-domain', 'src'), join(FIXTURE_REPO, 'packages', 'control-domain', 'src'));
   copyDirTree(join(REPO_ROOT, 'services', 'api', 'src'), join(FIXTURE_REPO, 'services', 'api', 'src'));
   copyFileSync(join(REPO_ROOT, 'tsconfig.base.json'), join(FIXTURE_REPO, 'tsconfig.base.json'));
   // The toolchain provision: the platform's installCommand provisions the

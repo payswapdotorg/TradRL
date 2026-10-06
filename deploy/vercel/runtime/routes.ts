@@ -47,9 +47,17 @@
 // NO CORS headers are ever emitted (the same-origin law — pinned by
 // deploy/vercel/vercel.test.ts, which scans this file too).
 //
+// THE DURABLE GOAL READ (W-25D, D-5 — additive, durable-only): under the
+// DURABLE backing the same path (GET /v1/projects/:projectId/goal) serves
+// the seam's HYDRATED goal set of ANY of the credential tenant's projects
+// (serveDurableGoalRoute below) — the create-project input's goal +
+// constraint set, persisted at createProject time and rehydrated at every
+// cold start. The two backings serve their own data with the same
+// envelope discipline (never merged).
+//
 // Zero-dep law: platform APIs only. Spec anchors: R43 (the composed
 // API surface — additive), L12, L20, R46, phase2-competitive-report
-// R2/R5.
+// R2/R5, D-5.
 
 import {
   apiError,
@@ -65,6 +73,7 @@ import {
   type RequestId,
 } from '../../../services/api/src/index';
 import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalStatement, demoSubmissionsOf, type DemoPorts } from './demo';
+import type { DurableBackingHandle } from './durable';
 
 /** The host auth's verdict: the credential tenant + principal behind the presented token. */
 export interface DemoSubstanceAuthorization {
@@ -173,4 +182,78 @@ export function serveDemoSubstanceRoute(input: DemoSubstanceRouteInput, request:
     return projectGoalRoute(input, request, demoRouteRequestId(request, serial), goalProject);
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// THE DURABLE GOAL READ ROUTE (W-25D, D-5 — additive, durable-only)
+// ---------------------------------------------------------------------------
+
+/** The durable backing's goal-read surface (the seam handle — runtime/durable.ts). */
+export type DurableGoalRouteInput = {
+  /** The durable seam (the hydrated goal sets + the typed degraded state). */
+  readonly durable: DurableBackingHandle;
+  /** The host auth seam (the composition's registered developer credential). */
+  readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization;
+};
+
+/**
+ * GET /v1/projects/:projectId/goal UNDER THE DURABLE BACKING (W-25D): the
+ * project's goal + constraint set, served from the seam's HYDRATED goal
+ * sets — the records that ride the create-project input (which main
+ * already carries), persisted at createProject time and rehydrated at
+ * every cold start (D-5: the project lands on another instance WITH ITS
+ * WORLD — the W-23 console goal fetch gets a real answer). The same
+ * envelope discipline as the demo-substance routes; the same auth law;
+ * the typed not-found for a project without a hydrated goal set; the
+ * typed 503 while the projection is degraded (never a crash, never a
+ * silent empty — R46). The demo path serves its OWN route byte-identically
+ * (the two backings never merge their data).
+ */
+export function serveDurableGoalRoute(input: DurableGoalRouteInput, request: DemoSubstanceRequest, serial: number): ApiResponse | null {
+  if (request.method !== 'GET') return null;
+  const goalProject = matchProjectGoalPath(request.path);
+  if (goalProject === null) return null;
+  const requestId = demoRouteRequestId(request, serial);
+  const authorization = input.verifyDeveloperAuthorization(request.headers.authorization);
+  if (authorization === null) {
+    return demoRouteError(requestId, apiError('unauthenticated', 'a Bearer credential token is required on every route of this boundary'));
+  }
+  const read = input.durable.goalOf(goalProject);
+  if (!read.ok) {
+    return demoRouteError(requestId, apiError('unavailable', `the durable projection is degraded (${read.error.code}): ${read.error.message} — the goal read answers the typed degraded state (R46)`));
+  }
+  if (read.value === null) {
+    return demoRouteError(requestId, apiError('not_found', `no goal statement exists for ${JSON.stringify(goalProject)} in the durable projection of this tenant (the goal read serves the create-project input's persisted goal set)`));
+  }
+  return demoRouteSuccess(requestId, deepFreeze({ goal: read.value.goal, constraintSet: read.value.constraintSet }));
+}
+
+// ---------------------------------------------------------------------------
+// THE DRAIN-FAILURE RESPONSE (the W-25D ordering law's failure half)
+// ---------------------------------------------------------------------------
+
+/**
+ * The response the host serves when a request's durable writes failed the
+ * drain: the SAME request id and envelope headers the boundary minted, the
+ * typed `unavailable` 503 carrying the durable failure's code — the caller
+ * learns the mutation is UNCONFIRMED (the seam re-projects from the durable
+ * truth; the unconfirmed mutation never serves). The boundary's own audit
+ * trail keeps its record of the pipeline's decision (the port call
+ * succeeded in-memory); the host-side degradation is this response — a
+ * documented limitation of the sync-port seam (the T041-side async
+ * widening removes it).
+ */
+export function drainedFailureResponse(original: ApiResponse, failure: { readonly code: string; readonly message: string }): ApiResponse {
+  const body = original.body as { readonly requestId?: unknown } | null;
+  const requestId = (typeof body?.requestId === 'string' ? body.requestId : original.headers['x-request-id']) as RequestId;
+  const headers: Record<string, string> = { ...original.headers };
+  delete headers['retry-after-ms'];
+  return deepFreeze({
+    status: 503,
+    headers,
+    body: {
+      requestId,
+      error: apiError('unavailable', `the durable write failed (${failure.code}): ${failure.message} — the mutation is unconfirmed; the seam re-projects from the durable store and the boundary degrades this request (R46)`),
+    },
+  });
 }
