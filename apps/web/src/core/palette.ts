@@ -67,6 +67,25 @@ export function paletteIndex(state: WorkspaceState, capsulesOf: CapsulesOf): rea
       haystack: `${state.project.name} ${state.project.id}`.toLowerCase(),
     });
   }
+  // D-16 (W-29 wave 2): CROSS-PROJECT JUMP ENTRIES — every OTHER desk in
+  // the tenant's project directory is searchable from the palette (S4's
+  // finding: the palette indexed the current project only — a "demo"
+  // query while scoped to another desk found nothing, and the Settings
+  // select was the only way across desks). Selecting a jump entry
+  // switches the workspace's scope (the same user-initiated
+  // project-adopted the switcher rides — the D-15 generation guard
+  // counts it) and lands on the Goal section, the project's own surface.
+  for (const project of state.projectDirectory) {
+    if (project.id === state.scope.projectId) continue; // the current project already carries its own entry above — never a duplicate
+    entries.push({
+      kind: 'PROJECT',
+      title: project.name,
+      subtitle: `switch desk · ${project.id}`,
+      target: 'goal',
+      ref: `project:${project.id}`,
+      haystack: `${project.name} ${project.id} switch desk`.toLowerCase(),
+    });
+  }
   for (const job of state.jobs) {
     entries.push({
       kind: 'JOB',
@@ -103,10 +122,18 @@ export function paletteIndex(state: WorkspaceState, capsulesOf: CapsulesOf): rea
 /**
  * The fuzzy score of a haystack for a query: a subsequence match on
  * the lowercased query (case-insensitive, order-preserving) — tight
- * runs score higher; no match is -1. DETERMINISTIC.
+ * runs score higher; no match falls through to the SUBSTITUTION-TOLERANT
+ * pass below; -1 only when neither matches. DETERMINISTIC.
  */
 export function fuzzyScore(haystack: string, query: string): number {
   if (query.length === 0) return 0;
+  const subsequence = subsequenceScore(haystack, query);
+  if (subsequence !== -1) return subsequence;
+  return correctedScore(haystack, query);
+}
+
+/** The subsequence pass (deletion-tolerant — the W-14 matcher S4 measured live: 'evidnce' -> Evidence). */
+function subsequenceScore(haystack: string, query: string): number {
   let score = 0;
   let cursor = 0;
   let run = 0;
@@ -118,6 +145,90 @@ export function fuzzyScore(haystack: string, query: string): number {
     cursor = found + 1;
   }
   return score;
+}
+
+/**
+ * D-16 (W-29 wave 2): THE SUBSTITUTION-TOLERANT PASS. The subsequence
+ * matcher absorbs DELETIONS ('evidnce' -> Evidence) but not
+ * SUBSTITUTIONS: 'evdance' and 'rezearch' matched nothing (S4's live
+ * finding, S2's 'evdance' — the personas' own typos). This pass scores
+ * a query against each of the haystack's whitespace tokens by
+ * Levenshtein distance with a bounded allowance (a quarter of the
+ * longer side, at least one and never more than two — the personas'
+ * real typos sit at distance 1-2, and a looser bound starts matching
+ * noise; queries shorter than three characters are excluded — a
+ * two-character "correction" matches almost anything). A corrected
+ * match always scores BELOW a genuine subsequence match of the same
+ * query (the weakest three-character subsequence already scores 9; a
+ * distance-1 correction scores 3, a distance-2 correction 1) — the
+ * sane rank: exact/prefix > subsequence > corrected > no match.
+ * DETERMINISTIC (no locale, no normalization — plain character
+ * equality).
+ */
+const CORRECTED_MIN_QUERY = 3;
+
+/** One bounded Levenshtein walk (the classic unit-cost DP, early-exited once a row's minimum passes the allowance — the row minima never decrease). */
+function levenshteinWithin(query: string, token: string, allowance: number): number {
+  let previous: number[] = [];
+  for (let position = 0; position <= token.length; position += 1) previous.push(position);
+  for (let at = 1; at <= query.length; at += 1) {
+    const current: number[] = [at];
+    let rowMinimum = at;
+    for (let position = 1; position <= token.length; position += 1) {
+      const cost = query.charCodeAt(at - 1) === token.charCodeAt(position - 1) ? 0 : 1;
+      const value = Math.min(
+        (current[position - 1] ?? 0) + 1, // skip a token character (insert into the query)
+        (previous[position - 1] ?? 0) + cost, // substitute / match
+        (previous[position] ?? 0) + 1, // skip a query character (delete)
+      );
+      current.push(value);
+      if (value < rowMinimum) rowMinimum = value;
+    }
+    if (rowMinimum > allowance) return allowance + 1; // early exit — the row minima never decrease
+    previous = current;
+  }
+  return previous[token.length] ?? allowance + 1;
+}
+
+/** The substitution-tolerant pass over the haystack's tokens (best corrected score, or -1). */
+function correctedScore(haystack: string, query: string): number {
+  if (query.length < CORRECTED_MIN_QUERY) return -1;
+  let best = -1;
+  for (const token of haystack.split(' ')) {
+    if (token.length === 0) continue;
+    const allowance = Math.min(2, Math.max(1, Math.floor(Math.max(query.length, token.length) / 4)));
+    const distance = levenshteinWithin(query, token, allowance);
+    if (distance > allowance) continue;
+    const score = 3 - distance; // distance 1 -> 3, distance 2 -> 1 — always below a genuine subsequence match
+    if (score > best) best = score;
+  }
+  return best;
+}
+
+/**
+ * D-16 (W-29 wave 2): parse a palette entry's PROJECT ref (`project:<id>`)
+ * into the project id (null for any other ref). The CURRENT project's
+ * entry and the cross-project jump entries share the grammar; the app
+ * layer switches scope when (and only when) the id is another project.
+ */
+export function projectRefOf(ref: string): string | null {
+  if (!ref.startsWith('project:')) return null;
+  const id = ref.slice('project:'.length);
+  return id.length > 0 ? id : null;
+}
+
+/**
+ * D-16 (W-29 wave 2): parse a palette entry's EVIDENCE-CAPSULE ref
+ * (`capsule:<id>`) into the capsule id — the §4.9 open key
+ * (data-capsule-open). Selecting an evidence entry navigates to the
+ * Evidence section AND opens the matched capsule inline (the JOB
+ * entries already open their dialog; every entity result behaves the
+ * same way now).
+ */
+export function capsuleRefOf(ref: string): string | null {
+  if (!ref.startsWith('capsule:')) return null;
+  const id = ref.slice('capsule:'.length);
+  return id.length > 0 ? id : null;
 }
 
 /** One ranked result (an entry + its score, stable by input order on ties). */

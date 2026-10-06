@@ -13,13 +13,14 @@ import {
   ConsoleLawError,
   CrossTenantRenderError,
   InvalidLaunchDraftError,
+  InvalidResearchSubmissionError,
   LoaderError,
   PolicyEnforcementError,
   WallClockReadError,
 } from './errors';
 
 describe('errors: the closed error-code vocabulary', () => {
-  it('is exactly the seven console-law codes', () => {
+  it('is exactly the eight console-law codes', () => {
     expect([...CONSOLE_ERROR_CODES]).toEqual([
       'chain_of_thought_exposure',
       'availability_violation',
@@ -27,6 +28,7 @@ describe('errors: the closed error-code vocabulary', () => {
       'wall_clock_read',
       'policy_enforcement_attempt',
       'invalid_launch_draft',
+      'invalid_research_submission',
       'loader_failure',
     ]);
   });
@@ -38,6 +40,7 @@ describe('errors: the closed error-code vocabulary', () => {
     expect(new WallClockReadError('m').code).toBe('wall_clock_read');
     expect(new PolicyEnforcementError('m').code).toBe('policy_enforcement_attempt');
     expect(new InvalidLaunchDraftError('p', 'm').code).toBe('invalid_launch_draft');
+    expect(new InvalidResearchSubmissionError('objective', 'm').code).toBe('invalid_research_submission');
     expect(new LoaderError('m').code).toBe('loader_failure');
   });
 });
@@ -50,6 +53,7 @@ describe('errors: the hierarchy shape', () => {
     ['WallClockReadError', new WallClockReadError('m')],
     ['PolicyEnforcementError', new PolicyEnforcementError('m')],
     ['InvalidLaunchDraftError', new InvalidLaunchDraftError('capital', 'must be an exact decimal')],
+    ['InvalidResearchSubmissionError', new InvalidResearchSubmissionError('objective', 'the objective statement is required')],
     ['LoaderError', new LoaderError('m')],
   ];
 

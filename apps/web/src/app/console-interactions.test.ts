@@ -1339,8 +1339,11 @@ describe('executed boot: J8 — the command palette query (the dead input wiring
     if (input === null) throw new Error('the palette input vanished mid-query');
     expect(input.getAttribute('value')).toBe('risk');
 
-    // every keystroke re-ranks live: a letter no haystack carries empties the list
-    typePaletteQuery(rig, 'risky');
+    // every keystroke re-ranks live: a letter no haystack carries empties
+    // the list ('risky' no longer qualifies — D-16's corrected pass
+    // legitimately reaches Risk at distance 1, which is the tolerance
+    // working as intended; pure garbage must still empty the palette)
+    typePaletteQuery(rig, 'zzzzz');
     expect(countByClass(rig.root, 'palette-item')).toBe(0);
   });
 
@@ -2917,7 +2920,7 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     const api = jobsSeamTransport();
     const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(18); // 15 navigation + the project + the TWO seeded jobs (the JOB group has entries to find)
+    expect(countByClass(rig.root, 'palette-item')).toBe(20); // 15 navigation + the project + the TWO seeded jobs + the TWO cross-project jump entries (D-16: the directory's other desks)
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(true); // the JOB group renders in the grouped results
 
     // by ID: the exact job the operator typed
@@ -3002,9 +3005,9 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     if (empty === undefined) throw new Error('the Research section renders no empty state');
     expect(elementsOf(rig.root).some((element) => textOf(element) === 'No research jobs at this view instant.')).toBe(true);
 
-    // the palette carries no JOB entries (15 navigation + the project — the pre-fix shape)
+    // the palette carries no JOB entries (15 navigation + the project + the two cross-project jump entries — the D-16 directory depth)
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(16);
+    expect(countByClass(rig.root, 'palette-item')).toBe(18);
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(false);
   });
 });
@@ -3579,3 +3582,476 @@ describe('executed boot: D-13 (W-29) — the project-scoped inbox across a desk 
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// D-12 (W-29 wave 2) — THE STANDALONE RESEARCH-SUBMIT AFFORDANCE. The
+// launch flow was the ONLY path to submit a research job (S4's P03
+// finding: "no direct submit-job control in Research"); the Research
+// section now carries its own submit affordance — a card with ONE
+// primary action opening a two-field form (objective + notes) that
+// rides the SAME beat-safe data-field pattern as the launch wizard and
+// submits through the SAME frozen POST /v1/jobs/research plumbing into
+// the CURRENT project. Pinned here end to end: the affordance renders
+// per scope (never on the launchpad), the submission flows through the
+// client (the transport log carries the POST with the current
+// project's id + the console-research spec), the returned job lands in
+// the tracked list + the Research section renders it, and the beat's
+// poll advances it through the async pattern (submitted -> running ->
+// complete) exactly like a launch's kickoff job.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-12 (W-29 wave 2) — the standalone research-submit affordance', () => {
+  /**
+   * A research-jobs transport wrapper: serves POST /v1/jobs/research
+   * (returning a submitted record for the REQUESTING project — the
+   * route's own law) and GET /v1/jobs/:id with a status that advances
+   * per read (submitted -> running -> complete), so the tests pin the
+   * async pattern end to end. Everything else delegates to the wrapped
+   * backing.
+   */
+  function researchJobsTransport(inner: ApiTransport): {
+    readonly transport: ApiTransport;
+    readonly submissions: { count: number; projects: string[]; specs: unknown[] };
+    readonly polls: { count: number; jobIds: string[] };
+  } {
+    const submissions = { count: 0, projects: [] as string[], specs: [] as unknown[] };
+    const polls = { count: 0, jobIds: [] as string[] };
+    const jobs = new Map<string, { readonly jobId: string; readonly project: string; reads: number }>();
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'POST' && path === '/v1/jobs/research') {
+        submissions.count += 1;
+        const body = request.body as { readonly projectId: string; readonly spec: unknown };
+        submissions.projects.push(body.projectId);
+        submissions.specs.push(body.spec);
+        const jobId = `job:research-${submissions.count}`;
+        jobs.set(jobId, { jobId, project: body.projectId, reads: 0 });
+        return { status: 200, headers: {}, body: { requestId: 'req-r', data: { jobId, kind: 'research', tenant: 'tenant-a', project: body.projectId, status: 'submitted', submittedAt: T0 + 500 } } };
+      }
+      const jobMatch = /^\/v1\/jobs\/([^/]+)$/.exec(path);
+      if (request.method === 'GET' && jobMatch !== null && jobs.has(jobMatch[1] ?? '')) {
+        const entry = jobs.get(jobMatch[1] ?? '') as { readonly jobId: string; readonly project: string; reads: number };
+        entry.reads += 1;
+        polls.count += 1;
+        polls.jobIds.push(entry.jobId);
+        const status = entry.reads === 1 ? 'running' : 'complete';
+        return {
+          status: 200,
+          headers: {},
+          body: {
+            requestId: 'req-r',
+            data: {
+              jobId: entry.jobId, kind: 'research', tenant: 'tenant-a', project: entry.project, status, submittedAt: T0 + 500,
+              ...(status === 'complete' ? { completedAt: T0 + 900, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: entry.project, summary: 'a standalone research run' } } : {}),
+            },
+          },
+        };
+      }
+      return inner(request);
+    };
+    return { transport, submissions, polls };
+  }
+
+  it('the affordance renders ONLY inside a project scope — the launchpad (no project yet) keeps the wizard as the only path', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    expect(findByData(rig.root, 'data-research-submit', 'closed')).not.toBeNull(); // the closed affordance card
+    expect(findByData(rig.root, 'data-action', 'research-submit-open')).not.toBeNull(); // with its single primary action
+    const texts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(texts).toContain('Run a research job in this project (prj-a) directly'); // the card STATES the scope it submits into
+
+    // the launchpad: no project exists — the affordance stays away and the teaching empty state keeps its wizard CTA
+    const launchpad = await bootRig({ tradrl_onboarded: 'true' }, api.transport, '');
+    clickNav(launchpad, 'research');
+    expect(findByData(launchpad.root, 'data-research-submit', 'closed')).toBeNull();
+    expect(findByData(launchpad.root, 'data-research-submit', 'open')).toBeNull();
+    expect(findByData(launchpad.root, 'data-empty', 'No research jobs at this view instant.')).not.toBeNull(); // the teaching empty state (unchanged copy — the wizard is the only path from the launchpad, by design)
+  });
+
+  it('the submission flows through the EXISTING plumbing: open -> type (beat-safe) -> submit posts /v1/jobs/research with the CURRENT project + the console-research spec, and the job lands in the tracked Research list', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    clickAction(rig, 'research-submit-open'); // the card opens the form
+    expect(findByData(rig.root, 'data-research-submit', 'open')).not.toBeNull();
+    expect(findByData(rig.root, 'data-research-field', 'objective')).not.toBeNull();
+    expect(findByData(rig.root, 'data-research-field', 'notes')).not.toBeNull();
+
+    // THE BEAT-SAFE DATA-FIELD PATTERN: a re-projection between keystrokes
+    // never reverts the text — the buffered edit rides the render (the
+    // same J3 law the launch fields follow; a click on the section's own
+    // nav item is the harness's user-realistic re-projection)
+    typeResearchField(rig, 'objective', 'Investigate the momentum edge under higher volatility.');
+    clickNav(rig, 'research'); // re-project the whole tree
+    const objectiveAfter = findByData(rig.root, 'data-research-field', 'objective');
+    if (objectiveAfter === null) throw new Error('the research form vanished on the re-projection');
+    expect(objectiveAfter.getAttribute('value')).toBe('Investigate the momentum edge under higher volatility.'); // the buffered edit survived
+    typeResearchField(rig, 'notes', 'Focus on the last 30 days.');
+
+    // SUBMIT: the frozen route receives the CURRENT project's id + the spec
+    clickAction(rig, 'research-submit');
+    await settle();
+    expect(api.submissions.count).toBe(1); // exactly one POST
+    expect(api.submissions.projects).toEqual(['prj-a']); // the CURRENT project — the same scope law the launch's kickoff job follows
+    expect(api.submissions.specs[0]).toEqual({ kind: 'console-research', objective: 'Investigate the momentum edge under higher volatility.', notes: 'Focus on the last 30 days.' }); // the spec carries the objective + notes, marked with its own kind
+
+    // the returned record landed through the EXISTING reducer merge and the section renders it
+    expect(rig.handle.state().jobs.map((job) => job.jobId)).toContain('job:research-1');
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('submitted');
+    expect(findByData(rig.root, 'data-research-submit', 'open')).toBeNull(); // success closes the form
+    expect(findByData(rig.root, 'data-research-submit', 'closed')).not.toBeNull(); // the affordance returns to its closed state
+    expect(findByData(rig.root, 'data-row', 'job:job:research-1')).not.toBeNull(); // the job row renders in the Research list
+  });
+
+  it('the submitted job ANIMATES through the async pattern on the beat (submitted -> running -> complete with its result + elapsed)', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    clickAction(rig, 'research-submit-open');
+    typeResearchField(rig, 'objective', 'Investigate the momentum edge.');
+    clickAction(rig, 'research-submit');
+    await settle();
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('submitted');
+
+    await rig.handle.beat(); // the beat's poll cadence (the SAME cadence a launch's kickoff job rides)
+    expect(api.polls.jobIds).toEqual(['job:research-1']); // the poll read the submitted job
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('running');
+
+    await rig.handle.beat();
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('complete');
+    const completed = rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1');
+    if (completed === undefined) throw new Error('fixture: the completed job record is missing');
+    expect(completed.completedAt).toBe(T0 + 900); // the record's own timestamps (D-17's derivation reads these)
+    clickNav(rig, 'research');
+    const row = findByData(rig.root, 'data-row', 'job:job:research-1');
+    if (row === null) throw new Error('the completed job row is missing from the Research list');
+    const rowTexts = elementsOf(row).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(rowTexts).toContain('complete');
+    expect(rowTexts).toContain('400ms'); // D-17's record-derived elapsed (T0+900 - T0+500)
+  });
+
+  it('the typed validation gate: an empty objective renders the inline error in the form card and NEVER fires the route; a failed POST renders the transport error and keeps the user\'s text', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    clickAction(rig, 'research-submit-open');
+    clickAction(rig, 'research-submit'); // no objective typed
+    await settle();
+    expect(api.submissions.count).toBe(0); // the gate fired BEFORE any API call
+    const error = findByData(rig.root, 'data-research-error', 'objective: the objective statement is required (one sentence — what this research run should investigate)');
+    expect(error).not.toBeNull(); // the typed error renders inline, in the form's own card
+    expect(findByData(rig.root, 'data-research-submit', 'open')).not.toBeNull(); // the form stays open for the fix
+  });
+});
+
+/** Type into a standalone research form field (the browser's semantics, mirroring typeField: the live value rides the DOM property, the input event carries it into the buffer). */
+function typeResearchField(rig: Rig, field: string, value: string): void {
+  const input = findByData(rig.root, 'data-research-field', field);
+  if (input === null) throw new Error(`no research field ${field} in the current tree`);
+  input.value = value;
+  rig.doc.fire('input', { target: input });
+}
+
+// ---------------------------------------------------------------------------
+// D-15 (W-29 wave 2) — THE SESSION-SCOPE DISCIPLINE. Three symptoms, one
+// root theme — session state bleeding across scope boundaries: (a) the
+// concluded launch panel rendering the PREVIOUS desk's params inside
+// another scope's sections (the reducer resets every record on
+// project-adopted but never the launch slice); (b) the Goal section's
+// lifecycle reading the project record's 'draft' while Home/Organization
+// show the compiled organization's 'active' with nothing reconciling the
+// two (they are two DIFFERENT entities' truths — the frozen backing
+// binds the organization without a lifecycle event); (c) THE SWITCHER
+// REBIND RACE the Lead reproduced twice ("the first select change did
+// not take", the select snapping back to the boot scope): the boot
+// restore read the persisted scope LATE (inside the async projects
+// read), so a user-initiated scope change that landed before the boot
+// bundle settled raced the rehydration. The fix: the stored scope is
+// captured ONCE at boot; the restore applies ONLY at generation 0 (no
+// scope move this session — a switcher choice, a palette jump, a launch
+// adoption, or the restore's own adoption all advance the generation,
+// making the restore exactly-once and structurally unable to clobber a
+// user's choice); the select's rendered value always mirrors the
+// CURRENT scope (a disabled current-scope option when the scope is not
+// in the readable list); and the lifecycle reads one truth per entity.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-15 (W-29 wave 2) — the session-scope discipline', () => {
+  /** A third desk's project record (the launched-desk shape: draft lifecycle, a bound organization). */
+  const launchedProject = (id: string, status: string): Record<string, unknown> => ({
+    id, tenantId: 'tenant-a', name: 'The Launched Desk', executionMode: 'simulation',
+    lifecycle: { projectId: id, status, acceptanceCriteriaId: null, organizationRef: 'org:seeded' },
+    lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  });
+
+  /**
+   * THE EXACT REPRO SHAPE (c): a three-desk directory where the boot
+   * bundle's directory read (GET /v1/projects) is HELD until the test
+   * releases it — the user's select change lands DURING boot, before the
+   * boot-restore's check ever runs, exactly like the Lead's synthetic
+   * select against a mid-boot tree.
+   */
+  function gatedBootTransport(): {
+    readonly transport: ApiTransport;
+    readonly release: () => void;
+  } {
+    const base = demoSubstanceTransport();
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-g', data } });
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'GET' && path === '/v1/projects') {
+        await gate; // HELD: the boot bundle's directory read
+        const inner = await base.transport(request);
+        const body = (inner as { readonly body?: { readonly data?: { readonly items?: readonly Record<string, unknown>[] } } }).body;
+        const items = body?.data?.items ?? [];
+        return ok({ items: [...items, launchedProject('prj-launched', 'draft')] }); // THREE readable desks (the Page shape the client walks)
+      }
+      if (request.method === 'GET' && path === '/v1/projects/prj-launched') return ok(launchedProject('prj-launched', 'draft'));
+      if (request.method === 'GET' && path === '/v1/execution/submissions' && request.path.includes('prj-launched')) return ok({ items: [] }); // the launched desk serves no blotter rows (the seeded blotter belongs to prj-a — a cross-scope record is a typed error, never served here)
+      return base.transport(request);
+    };
+    return { transport, release: () => releaseGate() };
+  }
+
+  it('(c) the boot-restore NEVER clobbers a user-initiated scope change: a select change DURING boot (before the boot bundle settles) holds — the restore skips, the select mirrors the chosen scope, and the choice persists', async () => {
+    const gated = gatedBootTransport();
+    const scopeStorage = new MapStorage();
+    scopeStorage.map.set(SCOPE_STORAGE_KEY, 'prj-other'); // the PREVIOUS session's world (what the boot captured)
+    const handle = bootConsole({
+      baseUrl: 'http://scripted.invalid',
+      token: 'token-test',
+      scope: { tenantId: 'tenant-a', projectId: 'prj-a' }, // the env pin
+      transport: gated.transport,
+      instants: { nowMs: () => T0 + 1000 },
+      theme: 'light',
+      storage: scopeStorage,
+      onboardingStorage: scopeStorage,
+      simulated: true,
+      scopeStorage,
+    });
+    const storage = new MapStorage();
+    storage.map.set('tradrl_onboarded', 'true');
+    const doc = new FakeDocument();
+    const root = new FakeElement('div');
+    handle.mount(root as unknown as Parameters<ConsoleHandle['mount']>[0], doc as unknown as Parameters<ConsoleHandle['mount']>[1]);
+    // the boot bundle is held at the directory read; the Settings panel already renders
+    clickNav({ handle, doc, root, storage, scheduler: null }, 'settings');
+
+    // THE USER'S CHOICE, during boot (the synthetic-select pattern: set the value, dispatch the change)
+    const switcher = findByData(root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    switcher.value = 'prj-launched';
+    doc.fire('change', { target: switcher });
+    expect(handle.state().scope.projectId).toBe('prj-launched'); // the user is driving
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-launched'); // persisted by the write-through
+
+    // THE BOOT BUNDLE SETTLES — the pre-fix restore would adopt the
+    // captured stored scope ('prj-other') right here, snapping the desk
+    // back (the Lead's twice-reproduced symptom)
+    gated.release();
+    await handle.refresh(); // a fresh bundle for the user's chosen scope (the restore check runs again — generation > 0 skips it)
+    expect(handle.state().scope.projectId).toBe('prj-launched'); // NEVER clobbered
+    expect(handle.state().project?.id).toBe('prj-launched'); // the chosen desk's world read
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-launched'); // still the user's choice
+
+    // the select's rendered value mirrors the CURRENT scope (not stale state)
+    clickNav({ handle, doc, root, storage, scheduler: null }, 'settings');
+    const reprojected = findByData(root, 'data-action', 'project-switch');
+    if (reprojected === null) throw new Error('the switcher vanished');
+    const selected = elementsOf(reprojected).filter((element) => element.tagName === 'OPTION').find((element) => element.getAttribute('selected') === 'selected');
+    expect(selected?.getAttribute('value')).toBe('prj-launched');
+    expect(handle.state().degraded).toEqual([]); // honest throughout
+  });
+
+  it('(c) after boot settles the restore is DONE — a later refresh never re-adopts the boot-time stored scope over the user\'s later choices', async () => {
+    const api = demoSubstanceTransport();
+    const scopeStorage = new MapStorage();
+    scopeStorage.map.set(SCOPE_STORAGE_KEY, 'prj-other'); // the boot restore adopts this once
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    expect(rig.handle.state().scope.projectId).toBe('prj-other'); // the restore ran (generation 0 -> 1)
+
+    // the user switches back to the env pin's project AFTER boot settled
+    clickNav(rig, 'settings');
+    const switcher = findByData(rig.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    switcher.value = 'prj-a';
+    rig.doc.fire('change', { target: switcher });
+    expect(rig.handle.state().scope.projectId).toBe('prj-a');
+
+    // a later bundle (the beat's refetch, a manual refresh) re-runs the
+    // restore check with the SAME boot-captured stored scope — the
+    // generation guard keeps it from ever re-adopting 'prj-other'
+    await rig.handle.refresh();
+    expect(rig.handle.state().scope.projectId).toBe('prj-a'); // the user's choice holds
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-a');
+    await rig.handle.beat();
+    expect(rig.handle.state().scope.projectId).toBe('prj-a');
+    expect(rig.handle.state().degraded).toEqual([]);
+  });
+
+  it('(c) the select\'s rendered value ALWAYS mirrors the current scope — a scope not in the readable directory renders a disabled current-scope option, never a silent fallback to the first entry', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a'); // every read degrades — the directory never loads
+    clickNav(rig, 'settings');
+    const switcher = findByData(rig.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    const options = elementsOf(switcher).filter((element) => element.tagName === 'OPTION');
+    expect(options).toHaveLength(1); // the disabled current-scope option alone
+    expect(options[0]?.getAttribute('value')).toBe('prj-a'); // the CURRENT scope's id
+    expect(options[0]?.getAttribute('selected')).toBe('selected'); // selected — the DOM value mirrors the state
+    expect(options[0]?.getAttribute('disabled')).toBe('disabled'); // not selectable (there is nothing to re-choose)
+  });
+
+  it('(a) the concluded launch panel renders ONLY within its OWN scope — a desk switch clears it from the other desk\'s view; switching back restores it', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a');
+    // a CONCLUDED launch on prj-a, seeded through the handle's sanctioned dispatch path
+    rig.handle.dispatch({ kind: 'launch-draft-started', at: T0 + 5, draft: VALID_DRAFT });
+    rig.handle.dispatch({ kind: 'launch-submitted', at: T0 + 10, projectId: 'prj-a', jobId: 'job-kickoff' });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-kickoff', kind: 'research', tenant: 'tenant-a', project: 'prj-a', status: 'complete', submittedAt: T0 + 10, completedAt: T0 + 20 } });
+    expect(rig.handle.state().launch.phase).toBe('launched'); // the D-11 terminal-record close
+    expect(rig.handle.state().launch.projectId).toBe('prj-a'); // the slice knows its OWN scope
+    const launchedTexts = () => elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(launchedTexts()).toContain('Launch (launched)'); // the concluded card renders in its own scope
+    expect(findByData(rig.root, 'data-launch-idle', 'true')).toBeNull(); // the panel is NOT idle here
+
+    // THE SWITCH: another desk — the previous desk's launch params must NOT bleed into it
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 30, projectId: 'prj-b' });
+    const foreignTexts = launchedTexts();
+    expect(foreignTexts).not.toContain('Launch (launched)'); // the concluded card is GONE in the other desk's view
+    expect(findByData(rig.root, 'data-launch-idle', 'true')).not.toBeNull(); // the panel renders its own idle state
+    expect(findByData(rig.root, 'data-action', 'launch-start')).not.toBeNull(); // the hero shows its CTA (the guarded slice reads idle)
+
+    // switching BACK restores the launched desk's own concluded cards
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 40, projectId: 'prj-a' });
+    expect(launchedTexts()).toContain('Launch (launched)');
+  });
+
+  it('(b) the lifecycle reads ONE truth per entity: the Goal section renders the project record\'s own lifecycle beside the bound organization\'s operating status, each labeled, with the plain-words note on the seam', async () => {
+    // The deployed backing's real shape for a launched desk: the
+    // organization binds (organizationRef set, snapshot active) while the
+    // project record's lifecycle stays 'draft' (bindOrganization never
+    // transitions the lifecycle — the frozen contract's own law).
+    const base = demoSubstanceTransport();
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'GET' && path === '/v1/projects/prj-a') {
+        const inner = await base.transport(request);
+        const body = (inner as { readonly body?: { readonly data?: Record<string, unknown> } }).body;
+        const project = body?.data;
+        if (project !== undefined && (project.lifecycle as Record<string, unknown>) !== undefined) {
+          return { ...inner, body: { ...body, data: { ...project, lifecycle: { ...(project.lifecycle as Record<string, unknown>), status: 'draft' } } } };
+        }
+      }
+      return base.transport(request);
+    };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, transport, 'prj-a');
+    expect(rig.handle.state().project?.lifecycle.status).toBe('draft'); // the record's own truth
+    expect(rig.handle.state().orgSnapshots.map((snapshot) => snapshot.status)).toContain('active'); // the organization's own truth
+
+    clickNav(rig, 'goal');
+    const goalTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(goalTexts).toContain('draft'); // the record's lifecycle — verbatim, never fabricated 'active'
+    expect(goalTexts).toMatch(/active \(observed/); // the organization's status beside it, labeled as its own entity
+    expect(findByData(rig.root, 'data-lifecycle-note', 'true')).not.toBeNull(); // the seam is STATED in plain words
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'The project record\'s lifecycle and the organization\'s operating status are separate states — the record moves only through an explicit lifecycle event.')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-16 (W-29 wave 2) — THE PALETTE DEPTH, executed: the cross-project
+// jump (search offers "jump to project X" entries for the tenant's other
+// desks — selecting one switches the scope through the same
+// user-initiated adoption the switcher rides), and EVERY ENTITY RESULT'S
+// ENTER OPENS ITS ENTITY (a JOB entry opens its dialog — the J8 fix; an
+// EVIDENCE entry now opens its capsule inline; a PROJECT entry switches
+// the desk — the pre-fix inconsistency was S4's finding: "palette
+// EVIDENCE Enter does NOT auto-open the capsule while JOB results
+// auto-open their dialog").
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-16 (W-29 wave 2) — the palette depth (the cross-project jump + the entity-open Enter)', () => {
+  /** Open the palette and type a query (the §4.14 wiring: the input event feeds the pure rank). */
+  function typePaletteQuery(rig: Rig, query: string): void {
+    clickAction(rig, 'palette-open');
+    const input = findByData(rig.root, 'data-palette-input', 'true');
+    if (input === null) throw new Error('the palette input is not rendered');
+    input.value = query;
+    rig.doc.fire('input', { target: input });
+  }
+
+  /** Press Enter in the palette (the keyboard contract's open action). */
+  function pressEnter(rig: Rig): void {
+    const input = findByData(rig.root, 'data-palette-input', 'true');
+    if (input === null) throw new Error('the palette input is not rendered');
+    rig.doc.fire('keydown', { key: 'Enter', target: input });
+  }
+
+  it('a project query offers the OTHER desk as a jump entry; Enter switches the scope (the beat refetches the adopted desk — the Settings select was the only path before)', async () => {
+    const api = demoSubstanceTransport();
+    const scopeStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    expect(rig.handle.state().projectDirectory.map((project) => project.id)).toEqual(['prj-a', 'prj-other']);
+
+    typePaletteQuery(rig, 'prj-other');
+    const jump = findByData(rig.root, 'data-palette-ref', 'project:prj-other');
+    if (jump === null) throw new Error('the palette offers no jump entry for the other desk');
+    expect(elementsOf(jump).map((element) => textOf(element)).join(' ')).toContain('switch desk'); // the entry states what it does
+    // the top result is the jump entry — Enter adopts the other desk
+    pressEnter(rig);
+    expect(rig.handle.state().scope.projectId).toBe('prj-other'); // THE SCOPE SWITCHED through the palette
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-other'); // the same write-through the switcher rides
+    expect(findByData(rig.root, 'data-palette-input', 'true')).toBeNull(); // the palette closed
+    expect(rig.handle.state().selectedSection).toBe('goal'); // it landed on the adopted desk's own surface
+
+    // the beat's scope-change refetch reads the adopted desk's world — no reload, no Settings trip
+    await rig.handle.beat();
+    expect(rig.handle.state().project?.id).toBe('prj-other');
+    expect(rig.handle.state().degraded).toEqual([]);
+  });
+
+  it('Enter on an EVIDENCE entry navigates to the Evidence section AND opens the matched capsule inline (the same open a badge click performs — the JOB entries\' dialog behavior, consistent now)', async () => {
+    const api = demoSubstanceTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    expect(rig.handle.state().outcomes).toHaveLength(1); // the enriched outcome carries the capsule the fold mints
+
+    // the capsule's content-address id, derived the same way the fold does
+    const capsule = capsuleFromOutcome(rig.handle.state().scope, rig.handle.state().outcomes[0] as unknown as OutcomeRecord);
+    const fragment = capsule.capsuleId.slice(0, 12); // a distinctive id fragment (S4's own navigation pattern)
+    typePaletteQuery(rig, fragment);
+    const evidenceEntry = findByData(rig.root, 'data-palette-ref', `capsule:${capsule.capsuleId}`);
+    if (evidenceEntry === null) throw new Error('the palette offers no evidence entry for the capsule');
+
+    pressEnter(rig);
+    expect(findByData(rig.root, 'data-palette-input', 'true')).toBeNull(); // the palette closed
+    expect(rig.handle.state().selectedSection).toBe('evidence'); // it navigated to the section
+    expect(findByData(rig.root, 'data-capsule-open', capsule.capsuleId)).not.toBeNull(); // AND the capsule's payload renders INLINE (the §4.9 open state)
+    const payload = elementsOf(rig.root).find((element) => element.hasClass('capsule-payload'));
+    if (payload === undefined) throw new Error('the opened capsule renders no payload block');
+    const payloadTexts = elementsOf(payload).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(payloadTexts).toContain('outcome-class: adverse_gap'); // the capsule's own facts render (L20 — verbatim)
+  });
+
+  it('a CLICK on a jump entry behaves exactly like Enter (the palette\'s click affordance switches the desk too)', async () => {
+    const api = demoSubstanceTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    typePaletteQuery(rig, 'prj-other');
+    const jump = findByData(rig.root, 'data-palette-ref', 'project:prj-other');
+    if (jump === null) throw new Error('the palette offers no jump entry for the other desk');
+    click(rig, jump);
+    expect(rig.handle.state().scope.projectId).toBe('prj-other'); // the click path adopts too
+    expect(findByData(rig.root, 'data-palette-input', 'true')).toBeNull(); // the palette closed
+    await rig.handle.beat();
+    expect(rig.handle.state().project?.id).toBe('prj-other');
+  });
+
+  it('the substitution-tolerant matcher, executed: the personas\' typo queries reach the sections through the live palette', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a');
+    typePaletteQuery(rig, 'evdance'); // S2's own typo — the pre-fix palette rendered the teaching no-match state
+    const evidence = findByData(rig.root, 'data-palette-ref', 'nav:evidence');
+    if (evidence === null) throw new Error('the typo query did not reach the Evidence section');
+    expect(findByData(rig.root, 'data-palette-empty', 'evdance')).toBeNull(); // no teaching empty state — a real result
+  });
+});
