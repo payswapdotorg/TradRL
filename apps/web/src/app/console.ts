@@ -85,6 +85,16 @@ export interface ConsoleBootOptions {
   readonly token: string;
   /** The workspace scope: the tenant, and either a real project id or the launchpad ('' until launched). */
   readonly scope: { readonly tenantId: string; readonly projectId: string };
+  /**
+   * THE CONSOLE SESSION HEADERS (FW-MI-A, MI-D1): extra headers the client
+   * carries on every request — the entry wires the session header
+   * (`x-tradrl-console-session`, core/session.ts's stable per-browser id)
+   * so the host scopes the project listing/detail/goal reads to THIS
+   * session (the demo project + the session's own projects — the wave-1
+   * #1 trust blocker, 9/9 professionals). Absent = the pre-fix behavior
+   * (the shared-tenant view), exactly as the headerless SDK caller sees.
+   */
+  readonly clientHeaders?: Readonly<Record<string, string>>;
   /** The INJECTED transport adapter (default: the browser fetch binding). */
   readonly transport?: ApiTransport;
   /** The fetch-like binding (tests); only used when no transport is injected. */
@@ -229,7 +239,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   const transport = options.transport ?? createFetchTransport(options.baseUrl, options.fetchLike);
   const instants: InstantSource = options.instants ?? { nowMs: systemNowMs };
   const scheduler: TickScheduler | undefined = options.scheduler;
-  const client: ConsoleClient = createConsoleClient({ transport, token: options.token });
+  const client: ConsoleClient = createConsoleClient({ transport, token: options.token, ...(options.clientHeaders === undefined ? {} : { headers: options.clientHeaders }) });
   const scope: WorkspaceScope = { tenantId: options.scope.tenantId, projectId: options.scope.projectId.length > 0 ? options.scope.projectId : LAUNCHPAD_PROJECT_ID };
   const beatMs = options.beatMs ?? 1000;
   // D-15 (W-29 wave 2) — THE SESSION-SCOPE DISCIPLINE, part 1: the
@@ -741,6 +751,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       launchEdits: {},
       researchSubmit: null,
       openCapsule: null,
+      projectFilter: '',
     };
     let paletteResults: readonly PaletteEntry[] = [];
     // §4.10's once-per-notice toast guard: the id of the notice the
@@ -805,6 +816,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const element = target as FieldEventTarget | null;
       if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
       if (element.getAttribute('data-palette-input') === null) return null;
+      return typeof element.value === 'string' ? element.value : '';
+    };
+    /**
+     * FW-MI-A (MI-D8): Read the project-switcher filter of an event
+     * target (null when the target is not the filter input; the live
+     * value rides the DOM property — the same pattern as the palette's).
+     */
+    const projectFilterOf = (target: unknown): string | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      if (element.getAttribute('data-project-filter') === null) return null;
       return typeof element.value === 'string' ? element.value : '';
     };
     /** Commit the buffered field edits into the state machine (one launch-draft-edited per flush; unabsorbed grammars stay buffered). */
@@ -907,6 +929,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     const focusPaletteInput = (): void => {
       if (document.querySelectorAll === undefined) return;
       for (const candidate of document.querySelectorAll('[data-palette-input]')) {
+        (candidate as { focus(): void }).focus();
+        return;
+      }
+    };
+    /** FW-MI-A (MI-D8): re-focus the switcher filter after a re-projection (the caret survives the full tree rebuild). */
+    const focusProjectFilter = (): void => {
+      if (document.querySelectorAll === undefined) return;
+      for (const candidate of document.querySelectorAll('[data-project-filter]')) {
         (candidate as { focus(): void }).focus();
         return;
       }
@@ -1185,6 +1215,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           view = { ...view, palette: { ...view.palette, query, selected: 0 } };
           refreshPalette();
           render();
+        }
+        return;
+      }
+      // FW-MI-A (MI-D8): THE SWITCHER FILTER — typing in
+      // [data-project-filter] feeds view.projectFilter and re-renders
+      // the Settings row (the render narrows the select's options by fuzzy
+      // name + id, with the live count line). The render's focus
+      // preservation keeps the caret in the input across the projection.
+      const projectFilter = projectFilterOf(event.target);
+      if (projectFilter !== null) {
+        if (view.projectFilter !== projectFilter) {
+          view = { ...view, projectFilter };
+          render();
+          focusProjectFilter();
         }
         return;
       }
@@ -1474,6 +1518,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             refreshPalette();
             render();
             focusPaletteInput();
+          }
+        }
+        // FW-MI-A (MI-D8): THE SWITCHER FILTER'S CLEAR — restores the
+        // whole session listing (every option renders; the count line
+        // leaves with the filter) and hands the focus back to the input.
+        if (kind === 'project-filter-clear') {
+          if (view.projectFilter.length > 0) {
+            view = { ...view, projectFilter: '' };
+            render();
           }
         }
         // §4.13 the onboarding wizard (completion persists; returning users never see it)

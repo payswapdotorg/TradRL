@@ -58,6 +58,16 @@ export interface ConsoleClientConfig {
   readonly transport: ApiTransport;
   /** The credential's bearer token (the host minted it at the secure boundary). */
   readonly token: string;
+  /**
+   * Extra headers carried on EVERY request (FW-MI-A, MI-D1): the boot
+   * wiring injects the console session header (`x-tradrl-console-session` —
+   * core/session.ts) so the host can scope the project listing/detail to
+   * THIS browser session (the demo project + the session's own projects).
+   * The credential's authorization header is always applied AFTER these
+   * (a caller can never override the token through this seam); per-request
+   * headers (the idempotency key) still win over these.
+   */
+  readonly headers?: Readonly<Record<string, string>>;
   /** The contract version this client speaks (default: the newest the mirror knows). */
   readonly apiVersion?: ApiVersion;
   /** The retry policy: the max attempts of the retryable families (default 4, immediate). */
@@ -185,6 +195,7 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
   if (typeof config.token !== 'string' || config.token.length === 0) throw new Error('createConsoleClient: the credential token is required');
   const transport = config.transport;
   const token = config.token;
+  const extraHeaders = config.headers ?? {};
   const apiVersion = config.apiVersion ?? CURRENT_API_VERSION;
   const maxAttempts = config.retry?.maxAttempts ?? 4;
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error('createConsoleClient: retry.maxAttempts must be a positive integer');
@@ -193,7 +204,7 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
 
   /** One raw transport round-trip (no negotiation, no retry — the negotiation path uses it directly). */
   async function rawRequest(method: SdkRequest['method'], path: string, body?: unknown, headers: Record<string, string> = {}): Promise<SdkResponse> {
-    return transport({ method, path, headers: { authorization: `Bearer ${token}`, ...headers }, ...(body === undefined ? {} : { body }) });
+    return transport({ method, path, headers: { ...extraHeaders, authorization: `Bearer ${token}`, ...headers }, ...(body === undefined ? {} : { body }) });
   }
 
   /** Parse the envelope of a response (success data or the thrown typed error). */

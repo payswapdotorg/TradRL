@@ -1420,3 +1420,113 @@ describe('deploy/vercel — the W-27 durable jobs surface (D-7)', () => {
     if (ready.ok) expect(ready.value).toEqual([]); // an unknown project's page is empty (never a leak)
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-MI-A (MI wave 1): THE SESSION-SCOPE SURFACES UNDER DURABLE — the
+// ownership stamp surviving cold starts + the FRESH session listing
+// (defects MI-D1 + MI-D8, the durable arm)
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-MI-A: the durable session scope (the ownership stamp, the fresh JOIN listing, the cross-instance freshness)', () => {
+  const SESSION_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; // 32-hex — the console's mint shape
+  const SESSION_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+  function sessionHeaders(session: string): Record<string, string> {
+    return { ...BEARER, 'x-tradrl-console-session': session };
+  }
+
+  it('the ownership stamp persists: a session-scoped create stamps the goal-set row, and a COLD instance serves the session view from it (the session\'s own desks survive reloads + cold starts)', async () => {
+    const providers = fakeProviders();
+    const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceA.ok).toBe(true);
+    if (!instanceA.ok) return;
+
+    // session A launches a desk through the FULL handler (the stamp rides the drain)
+    const created = await drive(instanceA, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: createProjectBody('prj-session-a-1'),
+    }));
+    expect(created.status).toBe(201);
+
+    // the goal-set row carries the OWNING session (the additive field on the opaque payload)
+    const direct = storesOver(providers.fetchLike);
+    const goalSet = await direct.project.goalSetOf(TENANT, 'prj-session-a-1');
+    expect(goalSet.ok).toBe(true);
+    if (!goalSet.ok) return;
+    expect(goalSet.value?.ownerSession).toBe(SESSION_A); // THE STAMP
+    expect(goalSet.value?.goal).toEqual(validGoal(TENANT)); // the create's own records, unchanged
+
+    // the COLD instance: session A still sees its desk (the durable ownership — the session's own projects hydrate for the session view)
+    const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceB.ok).toBe(true);
+    if (!instanceB.ok) return;
+    const ownListing = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_A) }));
+    expect(ownListing.status).toBe(200);
+    expect(((ownListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id)).toEqual([DEMO_PROJECT_ID, 'prj-session-a-1']);
+
+    // ...and session B still does NOT (the cold start changes nothing about isolation)
+    const otherListing = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_B) }));
+    expect(((otherListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id)).toEqual([DEMO_PROJECT_ID]);
+  });
+
+  it('cross-session reads by id answer the typed not-found under durable too — and the session\'s own goal read serves FRESH from the JOIN row (never the projection)', async () => {
+    const providers = fakeProviders();
+    const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceA.ok).toBe(true);
+    if (!instanceA.ok) return;
+    await drive(instanceA, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: createProjectBody('prj-session-a-1'),
+    }));
+
+    // a FRESH instance (the cold start): the session view, not the projection, answers
+    const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceB.ok).toBe(true);
+    if (!instanceB.ok) return;
+
+    // B's direct id read of A's desk: the typed not-found (unknown and foreign indistinguishable)
+    const foreignDetail = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1', headers: sessionHeaders(SESSION_B) }));
+    expect(foreignDetail.status).toBe(404);
+    const foreignGoal = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1/goal?project=prj-session-a-1', headers: sessionHeaders(SESSION_B) }));
+    expect(foreignGoal.status).toBe(404);
+
+    // A's own detail + goal read serve — the goal FRESH from the JOIN row, with the ownerSession field NEVER crossing the wire
+    const ownDetail = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1', headers: sessionHeaders(SESSION_A) }));
+    expect(ownDetail.status).toBe(200);
+    const ownGoal = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1/goal?project=prj-session-a-1', headers: sessionHeaders(SESSION_A) }));
+    expect(ownGoal.status).toBe(200);
+    const goalBundle = ownGoal.body.data as { goal: unknown; constraintSet: unknown; ownerSession?: unknown };
+    expect(goalBundle.goal).toEqual(validGoal(TENANT)); // the launch's own goal, served fresh
+    expect(goalBundle.constraintSet).toEqual(validConstraintSet(TENANT));
+    expect(goalBundle.ownerSession).toBeUndefined(); // the ownership field is host-side only — never in the console's read
+  });
+
+  it('MI-D8\'s root cause, closed: a WARM instance\'s session listing sees another instance\'s create IMMEDIATELY (the fresh JOIN) — where the frozen boundary\'s projection view still serves the boot snapshot', async () => {
+    const providers = fakeProviders();
+    // instance B boots FIRST (its projection settles over the pre-create world)
+    const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceB.ok).toBe(true);
+    if (!instanceB.ok) return;
+    const warmBoot = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: BEARER }));
+    expect(warmBoot.status).toBe(200); // the projection settled (the boundary's listing answered)
+
+    // instance A (a DIFFERENT serverless instance) creates a project for session A
+    const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceA.ok).toBe(true);
+    if (!instanceA.ok) return;
+    await drive(instanceA, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: createProjectBody('prj-warm-1'),
+    }));
+
+    // THE FIX: instance B's SESSION listing reads the durable tables (the JOIN) — the desk A just launched is ALREADY there (the wave-1 evidence: "after reload MY two desks became UNREACHABLE" — the warm projection never re-read the registry)
+    const sessionListing = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_A) }));
+    expect(sessionListing.status).toBe(200);
+    expect(((sessionListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id)).toEqual([DEMO_PROJECT_ID, 'prj-warm-1']);
+
+    // ...while the HEADERLESS boundary listing on the same warm instance still serves the boot projection (the frozen boundary's own, unchanged behavior — the session routes are the additive fix, never a re-implementation)
+    const boundaryListing = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: BEARER }));
+    const boundaryIds = ((boundaryListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id);
+    expect(boundaryIds).toEqual([DEMO_PROJECT_ID]); // the pre-fix projection staleness, preserved byte-identically for the headerless SDK caller
+  });
+});

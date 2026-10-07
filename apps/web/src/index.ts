@@ -30,6 +30,7 @@ import type { ApiTransport } from './api/transport';
 import { createFetchTransport } from './api/transport';
 import { readStoredTheme, type ThemeStorage } from './core/theme';
 import { browserScheduler } from './core/clock';
+import { consoleSessionHeaders, consoleSessionIdOf, generateConsoleSessionId } from './core/session';
 
 /** The console's configuration as the static shell carries it (window.__TRADRL_CONSOLE__). */
 export interface ShellConfig {
@@ -144,10 +145,22 @@ export async function bootFromShell(options: {
     // on every boot (the W-10b fix: the seam existed but was never
     // wired here).
     const storage: ThemeStorage | undefined = typeof localStorage !== 'undefined' ? localStorage : undefined;
+    // THE CONSOLE SESSION (FW-MI-A, MI-D1): the stable per-browser session
+    // id — read-or-generated against the same storage seam the theme + the
+    // onboarding completion ride (the browser's localStorage, the same
+    // trust zone), and carried as the `x-tradrl-console-session` header on
+    // every client request. The host scopes the project listing/detail to
+    // THIS session (the demo project + the session's own projects) — the
+    // wave-1 #1 trust blocker (9/9 professionals saw every other session's
+    // desks in the switcher, the palette and the export). A browser with
+    // no storage degrades to an EPHEMERAL per-boot id (still a coherent,
+    // honestly isolated session within the boot).
+    const sessionId = storage === undefined ? generateConsoleSessionId() : consoleSessionIdOf(storage);
     const handle = boot.bootConsole({
       baseUrl: apiBaseUrl(config),
       token: config.token,
       scope: { tenantId: config.tenantId, projectId: config.projectId ?? '' },
+      clientHeaders: consoleSessionHeaders(sessionId),
       theme: storage === undefined ? 'light' : readStoredTheme(storage),
       ...(storage === undefined ? {} : { storage }),
       ...(storage === undefined ? {} : { onboardingStorage: storage }),

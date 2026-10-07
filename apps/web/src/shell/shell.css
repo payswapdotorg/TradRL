@@ -1250,6 +1250,24 @@ details.list-row > summary::-webkit-details-marker { display: none; }
 .onboarding-dot.active { width: 24px; height: 6px; background: var(--sidebar-primary); opacity: 1; }
 .onboarding-hidden { display: none; }
 
+
+/* FW-MI-A (MI-D8): the Settings project-switcher filter — the same
+   affordance class as the palette's input (an unset, border-bound text
+   field), row-sized. Typing narrows the switcher's options by fuzzy
+   name + id; the live count line stays a .card-note. */
+.project-filter-input {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 0.875rem;
+  font-family: inherit;
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.project-filter-input:focus { border-color: var(--accent); }
+
 /* ---------------------------------------------------------------------------
    §6 J12 THE TOUCH-TARGET FLOOR (the W-17b fix, placement corrected by
    W-18b): at mobile widths (<768px — the same breakpoint the drawer/

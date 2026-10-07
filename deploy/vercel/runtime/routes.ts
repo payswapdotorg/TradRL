@@ -152,17 +152,24 @@ export const DEMO_SUBSTANCE_ROUTE_PATHS = deepFreeze(['/v1/execution/submissions
 // ---------------------------------------------------------------------------
 
 /** The minimal request surface the host routes consume (the wrapped ApiRequest carries exactly these). */
-type DemoSubstanceRequest = Pick<ApiRequest, 'method' | 'path' | 'query' | 'headers'>;
+export type DemoSubstanceRequest = Pick<ApiRequest, 'method' | 'path' | 'query' | 'headers'>;
 
-function demoRouteRequestId(request: DemoSubstanceRequest, serial: number): RequestId {
+/**
+ * The envelope helpers (shared with the session-scope routes — FW-MI-A):
+ * the SAME request-id minting + success/error envelope discipline the
+ * demo-substance routes built (imported, never duplicated).
+ */
+export function demoRouteRequestId(request: DemoSubstanceRequest, serial: number): RequestId {
   return mintRequestId(fnv1a32Hex(canonicalJson(['demo-substance-route', request.method, request.path, serial] as never)));
 }
 
-function demoRouteSuccess(requestId: RequestId, data: unknown, status = 200): ApiResponse {
+/** The shared success envelope (the boundary's own { requestId, data } shape + the version header). */
+export function demoRouteSuccess(requestId: RequestId, data: unknown, status = 200): ApiResponse {
   return deepFreeze({ status, headers: { 'x-request-id': requestId, 'x-api-version': CURRENT_API_VERSION }, body: { requestId, data } });
 }
 
-function demoRouteError(requestId: RequestId, error: ApiError): ApiResponse {
+/** The shared error envelope (the boundary's own { requestId, error } shape + the retry header when present). */
+export function demoRouteError(requestId: RequestId, error: ApiError): ApiResponse {
   const headers: Record<string, string> = { 'x-request-id': requestId, 'x-api-version': CURRENT_API_VERSION };
   if (error.retryAfterMs !== undefined) headers['retry-after-ms'] = String(error.retryAfterMs);
   return deepFreeze({ status: error.status, headers, body: { requestId, error } });

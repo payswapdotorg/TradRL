@@ -53,9 +53,32 @@ import { getDeploymentService, type DeploymentComposition } from '../runtime/com
 import { demoJobsOf } from '../runtime/demo';
 import { toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
 import { drainedFailureResponse, serveDemoSubstanceRoute, serveDurableSubstanceRoute } from '../runtime/routes';
+import { consoleSessionOf, serveSessionScopedRoute } from '../runtime/session-routes';
+import { isProjectId, isTenantId, type ApiRequest, type ApiResponse } from '../../../services/api/src/index';
 
 /** The demo-substance/durable-goal read routes' request serial (per instance — the minted request ids stay unique per invocation). */
 let demoSubstanceSerial = 0;
+
+/**
+ * THE CREATE-STAMP DECODER (FW-MI-A, MI-D1): one successful
+ * create-project's { tenant, project } — the owning-session stamp's
+ * target, decoded from the boundary's OWN confirmed response (never a
+ * request value: the tenant is the one the pipeline injected, the id the
+ * one the control plane accepted). Null for every other request/response
+ * shape (the stamp never fires on a refusal).
+ */
+function createdProjectOf(request: ApiRequest, response: ApiResponse): { readonly tenantId: string; readonly projectId: string } | null {
+  if (request.method.toUpperCase() !== 'POST') return null;
+  if (request.path.replace(/\/+$/, '') !== '/v1/projects') return null;
+  if (response.status < 200 || response.status >= 300) return null;
+  const body = response.body as { readonly data?: unknown } | null;
+  const data = typeof body === 'object' && body !== null ? body.data : null;
+  if (typeof data !== 'object' || data === null) return null;
+  const record = data as { readonly id?: unknown; readonly tenantId?: unknown };
+  if (typeof record.id !== 'string' || !isProjectId(record.id)) return null;
+  if (typeof record.tenantId !== 'string' || !isTenantId(record.tenantId)) return null;
+  return { tenantId: record.tenantId, projectId: record.id };
+}
 
 /**
  * Serve ONE request over an ALREADY-COMPOSED deployment (the test seam:
@@ -116,6 +139,47 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
   const wrapped = await toApiRequest(request);
   if (!wrapped.ok) {
     writeDegraded(response, 400, 'invalid_json', 'the request body is not valid JSON');
+    return;
+  }
+
+  // 3b. THE SESSION-SCOPED ROUTES (FW-MI-A, defects MI-D1 + MI-D8): a
+  //     request carrying the console session header is served the
+  //     SESSION'S view — the demo project + the session's own projects —
+  //     for the project listing/detail/goal reads, and the host-owned
+  //     project-scoped reads (the jobs list + the execution blotter) are
+  //     GATED by the same visibility law (a foreign project answers the
+  //     typed not-found). Null = not a session request, or the gate passed
+  //     on a route the existing host routes own — the caller falls through
+  //     to the demo-substance routes + the frozen boundary, the pre-fix
+  //     behavior byte-identical (SDK parity: a headerless caller always
+  //     takes the fall-through path). Under DURABLE the session listing
+  //     reads the STORES (the fresh JOIN — never the instance's boot
+  //     projection), so a session's own desks survive reloads onto stale
+  //     warm instances (the MI-D8 root cause).
+  const durableHandle = deployment.durable;
+  const sessionRoute = await serveSessionScopedRoute(
+    {
+      verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization,
+      demo: deployment.demo === null ? null : deployment.demo.session,
+      durable: durableHandle === null ? null : { sessionProjectRows: () => durableHandle.sessionProjectRows() },
+    },
+    wrapped.request,
+    demoSubstanceSerial++,
+  );
+  if (sessionRoute !== null) {
+    // THE WRITE-THROUGH DRAIN ON THE HOST-ROUTE PATH (the W-27 ordering
+    // law — the same drain the demo-substance host routes run): the
+    // per-request machinery tick (step 2b) may have queued durable writes,
+    // and a host-route-served response leaves HERE — the drain runs first;
+    // a failed write replaces the response with the typed 503.
+    if (deployment.durable !== null) {
+      const drained = await deployment.durable.drain();
+      if (!drained.ok) {
+        writeApiResponse(response, drainedFailureResponse(sessionRoute, drained.error));
+        return;
+      }
+    }
+    writeApiResponse(response, sessionRoute);
     return;
   }
 
@@ -180,6 +244,28 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
 
   // 5. One request through the whole T041 pipeline.
   const apiResponse = deployment.service.handle(wrapped.request);
+
+  // 5a. THE SESSION-OWNERSHIP STAMP (FW-MI-A, MI-D1): a successful
+  //     session-scoped create-project records the OWNING console session
+  //     — the demo arm's per-instance map, the durable arm's additive
+  //     `ownerSession` field on the goal-set row (queued onto the SAME
+  //     drain the create's own writes ride: the stamp runs BEFORE step
+  //     5b, so a failed stamp write is the typed 503 + the re-projection —
+  //     the create is unconfirmed, exactly like a failed registry write;
+  //     the session that launched the project is the session that sees
+  //     it, from the first response on). The stamp target decodes from
+  //     the boundary's OWN confirmed response — never a request value.
+  const session = consoleSessionOf(wrapped.request.headers);
+  if (session !== null) {
+    const created = createdProjectOf(wrapped.request, apiResponse);
+    if (created !== null) {
+      if (deployment.demo !== null) {
+        deployment.demo.recordSessionOwner(created.projectId, session);
+      } else if (deployment.durable !== null) {
+        await deployment.durable.stampSessionOwner(created.tenantId, created.projectId, session);
+      }
+    }
+  }
 
   // 5b. THE WRITE-THROUGH DRAIN (W-25D — the ordering law's second half):
   //     the host awaits the request's pending durable writes BEFORE the
