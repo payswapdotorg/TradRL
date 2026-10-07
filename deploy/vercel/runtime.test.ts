@@ -37,11 +37,12 @@ import {
   demoOutcomeRecordIsValid,
   demoOutcomeRecord,
   demoPostMortemRecordIsValid,
+  demoProjectEvidenceOf,
   demoSubmissionBlotter,
   demoWorldOf,
 } from './runtime/demo';
 import { validCreateProjectRequest, validStrategyIntent } from '../../services/api/src/fixtures';
-import { isGatewaySubmissionRecord, isJobRecord, isOutcomeRecordMirror, type ApiService } from '../../services/api/src/index';
+import { canonicalJson, isGatewaySubmissionRecord, isJobRecord, isOutcomeRecordMirror, type ApiService } from '../../services/api/src/index';
 import { handleDeploymentRequest } from './api/router';
 import { FUNCTION_MOUNT_PATH, publicPathOf, queryOf, readJsonBody, toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from './runtime/http';
 
@@ -1508,5 +1509,249 @@ describe('deploy/vercel — the launched world capture, demo arm (D-8, W-28: eve
     const cold = capture();
     await handleDeploymentRequest(second, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-demo/goal', headers: bearer }), cold.response);
     expect(cold.captured().status).toBe(404); // the fresh instance's capture is per-instance (durability is the DURABLE backing's surface, D-8's durable half)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE LAUNCHED-DESK EVIDENCE STREAM (FW-MI-B — MI-D2 + MI-D10): a user's
+// own launched desk gets its OWN honest simulated evidence stream — the
+// same audit spine the seeded demo project serves (2 routed fills + 1
+// NUMERIC pre-trade-risk refusal, an adverse-gap outcome with tolerance,
+// a confidence-rated post-mortem), derived deterministically from the
+// desk's OWN envelope (its captured goal set + launch world) behind the
+// COMPILE gate. The wave-1 evidence (7/9 professionals, the #1 value
+// blocker): S1 (founder) "my three launched desks produced zero orders,
+// empty blotters, decision streams with evidence none and actor unknown
+// — the audit spine that would convert me lives only in the seeded demo
+// project"; L4 (execution trader) "the screen I'd open 400 times a day
+// has no flow in it"; S2 (junior) "the product can't yet capture MY
+// work". MI-D10 folds in: the stream's deciding bodies are NAMED
+// (desk:<project>-execution / gate:pre-trade-risk) — never "unknown".
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the launched-desk evidence stream (FW-MI-B: MI-D2 + MI-D10 — every compiled desk gets its own honest simulated evidence stream)', () => {
+  /** The console's launch flow, driven through the REAL routes: the create (goal + constraint set) + the kickoff job whose spec carries the launch world. */
+  function launchDesk(service: ApiService, projectId: string, at: number): void {
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const tenant = VALID_ENV[API_ENV_KEYS.apiDeveloperTenant];
+    const created = service.handle({
+      method: 'POST',
+      path: '/v1/projects',
+      headers: bearer,
+      body: {
+        id: projectId,
+        name: `the ${projectId} desk`,
+        executionMode: 'simulation',
+        goal: {
+          id: `goal-${projectId}`, version: 1, tenantId: tenant,
+          objective: 'Find and keep an edge in momentum.',
+          horizon: { startsAt: at, endsAt: at + 90 * 24 * 3_600_000, label: 'the launch window' },
+          successCriteria: {
+            criteria: [
+              { id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 }, description: 'net profit is non-negative' },
+              { id: 'sc-2', metric: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.2 }, description: 'bounded drawdown' },
+            ],
+            requiredSatisfaction: 0.5,
+          },
+          evaluation: { blindRef: 'eval:blind-1', walkForwardRef: 'eval:wf-1', regimeRef: 'eval:regime-1', adversarialRequired: true },
+          createdAt: at,
+        },
+        constraintSet: {
+          id: `cs-${projectId}`, version: 1, tenantId: tenant,
+          constraints: [
+            { id: 'c-1', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.2 }, severity: 'blocking', description: 'the drawdown ceiling' },
+            { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: '500000.00' }, severity: 'blocking' },
+            { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: '40000.00' }, severity: 'blocking' },
+          ],
+          createdAt: at,
+        },
+        at,
+      },
+    });
+    expect(created.status).toBe(201);
+    const kickoff = service.handle({
+      method: 'POST',
+      path: '/v1/jobs/research',
+      headers: { ...bearer, 'idempotency-key': `idem:fwmib:kickoff:${projectId}` },
+      body: {
+        kind: 'research',
+        projectId,
+        spec: {
+          kind: 'console-launch',
+          objective: 'Find and keep an edge in momentum.',
+          horizon: { startsAt: at, endsAt: at + 90 * 24 * 3_600_000, label: 'the launch window' },
+          capitalBudget: '500000.00',
+          riskBudget: '40000.00',
+          markets: ['BTC-USD', 'ETH-USD'],
+          venues: ['binance', 'kraken'],
+          dataSources: ['candle-v1', 'depth-v1'],
+          executionMode: 'simulation',
+          preferences: [],
+        },
+      },
+    });
+    expect(kickoff.status).toBe(202);
+  }
+
+  it('the full story: launch -> ONE machinery tick (the org compile) -> the blotter + the outcome/post-mortem reads serve the desk\'s OWN stream — named bodies, the 7 checks, a numeric refusal, an adverse-gap outcome, a confidence-rated post-mortem', async () => {
+    const composed = composeDeployment(apiEnv({ [API_ENV_KEYS.apiInternalToken]: 'tok-internal-demo', [API_ENV_KEYS.apiInternalPrincipal]: 'demo-machinery' }));
+    expect(composed.ok).toBe(true);
+    if (!composed.ok || composed.demo === null || composed.demo.tick === null) return;
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    const launchAt = 1_700_500_000_000;
+    launchDesk(composed.service, 'prj-desk-evidence', launchAt);
+
+    // BEFORE the compile: the honest pre-fix emptiness (a draft desk has no
+    // trading history — the derivation's compile gate answers null).
+    expect(demoProjectEvidenceOf(composed.demo.ports, VALID_ENV[API_ENV_KEYS.apiDeveloperTenant], 'prj-desk-evidence')).toBeNull();
+    const preCompile = composed.service.handle({ method: 'POST', path: '/v1/outcomes/query', headers: bearer, body: { project: 'prj-desk-evidence', at: launchAt + 10_000 } });
+    expect(((preCompile.body as { data: { items: readonly unknown[] } }).data).items).toEqual([]);
+
+    // ONE request through the full handler: the router's per-request tick
+    // compiles the organization (the R4 pass), and the SAME request's
+    // blotter read serves the desk's own derived stream.
+    const blotter = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: '/v1/execution/submissions?project=prj-desk-evidence', headers: bearer }), blotter.response);
+    expect(blotter.captured().status).toBe(200);
+    const rows = (JSON.parse(blotter.captured().payload as string) as { data: { items: readonly Record<string, unknown>[] } }).data.items;
+    expect(rows).toHaveLength(3); // 2 routed fills + 1 honest pre-trade-risk refusal
+    const routedRows = rows.filter((row) => row.kind === 'routed') as unknown as readonly { kind: string; decisionBody: string; decisionRationale: string; riskChecks: readonly { dimension: string; outcome: string }[]; order: { instrumentId: string; venueId: string; quantity: string; price: string }; fill: { notional: string; fee: string; quantity: string; price: string }; evidence: readonly { kind: string; ref: string }[] }[];
+    const refusedRow = rows.find((row) => row.kind === 'refused') as unknown as { kind: string; decisionBody: string; decisionRationale: string; refusal: { stage: string; refusals: readonly { constraintId: string; subject: string; predicate: { kind: string; bound: number }; observed: string }[] }; order: { instrumentId: string; venueId: string } };
+    expect(routedRows).toHaveLength(2);
+    // THE NAMED DECIDING BODIES (MI-D10): the desk's own identity, the platform's named risk gate — never "unknown".
+    expect(routedRows.every((row) => row.decisionBody === 'desk:prj-desk-evidence-execution')).toBe(true);
+    expect(refusedRow.decisionBody).toBe('gate:pre-trade-risk');
+    // THE SEVEN NAMED PRE-TRADE CHECKS on every routed row (the audit spine).
+    expect(routedRows.every((row) => row.riskChecks.map((check) => check.dimension).join(',') === 'kill_switch,identity,authorization,limits,venue_permissions,rate_limits,credentials')).toBe(true);
+    // THE INSTRUMENTS + VENUE are the desk's OWN world (BTC-USD/ETH-USD on binance — not the demo seed's BROKER-FIX).
+    expect(routedRows[0]!.order.instrumentId).toBe('BTC-USD');
+    expect(routedRows[0]!.order.venueId).toBe('binance');
+    expect(routedRows[1]!.order.instrumentId).toBe('ETH-USD');
+    // THE NOTIONAL MATH reconciles exactly from the printed qty x price (exact decimals).
+    for (const row of routedRows) {
+      const [intPart, fracPart = ''] = row.order.quantity.split('.');
+      const [priceInt, priceFrac = ''] = row.order.price.split('.');
+      let scale = fracPart.length + priceFrac.length;
+      let product = BigInt(`${intPart}${fracPart}`) * BigInt(`${priceInt}${priceFrac}`);
+      while (scale > 0 && product % 10n === 0n) { product /= 10n; scale -= 1; } // the canonical form strips trailing fraction zeros
+      const plain = product.toString();
+      const expected = scale === 0 ? plain : `${plain.padStart(scale + 1, '0').slice(0, -scale)}.${plain.padStart(scale + 1, '0').slice(-scale)}`;
+      expect(row.fill.notional).toBe(expected);
+    }
+    expect(routedRows[0]!.fill.notional).toBe('48000'); // 0.8 x 60000 — sized inside the declared budgets
+    // THE HONEST REFUSAL quotes bound vs observed from the desk's OWN constraint (c-1, limit.max 0.2 -> observed 0.24).
+    expect(refusedRow.refusal.stage).toBe('risk_limits');
+    const quoted = refusedRow.refusal.refusals[0]!;
+    expect(quoted.constraintId).toBe('c-1');
+    expect(quoted.subject).toBe('risk.maxDrawdown');
+    expect(quoted.predicate.bound).toBe(0.2);
+    expect(quoted.observed).toBe('0.24');
+    expect(refusedRow.decisionRationale).toContain('0.2');
+    expect(refusedRow.decisionRationale).toContain('0.24');
+    // THE AUDIT PROSE cites the desk's actual goal numbers (its budgets, verbatim).
+    expect(routedRows[0]!.decisionRationale).toContain('500000.00');
+    expect(routedRows[0]!.decisionRationale).toContain('40000.00');
+
+    // THE OUTCOME + POST-MORTEM READS (the frozen boundary routes over the
+    // wrapped port): the adverse-gap story with tolerance + the
+    // confidence-rated hypothesis attached to its outcome.
+    const outcomes = composed.service.handle({ method: 'POST', path: '/v1/outcomes/query', headers: bearer, body: { project: 'prj-desk-evidence', at: launchAt + 10_000 } });
+    expect(outcomes.status).toBe(200);
+    const outcomeItems = (outcomes.body as { data: { items: readonly { outcomeId: string; outcomeClass: string; decisionBody: string; expectation: { expectedRealized: string; tolerance: string; declaredBy: string }; realization: { realizedOutcome: string; notionalTotal: string }; deviation: { realizedGap: string; withinTolerance: boolean }; riskChecks: readonly unknown[] }[] } }).data.items;
+    expect(outcomeItems).toHaveLength(1);
+    const outcome = outcomeItems[0]!;
+    expect(outcome.outcomeClass).toBe('adverse_gap');
+    expect(outcome.decisionBody).toBe('desk:prj-desk-evidence-execution'); // the named body — MI-D10
+    expect(outcome.expectation.declaredBy).toBe('spec-launch-director'); // the launch director — the spec-demo-director pattern, per-project
+    expect(outcome.expectation.expectedRealized).toBe('48');
+    expect(outcome.realization.realizedOutcome).toBe('-12');
+    expect(outcome.expectation.tolerance).toBe('4.8');
+    expect(outcome.deviation.realizedGap).toBe('-60');
+    expect(outcome.deviation.withinTolerance).toBe(false);
+    expect(outcome.riskChecks).toHaveLength(7);
+    expect(outcome.realization.notionalTotal).toBe('48000'); // the fill's own economics — one coherent tale
+    const mortems = composed.service.handle({ method: 'POST', path: '/v1/post-mortems/query', headers: bearer, body: { project: 'prj-desk-evidence', at: launchAt + 10_000, latestPerOutcome: true } });
+    expect(mortems.status).toBe(200);
+    const mortemItems = (mortems.body as { data: { items: readonly { postMortemId: string; subject: { outcomeRecordRef: string }; hypotheses: readonly { class: string; confidence: string; note: string }[] }[] } }).data.items;
+    expect(mortemItems).toHaveLength(1);
+    const mortem = mortemItems[0]!;
+    expect(mortem.subject.outcomeRecordRef).toBe(outcome.outcomeId); // attached to ITS outcome (the D-2 convention)
+    expect(mortem.hypotheses[0]!.class).toBe('decision');
+    expect(mortem.hypotheses[0]!.confidence).toBe('0.8'); // confidence-rated
+    expect(mortem.hypotheses[0]!.note).toContain('simulated'); // the honesty discipline — the attribution says simulated
+
+    // DETERMINISM + IDEMPOTENCE: a re-read serves the SAME records (never a duplicate — the fold is pure).
+    const reread = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: '/v1/execution/submissions?project=prj-desk-evidence', headers: bearer }), reread.response);
+    const rereadRows = (JSON.parse(reread.captured().payload as string) as { data: { items: readonly { submissionId: string }[] } }).data.items;
+    expect(rereadRows.map((row) => row.submissionId)).toEqual(rows.map((row) => (row as { submissionId: string }).submissionId));
+  });
+
+  it('the gates stay honest: WITHOUT the internal credential nothing compiles and nothing serves; a WORLD-LESS launch derives no stream; the DEMO project\'s own records stay byte-identical (the derived stream never doubles them)', async () => {
+    const composed = composeDeployment(apiEnv()); // NO internal credential — the machinery is absent (tick null)
+    expect(composed.ok).toBe(true);
+    if (!composed.ok || composed.demo === null) return;
+    expect(composed.demo.tick).toBeNull();
+    const bearer = { authorization: `Bearer ${VALID_ENV[API_ENV_KEYS.apiDeveloperToken]}` };
+    launchDesk(composed.service, 'prj-desk-unmachined', 1_700_600_000_000);
+    // Uncompiled forever (no tick) — the honest pre-fix emptiness.
+    const blotter = capture();
+    await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: '/v1/execution/submissions?project=prj-desk-unmachined', headers: bearer }), blotter.response);
+    expect(blotter.captured().status).toBe(200);
+    expect((JSON.parse(blotter.captured().payload as string) as { data: { items: readonly unknown[] } }).data.items).toEqual([]);
+    const outcomes = composed.service.handle({ method: 'POST', path: '/v1/outcomes/query', headers: bearer, body: { project: 'prj-desk-unmachined', at: 1_700_600_010_000 } });
+    expect(((outcomes.body as { data: { items: readonly unknown[] } }).data).items).toEqual([]);
+
+    // A WORLD-LESS launch (a foreign kickoff spec — no console-launch world captured): no stream even once compiled.
+    const machined = composeDeployment(apiEnv({ [API_ENV_KEYS.apiInternalToken]: 'tok-internal-demo', [API_ENV_KEYS.apiInternalPrincipal]: 'demo-machinery' }));
+    if (!machined.ok || machined.demo === null || machined.demo.tick === null) return;
+    const tenant = VALID_ENV[API_ENV_KEYS.apiDeveloperTenant];
+    const created = machined.service.handle({
+      method: 'POST',
+      path: '/v1/projects',
+      headers: bearer,
+      body: {
+        id: 'prj-desk-worldless', name: 'the worldless desk', executionMode: 'simulation',
+        goal: { id: 'goal-prj-desk-worldless', version: 1, tenantId: tenant, objective: 'an objective', horizon: { startsAt: 1_700_700_000_000, endsAt: 1_700_700_000_000 + 86_400_000 }, successCriteria: { criteria: [{ id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 } }], requiredSatisfaction: 1 }, evaluation: { blindRef: 'eval:b', walkForwardRef: 'eval:w', regimeRef: 'eval:r', adversarialRequired: true }, createdAt: 1_700_700_000_000 },
+        constraintSet: { id: 'cs-prj-desk-worldless', version: 1, tenantId: tenant, constraints: [{ id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: '100000.00' }, severity: 'blocking' }], createdAt: 1_700_700_000_000 },
+        at: 1_700_700_000_000,
+      },
+    });
+    expect(created.status).toBe(201);
+    const kickoff = machined.service.handle({ method: 'POST', path: '/v1/jobs/research', headers: { ...bearer, 'idempotency-key': 'idem:fwmib:worldless' }, body: { kind: 'research', projectId: 'prj-desk-worldless', spec: { kind: 'demo-seed', note: 'not a console launch' } } });
+    expect(kickoff.status).toBe(202);
+    machined.demo.tick(1_700_700_001_000); // compiles the org — but no world means no honest desk stream
+    expect((machined.service.handle({ method: 'GET', path: '/v1/projects/prj-desk-worldless', headers: bearer }).body as { data: { lifecycle: { organizationRef: string | null } } }).data.lifecycle.organizationRef).not.toBeNull();
+    expect(demoProjectEvidenceOf(machined.demo.ports, tenant, 'prj-desk-worldless')).toBeNull();
+
+    // THE DEMO PROJECT stays byte-identical: its own hand-authored seed serves, the derivation never touches it.
+    expect(demoProjectEvidenceOf(machined.demo.ports, tenant, DEMO_PROJECT_ID)).toBeNull();
+    const demoBlotter = capture();
+    await handleDeploymentRequest(machined, streamingRequest({ method: 'GET', url: `/v1/execution/submissions?project=${encodeURIComponent(DEMO_PROJECT_ID)}`, headers: bearer }), demoBlotter.response);
+    const demoRows = (JSON.parse(demoBlotter.captured().payload as string) as { data: { items: readonly { submissionId: string; decisionBody?: string }[] } }).data.items;
+    expect(demoRows).toHaveLength(3); // the SEEDED demo blotter, unchanged
+    expect(demoRows.every((row) => row.decisionBody === undefined || row.decisionBody === 'desk:tradrl-demo-execution' || row.decisionBody === 'gate:pre-trade-risk')).toBe(true);
+    const demoOutcomes = machined.service.handle({ method: 'POST', path: '/v1/outcomes/query', headers: bearer, body: { project: DEMO_PROJECT_ID, at: 1_730_000_000_000 } });
+    expect((((demoOutcomes.body as { data: { items: readonly { outcomeId: string }[] } }).data).items).map((entry) => entry.outcomeId)).toEqual(['out:demo0001']);
+  });
+
+  it('L12 + determinism across instances: a foreign tenant\'s fold finds nothing; two compositions derive the IDENTICAL stream for the same envelope (content-addressed ids)', async () => {
+    const tenant = VALID_ENV[API_ENV_KEYS.apiDeveloperTenant];
+    const first = composeDeployment(apiEnv({ [API_ENV_KEYS.apiInternalToken]: 'tok-internal-demo', [API_ENV_KEYS.apiInternalPrincipal]: 'demo-machinery' }));
+    if (!first.ok || first.demo === null || first.demo.tick === null) return;
+    launchDesk(first.service, 'prj-desk-determinism', 1_700_800_000_000);
+    first.demo.tick(1_700_800_001_000);
+    const firstSeed = demoProjectEvidenceOf(first.demo.ports, tenant, 'prj-desk-determinism');
+    expect(firstSeed).not.toBeNull();
+    // L12: the fold keys on the AUTHORIZED tenant — a foreign tenant's captures never existed.
+    expect(demoProjectEvidenceOf(first.demo.ports, 'tenant-other-demo', 'prj-desk-determinism')).toBeNull();
+    // A SECOND composition (a fresh serverless instance): the same launch + the same compile derive the SAME bytes.
+    const second = composeDeployment(apiEnv({ [API_ENV_KEYS.apiInternalToken]: 'tok-internal-demo', [API_ENV_KEYS.apiInternalPrincipal]: 'demo-machinery' }));
+    if (!second.ok || second.demo === null || second.demo.tick === null) return;
+    launchDesk(second.service, 'prj-desk-determinism', 1_700_800_000_000);
+    second.demo.tick(1_700_800_001_000);
+    const secondSeed = demoProjectEvidenceOf(second.demo.ports, tenant, 'prj-desk-determinism');
+    expect(secondSeed).not.toBeNull();
+    expect(canonicalJson(secondSeed as never)).toBe(canonicalJson(firstSeed as never)); // byte-identical — no seeded state, no drift
   });
 });
