@@ -77,7 +77,7 @@ import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import type { NeonStoreDeps } from '../../adapters/neon/stores';
 import { DEMO_PROJECT_ID, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance } from './demo';
-import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization } from './routes';
+import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization, VerifyInternalAuthorization } from './routes';
 
 // ---------------------------------------------------------------------------
 // The typed degraded port stubs (R46 — checkpoint 1)
@@ -215,7 +215,7 @@ export interface DemoBackingHandle {
 }
 
 export type DeploymentComposition =
-  | { readonly ok: true; readonly service: ApiService; readonly backing: DeployBacking; readonly demo: DemoBackingHandle | null; readonly durable: DurableDeploymentHandle | null; readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization }
+  | { readonly ok: true; readonly service: ApiService; readonly backing: DeployBacking; readonly demo: DemoBackingHandle | null; readonly durable: DurableDeploymentHandle | null; readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization; readonly verifyInternalAuthorization: VerifyInternalAuthorization }
   | DeploymentNotConfigured;
 
 /**
@@ -396,6 +396,23 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     const presented = bearerTokenOf(authorization);
     return presented !== null && presented === token ? { tenant, principal } : null;
   };
+  // THE INTERNAL AUTH SEAM (W-28, lane B): the host owns the internal
+  // credential registration (the secure-boundary act above — the same act
+  // that registers the developer credential; W-3f's private-plane closure).
+  // The host-owned internal runbook routes (POST /internal/deploy/ddl/apply
+  // + GET /internal/deploy/ddl/verify — runtime/routes.ts) authenticate
+  // themselves with the SAME law the boundary applies to its /internal/*
+  // routes: a Bearer token that is not the deployment's registered internal
+  // credential is the typed 401 (`unauthenticated`). When the internal
+  // credential is NOT configured (apiInternalToken === null) the host-owned
+  // internal routes stay CLOSED (the typed 401 — authn first, the same law
+  // the existing demo-substance routes apply to a missing developer
+  // credential). The token never crosses into any error or response.
+  const verifyInternalAuthorization: VerifyInternalAuthorization = (authorization: string | undefined) => {
+    if (internalToken === null) return null; // the private plane is closed
+    const presented = bearerTokenOf(authorization);
+    return presented !== null && presented === internalToken ? { principal: env.apiInternalPrincipal as string } : null;
+  };
   // The demo world seed — ONLY for the un-overridden demo composition
   // (see hasOverrides above). Every seed mutation goes THROUGH the real
   // routes (L20 runs for real — see runtime/demo.ts). The durable handle
@@ -438,9 +455,9 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
             jobsOf: (tenant, project) => demoJobsOf(serving, tenant, project),
           };
       durable = { ...durable, tick: activation.tick, ensureBootWorld: activation.ensureBootWorld, demoSubstance };
-      return { ok: true, service: serving, backing, demo: null, durable, verifyDeveloperAuthorization };
+      return { ok: true, service: serving, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization };
     }
-    return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization };
+    return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization };
   }
   const seed = seedDemoWorld(construction.service, { tenant, developerToken: token, internalToken }, Date.now());
   const machinery: DemoMachineryContext = { ports: demoPorts, tenant, developerToken: token, internalToken: internalToken as string };
@@ -455,6 +472,7 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     },
     durable,
     verifyDeveloperAuthorization,
+    verifyInternalAuthorization,
   };
 }
 
@@ -468,6 +486,7 @@ let cachedDemo: DemoBackingHandle | null = null;
 let cachedDurable: DurableDeploymentHandle | null = null;
 let cachedBacking: DeployBacking | null = null;
 let cachedVerify: VerifyDeveloperAuthorization | null = null;
+let cachedVerifyInternal: VerifyInternalAuthorization | null = null;
 
 interface EnvIdentity {
   readonly source: Readonly<Record<string, string | undefined>>;
@@ -486,8 +505,8 @@ interface EnvIdentity {
 export function getDeploymentService(
   source: Readonly<Record<string, string | undefined>> = process.env,
 ): DeploymentComposition {
-  if (cachedService !== null && cachedEnv !== null && cachedEnv.source === source && cachedBacking !== null && cachedVerify !== null) {
-    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo, durable: cachedDurable, verifyDeveloperAuthorization: cachedVerify };
+  if (cachedService !== null && cachedEnv !== null && cachedEnv.source === source && cachedBacking !== null && cachedVerify !== null && cachedVerifyInternal !== null) {
+    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo, durable: cachedDurable, verifyDeveloperAuthorization: cachedVerify, verifyInternalAuthorization: cachedVerifyInternal };
   }
   const composed = composeDeployment(readApiEnv(source));
   if (!composed.ok) return composed;
@@ -497,5 +516,6 @@ export function getDeploymentService(
   cachedDurable = composed.durable;
   cachedBacking = composed.backing;
   cachedVerify = composed.verifyDeveloperAuthorization;
-  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo, durable: composed.durable, verifyDeveloperAuthorization: composed.verifyDeveloperAuthorization };
+  cachedVerifyInternal = composed.verifyInternalAuthorization;
+  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo, durable: composed.durable, verifyDeveloperAuthorization: composed.verifyDeveloperAuthorization, verifyInternalAuthorization: composed.verifyInternalAuthorization };
 }

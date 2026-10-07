@@ -114,7 +114,8 @@ import type {
 import { canonicalJson, isJobRecord } from '../../../services/api/src/index';
 import { fakeJobSubmission } from '../../../services/api/src/fixtures';
 import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, type GoalSetRecord, type NeonStoreDeps } from '../../adapters/neon/stores';
-import type { NeonConfig } from '../../adapters/neon/client';
+import { executeNeonStatement, type NeonConfig } from '../../adapters/neon/client';
+import { NEON_DDL_RECORDS } from '../../adapters/neon/schema';
 import type { ServedKnowledgeMirror } from '../../adapters/neon/mirrors';
 import { enabledAdapters, type ProviderEnv } from '../../wire/composition';
 import { isNonEmptyString, isRecord, type FetchLike, type InstantSourceMirror, type StoreFailure, type StoreResult } from '../../adapters/shared';
@@ -171,6 +172,88 @@ interface PendingDurableWrite {
 
 /** The drain verdict: ok, or the typed failure of the first failed durable write. */
 export type DrainResult = { readonly ok: true } | { readonly ok: false; readonly error: StoreFailure };
+
+// ---------------------------------------------------------------------------
+// THE DDL RUNBOOK (W-28, lane B): the host-owned internal route pair the
+// Lead uses to heal production (and any future database) with a single
+// authenticated call — apply EVERY DDL record in `NEON_DDL_RECORDS` (in the
+// listed order) and report schema truth (information_schema only — L12: NO
+// tenant data ever crosses). The runbook is host-owned (deploy/vercel/
+// runtime/routes.ts); it rides the SAME Neon SQL-over-HTTP client the
+// durable stores compose over (deploy/adapters/neon/client.ts — no new
+// dependency, no re-implementation of the wire format). DDL is idempotent
+// by construction (`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT
+// EXISTS`); a second apply is safe. The honest distinction between "applied"
+// and "already-present" is NOT measurable with the wire response shape (a
+// `CREATE TABLE IF NOT EXISTS` that changes nothing still returns the same
+// command tag), so the apply surface reports `"ok"` for both — never a
+// fabricated distinction. The verify surface queries
+// `information_schema.tables` (schema metadata, parameterized — every
+// dynamic value is a $n bind parameter) for the table names in
+// `NEON_DDL_RECORDS` and reports each table's existence + a coverage
+// summary. The 7th table (`tradrl_jobs`, the W-27 lane) is the production
+// gap this runbook exists to heal.
+// ---------------------------------------------------------------------------
+
+/**
+ * One DDL apply result, per table. The honest result is `"ok"` for both
+ * applied and already-present (the wire response does not distinguish them —
+ * the honesty law forbids fabricating a distinction); `"failed"` carries the
+ * Neon failure code ONLY (no SQL error text — it can embed the endpoint).
+ */
+export interface DdlApplyTableResult {
+  /** The table this result describes (e.g. `tradrl_jobs`). */
+  readonly table: string;
+  /** The honest result: `"ok"` for both applied and already-present (the wire does not distinguish them); `"failed"` carries the failure code. */
+  readonly result: 'ok' | 'failed';
+  /** The Neon failure code, ONLY when `result === "failed"` (the table name + the code are safe; raw SQL error text is NOT — it can embed the endpoint). */
+  readonly code?: string;
+}
+
+/** The DDL apply verdict: every table's per-record result, or the typed failure that stopped the apply. */
+export type DdlApplyResult =
+  | { readonly ok: true; readonly tables: readonly DdlApplyTableResult[] }
+  | { readonly ok: false; readonly error: StoreFailure };
+
+/** One DDL verify result, per table. */
+export interface DdlVerifyTableResult {
+  /** The table this result describes (e.g. `tradrl_jobs`). */
+  readonly table: string;
+  /** Whether the table exists in the durable store's information_schema (schema metadata — L12: NO tenant data queried). */
+  readonly exists: boolean;
+}
+
+/** The DDL verify verdict: each table's existence + the coverage summary, or the typed failure of the information_schema read. */
+export type DdlVerifyResult =
+  | { readonly ok: true; readonly tables: readonly DdlVerifyTableResult[]; readonly coverage: string }
+  | { readonly ok: false; readonly error: StoreFailure };
+
+/** The durable backing's runbook surface (W-28, lane B). */
+export interface DurableRunbook {
+  /**
+   * Apply EVERY record in `NEON_DDL_RECORDS` (in the listed order) via the
+   * existing Neon SQL-over-HTTP client the durable stores already compose
+   * over. DDL is idempotent by construction; a second apply is safe. The
+   * apply STOPS on the first failure (the precedent of `drain()` — the
+   * ordering law) and returns the typed failure of the failed record (the
+   * host serves the typed 503 listing the failed table + the failure code
+   * ONLY — scrubbed of any secret-shaped material). The honest per-table
+   * result is `"ok"` for both applied and already-present (the wire does
+   * not distinguish them); the honesty law forbids fabricating a
+   * distinction.
+   */
+  applyDdl(): Promise<DdlApplyResult>;
+  /**
+   * Report schema truth: for each table named in `NEON_DDL_RECORDS`,
+   * whether it exists. The query is `SELECT table_name FROM
+   * information_schema.tables WHERE table_name IN ($1..$n)` — schema
+   * metadata, parameterized (L12: NO tenant data ever crosses; every
+   * dynamic value is a $n bind parameter). Returns each table's existence
+   * + a coverage summary (`"7/7 tables present"` style) or the typed
+   * failure of the read.
+   */
+  verifyDdl(): Promise<DdlVerifyResult>;
+}
 
 /**
  * The durable backing handle (what compose.ts carries for the router): the
@@ -259,6 +342,19 @@ export interface DurableBackingHandle {
   lastProjection(): ProjectionReport | null;
   /** The typed failure of the last failed projection (null when none). */
   lastFailure(): StoreFailure | null;
+  /**
+   * THE DDL RUNBOOK SURFACE (W-28, lane B): apply EVERY DDL record in
+   * `NEON_DDL_RECORDS` (idempotent by construction) and report schema
+   * truth (information_schema only — L12: NO tenant data). The host-owned
+   * internal routes (`POST /internal/deploy/ddl/apply` +
+   * `GET /internal/deploy/ddl/verify`) ride this surface — the SAME Neon
+   * SQL-over-HTTP client the durable stores compose over, no new
+   * dependency. The production gap this runbook exists to heal: the 7th
+   * table (`tradrl_jobs`, the W-27 lane) was added to the DDL records but
+   * the runbook step was never executed on the production database
+   * (deploy/README.md §neon).
+   */
+  readonly runbook: DurableRunbook;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +407,12 @@ export function neonStoreDepsOf(deps: DurableSeamDeps): NeonStoreDeps | null {
 export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle | null {
   const neonDeps = neonStoreDepsOf(deps);
   if (neonDeps === null) return null;
+  // Capture the non-null neon deps for the closures below (the runbook
+  // surface's applyDdl/verifyDdl) — TypeScript's flow analysis loses the
+  // narrowing inside the closures without this local capture (the
+  // `neonDeps` const is non-null here, but the closure widens it back to
+  // `NeonStoreDeps | null` without the capture).
+  const runbookNeonDeps: NeonStoreDeps = neonDeps;
   const firmMemoryStore = new NeonFirmMemoryStore(neonDeps);
   const outcomeStore = new NeonOutcomeLearningStore(neonDeps);
   const projectStore = new NeonProjectStore(neonDeps);
@@ -841,6 +943,94 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     return { ok: true, value: liveGoalSets.get(projectId) ?? null };
   }
 
+  // -------------------------------------------------------------------------
+  // THE DDL RUNBOOK (W-28, lane B): apply EVERY DDL record + verify schema
+  // truth, over the SAME Neon SQL-over-HTTP client the durable stores
+  // compose over. The runbook is host-owned — the host route serves it
+  // before the boundary wrap; it never reads tenant data (information_schema
+  // only — L12); it never re-implements the wire format (zero-dep law).
+  // -------------------------------------------------------------------------
+
+  // The fetch the runbook issues its statements over (the seam's injected
+  // fetch — fakes in tests, the platform fetch in production; never ambient).
+  // The same fallback law the Neon stores apply (deps.fetchLike ?? platform
+  // fetch resolved lazily — tests never hit the network).
+  const runbookFetchLike: FetchLike = runbookNeonDeps.fetchLike ?? ((input: string, init?: { method?: string; headers?: Readonly<Record<string, string>>; body?: string }) => {
+    const fetchGlobal = (globalThis as { fetch?: unknown }).fetch;
+    if (typeof fetchGlobal !== 'function') {
+      return Promise.reject(new Error('no fetch implementation is available in this runtime'));
+    }
+    return (fetchGlobal as FetchLike)(input, init);
+  });
+
+  async function applyDdl(): Promise<DdlApplyResult> {
+    // Apply EVERY record in `NEON_DDL_RECORDS` IN THE LISTED ORDER, each via
+    // the existing Neon SQL-over-HTTP client the durable stores compose over.
+    // DDL is idempotent by construction (`CREATE TABLE IF NOT EXISTS` / `CREATE
+    // INDEX IF NOT EXISTS`), so applying twice is safe. The apply STOPS on the
+    // first failure (the precedent of `drain()` — the ordering law) and
+    // returns the typed failure of the failed record (the host serves the
+    // typed 503 listing the failed table + the failure code ONLY — scrubbed
+    // of any secret-shaped material: the table name + the neon failure code
+    // are safe; raw SQL error text is NOT).
+    const tables: DdlApplyTableResult[] = [];
+    for (const record of NEON_DDL_RECORDS) {
+      // The DDL is a schema-level statement (no bind parameters, no tenant
+      // scope — L12 by construction: it touches NO tenant data). The Neon
+      // SQL-over-HTTP client sends the whole record's DDL string as one
+      // query (the live proxy accepts multi-statement queries when no
+      // params are bound — the same wire path every adapter read/write
+      // rides, never re-implemented).
+      const executed = await executeNeonStatement(runbookNeonDeps.config, record.ddl, [], runbookFetchLike);
+      if (!executed.ok) {
+        // The host serves the typed 503 listing the failed table + the
+        // neon failure code ONLY (the scrubbing law — the sweep precedent).
+        return {
+          ok: false,
+          error: { code: executed.error.code, message: `the DDL apply failed for ${record.table} (${executed.error.code}) — the boundary degrades this route (R46)` },
+        };
+      }
+      // HONESTY LAW: the wire response does not distinguish "applied" from
+      // "already-present" (a `CREATE TABLE IF NOT EXISTS` that changes
+      // nothing still returns the same command tag). The honest per-table
+      // result is `"ok"` for both — never a fabricated distinction. The PR
+      // body discloses this honestly.
+      tables.push({ table: record.table, result: 'ok' });
+    }
+    return { ok: true, tables: Object.freeze(tables) as readonly DdlApplyTableResult[] };
+  }
+
+  async function verifyDdl(): Promise<DdlVerifyResult> {
+    // Query `information_schema.tables` for the table names in
+    // `NEON_DDL_RECORDS` (schema metadata, parameterized — L12: NO tenant
+    // data ever crosses; every dynamic value is a $n bind parameter). The
+    // query is `SELECT table_name FROM information_schema.tables WHERE
+    // table_name IN ($1..$n)` so the surface stays parameterized end-to-end
+    // (no value is SQL-interpolated — the L12 law in shared infrastructure).
+    const tableNames = NEON_DDL_RECORDS.map((record) => record.table);
+    const placeholders = tableNames.map((_, index) => `$${index + 1}`).join(', ');
+    const query = `SELECT table_name FROM information_schema.tables WHERE table_name IN (${placeholders})`;
+    const executed = await executeNeonStatement(runbookNeonDeps.config, query, tableNames, runbookFetchLike);
+    if (!executed.ok) {
+      // Same scrubbing law: the neon failure code ONLY.
+      return { ok: false, error: { code: executed.error.code, message: `the DDL verify read failed (${executed.error.code}) — the boundary degrades this route (R46)` } };
+    }
+    // Decode the SELECT response (each row is `[table_name]` in array mode).
+    const present = new Set<string>();
+    if (executed.value.kind === 'select') {
+      for (const row of executed.value.rows) {
+        const value = row[0];
+        if (typeof value === 'string') present.add(value);
+      }
+    }
+    const tables: DdlVerifyTableResult[] = NEON_DDL_RECORDS.map((record) => ({ table: record.table, exists: present.has(record.table) }));
+    const presentCount = tables.filter((entry) => entry.exists).length;
+    const coverage = `${presentCount}/${tables.length} tables present`;
+    return { ok: true, tables: Object.freeze(tables) as readonly DdlVerifyTableResult[], coverage };
+  }
+
+  const runbook: DurableRunbook = { applyDdl, verifyDdl };
+
   return {
     ports: { controlPlane: controlPlanePort, firmMemory: firmMemoryPort, outcomeLearning: outcomeLearningPort, jobSubmission: jobSubmissionPort },
     settled,
@@ -853,5 +1043,6 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     endJobHydration,
     lastProjection: () => report,
     lastFailure: () => failure,
+    runbook,
   };
 }

@@ -105,7 +105,7 @@ import {
   type RequestId,
 } from '../../../services/api/src/index';
 import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
-import type { DurableBackingHandle } from './durable';
+import type { DurableBackingHandle, DdlApplyResult, DdlVerifyResult } from './durable';
 
 /** The host auth's verdict: the credential tenant + principal behind the presented token. */
 export interface DemoSubstanceAuthorization {
@@ -115,6 +115,31 @@ export interface DemoSubstanceAuthorization {
 
 /** The composition's host-auth seam (runtime/compose.ts mints it from the registered developer credential). */
 export type VerifyDeveloperAuthorization = (authorization: string | undefined) => DemoSubstanceAuthorization | null;
+
+/**
+ * The internal auth's verdict (W-28, lane B): the principal behind the
+ * presented internal credential. The principal is the audit name (the
+ * boundary's own law — WHO, not WHAT); the runbook routes are SCHEMA-LEVEL
+ * (no tenant scope — they touch NO tenant data, L12 by construction: the
+ * DDL is schema-only, the verify queries information_schema only). The
+ * host-owned runbook routes authenticate themselves with the SAME law the
+ * boundary applies to its /internal/* routes: a Bearer token that is not
+ * the deployment's registered internal credential is the typed 401.
+ */
+export interface InternalAuthorization {
+  readonly principal: string;
+}
+
+/**
+ * The composition's internal host-auth seam (runtime/compose.ts mints it
+ * from the registered internal credential — the same secure-boundary act
+ * that registers the developer credential, W-3f's private-plane closure).
+ * Returns `null` when the internal credential is NOT configured OR the
+ * presented token does not match — the host-owned internal routes then
+ * answer the typed 401 (authn first — the existing demo-substance routes'
+ * own law).
+ */
+export type VerifyInternalAuthorization = (authorization: string | undefined) => InternalAuthorization | null;
 
 /**
  * The execution-blotter + jobs-list routes' STRUCTURAL input (W-26C, R4):
@@ -401,4 +426,157 @@ export function drainedFailureResponse(original: ApiResponse, failure: { readonl
       error: apiError('unavailable', `the durable write failed (${failure.code}): ${failure.message} — the mutation is unconfirmed; the seam re-projects from the durable store and the boundary degrades this request (R46)`),
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// THE HOST-OWNED INTERNAL DDL RUNBOOK ROUTES (W-28, lane B)
+//   POST /internal/deploy/ddl/apply  — apply EVERY DDL record in
+//                                     `NEON_DDL_RECORDS` (idempotent by
+//                                     construction) over the SAME Neon
+//                                     SQL-over-HTTP client the durable
+//                                     stores compose over; per-table report
+//                                     with the honest `"ok"` result (the
+//                                     wire does not distinguish "applied"
+//                                     from "already-present" — the honesty
+//                                     law forbids fabricating a distinction).
+//   GET  /internal/deploy/ddl/verify — for each table named in
+//                                     `NEON_DDL_RECORDS`, whether it exists
+//                                     (information_schema only — L12: NO
+//                                     tenant data queried; the query is
+//                                     parameterized end-to-end).
+//
+// AUTH (the internal plane's own credential — authn FIRST, the boundary's
+// own 401 law): BOTH routes require `Authorization: Bearer
+// <TRADRL_API_INTERNAL_TOKEN>` (env contract in
+// `deploy/vercel/runtime/env.ts` — `apiInternalToken`, principal
+// `TRADRL_API_INTERNAL_PRINCIPAL`). Invalid/missing → the typed 401 envelope
+// the boundary uses (`unauthenticated` — the SAME shape the existing
+// demo-substance routes apply to a missing developer credential). When the
+// deployment has NO durable backing (Neon keys absent → the seam was not
+// built → `deployment.durable === null`): both routes answer the typed
+// `deploy_adapter_absent` degraded response (503) — NEVER attempt any Neon
+// traffic in that state (the matrix's Neon-absent precedent — pinned by
+// test).
+//
+// HOST-OWNED PATTERN: these routes are served from the host-route section
+// of `deploy/vercel/api/router.ts` BEFORE the boundary wrap — the EXACT
+// pattern the W-8/W-25A demo-substance routes use (`GET /v1/jobs`,
+// `GET /v1/execution/submissions`). The paths are declared nowhere in the
+// frozen route table, so without this host-route section they would answer
+// the typed not-found; under the DEMO backing they answer the typed
+// `deploy_adapter_absent` 503 (the matrix's Neon-absent row — the seam was
+// not built).
+//
+// R46 — every failure path typed; never a crash. L12 — the routes read NO
+// tenant data (the DDL is schema-level; the verify query is information_schema
+// only). Same-origin law — NO CORS headers ever. No secrets in errors or
+// logs — the failure response carries the table name + the neon failure
+// code ONLY (scrubbed of any secret-shaped material — the sweep precedent).
+// Zero-dep law — platform APIs only.
+// ---------------------------------------------------------------------------
+
+/** The host-owned runbook routes' paths (additive — declared nowhere in the frozen route table). */
+export const RUNBOOK_ROUTE_PATHS = deepFreeze(['/internal/deploy/ddl/apply', '/internal/deploy/ddl/verify'] as const);
+
+/** The runbook routes' structural input (the durable seam handle + the host's internal auth seam). */
+export interface RunbookRouteInput {
+  /** The durable seam handle (null when the seam was not built — the matrix's Neon-absent row). */
+  readonly durable: DurableBackingHandle | null;
+  /** The host's internal-credential auth seam (returns null when the credential is not configured or the token is wrong). */
+  readonly verifyInternalAuthorization: VerifyInternalAuthorization;
+}
+
+/** The minimal request surface the runbook routes consume (the wrapped ApiRequest carries exactly these). */
+type RunbookRequest = Pick<ApiRequest, 'method' | 'path' | 'headers'>;
+
+function runbookRequestId(request: RunbookRequest, serial: number): RequestId {
+  return mintRequestId(fnv1a32Hex(canonicalJson(['runbook-route', request.method, request.path, serial] as never)));
+}
+
+/** POST /internal/deploy/ddl/apply — apply EVERY DDL record in `NEON_DDL_RECORDS` (idempotent). */
+async function ddlApplyRoute(input: RunbookRouteInput, _request: RunbookRequest, requestId: RequestId): Promise<ApiResponse> {
+  // AUTHN FIRST (the boundary's own 401 law — match the existing envelope shape exactly).
+  const authorization = input.verifyInternalAuthorization(_request.headers.authorization);
+  if (authorization === null) {
+    return runbookError(requestId, apiError('unauthenticated', 'a Bearer internal credential token is required on this route of the internal plane'));
+  }
+  // The durable seam must be built (Neon keys present). When it is not, the
+  // matrix's Neon-absent precedent applies: the typed `deploy_adapter_absent`
+  // 503 — NEVER attempt any Neon traffic in that state.
+  if (input.durable === null) {
+    return runbookError(requestId, apiError('unavailable', 'the neon adapter is not configured (its environment keys are absent — see deploy/.env.example); the runbook route degrades this request (R46) — deploy_adapter_absent'));
+  }
+  // Apply EVERY DDL record. The runbook surface on the durable handle
+  // composes over the SAME Neon SQL-over-HTTP client the durable stores
+  // compose over (no new dependency, no re-implementation of the wire
+  // format). On any Neon failure, the typed 503 carrying the failure
+  // code ONLY (scrubbed — the table name + the code are safe; raw SQL
+  // error text is NOT).
+  const result: DdlApplyResult = await input.durable.runbook.applyDdl();
+  if (!result.ok) {
+    return runbookError(requestId, apiError('unavailable', `${result.error.message}`));
+  }
+  return runbookSuccess(requestId, deepFreeze({ tables: result.tables }));
+}
+
+/** GET /internal/deploy/ddl/verify — report schema truth for each table in `NEON_DDL_RECORDS`. */
+async function ddlVerifyRoute(input: RunbookRouteInput, _request: RunbookRequest, requestId: RequestId): Promise<ApiResponse> {
+  // AUTHN FIRST (the boundary's own 401 law — match the existing envelope shape exactly).
+  const authorization = input.verifyInternalAuthorization(_request.headers.authorization);
+  if (authorization === null) {
+    return runbookError(requestId, apiError('unauthenticated', 'a Bearer internal credential token is required on this route of the internal plane'));
+  }
+  // The durable seam must be built (Neon keys present). When it is not, the
+  // matrix's Neon-absent precedent applies: the typed `deploy_adapter_absent`
+  // 503 — NEVER attempt any Neon traffic in that state.
+  if (input.durable === null) {
+    return runbookError(requestId, apiError('unavailable', 'the neon adapter is not configured (its environment keys are absent — see deploy/.env.example); the runbook route degrades this request (R46) — deploy_adapter_absent'));
+  }
+  // Verify schema truth: for each table named in `NEON_DDL_RECORDS`,
+  // whether it exists (information_schema only — L12: NO tenant data
+  // queried; the query is parameterized end-to-end).
+  const result: DdlVerifyResult = await input.durable.runbook.verifyDdl();
+  if (!result.ok) {
+    return runbookError(requestId, apiError('unavailable', `${result.error.message}`));
+  }
+  return runbookSuccess(requestId, deepFreeze({ tables: result.tables, coverage: result.coverage }));
+}
+
+function runbookSuccess(requestId: RequestId, data: unknown, status = 200): ApiResponse {
+  return deepFreeze({ status, headers: { 'x-request-id': requestId, 'x-api-version': CURRENT_API_VERSION }, body: { requestId, data } });
+}
+
+function runbookError(requestId: RequestId, error: ApiError): ApiResponse {
+  const headers: Record<string, string> = { 'x-request-id': requestId, 'x-api-version': CURRENT_API_VERSION };
+  if (error.retryAfterMs !== undefined) headers['retry-after-ms'] = String(error.retryAfterMs);
+  return deepFreeze({ status: error.status, headers, body: { requestId, error } });
+}
+
+/**
+ * Serve one request off the host-owned internal runbook routes. Returns
+ * `null` when the request is NOT one of them (the caller falls through to
+ * the demo-substance / durable-substance routes or the frozen boundary —
+ * the pre-W-28 behavior, byte-identical) or when the method is not the
+ * route's own (the boundary answers the typed not-found /
+ * method-not-allowed for those paths itself, exactly as before). `serial`
+ * is the caller's per-instance request counter — the minted request ids
+ * stay unique per invocation (mirrors `serveDemoSubstanceRoute`'s serial).
+ *
+ * HOST-OWNED PATTERN (cites the W-8/W-25A precedent): the runbook routes
+ * are served BEFORE the boundary wrap, exactly like the demo-substance
+ * routes (`GET /v1/jobs`, `GET /v1/execution/submissions`). The paths are
+ * declared nowhere in the frozen route table; without this host-route
+ * section they would answer the typed not-found. Under the DEMO backing
+ * (or the durable backing without Neon keys) they answer the typed
+ * `deploy_adapter_absent` 503 (the matrix's Neon-absent row — the seam
+ * was not built).
+ */
+export async function serveRunbookRoute(input: RunbookRouteInput, request: RunbookRequest, serial: number): Promise<ApiResponse | null> {
+  if (request.path === '/internal/deploy/ddl/apply' && request.method === 'POST') {
+    return ddlApplyRoute(input, request, runbookRequestId(request, serial));
+  }
+  if (request.path === '/internal/deploy/ddl/verify' && request.method === 'GET') {
+    return ddlVerifyRoute(input, request, runbookRequestId(request, serial));
+  }
+  return null;
 }

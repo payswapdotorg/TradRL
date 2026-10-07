@@ -56,6 +56,16 @@ export function fakeProviders(): FakeProviders {
   const redis = new Map<string, string>();
   const objects = new Map<string, string>();
   const tables = new Map<string, { params: readonly string[] }[]>();
+  // W-28 (lane B): the runbook's DDL apply surface. The fake models the
+  // live Postgres `information_schema.tables` truth — a freshly-CREATEd
+  // table appears here even before any INSERT lands (an empty table is a
+  // real table — `SELECT table_name FROM information_schema.tables` finds
+  // it). The existing `tables` map only carries tables that have INSERT
+  // rows, so the runbook's CREATE statements record their existence here
+  // and the verify query reads them back. Both maps are consulted by the
+  // information_schema SELECT (the union — what the real catalog would
+  // answer).
+  const createdTables = new Set<string>();
   let failing = false;
   const responder = (text: string, status = 200) => ({
     ok: status >= 200 && status < 300,
@@ -68,6 +78,40 @@ export function fakeProviders(): FakeProviders {
     if (url.endsWith('/sql')) {
       seen.neon += 1;
       const parsed = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as { query: string; params: string[] };
+      // W-28 (lane B): the DDL runbook's CREATE TABLE / CREATE INDEX
+      // statements. The DDL records in NEON_DDL_RECORDS are multi-statement
+      // (CREATE TABLE ... ; CREATE INDEX ...); the live proxy accepts
+      // multi-statement queries when no params are bound. The DDL strings
+      // carry leading/trailing whitespace (the template literal that
+      // declares them starts with a newline) — the check trims before
+      // matching the start, the way the live proxy would parse the query.
+      // The fake records every `tradrl_*` identifier in the DDL string in
+      // `createdTables` (both table names AND index names — the index names
+      // are harmless extras: the verify query only ever asks for the table
+      // names in NEON_DDL_RECORDS, and the union is the information_schema
+      // truth anyway). The fake answers the same command tag the live
+      // proxy does (a DML envelope — the client's decoder accepts the
+      // `command`/`rowCount` shape, NOT the select shape). Idempotent by
+      // construction: a second apply is a no-op (the set already holds
+      // the names).
+      const trimmedQuery = parsed.query.trim();
+      if (trimmedQuery.startsWith('CREATE TABLE IF NOT EXISTS') || trimmedQuery.startsWith('CREATE INDEX IF NOT EXISTS')) {
+        for (const match of parsed.query.matchAll(/\b(tradrl_\w+)\b/g)) {
+          createdTables.add(match[1] as string);
+        }
+        return responder(JSON.stringify({ command: 'CREATE TABLE', rowCount: 0 }));
+      }
+      // W-28 (lane B): the DDL runbook's verify query — `SELECT table_name
+      // FROM information_schema.tables WHERE table_name IN ($1..$n)`. The
+      // fake answers with the subset of the requested table names that
+      // exist in `createdTables` OR in `tables` (an INSERT implicitly
+      // creates the table — the real catalog lists both). The response is
+      // a SELECT envelope (array mode — each row is `[table_name]`).
+      if (parsed.query.startsWith('SELECT table_name FROM information_schema.tables')) {
+        const present = new Set<string>([...createdTables, ...tables.keys()]);
+        const found = parsed.params.filter((name) => present.has(name));
+        return responder(JSON.stringify({ fields: [{ name: 'table_name', typeOID: 25 }], rows: found.map((name) => [name]) }));
+      }
       const insert = /^INSERT INTO (tradrl_\w+) \(([^)]+)\)/.exec(parsed.query);
       if (insert !== null) {
         const table = insert[1] as string;
