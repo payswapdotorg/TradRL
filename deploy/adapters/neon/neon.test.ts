@@ -34,6 +34,7 @@ import {
   projectListStatement,
   projectNextOrdinalStatement,
   projectPutStatement,
+  projectSessionListStatement,
   statementDigest,
   type BuiltStatement,
 } from './stores';
@@ -113,6 +114,21 @@ function fakeNeon(seed: readonly FakeRow[] = []): { fetchLike: FetchLike; calls:
       }
       rows.push({ table: insertMatch[1] as string, params });
       return responder(JSON.stringify({ command: 'INSERT 0 1', rowCount: 1 }));
+    }
+    // FW-MI-A (MI-D1): the session-listing JOIN — the projects LEFT JOINed
+    // with their goal-set rows (one row per project, the goal cell NULL on
+    // the LEFT JOIN miss), ordered by created_at (tradrl_projects INSERT
+    // param 5 — see TABLE_SPEC's order note; the JOIN reads param 4, the
+    // created_at column itself).
+    if (/^SELECT p\.payload AS project_payload, g\.payload AS goal_payload FROM tradrl_projects p LEFT JOIN tradrl_project_goals g/.test(query)) {
+      const projects = rows.filter((row) => row.table === 'tradrl_projects' && row.params[0] === params[0]);
+      const goals = rows.filter((row) => row.table === 'tradrl_project_goals');
+      const ordered = [...projects].sort((a, b) => Number(a.params[4]) - Number(b.params[4]));
+      const joined = ordered.map((row) => {
+        const goal = goals.find((entry) => entry.params[0] === row.params[0] && entry.params[1] === row.params[1]);
+        return [row.params[6] ?? null, goal === undefined ? null : goal.params[2] ?? null];
+      });
+      return responder(JSON.stringify({ fields: [{ name: 'project_payload', typeOID: 25 }, { name: 'goal_payload', typeOID: 25 }], rows: joined }));
     }
     const selectMatch = /^SELECT payload FROM (tradrl_\w+)/.exec(query);
     if (selectMatch !== null) {
@@ -444,6 +460,33 @@ describe('deploy/adapters/neon — the stores', () => {
     expect(malformed.ok).toBe(false);
   });
 
+  it('goal sets with the ADDITIVE launch world (D-8, W-28): the world rides the same opaque payload, round-trips verbatim, and a pre-W-28 row (no world) still decodes', async () => {
+    const fake = fakeNeon();
+    const store = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const goal = { id: 'goal-tenant-a', version: 1, tenantId: 'tenant-a' };
+    const constraintSet = { id: 'cs-tenant-a', version: 1, tenantId: 'tenant-a' };
+    const world = {
+      markets: ['BTC-USD', 'ETH-USD'], venues: ['binance', 'kraken'], dataSources: ['candle-v1', 'depth-v1'],
+      executionMode: 'simulation', capitalBudget: '500000.00', riskBudget: '40000.00',
+      horizon: { startsAt: 1, endsAt: 2 },
+    };
+    // The launch-time write (the create, no world yet) followed by the world-merge write (the kickoff job's capture).
+    expect((await store.putGoalSet('tenant-a', 'prj_world', { goal, constraintSet })).ok).toBe(true);
+    expect((await store.putGoalSet('tenant-a', 'prj_world', { goal, constraintSet, world })).ok).toBe(true);
+    const got = await store.goalSetOf('tenant-a', 'prj_world');
+    expect(got.ok).toBe(true);
+    if (got.ok && got.value !== null) {
+      expect(got.value.goal).toEqual(goal);
+      expect(got.value.constraintSet).toEqual(constraintSet);
+      expect(got.value.world).toEqual(world); // the additive field round-trips verbatim (the opaque payload law)
+    }
+    // A pre-W-28 row (written without a world) decodes exactly as before — no fabricated world.
+    expect((await store.putGoalSet('tenant-a', 'prj_legacy', { goal, constraintSet })).ok).toBe(true);
+    const legacy = await store.goalSetOf('tenant-a', 'prj_legacy');
+    expect(legacy.ok).toBe(true);
+    if (legacy.ok && legacy.value !== null) expect(legacy.value.world).toBeUndefined();
+  });
+
   it('projects: put/get/list round-trip; the event log appends and reads back in order', async () => {
     const fake = fakeNeon();
     const store = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
@@ -589,3 +632,55 @@ function postMortemRecord(tenant: string, postMortemId: string): Record<string, 
 function projectRecord(tenant: string, projectId: string): Record<string, unknown> {
   return { id: projectId, tenantId: tenant, name: `Project ${projectId}`, executionMode: 'simulation', lifecycle: { status: 'active' }, lineage: {}, createdAt: 1, updatedAt: 1 };
 }
+
+// ---------------------------------------------------------------------------
+// FW-MI-A (MI-D1): the session-listing JOIN — the statement + the store
+// round-trip (the fresh, one-round-trip read the session routes serve)
+// ---------------------------------------------------------------------------
+
+describe('deploy/adapters/neon — FW-MI-A: the session-listing JOIN (the fresh session read)', () => {
+  it('the statement is tenant-scoped (L12: param 1 binds the tenant), LEFT JOINed with the goal sets, in creation order', () => {
+    const built = projectSessionListStatement('tenant-demo');
+    expect(built.sql).toBe('SELECT p.payload AS project_payload, g.payload AS goal_payload FROM tradrl_projects p LEFT JOIN tradrl_project_goals g ON g.tenant = p.tenant AND g.project_id = p.project_id WHERE p.tenant = $1 ORDER BY p.created_at');
+    expect(built.params).toEqual(['tenant-demo']); // the tenant is a bind parameter, never interpolated
+  });
+
+  it('the store round-trip: one row per project, the goal payload decoded beside it, the ownership + the LEFT JOIN miss both legible', async () => {
+    const project = (id: string, name: string, createdAt: number) => JSON.stringify({ id, tenantId: 'tenant-demo', name, executionMode: 'simulation', lifecycle: { projectId: id, status: 'active' }, lineage: { projectId: id, goal: { goalId: `goal-${id}`, version: 1 }, constraintSet: { id: `cs-${id}`, version: 1 } }, createdAt, updatedAt: createdAt });
+    const goalSet = (ownerSession?: string) => JSON.stringify({ goal: { goalId: 'goal-1' }, constraintSet: { id: 'cs-1' }, ...(ownerSession === undefined ? {} : { ownerSession }) });
+    const seeded: readonly FakeRow[] = [
+      // created LATER but created_at EARLIER — the JOIN orders by created_at, not insert order
+      { table: 'tradrl_projects', params: ['tenant-demo', 'prj-b', 'desk b', 'active', '100', '100', project('prj-b', 'desk b', 100)] },
+      { table: 'tradrl_projects', params: ['tenant-demo', 'prj-a', 'desk a', 'active', '200', '200', project('prj-a', 'desk a', 200)] },
+      { table: 'tradrl_project_goals', params: ['tenant-demo', 'prj-a', goalSet('session-a')] },
+      // a FOREIGN tenant's rows never cross (the JOIN's WHERE p.tenant = $1)
+      { table: 'tradrl_projects', params: ['tenant-other', 'prj-x', 'foreign', 'active', '50', '50', project('prj-x', 'foreign', 50)] },
+      { table: 'tradrl_project_goals', params: ['tenant-other', 'prj-x', goalSet('session-x')] },
+      // a malformed project payload row is skipped fail-closed, never a throw
+      { table: 'tradrl_projects', params: ['tenant-demo', 'prj-bad', 'bad', 'active', '10', '10', 'not json {'] },
+    ];
+    const fake = fakeNeon(seeded);
+    const store = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const rows = await store.projectSessionRowsOf('tenant-demo');
+    expect(rows.ok).toBe(true);
+    if (!rows.ok) return;
+    expect(rows.value.length).toBe(2); // prj-b (created_at 100) then prj-a (200) — the malformed row skipped, the foreign tenant's never read
+    const first = rows.value[0] as { project: { id: string }; ownerSession: string | null; goalSet: { ownerSession?: unknown } | null };
+    expect(first.project.id).toBe('prj-b');
+    expect(first.ownerSession).toBe(null); // the LEFT JOIN miss — prj-b has NO goal set (unowned)
+    expect(first.goalSet).toBe(null);
+    const second = rows.value[1] as { project: { id: string }; ownerSession: string | null; goalSet: { ownerSession?: unknown } | null };
+    expect(second.project.id).toBe('prj-a');
+    expect(second.ownerSession).toBe('session-a'); // the ownership stamps legibly beside the record
+    expect(second.goalSet?.ownerSession).toBe('session-a');
+  });
+
+  it('R46: a degraded Neon read is the typed failure — never a throw, never a partial session view', async () => {
+    const store = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: failingFetch, instants });
+    const rows = await store.projectSessionRowsOf('tenant-demo');
+    expect(rows.ok).toBe(false);
+    if (rows.ok) return;
+    expect(rows.error.code).toBeTruthy();
+    expect(rows.error.message.length).toBeGreaterThan(0);
+  });
+});

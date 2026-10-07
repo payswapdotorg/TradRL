@@ -17,12 +17,13 @@
 //      the last known world, never a blank.
 
 import { describe, expect, it } from 'vitest';
-import type { ConstraintSetStatement, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { ConstraintSetStatement, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { LaunchDraft } from '../core/launch';
 import { systemNowMs } from '../core/clock';
 import { AvailabilityViolationError, CrossTenantRenderError, PolicyEnforcementError, WallClockReadError } from '../core/errors';
 import { assertVisible } from '../core/availability';
 import { openWorkspace, reduceAll, type WorkspaceEvent, type WorkspaceState } from '../core/workspace';
-import { capsuleFromOutcome, capsuleFromPostMortem } from '../core/evidence';
+import { capsuleFromOutcome, capsuleFromPostMortem, capsuleFromJob } from '../core/evidence';
 import { WORKSPACE_SECTIONS } from '../core/sections';
 import { assertVerdictFaithful, jobResultSectionOf, predicatePhraseOf, renderConsoleModel, serializeConsoleModel, submissionVerdictBadgeOf, type VerdictBadge } from './model';
 import { defaultShellView } from './shell';
@@ -416,6 +417,67 @@ describe('render model: the job RESULT section (§4.5a — the R1 fix, W-19)', (
   });
 });
 
+// ---------------------------------------------------------------------------
+// D-9 (W-28): the result->job lineage leg — the job capsules in the
+// Evidence section (ALONGSIDE the read families) + the job sheet's own
+// capsule affordance (the bidirectional leg L2 verified for outcome
+// capsules: a capsule that references its job, and the job's result view
+// linking its capsule).
+// ---------------------------------------------------------------------------
+
+describe('render model: D-9 — the job capsules (the result->job lineage leg, W-28)', () => {
+  /** A workspace with one outcome AND one completed research job with its release-candidate result. */
+  function workspaceWithResultJob(): WorkspaceState {
+    const job = completedResearchJob({ kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' });
+    return reduceAll(populatedWorkspace(), [
+      { kind: 'job-updated', at: T0 + 40, job },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  it('the Evidence section lists the job capsule ALONGSIDE the read families (the research result is no longer a lineage leaf)', () => {
+    const state = reduceAll(workspaceWithResultJob(), [{ kind: 'section-selected', at: T0 + 50, section: 'evidence' }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section' }));
+    const outcomeCapsule = capsuleFromOutcome(SCOPE, outcome());
+    const jobCapsule = capsuleFromJob(SCOPE, completedResearchJob({ kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' }));
+    expect(bytes).toContain(`data-capsule-open="${outcomeCapsule.capsuleId}"`); // the read family's capsule survives unchanged
+    expect(bytes).toContain(`data-capsule-open="${jobCapsule.capsuleId}"`);    // the job-derived capsule lists beside it
+    // opening the job capsule renders the lineage leg: the JOB REF + the provenance line
+    const opened = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', openCapsule: jobCapsule.capsuleId }));
+    expect(opened).toContain('refs: job:job-r1');
+    expect(opened).toContain('read from /v1/jobs/:jobId'); // the provenance line's route
+    expect(opened).toContain('capsule-provenance');
+    expect(opened).toContain('job job-r1');               // the entity id in the provenance line
+  });
+
+  it('the job\'s detail sheet carries its own capsule INLINE (the bidirectional affordance — the result view links its capsule)', () => {
+    const state = workspaceWithResultJob();
+    const jobCapsule = capsuleFromJob(SCOPE, completedResearchJob({ kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' }));
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', sheet: { kind: 'job', id: 'job-r1' } }));
+    expect(bytes).toContain('data-def="RESULT"');                        // the result view renders (§4.5a)
+    expect(bytes).toContain(`data-capsule-open="${jobCapsule.capsuleId}"`); // ...and its capsule badge rides the sheet
+  });
+
+  it('a job WITHOUT a result mints no capsule — the sheet renders no badge (nothing fabricated, L20)', () => {
+    const state = populatedWorkspace(); // the fixture's job-1 is 'running' with no result
+    const viewing = reduceAll(state, [{ kind: 'view-live', at: T0 + 50 }]);
+    const bytes = serializeVNode(renderConsoleModel(viewing, T0 + 50, { ...defaultShellView(viewing), accountView: 'section', sheet: { kind: 'job', id: 'job-1' } }));
+    expect(bytes).not.toContain('data-action="capsule-open"');
+  });
+
+  it('a workspace with NO capsule sources renders the Evidence teaching empty state (unchanged)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'evidence' },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section' }));
+    expect(bytes).toContain('No evidence capsules at this view instant.');
+    expect(bytes).toContain('Open Outcomes');
+    expect(bytes).not.toContain('data-action="capsule-open"');
+  });
+});
+
 describe('render model: constraint and criterion bounds (§4.5 — the R5 fix, W-19)', () => {
   /** The fixture constraint set: the M5 finding's exact three (a budget equals, a drawdown limit.max, a range). */
   function constraintSet(): ConstraintSetStatement {
@@ -581,5 +643,388 @@ describe('render model: the OUTCOMES post-mortem cards (D-2 — the W-24 fix)', 
     ]);
     const foreign = { ...anchored, postMortems: [{ ...postMortem(), lineage: { ...postMortem().lineage, tenant: 'tenant-b' } }] } as WorkspaceState;
     expect(() => serializeConsoleModel({ ...foreign, selectedSection: 'outcomes' } as WorkspaceState, T0 + 60)).toThrow(CrossTenantRenderError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-8 (W-28) — THE MARKET WORLD SECTION'S BINDING: the section was bound to
+// the IN-SESSION launch draft (state.launch.draft) only, so after a reload
+// (or a scope switch, or a cold start) it rendered the teaching empty state
+// forever for every launched project — M4's + L5's re-run finding, the
+// re-run's ONLY project blocker. The fix rebinds it to the PERSISTED world
+// (state.world — the host goal route's additive `world` field) FIRST, with
+// the draft remaining the source only while the wizard is open in a scope
+// that has no world yet, and the teaching empty state rendering ONLY for a
+// project that genuinely has no world on record (the demo scope).
+// ---------------------------------------------------------------------------
+
+describe('render model: the MARKET WORLD section (D-8 — the persisted launch world, W-28)', () => {
+  /** The fixture persisted world (the host goal route's additive `world` shape). */
+  function world(overrides: Partial<ProjectGoalWorldSpec> = {}): ProjectGoalWorldSpec {
+    return {
+      markets: ['BTC-USD', 'ETH-USD', 'SOL-USD'],
+      venues: ['binance', 'kraken'],
+      dataSources: ['candle-v1', 'depth-v1', 'trades-v1'],
+      executionMode: 'simulation',
+      capitalBudget: '750000.00',
+      riskBudget: '60000.00',
+      horizon: { startsAt: T0, endsAt: T0 + 2_592_000_000 },
+      ...overrides,
+    };
+  }
+
+  it('a workspace with a PERSISTED world (the reload path — no session draft anywhere) renders the world card, NOT the teaching empty state', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'goal-loaded', at: T0 + 5, goal: goalStatementOf(), constraintSet: constraintSetOf(), world: world() },
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    expect(state.launch.draft).toBeNull(); // the reload path: no in-session draft — the pre-fix section rendered the empty state HERE
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-market-world="persisted"');      // the persisted-world card
+    expect(bytes).toContain('BTC-USD, ETH-USD, SOL-USD');          // the launched markets
+    expect(bytes).toContain('binance, kraken');                    // the launched venues
+    expect(bytes).toContain('candle-v1, depth-v1, trades-v1');     // the launched data sources
+    expect(bytes).toContain('750000.00');                          // the capital budget, exact decimal
+    expect(bytes).toContain('60000.00');                           // the risk budget, exact decimal
+    expect(bytes).not.toContain('No launch context yet');          // the D-8 defect is gone
+  });
+
+  it('the persisted world WINS over a stale session draft (the D-15 cross-scope bleed, closed for this section): a draft from ANOTHER scope never renders here', () => {
+    // a workspace with BOTH: a persisted world (this scope's own) and a leftover
+    // launch draft (another scope's session context — D-15's bleed source)
+    const draft = { ...blankDraft(), markets: ['STALE-MKT'], venues: ['stale-venue'], dataSources: ['stale-feed'] };
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'launch-draft-started', at: T0 + 1, draft },
+      { kind: 'goal-loaded', at: T0 + 5, goal: goalStatementOf(), constraintSet: constraintSetOf(), world: world() },
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('BTC-USD, ETH-USD, SOL-USD'); // the SCOPE's own world renders
+    expect(bytes).not.toContain('STALE-MKT');             // the foreign session draft never bleeds in
+    expect(bytes).not.toContain('Market world (launch context)'); // the draft card lost its precedence
+  });
+
+  it('the in-session DRAFT still renders while the wizard is open in a scope that has NO world yet (the pre-W-28 behavior, preserved)', () => {
+    const draft = { ...blankDraft(), markets: ['SPY', 'GLD'], venues: ['venue-x'], dataSources: ['data:ohlcv-1d'] };
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'launch-draft-started', at: T0 + 1, draft },
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('Market world (launch context)'); // the draft card (the in-session source)
+    expect(bytes).toContain('SPY, GLD');
+    expect(bytes).not.toContain('No launch context yet');
+  });
+
+  it('a workspace with NEITHER a world NOR a draft (the demo scope — its seeded goal genuinely has no world fields) renders the TEACHING EMPTY STATE', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'goal-loaded', at: T0 + 5, goal: goalStatementOf(), constraintSet: constraintSetOf() }, // NO world on the wire
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('No launch context yet — the market world is specified at launch.'); // the teaching empty state stays
+    expect(bytes).toContain('Open Goal'); // its single action stays
+    expect(bytes).not.toContain('data-market-world');
+  });
+
+  /** A minimal goal statement (the goal-loaded pair's first half). */
+  function goalStatementOf(): GoalStatement {
+    return {
+      id: 'goal-1', version: 1, tenantId: 'tenant-a', objective: 'Compound the book.',
+      horizon: { startsAt: T0, endsAt: T0 + 90_000 },
+      successCriteria: { criteria: [], requiredSatisfaction: 1 },
+      evaluation: { blindRef: 'ev-blind', walkForwardRef: 'ev-wf', regimeRef: 'ev-regime', adversarialRequired: false },
+      createdAt: T0,
+    };
+  }
+
+  /** A minimal constraint-set statement (the goal-loaded pair's second half). */
+  function constraintSetOf(): ConstraintSetStatement {
+    return { id: 'cs-1', version: 1, tenantId: 'tenant-a', constraints: [], createdAt: T0 };
+  }
+
+  /** A blank launch draft (core/launch-form's own factory — the wizard's opening state). */
+  function blankDraft(): LaunchDraft {
+    return {
+      name: 'Alpha Seeker',
+      objective: 'Find and keep an edge in momentum.',
+      horizon: { startsAt: T0, endsAt: T0 + 86_400_000 },
+      successCriteria: [{ id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 } }],
+      evaluation: { blindRef: 'eval:blind-1', walkForwardRef: 'eval:wf-1', regimeRef: 'eval:regime-1', adversarialRequired: true },
+      constraints: [],
+      capitalBudget: '10000.00',
+      riskBudget: '250.00',
+      markets: ['SPY'],
+      venues: ['venue-x'],
+      dataSources: ['data:ohlcv-1d'],
+      executionMode: 'simulation',
+      preferences: [],
+    };
+  }
+});
+
+// ---------------------------------------------------------------------------
+// D-11 (W-29) — THE HOME HERO'S LAUNCH BANNER. M4's finding: after the
+// launch completed, Home kept the "A launch is in progress — details
+// below." banner AND hid the launch-entry buttons (a second launch
+// required a page reload). The banner is now PHASE-DRIVEN: it renders
+// ONLY while the tracked launch is genuinely in flight, and a concluded
+// launch (launched/failed, no open wizard) restores the entry CTA.
+// ---------------------------------------------------------------------------
+
+describe('render model: D-11 — the Home hero\'s launch banner clears when the launch concludes', () => {
+  function homeBytes(events: readonly WorkspaceEvent[]): string {
+    const state = reduceAll(openWorkspace(SCOPE, T0), events);
+    return serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
+  }
+
+  it('while the launch is IN FLIGHT the banner renders and the entry CTA is away', () => {
+    const bytes = homeBytes([{ kind: 'launch-submitted', at: T0 + 1, projectId: 'proj-a', jobId: 'job-9' }]);
+    expect(bytes).toContain('A launch is in progress — details below.');
+    expect(bytes).toContain('data-hero-launch="launching"');
+    expect(bytes).not.toContain('data-action="launch-start"');
+  });
+
+  it('a COMPLETED launch restores the entry CTA — the banner clears (no reload needed for a second launch)', () => {
+    // the jobs-list race shape: the kickoff job arrives already complete
+    // (the D-11 reducer closes the launch on the record itself)
+    const bytes = homeBytes([
+      { kind: 'launch-submitted', at: T0 + 1, projectId: 'proj-a', jobId: 'job-9' },
+      { kind: 'job-updated', at: T0 + 2, job: { jobId: 'job-9', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: T0 + 1, completedAt: T0 + 5 } },
+    ]);
+    expect(bytes).toContain('data-action="launch-start"');       // the launch-entry button is back
+    expect(bytes).toContain('Describe your goal');               // the hero's own CTA copy
+    expect(bytes).not.toContain('A launch is in progress');      // the banner is gone
+    // the launch panel below keeps the concluded launch's own card (the honest terminal render)
+    expect(bytes).toContain('Launch progress');
+    expect(bytes).toContain('data-launch-phase="complete"');
+  });
+
+  it('a FAILED launch restores the entry CTA too — the error card stays in the launch panel, never the hero', () => {
+    const bytes = homeBytes([
+      { kind: 'launch-submitted', at: T0 + 1, projectId: 'proj-a', jobId: 'job-9' },
+      { kind: 'job-updated', at: T0 + 2, job: { jobId: 'job-9', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'failed', submittedAt: T0 + 1 } },
+    ]);
+    expect(bytes).toContain('data-action="launch-start"');
+    expect(bytes).not.toContain('A launch is in progress');
+    expect(bytes).toContain('Launch failed'); // the error card renders in the launch panel below
+  });
+
+  it('the wizard-open note still wins while a draft is active (the J3 resume hint, unchanged)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [{ kind: 'launch-draft-started', at: T0 + 1, draft: blankDraftOfD11() }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
+    expect(bytes).toContain('The launch wizard is open — continue below.');
+    expect(bytes).toContain('data-hero-launch="draft"');
+    expect(bytes).not.toContain('data-action="launch-start"');
+  });
+
+  /** The blank draft fixture (the D-11 describe's own copy — the wizard's opening state). */
+  function blankDraftOfD11(): LaunchDraft {
+    return {
+      name: 'Alpha Seeker',
+      objective: 'Find and keep an edge in momentum.',
+      horizon: { startsAt: T0, endsAt: T0 + 86_400_000 },
+      successCriteria: [{ id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 } }],
+      evaluation: { blindRef: 'eval:blind-1', walkForwardRef: 'eval:wf-1', regimeRef: 'eval:regime-1', adversarialRequired: true },
+      constraints: [],
+      capitalBudget: '10000.00',
+      riskBudget: '250.00',
+      markets: ['SPY'],
+      venues: ['venue-x'],
+      dataSources: ['data:ohlcv-1d'],
+      executionMode: 'simulation',
+      preferences: [],
+    };
+  }
+});
+
+// ---------------------------------------------------------------------------
+// D-13 (W-29) — THE PROJECT-SCOPED INBOX. The inbox state keeps every notice
+// the session folded (append-only), but the SURFACE is project-scoped like
+// every section panel: a multi-desk tenant never sees the demo project's
+// seed notices inside their own desk's inbox (M4/M5/L5: 7 unread = 5 demo +
+// 2 own). The bell badge, the Home unread tile and the activity timeline
+// all follow the same scoped fold.
+// ---------------------------------------------------------------------------
+
+describe('render model: D-13 — the inbox renders the PROJECT-SCOPED view', () => {
+  /** A two-desk session: desk A (proj-a) folds a notice, the workspace adopts desk B (proj-b), desk B folds its own. */
+  function twoDeskState(): WorkspaceState {
+    const events: readonly WorkspaceEvent[] = [
+      { kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-desk-a', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'failed', submittedAt: T0 + 10 } },
+      { kind: 'project-adopted', at: T0 + 30, projectId: 'proj-b' },
+      { kind: 'job-updated', at: T0 + 40, job: { jobId: 'job-desk-b', kind: 'research', tenant: 'tenant-a', project: 'proj-b', status: 'failed', submittedAt: T0 + 35 } },
+      { kind: 'view-live', at: T0 + 50 },
+    ];
+    return reduceAll(openWorkspace(SCOPE, T0), events);
+  }
+
+  it('the Inbox panel lists ONLY the current desk\'s notices — the other desk\'s rows never render, and the scoping is STATED in the copy', () => {
+    const state = twoDeskState();
+    expect(state.inbox.notices).toHaveLength(2); // the STATE keeps both desks' notices (append-only)
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'inbox' }));
+    expect(bytes).toContain('data-row="notice:');                       // the row grammar renders
+    expect(bytes).not.toContain('job-desk-a');                          // desk A's notice NEVER renders in desk B's inbox
+    expect(bytes).toContain('job-desk-b');                              // desk B's own notice renders
+    expect(bytes).toContain('data-inbox-scope="proj-b"');               // the scoping is disclosed
+    expect(bytes).toContain('Notices for this project (proj-b)');       // in plain-English copy
+    expect(bytes).toContain('data-unread="1"');                         // the panel's own count is the scoped one
+  });
+
+  it('the bell badge and Home\'s unread tile + activity timeline follow the SAME scoped fold (another desk\'s notices never badge this desk)', () => {
+    const state = twoDeskState();
+    const homeBytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
+    expect(homeBytes).toContain('data-unread="1"');          // the bell badge: ONE unread (desk B's own)
+    expect(homeBytes).not.toContain('data-unread="2"');      // never the two-desk total
+    expect(homeBytes).toContain('UNREAD NOTICES');           // the Home tile
+    expect(homeBytes).toContain('job-desk-b');               // the activity timeline carries desk B's notice
+    expect(homeBytes).not.toContain('job-desk-a');           // never desk A's
+  });
+
+  it('switching BACK to the first desk restores ITS notices (the state kept them; each desk sees its own)', () => {
+    const state = reduceAll(twoDeskState(), [{ kind: 'project-adopted', at: T0 + 60, projectId: 'proj-a' }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 70, { ...defaultShellView(state), accountView: 'inbox' }));
+    expect(bytes).toContain('job-desk-a');          // desk A's notice is back in ITS inbox
+    expect(bytes).not.toContain('job-desk-b');      // desk B's never renders here
+    expect(bytes).toContain('data-inbox-scope="proj-a"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-17 (W-29) — THE JOB DIALOG'S ELASTIC ELAPSED, FIXED AT THE RECORD. The
+// dialog's METRICS showed "elapsed: pending" for COMPLETE jobs with BOTH
+// timestamps present — the seed job:57d1815d (L2) and the Lead's fresh
+// kickoff job:1f7a71dc — because the sheet derived it from renderJobProgress
+// over the SESSION's observation points (empty for every non-tracked job and
+// after every reload). The sheet now derives it from the record's own
+// timestamps; 'pending' shows ONLY while the record genuinely carries no
+// completedAt.
+// ---------------------------------------------------------------------------
+
+describe('render model: D-17 — the job sheet\'s elapsed derives from the RECORD', () => {
+  /** A COMPLETE job with both timestamps — the D-17 shape (NO session launch tracking anywhere, the reload/seed reality). */
+  function completeSeededJob(): JobRecord {
+    return { jobId: 'job:57d1815d', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: T0 + 20, completedAt: T0 + 28, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1 } };
+  }
+
+  it('a COMPLETE job with timestamps renders its elapsed — no session launch tracking anywhere (the exact persona/Lead shape)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 30, job: completeSeededJob() },
+      { kind: 'view-live', at: T0 + 40 },
+    ]);
+    expect(state.launch.jobId).toBeNull(); // no tracked launch — the pre-fix sheet rendered 'pending' exactly here
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', sheet: { kind: 'job', id: 'job:57d1815d' } }));
+    expect(bytes).toContain('job:57d1815d');
+    expect(bytes).toContain('completed at');      // the record's completion instant renders
+    // the METRICS pair carries the derived duration (8ms — the record's own arithmetic)
+    expect(bytes).toContain('8ms');
+  });
+
+  it('a RUNNING job (genuinely incomplete — no completedAt on the record) still renders pending', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 30, job: { jobId: 'job-running-1', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'running', submittedAt: T0 + 20 } },
+      { kind: 'view-live', at: T0 + 40 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', sheet: { kind: 'job', id: 'job-running-1' } }));
+    expect(bytes).toContain('pending'); // the honest in-flight state
+  });
+
+  it('the Research section\'s row carries the duration meta for EVERY completed job (not only the tracked launch)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 30, job: completeSeededJob() },
+      { kind: 'section-selected', at: T0 + 31, section: 'research' },
+      { kind: 'view-live', at: T0 + 40 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('job:57d1815d');
+    expect(bytes).toContain('8ms'); // the row's meta — the record's own duration
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-18 (W-29 wave 2) — THE COPY POLISH. Three register items pinned at the
+// model layer: (1) the jargon labels explained in place — the Time Machine
+// section's one-line modes explainer (S2: "T-x is cryptic pre-click") and
+// the Watch heading's plain-words description (S2: "'Watch' is unexplained
+// jargon"); (2) the Lessons cards lead with ONE human sentence (L2: the
+// lessons rendered as raw field tuples) — the typed record still renders
+// beneath it; (3) the evidence capsule row's refs line rides the payload's
+// hover title (M5: "evidence ref labels are hard-truncated") — the badge
+// half of the fix is pinned in flow.test.ts. The fourth register item (a
+// risk-utilization view) is DISCLOSED-SKIPPED: the console surface carries
+// bounds only (constraint sets) and breach-time observed values (refusal
+// payloads) — no continuous consumption data exists to render, and
+// fabricating one is forbidden (L20).
+// ---------------------------------------------------------------------------
+
+describe('render model: D-18 — the copy polish (jargon explained, lessons in words, refs hoverable)', () => {
+  it('the Lessons card leads with ONE human sentence — the claim in words + confidence + evidence count (L2: field tuples only before), with the typed record still beneath it', () => {
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'lessons' },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    // the fixture: kind causal, polarity positive, dimension momentum, confidence 0.80, 2 pieces of evidence
+    expect(bytes).toContain('data-lesson-summary="true"');
+    expect(bytes).toContain('A causal lesson the firm treats as positive (momentum) — confidence 0.80, from 2 pieces of evidence.');
+    // the typed record still renders verbatim beneath the sentence (the summary ADDS, never replaces)
+    expect(bytes).toContain('claim kind');
+    expect(bytes).toContain('causal');
+    expect(bytes).toContain('polarity');
+    expect(bytes).toContain('momentum');
+    expect(bytes).toContain('0.80');
+  });
+
+  it('a dimension-less lesson renders its sentence WITHOUT the parenthetical — nothing fabricated', () => {
+    const dimensionless: ServedKnowledge = {
+      record: { ...knowledge().record, knowledgeId: 'knl-nodim', claim: { ...knowledge().record.claim, dimension: null } },
+      status: 'active', supersededBy: null,
+    } as unknown as ServedKnowledge;
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'knowledge-loaded', at: T0 + 32, records: [knowledge(), dimensionless] }, // both lessons — the reducer's list is per-read
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'lessons' },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('A causal lesson the firm treats as positive — confidence 0.80, from 2 pieces of evidence.');
+    expect(bytes).toContain('(momentum)'); // the dimensioned fixture still renders its own parenthetical
+  });
+
+  it('the Time Machine section explains its modes in ONE plain line (S2: "T-x is cryptic pre-click") — every mode named, T-x included', () => {
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'time-machine' },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-tm-explainer="true"');
+    expect(bytes).toContain('The modes: LIVE shows the world as the API serves it now; T-x views it as of x seconds before the latest datum; TIMESTAMP picks one explicit instant; PLAYBACK plays history forward, one knowable-then step at a time.');
+  });
+
+  it('the Decisions section\'s Watch heading explains itself — the hover title + ONE plain line (S2: "\'Watch\' is unexplained jargon")', () => {
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'decisions' },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-watch-explainer="true"');
+    expect(bytes).toContain('The live decision stream — what each agent proposed, the evidence it consulted, and how the gateway answered.');
+    expect(bytes).toContain('title="Watch — the live decision stream: what each agent proposed and how the gateway answered"');
+    expect(bytes).toContain('aria-label="Watch — the live decision stream"');
+  });
+
+  it('the opened evidence capsule\'s payload carries the FULL refs line as its hover title — a wrapped or long refs line never hides a ref (M5\'s finding)', () => {
+    const evidence = reduceAll(populatedWorkspace(), [
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'evidence' },
+    ]);
+    const capsule = capsuleFromOutcome(SCOPE, outcome());
+    const opened = serializeVNode(renderConsoleModel(evidence, T0 + 50, { ...defaultShellView(evidence), accountView: 'section', openCapsule: capsule.capsuleId }));
+    expect(opened).toContain('data-refs-line="refs: fill:fil-1"'); // the fixture outcome's own evidence ref, verbatim
+    expect(opened).toContain('title="refs: fill:fil-1"'); // the hover title carries it too
+    expect(opened).toContain('refs: fill:fil-1'); // and the line itself renders in the mono block
   });
 });

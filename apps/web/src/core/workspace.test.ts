@@ -11,9 +11,11 @@
 //   - section registry completeness (the twelve, selectable, default goal).
 
 import { describe, expect, it } from 'vitest';
-import type { GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ServedKnowledge } from '../api/contracts';
 import {
   CHAIN_ALGORITHM,
+  CHAIN_CANONICAL_RULE,
+  CHAIN_DIGEST_RULE,
   CHAIN_FORMAT_VERSION,
   CHAIN_GENESIS,
   composeWorkspaceExport,
@@ -24,6 +26,7 @@ import {
   serializeWorkspaceExport,
   verifyWorkspaceChain,
   verifyWorkspaceExport,
+  verifyWorkspaceExportReport,
   viewAtOf,
   watchEventsOf,
   type WorkspaceEvent,
@@ -32,7 +35,7 @@ import {
 import { WORKSPACE_SECTIONS } from './sections';
 import { CrossTenantRenderError } from './errors';
 import { canonicalJson, sha256Hex, sha256Of } from './digest';
-import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from './evidence';
+import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsuleFromJob } from './evidence';
 
 const SCOPE = { tenantId: 'tenant-a', projectId: 'proj-a' } as const;
 const T0 = 1_700_000_000_000;
@@ -66,6 +69,25 @@ function goalRecord(): GoalStatement {
 
 function orgSnapshot(status: 'forming' | 'active' = 'active'): OrgStatusSnapshot {
   return { organizationRef: 'org:alpha', tenant: 'tenant-a', project: 'proj-a', status, at: T0 + 10, instanceRefs: ['inst:1', 'inst:2'] };
+}
+
+/** A minimal constraint-set record (the goal-loaded pair's second half). */
+function constraintSetRecord(): ConstraintSetStatement {
+  return { id: 'cs-1', version: 1, tenantId: 'tenant-a', constraints: [], createdAt: T0 };
+}
+
+/** One persisted launch world (the host goal route's additive `world` field — D-8, W-28). */
+function worldRecord(overrides: Partial<ProjectGoalWorldSpec> = {}): ProjectGoalWorldSpec {
+  return {
+    markets: ['BTC-USD', 'ETH-USD'],
+    venues: ['binance', 'kraken'],
+    dataSources: ['candle-v1', 'depth-v1'],
+    executionMode: 'simulation',
+    capitalBudget: '500000.00',
+    riskBudget: '40000.00',
+    horizon: { startsAt: T0, endsAt: T0 + 86_400_000 },
+    ...overrides,
+  };
 }
 
 function jobRecord(status: 'submitted' | 'running' | 'complete' | 'failed' = 'running'): JobRecord {
@@ -132,6 +154,28 @@ describe('workspace: opening + the twelve-section registry', () => {
   it('opening requires a real scope and an integer instant', () => {
     expect(() => openWorkspace({ tenantId: '', projectId: 'p' }, T0)).toThrow(/scope/);
     expect(() => openWorkspace(SCOPE, 1.5)).toThrow(/integer/);
+  });
+});
+
+describe('workspace: the persisted launch world (D-8, W-28 — the goal bundle\'s additive `world` field)', () => {
+  it('goal-loaded WITH a world sets it; a later world-less goal-loaded (the demo scope, a pre-W-28 launch) CLEARS it — the state always mirrors THIS scope\'s read-back truth', () => {
+    let state = openWorkspace(SCOPE, T0);
+    expect(state.world).toBeNull(); // the fresh workspace carries no world
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    expect(state.world).toEqual(worldRecord()); // the persisted launch world entered the state
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord() }); // NO world on the wire
+    expect(state.world).toBeNull(); // the prior scope's world never survives a world-less read (no stale carry)
+    // a re-read WITH a world restores it (the scope's own truth)
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 3, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord({ markets: ['SOL-USD'] }) });
+    expect(state.world?.markets).toEqual(['SOL-USD']);
+  });
+
+  it('the export carries the persisted world inside the workspace state block (D-14\'s world-spec gap, closed at the console\'s half)', () => {
+    const state = reduceWorkspace(openWorkspace(SCOPE, T0), { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    const doc = composeWorkspaceExport(state);
+    expect(doc.workspace.world).toEqual(worldRecord()); // the export's workspace.state block carries the world — reconstructable downstream
+    const parsed = JSON.parse(serializeWorkspaceExport(state)) as { workspace: { world: unknown } };
+    expect(parsed.workspace.world).toEqual(worldRecord()); // and it SURVIVES the serialized bytes
   });
 });
 
@@ -213,17 +257,20 @@ describe('workspace: transitions', () => {
     // append-only chain keeps everything).
     let state = openWorkspace({ tenantId: 'tenant-a', projectId: 'proj-a' }, T0);
     state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 1, project: projectRecord({ lifecycle: { projectId: 'proj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:demo' } }) });
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
     state = reduceWorkspace(state, { kind: 'org-snapshot', at: T0 + 2, snapshot: orgSnapshot() });
     state = reduceWorkspace(state, { kind: 'outcomes-loaded', at: T0 + 3, records: [outcomeRecord()] });
     state = reduceWorkspace(state, { kind: 'knowledge-loaded', at: T0 + 4, records: [knowledgeRecord()] });
     state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 5, job: jobRecord('complete') });
     expect(state.project?.id).toBe('proj-a'); // the deployed boot's loaded world
+    expect(state.world).not.toBeNull(); // the loaded world rides the loaded goal (D-8, W-28)
 
     const adopted = reduceWorkspace(state, { kind: 'project-adopted', at: T0 + 6, projectId: 'proj-launched' });
     expect(adopted.scope.projectId).toBe('proj-launched'); // the workspace FOLLOWS the launch
     expect(adopted.project).toBeNull();                    // the prior project's records left the sections…
     expect(adopted.goal).toBeNull();
     expect(adopted.constraintSet).toBeNull();
+    expect(adopted.world).toBeNull(); // D-8 (W-28): the prior project's world left with them (a scope switch never renders a foreign world)
     expect(adopted.orgSnapshots).toHaveLength(0);
     expect(adopted.outcomes).toHaveLength(0);
     expect(adopted.knowledge).toHaveLength(0);
@@ -301,6 +348,47 @@ describe('workspace: transitions', () => {
     expect(state.launch.phase).toBe('launched');
     state = reduceWorkspace(state, { kind: 'launch-reset', at: T0 + 5 });
     expect(state.launch.phase).toBe('idle');
+  });
+
+  it('D-11 (W-29): the tracked launch\'s phase FOLLOWS ITS JOB\'S RECORD — a terminal job-updated closes the launch even with NO poll observation of the transition (the jobs-list race)', () => {
+    // THE RACE (M4's finding: Home kept the "A launch is in progress"
+    // banner after the launch completed; a second launch required a page
+    // reload): app/console.ts dispatches launch-completed only from
+    // pollJobs, and pollJobs SKIPS jobs already terminal in state — so
+    // when the beat's jobs-list read serves the kickoff job ALREADY
+    // complete (job-updated(complete) with no poll observation of the
+    // transition), the dedicated event never fired and phase stayed
+    // 'launching' forever. The reducer now closes the loop itself.
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'launch-submitted', at: T0 + 2, projectId: 'proj-a', jobId: 'job-9' });
+    expect(state.launch.phase).toBe('launching');
+    // the jobs-list read serves the record already COMPLETE — no
+    // launch-progress, no launch-completed anywhere in the sequence
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 3, job: { ...jobRecord('complete'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('launched');
+    expect(state.launch.progress.map((point) => point.status)).toEqual(['submitted', 'complete']);
+    // the poll path stays idempotent: the same terminal record again (a
+    // re-read) appends its observation and changes the phase nothing
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 4, job: { ...jobRecord('complete'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('launched');
+    // and the dedicated event on top of it changes nothing either
+    state = reduceWorkspace(state, { kind: 'launch-completed', at: T0 + 5 });
+    expect(state.launch.phase).toBe('launched');
+  });
+
+  it('D-11 (W-29): a tracked kickoff job FAILING through the record closes the launch with its error (and a NON-tracked job never touches the launch slice)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'launch-submitted', at: T0 + 2, projectId: 'proj-a', jobId: 'job-9' });
+    // a different project's job completing must not close THIS launch
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 3, job: jobRecord('complete') });
+    expect(state.launch.phase).toBe('launching'); // jobRecord's id is job-1, not the tracked job-9
+    // the tracked job fails through its record (the list-read race again)
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 4, job: { ...jobRecord('failed'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('failed');
+    expect(state.launch.error).toContain('job-9');
+    // a concluded launch never re-opens on later records (the guard is the in-flight phase)
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 5, job: { ...jobRecord('complete'), jobId: 'job-9' } });
+    expect(state.launch.phase).toBe('failed');
   });
 });
 
@@ -689,6 +777,34 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
     }
   });
 
+  it('D-9 (W-28): the export carries the JOB capsules too — one per COMPLETED job WITH a result, never for a resultless one; a re-read mints no duplicate', () => {
+    // richState's own job is 'complete' WITHOUT a result — it mints nothing
+    // (the fixture's pinned 5-capsule list above stays true unchanged).
+    const state = richState();
+    expect((state.jobs[0] as JobRecord).status).toBe('complete');
+    expect((state.jobs[0] as JobRecord).result).toBeUndefined();
+    // the completed job WITH a result: the research result mints its capsule
+    const resultJob: JobRecord = {
+      jobId: 'job-result-1', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete',
+      submittedAt: T0 + 20, completedAt: T0 + 25,
+      result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' },
+    };
+    const withResult = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 26, job: resultJob });
+    const doc = composeWorkspaceExport(withResult);
+    expect(doc.capsules.length).toBe(6); // the 5 read-family capsules + the job capsule
+    const jobCapsule = capsuleFromJob(SCOPE, resultJob);
+    expect(doc.capsules).toContainEqual(jobCapsule); // the lineage leg: a capsule that references its job
+    expect(doc.capsules[5]?.refs).toEqual([{ kind: 'job', ref: 'job-result-1' }]);
+    expect(doc.manifest.counts.capsules).toBe(6); // the manifest stays TRUE (self-describing completeness)
+    // the fold is IDEMPOTENT under re-reads: the reducer's replace-by-id
+    // merge keeps the listing deduped, and the content address derives the
+    // identical capsule — a hydration replay or a re-read mints no duplicate.
+    const reRead = reduceWorkspace(withResult, { kind: 'job-updated', at: T0 + 27, job: { ...resultJob } });
+    expect(reRead.jobs.filter((job) => job.jobId === 'job-result-1')).toHaveLength(1);
+    expect(composeWorkspaceExport(reRead).capsules.length).toBe(6);
+    expect(composeWorkspaceExport(reRead).capsules).toContainEqual(jobCapsule);
+  });
+
   it('the export carries the DECISIONS (the watch records + the gateway\'s own records, exactly as the Decisions section renders)', () => {
     const state = richState();
     const doc = composeWorkspaceExport(state);
@@ -718,8 +834,9 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
     const state = richState();
     const doc = composeWorkspaceExport(state);
     expect(doc.manifest.included).toEqual([
-      'workspace.state', 'events.chain', 'evidence.capsules', 'decisions.watch', 'decisions.gateway', 'readState',
+      'launchWorld', 'workspace.state', 'events.chain', 'evidence.capsules', 'decisions.watch', 'decisions.gateway', 'readState',
     ]);
+    expect(doc.manifest.counts.launchWorld).toBe(doc.launchWorld === null ? 0 : 1); // D-14: the world count is TRUE either way
     expect(doc.manifest.counts.events).toBe(doc.events.length);
     expect(doc.manifest.counts.capsules).toBe(doc.capsules.length);
     expect(doc.manifest.counts.decisionsWatch).toBe(doc.decisions.watch.length);
@@ -734,6 +851,8 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
     expect(doc.chain.genesis).toBe(CHAIN_GENESIS);
     expect(doc.chain.digestRule).toContain('sha256Hex(canonicalJson');
     expect(doc.chain.linkRule).toContain('previousChainHead + digest');
+    // D-14: richState's chain is single-project — no cross-scope note to disclose
+    expect(doc.manifest.chainScopeNote).toBeUndefined();
   });
 
   it('the workspace block carries EVERYTHING but the history (which IS the events chain)', () => {
@@ -764,5 +883,306 @@ describe('workspace: export DETERMINISM (the law extends to the export bytes)', 
     const base = serializeWorkspaceExport(richState());
     const varied = serializeWorkspaceExport(reduceWorkspace(richState(), { kind: 'view-live', at: T0 + 99 }));
     expect(varied).not.toBe(base);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-14 (W-29) — THE EXPORT'S SUBSTANCE: the launch WORLD specification,
+// first-class, and the chain-scope audit note. L5's P19 finding: the world
+// spec (markets/venues/dataSources) was NOWHERE in the export file (the
+// goal object carries no world fields, launch.draft was null) — the launch
+// config was unrecoverable downstream; and L1/L2/L5 noted the events chain
+// legitimately spans projects under a project-scoped export label with
+// every entry self-labeling its projectId and integrity unaffected — a span
+// an audit pack must DISCLOSE, not hide. Both additions are ADDITIVE: the
+// format version stays 2 and v2 readers that do not know the fields verify
+// the document unchanged.
+// ---------------------------------------------------------------------------
+
+describe('workspace: D-14 — the export carries the launch WORLD, first-class (additive)', () => {
+  it('a scope WITH a world exports it as the document\'s own launchWorld field — the full specification, byte-true, surviving the serialized bytes', () => {
+    let state = reduceWorkspace(openWorkspace(SCOPE, T0), { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord({ markets: ['BTC-USD', 'ETH-USD', 'SOL-USD'], venues: ['binance', 'kraken'], dataSources: ['candle-v1', 'depth-v1', 'trades-v1'] }) });
+    state = reduceWorkspace(state, { kind: 'view-live', at: T0 + 2 }); // one chained event, so the export is non-trivial
+    const doc = composeWorkspaceExport(state);
+    expect(doc.launchWorld).toEqual(worldRecord({ markets: ['BTC-USD', 'ETH-USD', 'SOL-USD'], venues: ['binance', 'kraken'], dataSources: ['candle-v1', 'depth-v1', 'trades-v1'] }));
+    expect(doc.launchWorld?.markets).toEqual(['BTC-USD', 'ETH-USD', 'SOL-USD']); // the markets
+    expect(doc.launchWorld?.venues).toEqual(['binance', 'kraken']);               // the venues
+    expect(doc.launchWorld?.dataSources).toEqual(['candle-v1', 'depth-v1', 'trades-v1']); // the data sources
+    expect(doc.manifest.included).toContain('launchWorld');       // the manifest DECLARES it
+    expect(doc.manifest.counts.launchWorld).toBe(1);              // and counts it TRUE
+    // the serialized bytes carry it (the downloaded file is what downstream holds)
+    const parsed = exportedDoc(state);
+    expect(parsed.launchWorld).toEqual(doc.launchWorld);
+    // the goal statement itself stays the frozen served shape — the world rides its own sibling field
+    expect((parsed.workspace as Record<string, unknown>).world).toEqual(doc.launchWorld); // the state block keeps its own copy (W-28)
+  });
+
+  it('a scope with NO world on record (the demo scope — its seeded goal carries no world fields) exports launchWorld: null with the manifest count TRUE at 0 — the honest absence, never a fabricated world', () => {
+    const state = reduceWorkspace(openWorkspace(SCOPE, T0), { kind: 'view-live', at: T0 + 1 });
+    const doc = composeWorkspaceExport(state);
+    expect(doc.launchWorld).toBeNull();
+    expect(doc.manifest.counts.launchWorld).toBe(0);
+    expect(exportedDoc(state).launchWorld).toBeNull(); // survives the bytes
+  });
+
+  it('the additions are ADDITIVE for v2 readers: a document carrying launchWorld + chainScopeNote verifies END TO END, and one WITHOUT them verifies too (the format version stays 2)', () => {
+    const withWorld = reduceWorkspace(openWorkspace(SCOPE, T0), { kind: 'goal-loaded', at: T0 + 1, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    expect(verifyWorkspaceExport(exportedDoc(withWorld))).toEqual({ ok: true });
+    expect(verifyWorkspaceExport(exportedDoc(richState()))).toEqual({ ok: true }); // no world, single-project chain
+    // a PRE-D-14 v2 document (the additive fields stripped) still verifies — no reader breaks
+    const stripped = exportedDoc(withWorld) as Record<string, unknown>;
+    delete stripped.launchWorld;
+    delete (stripped.manifest as Record<string, unknown>).chainScopeNote;
+    expect(verifyWorkspaceExport(stripped)).toEqual({ ok: true });
+  });
+});
+
+describe('workspace: D-14 — the chain-scope audit note (a cross-project chain under a project-scoped label)', () => {
+  /** A session that HELD two scopes: events under proj-a, then the launch adopts proj-launched and more events follow. */
+  function crossScopeState(): WorkspaceState {
+    let state = openWorkspace(SCOPE, T0); // proj-a
+    state = reduceWorkspace(state, { kind: 'connection-changed', at: T0 + 1, status: 'connected' });
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 2, project: projectRecord() });
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 5, job: jobRecord('running') });
+    state = reduceWorkspace(state, { kind: 'project-adopted', at: T0 + 6, projectId: 'proj-launched' }); // the launch bridge / a switch
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 7, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    state = reduceWorkspace(state, { kind: 'view-live', at: T0 + 8 });
+    return state;
+  }
+
+  it('a chain spanning MORE THAN ONE project carries the note: the span named, every entry self-labeled, integrity unaffected — and the export still verifies END TO END', () => {
+    const state = crossScopeState();
+    const doc = composeWorkspaceExport(state);
+    // the span is real: the history carries entries under BOTH project ids
+    const projectIds = new Set(doc.events.map((entry) => entry.projectId));
+    expect(projectIds).toEqual(new Set(['proj-a', 'proj-launched']));
+    // the note discloses it
+    expect(typeof doc.manifest.chainScopeNote).toBe('string');
+    expect(doc.manifest.chainScopeNote).toContain('proj-launched'); // the export's own label
+    expect(doc.manifest.chainScopeNote).toContain('proj-a');        // the spanned project
+    expect(doc.manifest.chainScopeNote).toContain('2 project ids'); // the span's count
+    expect(doc.manifest.chainScopeNote).toContain('self-labels its own projectId');
+    expect(doc.manifest.chainScopeNote).toContain('integrity is unaffected');
+    // the note survives the serialized bytes (the file is what the auditor holds)
+    const manifest = (exportedDoc(state).manifest as Record<string, unknown>);
+    expect(typeof manifest.chainScopeNote).toBe('string');
+    // and the chain verifies END TO END from the file alone — the span never broke integrity
+    expect(verifyWorkspaceExport(exportedDoc(state))).toEqual({ ok: true });
+  });
+
+  it('a SINGLE-project chain carries NO note (nothing to disclose) — and the empty-workspace export carries none either', () => {
+    expect(composeWorkspaceExport(richState()).manifest.chainScopeNote).toBeUndefined();
+    expect(composeWorkspaceExport(openWorkspace(SCOPE, T0)).manifest.chainScopeNote).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MI-D7 (MI wave 1, M5's finding — the export chain under INDEPENDENT
+// verification): "export event seq 179's payload recomputes to a different
+// digest than stored (mutated after sealing without re-hash)". Reproduced
+// and root-caused here FIRST, byte-exact: the deployed demo data's outcome
+// decisionRationale (deploy/vercel/runtime/demo.ts:319) carries the only
+// non-ASCII character in any string the seeded records serve into an event
+// payload (an em dash, U+2014) — so a demo-scope session's outcomes-loaded
+// event carries exactly one non-ASCII payload string. The console's
+// canonicalJson serializes it RAW (UTF-8 — JSON.stringify never escapes
+// non-ASCII); an independent verifier whose canonical-JSON reading escapes
+// non-ASCII (Python json.dumps' DEFAULT ensure_ascii=True, the natural
+// reading of the then-published rule "canonicalJson recursively sorts
+// object keys") recomputes it as \u2014 — same payload, two defensible
+// readings of an underdetermined rule, two different SHA-256 digests, and
+// the divergence reads exactly like M5's seq-179 symptom (one event
+// mismatching in an otherwise clean chain; the eight other professionals'
+// 142-268-link chains verified clean — consistent with raw-UTF-8 verifiers
+// and/or ASCII-only payload sessions). ROOT CAUSE: the code path NEVER
+// mutates a sealed entry (the reducer is append-only — every fold replaces
+// wholesale; no write into history exists anywhere in the tree), and the
+// export verifies end to end under the raw-UTF-8 form — so the defect is
+// the UNDERDETERMINED canonical rule, not a mutation. The fixes below make
+// the invariant hold — EVERY exported chain must verify under the
+// documented in-file rules — three ways: (1) the rule now pins the
+// byte-exact grammar (CHAIN_CANONICAL_RULE, embedded in every export),
+// (2) the linked payload is deeply FROZEN at seal time so an in-place
+// mutation after sealing is impossible BY CONSTRUCTION (append-only: a
+// change arrives as a NEW event — closing the mutation hypothesis
+// mechanically even though no such path existed), and (3) the console
+// itself verifies the downloaded file in the UI
+// (verifyWorkspaceExportReport — S5's explicit ask: no script required).
+// ---------------------------------------------------------------------------
+
+describe('workspace: MI-D7 — the non-ASCII canonical divergence + the published canonical rule', () => {
+  /** The M5 shape: the demo outcome's own decisionRationale prose, em dash and all (deploy/vercel/runtime/demo.ts line 319 — the seeded adverse-gap outcome). */
+  function unicodeOutcomeRecord(): OutcomeRecord {
+    return {
+      ...outcomeRecord(),
+      outcomeId: 'out:demo0001',
+      outcomeClass: 'adverse_gap',
+      decisionRationale: 'The desk approved the 0.75 BTC-USD rebalance on a 0.07 weight drift against the 0.25 target; the realized fill landed -12.5 against the 45.5 expectation (tolerance 0.05) — the adverse gap post-mortem pmr:demo0001 attributes to the simulated venue lag.',
+    } as unknown as OutcomeRecord;
+  }
+
+  /** A session whose outcomes-loaded event carries the non-ASCII payload (the M5 export's seq-179 class). */
+  function unicodeState(): WorkspaceState {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'connection-changed', at: T0 + 1, status: 'connected' });
+    state = reduceWorkspace(state, { kind: 'outcomes-loaded', at: T0 + 30, records: [unicodeOutcomeRecord()] });
+    state = reduceWorkspace(state, { kind: 'view-live', at: T0 + 40 });
+    return state;
+  }
+
+  /**
+   * An INDEPENDENT canonical-JSON implementation — the careful verifier's
+   * reimplementation of the documented rule from the file alone (recursive
+   * key sort + JSON escaping), with the one degree of freedom the
+   * pre-MI-D7 rule left open: whether non-ASCII characters stay RAW
+   * (UTF-8 — ensure_ascii=False / jq / JSON.stringify) or escape to
+   * \uXXXX (Python json.dumps' DEFAULT ensure_ascii=True).
+   */
+  function independentCanonicalJson(value: unknown, asciiEscaped: boolean): string {
+    if (value === null) return 'null';
+    if (typeof value === 'string') {
+      if (!asciiEscaped) return JSON.stringify(value); // the raw-UTF-8 form
+      let out = '"';
+      for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code === 0x22) out += '\\"';
+        else if (code === 0x5c) out += '\\\\';
+        else if (code < 0x20) out += `\\u${code.toString(16).padStart(4, '0')}`;
+        else if (code > 0x7e) out += `\\u${code.toString(16).padStart(4, '0')}`; // python's default: every non-ASCII code unit escapes
+        else out += value[index];
+      }
+      return `${out}"`;
+    }
+    if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'null';
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (Array.isArray(value)) return `[${value.map((element) => independentCanonicalJson(element, asciiEscaped)).join(',')}]`;
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${independentCanonicalJson(record[key], asciiEscaped)}`).join(',')}}`;
+    }
+    return 'null';
+  }
+
+  it('REPRODUCTION (the mismatch class, byte-exact): an independent ASCII-ESCAPED canonical form — Python json.dumps\' default — recomputes a DIFFERENT digest for the non-ASCII payload (the exact "recomputes to a different digest than stored" symptom class M5 reported), while the RAW-UTF-8 form recomputes the STORED digest exactly (the sealed bytes and the stored digest agree — the mismatch lives in the verifier\'s reading of the rule, not in the file)', () => {
+    const state = unicodeState();
+    const entry = state.history.find((candidate) => candidate.payload.kind === 'outcomes-loaded');
+    if (entry === undefined) throw new Error('fixture: the outcomes-loaded event must be linked');
+    // the payload carries the non-ASCII byte class (an em dash, U+2014)
+    expect(JSON.stringify(entry.payload)).toContain('—');
+    const chainedRecord = { seq: entry.seq, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload };
+    const rawFormDigest = sha256Hex(independentCanonicalJson(chainedRecord, false));
+    const asciiFormDigest = sha256Hex(independentCanonicalJson(chainedRecord, true));
+    expect(asciiFormDigest).not.toBe(entry.digest); // the divergent reading — a different digest for exactly the one non-ASCII payload
+    expect(rawFormDigest).toBe(entry.digest);       // the raw-UTF-8 reading recomputes the stored digest — internal consistency never broke
+    // and the two independent readings themselves disagree (the underdetermined rule is the defect)
+    expect(asciiFormDigest).not.toBe(rawFormDigest);
+  });
+
+  it('the export carrying the non-ASCII payload verifies END TO END under the console\'s own file-alone verifier (the invariant holds for every payload shape — the export composes, serializes, round-trips and verifies)', () => {
+    const state = unicodeState();
+    expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state)))).toEqual({ ok: true });
+  });
+
+  it('the published CANONICAL RULE now pins the byte-exact grammar — raw UTF-8 non-ASCII (never \\u-escaped), minimal JSON string escaping, the ECMAScript number form, UTF-16 code-unit key order — and names the ensure_ascii pitfall; it is embedded ADDITIVELY in every export (format version stays 2) and survives the serialized bytes', () => {
+    expect(CHAIN_CANONICAL_RULE).toContain('recursively sorted');
+    expect(CHAIN_CANONICAL_RULE).toContain('UTF-16 code unit');
+    expect(CHAIN_CANONICAL_RULE).toContain('RAW UTF-8');
+    expect(CHAIN_CANONICAL_RULE).toContain('ensure_ascii=False');
+    expect(CHAIN_CANONICAL_RULE).toContain('1e-05'); // the number-form pitfall is named too (ECMAScript 0.00001, not Python repr 1e-05)
+    const doc = composeWorkspaceExport(unicodeState());
+    expect(doc.chain.canonicalRule).toBe(CHAIN_CANONICAL_RULE);
+    expect(doc.formatVersion).toBe(2); // additive — the format version does not move
+    const parsed = exportedDoc(unicodeState());
+    expect((parsed.chain as Record<string, unknown>).canonicalRule).toBe(CHAIN_CANONICAL_RULE); // survives the bytes
+    // a PRE-MI-D7 v2 document (the field absent — M5's own file shape) still verifies: no reader breaks, old exports stay verifiable
+    const stripped = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
+    delete (stripped.chain as Record<string, unknown>).canonicalRule;
+    expect(verifyWorkspaceExport(stripped)).toEqual({ ok: true });
+    // the digest rule POINTS at the canonical rule (sorted keys alone were never sufficient)
+    expect(CHAIN_DIGEST_RULE).toContain('canonicalRule');
+  });
+
+  it('IMMUTABILITY AFTER SEAL: the linked history payload is deeply frozen at link time — an in-place mutation attempt does NOT take, the runtime chain still verifies, and the digest can never diverge from its payload (a change must arrive as a NEW event)', () => {
+    const state = unicodeState();
+    const entry = state.history.find((candidate) => candidate.payload.kind === 'outcomes-loaded');
+    if (entry === undefined) throw new Error('fixture: the outcomes-loaded event must be linked');
+    expect(Object.isFrozen(entry)).toBe(true);               // the entry itself
+    expect(Object.isFrozen(entry.payload)).toBe(true);       // the payload
+    const records = (entry.payload as { records?: unknown }).records;
+    if (!Array.isArray(records)) throw new Error('fixture: the payload carries its records');
+    expect(Object.isFrozen(records)).toBe(true);             // ...and the nested records, deeply
+    expect(Object.isFrozen(records[0])).toBe(true);
+    // the in-place mutation attempt (sloppy mode: silently refused; strict mode: TypeError) does NOT take
+    const hostile = entry.payload as unknown as { records: Array<{ outcomeId: string }> };
+    expect(() => {
+      'use strict';
+      hostile.records[0].outcomeId = 'out:forged';
+    }).toThrow(); // a sealed record refuses the write
+    expect(hostile.records[0].outcomeId).toBe('out:demo0001'); // the payload is UNCHANGED
+    expect(verifyWorkspaceChain(state.history)).toEqual({ ok: true }); // the chain still verifies — the digest still matches its payload
+  });
+
+  it('the COUNTED report (the in-UI verification affordance, S5\'s ask): an honest export reports N/N digests, N/N links and the head match; a tampered one names the break with the counts up to it', () => {
+    const state = unicodeState();
+    const honest = verifyWorkspaceExportReport(JSON.parse(serializeWorkspaceExport(state)));
+    expect(honest.ok).toBe(true);
+    expect(honest.reason).toBeNull();
+    expect(honest.entryCount).toBe(state.history.length);
+    expect(honest.digestsOk).toBe(state.history.length);
+    expect(honest.linksOk).toBe(state.history.length);
+    expect(honest.headMatch).toBe(true);
+    expect(honest.format).toBe('tradrl-workspace-export');
+    expect(honest.formatVersion).toBe(2);
+    // the tampered file: the LAST event's payload field is rewritten — the digest fails there, the counts stop one short, the head can no longer match
+    const tampered = exportedDoc(state);
+    const events = tampered.events as Array<Record<string, unknown>>;
+    const last = events[events.length - 1] as Record<string, unknown>;
+    const lastPayload = last.payload as Record<string, unknown>;
+    lastPayload.at = T0 + 99_999;
+    const broken = verifyWorkspaceExportReport(tampered);
+    expect(broken.ok).toBe(false);
+    expect(broken.reason).toContain(`event ${events.length}'s digest does not match`);
+    expect(broken.entryCount).toBe(events.length);
+    expect(broken.digestsOk).toBe(events.length - 1); // every digest before the break recomputed
+    expect(broken.linksOk).toBe(events.length - 1);
+    expect(broken.headMatch).toBe(false);
+    // a non-document (not JSON of an export) is refused with a counted zero report, never a throw
+    const notAnExport = verifyWorkspaceExportReport({ hello: 'world' });
+    expect(notAnExport.ok).toBe(false);
+    expect(notAnExport.entryCount).toBe(0);
+    expect(notAnExport.headMatch).toBeNull();
+  });
+});
+
+describe('workspace: MI-D9 — the manual stepping events (Step back / Step while paused, append-only)', () => {
+  it('playback-step-back steps the paused view BACK one controlled step, STAYS paused, stays in the playback mode — and links as its own history entry (append-only: the step is an EVENT, never a rewrite)', () => {
+    // The TM events' injected instants all sit at T0 + 2_000 — the
+    // anchor must stay PAST the stepping view (the view may never point
+    // after the anchor; the span here is a real 2s).
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'playback-start', at: T0 + 2_000, fromAt: T0, stepMs: 500 });
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 2_000 });
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 2_000 });
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 2_000 });
+    state = reduceWorkspace(state, { kind: 'playback-paused', at: T0 + 2_000 });
+    expect(viewAtOf(state)).toBe(T0 + 1_500); // three ticks of 500ms from T0
+    const before = state.history.length;
+    state = reduceWorkspace(state, { kind: 'playback-step-back', at: T0 + 2_000 });
+    expect(state.timeMachine.mode).toBe('playback');            // no mode flip (the MI-D9 defect: playback -> t-minus)
+    expect(state.timeMachine.playback?.paused).toBe(true);      // stays paused
+    expect(viewAtOf(state)).toBe(T0 + 1_000);                   // one step BACK (the defect: jumped to anchor-500ms)
+    expect(state.history.length).toBe(before + 1);              // append-only — the step linked as its own event
+    expect(state.history[state.history.length - 1]?.kind).toBe('playback-step-back');
+    expect(verifyWorkspaceChain(state.history)).toEqual({ ok: true }); // the chain still verifies
+  });
+
+  it('playback-step-forward is the user\'s own step while paused: one step forward, STAYING paused (the freeze stops the beat\'s ticks, never the Step control)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'playback-start', at: T0 + 2_000, fromAt: T0, stepMs: 500 });
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 2_000 });
+    state = reduceWorkspace(state, { kind: 'playback-paused', at: T0 + 2_000 });
+    state = reduceWorkspace(state, { kind: 'playback-step-forward', at: T0 + 2_000 });
+    expect(state.timeMachine.playback?.paused).toBe(true);  // still paused — a manual step is not a resume
+    expect(viewAtOf(state)).toBe(T0 + 1_000);                // one step forward from the frozen T0+500
   });
 });

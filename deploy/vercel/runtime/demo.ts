@@ -119,12 +119,14 @@ import {
   isOrgStatusSnapshot,
   isOutcomeRecordMirror,
   isPostMortemRecordMirror,
+  isRecord,
   type ApiService,
   type ControlPlanePort,
   type ExecutionGatewayPort,
   type GatewaySubmissionRecord,
   type GoalStatement,
   type JobRecord,
+  type OutcomeLearningPort,
   type ConstraintSetStatement,
   type OrgStatusSnapshot,
   type OutcomeRecordMirror,
@@ -133,6 +135,7 @@ import {
   type TenantId,
   type TimestampMs,
 } from '../../../services/api/src/index';
+import { deriveProjectEvidence, type ProjectEvidenceSeed } from './project-evidence';
 
 // ---------------------------------------------------------------------------
 // The demo seed constants (fixed, deterministic, tenant-scoped at seed time)
@@ -563,6 +566,134 @@ export function demoSubmissionBlotter(): readonly DemoBlotterRow[] {
 }
 
 // ---------------------------------------------------------------------------
+// THE PER-PROJECT EVIDENCE STREAM (FW-MI-B — MI-D2 + MI-D10: every
+// LAUNCHED desk gets its own honest simulated evidence stream)
+// ---------------------------------------------------------------------------
+
+/**
+ * The structural ports a per-project evidence derivation reads (the
+ * W-25B goal-set capture + the W-28 world capture + the project listing
+ * for the compiled gate). Widened exactly like DemoMachineryContext's
+ * own `ports` — `DemoPorts` satisfies it structurally, and lighter
+ * callers (the tests) may pass the pair alone.
+ */
+export interface DemoEvidencePorts {
+  /** The demo control plane (its goalSets capture — every create's goal + constraint set). */
+  readonly controlPlane: ReturnType<typeof demoControlPlane>;
+  /** The demo job-submission port (its worlds capture — every console-launch spec's world). */
+  readonly jobSubmission: ReturnType<typeof demoJobSubmission>;
+}
+
+/**
+ * THE DEMO ARM'S PER-PROJECT EVIDENCE FOLD (FW-MI-B, MI-D2): one
+ * LAUNCHED project's derived evidence stream — the pure generator
+ * (runtime/project-evidence.ts) applied to the project's OWN captured
+ * envelope (its goal set + its launch world) behind the COMPILE gate
+ * (the project's organization ref must be bound — a draft desk has no
+ * trading history; the machinery's org-compile pass binds it once per
+ * project, so the stream comes into existence at compile time exactly
+ * like the organization itself does).
+ *
+ * The gates (each answers `null` — the honest pre-fix emptiness):
+ *   - the DEMO project is excluded (it carries its own hand-authored
+ *     seed, pinned byte-identical by tests — the derived stream would
+ *     double its records);
+ *   - no captured goal set / no captured world (a foreign create, a
+ *     pre-W-28 launch, a cross-tenant read) — nothing to derive FROM;
+ *   - not compiled (organizationRef null) — the desk has not launched;
+ *   - a malformed or zero-budget envelope — the generator's own gate.
+ *
+ * L12 by construction: the captures key on the AUTHORIZED tenant (the
+ * pipeline injected it at create/submit; a foreign tenant's fold finds
+ * nothing). Deterministic: the same captured envelope derives the same
+ * records on every call, every instance, every cold start — no seeded
+ * state exists to lose.
+ */
+export function demoProjectEvidenceOf(ports: DemoEvidencePorts, tenant: string, project: string): ProjectEvidenceSeed | null {
+  if (project === DEMO_PROJECT_ID) return null; // the demo scope's own hand-authored seed is the whole story there
+  const goalSet = ports.controlPlane.goalSets.get(`${tenant}/${project}`);
+  if (goalSet === undefined) return null; // no captured goal set — nothing to derive from
+  const world = ports.jobSubmission.worlds.get(`${tenant}/${project}`);
+  if (world === undefined) return null; // no captured launch world — no markets to trade
+  const organizationRef = organizationRefOfProject(ports.controlPlane, tenant, project);
+  if (organizationRef === null) return null; // not compiled — a draft desk has no trading history
+  return deriveProjectEvidence({ tenant, project, goal: goalSet.goal, constraintSet: goalSet.constraintSet, world, organizationRef });
+}
+
+/** The organization ref of one project of one tenant (null when unbound, unknown, or the listing fails — R46). */
+function organizationRefOfProject(controlPlane: ControlPlanePort, tenant: string, project: string): string | null {
+  const listed = controlPlane.projectsOf(tenant as TenantId);
+  if (!listed.ok) return null; // R46: a port failure answers nothing — never a crash
+  const record = listed.value.find((entry) => (entry.id as string) === project);
+  if (record === undefined) return null;
+  const organizationRef = record.lifecycle.organizationRef;
+  return typeof organizationRef === 'string' && organizationRef.length > 0 ? organizationRef : null;
+}
+
+/**
+ * THE DURABLE ARM'S EVIDENCE SOURCE (FW-MI-B): the same derivation over
+ * the W-25D seam's own surfaces — the hydrated goal set (goal +
+ * constraint set + the W-28 world, rehydrated at every cold start) and
+ * the hydrated control plane's project listing (the compile gate).
+ * Structural, like DemoEvidencePorts: the composition (runtime/compose.ts)
+ * implements it over the DurableBackingHandle; the same pure generator
+ * runs under both backings (imported, never duplicated).
+ */
+export interface DurableEvidenceSource {
+  /** The durable goal set of one project (null when absent or degraded). */
+  goalSetOf(project: string): { readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; readonly world: LaunchWorldRecord | null } | null;
+  /** The organization ref of one project of one tenant (null when unbound, unknown or degraded). */
+  organizationRefOf(tenant: string, project: string): string | null;
+}
+
+/** THE DURABLE ARM'S PER-PROJECT EVIDENCE FOLD (the same gates as the demo arm's, over the seam's own surfaces). */
+export function durableProjectEvidenceOf(source: DurableEvidenceSource, tenant: string, project: string): ProjectEvidenceSeed | null {
+  if (project === DEMO_PROJECT_ID) return null; // the demo project's fixture substance is boot-written (durable-world.ts R4)
+  const goalSet = source.goalSetOf(project);
+  if (goalSet === null) return null;
+  if (goalSet.world === null) return null; // no launch world — no markets to trade
+  const organizationRef = source.organizationRefOf(tenant, project);
+  if (organizationRef === null) return null; // not compiled — a draft desk has no trading history
+  return deriveProjectEvidence({ tenant, project, goal: goalSet.goal, constraintSet: goalSet.constraintSet, world: goalSet.world, organizationRef });
+}
+
+/**
+ * THE OUTCOME-LEARNING WRAPPER (FW-MI-B): the base port (the fixture
+ * fake under demo, the seam's hydrated port under durable) wrapped so
+ * the per-project derived records serve ALONGSIDE the base rows — the
+ * frozen boundary's outcome/post-mortem reads (/v1/outcomes/query, /v1/post-mortems/query)
+ * then serve a LAUNCHED desk's own stream exactly like the demo
+ * project's seeded records. Idempotent by construction: the derived
+ * ids are content-addressed, and a base row that already carries the
+ * id (a re-hydration of the same record, a future durable persistence)
+ * is never duplicated. The base port's typed failures pass through
+ * untouched (the degraded states stay the seam's own — R46).
+ */
+export function outcomeLearningWithProjectEvidence(
+  inner: OutcomeLearningPort,
+  projectEvidenceOf: (tenant: string, project: string) => ProjectEvidenceSeed | null,
+): OutcomeLearningPort {
+  return {
+    queryOutcomes(query, options) {
+      const result = inner.queryOutcomes(query, options);
+      if (!result.ok) return result; // the base port's typed failure passes through untouched
+      const seed = projectEvidenceOf(query.tenant, query.project);
+      if (seed === null) return result;
+      if (result.value.some((record) => record.outcomeId === seed.outcome.outcomeId)) return result; // idempotent — never a duplicate
+      return { ok: true, value: Object.freeze([...result.value, seed.outcome]) };
+    },
+    queryPostMortems(query, options) {
+      const result = inner.queryPostMortems(query, options);
+      if (!result.ok) return result;
+      const seed = projectEvidenceOf(query.tenant, query.project);
+      if (seed === null) return result;
+      if (result.value.some((record) => record.postMortemId === seed.postMortem.postMortemId)) return result;
+      return { ok: true, value: Object.freeze([...result.value, seed.postMortem]) };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The demo ports (the fixture fakes, knowledge/outcome/blotter data seeded)
 // ---------------------------------------------------------------------------
 
@@ -594,6 +725,99 @@ export function demoExecutionGateway(): ExecutionGatewayPort & { readonly record
       return result;
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// The launch world specification (D-8, W-28 — the market world, persisted
+// at the job-spec seam and served by the host-owned goal route)
+// ---------------------------------------------------------------------------
+
+/** The spec-kind marker the console's launch flow stamps on its kickoff job spec (apps/web core/launch.ts toLaunchJobSpec). */
+export const LAUNCH_JOB_SPEC_KIND = 'console-launch';
+
+/**
+ * THE LAUNCH WORLD SPECIFICATION (D-8, W-28): the market-world fields the
+ * console's launch wizard collects (markets/venues/data sources + the
+ * world-shaped launch context — execution mode, the budgets, the horizon).
+ * The console carries them in the kickoff job's OPAQUE spec (the only
+ * console->host carrier the frozen contracts leave room for: the
+ * create-project request's parser keeps exactly id/name/executionMode/goal/
+ * constraintSet/at, while the job spec passes through untouched); the
+ * backings capture the world HERE, at the job port seam, and persist it in
+ * the goal-set record's opaque payload (the DURABLE seam merges it into the
+ * tradrl_project_goals row — no schema change; the DEMO backing retains it
+ * per instance). The host-owned goal route serves it back as the ADDITIVE
+ * `world` field of the goal bundle, so the console's Market World section
+ * renders the PERSISTED world after a reload, a scope switch or a cold
+ * start (D-8's defect: the section was bound to the in-session launch
+ * draft and rendered its teaching empty state forever after a reload).
+ */
+export interface LaunchWorldRecord {
+  /** The markets (instrument ids), e.g. ['BTC-USD', 'ETH-USD']. */
+  readonly markets: readonly string[];
+  /** The venues, e.g. ['binance', 'kraken']. */
+  readonly venues: readonly string[];
+  /** The data source refs, e.g. ['candle-v1', 'depth-v1', 'trades-v1']. */
+  readonly dataSources: readonly string[];
+  /** The execution mode (simulation | shadow | live). */
+  readonly executionMode: string;
+  /** The capital budget — an exact decimal string. */
+  readonly capitalBudget: string;
+  /** The risk budget — an exact decimal string. */
+  readonly riskBudget: string;
+  /** The horizon (epoch ms bounds + the optional label). */
+  readonly horizon: { readonly startsAt: number; readonly endsAt: number; readonly label?: string };
+}
+
+/** Guard: a non-empty array of non-empty strings (the world's list fields). */
+function isNonEmptyStringList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.length > 0 && value.every((entry) => typeof entry === 'string' && entry.length > 0);
+}
+
+/**
+ * Guard: a structurally valid launch world record (D-8, W-28). The goal
+ * route re-validates a DURABLE-decoded world with this before serving it —
+ * a pre-W-28 or malformed payload never crosses to the console (the route
+ * simply serves no `world` field; R46, never a crash).
+ */
+export function isLaunchWorldRecord(value: unknown): value is LaunchWorldRecord {
+  return launchWorldOfSpec({ kind: LAUNCH_JOB_SPEC_KIND, ...(isRecord(value) ? value : {}) }) !== null;
+}
+
+/**
+ * Extract the launch world specification from a job spec, STRUCTURALLY
+ * (never a throw — R46): a spec is a console launch spec iff it carries the
+ * `console-launch` kind marker AND every world field validates. Anything
+ * else (the demo seed's `demo-seed` specs, hydration replays, foreign or
+ * malformed specs) answers `null` — the backing captures nothing for it
+ * (the demo project's goal stays world-less BY DESIGN: the demo scope's
+ * teaching empty state is correct and must be preserved). The extracted
+ * record is a frozen copy — the caller may persist it without aliasing the
+ * request's spec object.
+ */
+export function launchWorldOfSpec(spec: unknown): LaunchWorldRecord | null {
+  if (!isRecord(spec)) return null;
+  if (spec.kind !== LAUNCH_JOB_SPEC_KIND) return null;
+  if (!isNonEmptyStringList(spec.markets)) return null;
+  if (!isNonEmptyStringList(spec.venues)) return null;
+  if (!isNonEmptyStringList(spec.dataSources)) return null;
+  if (typeof spec.executionMode !== 'string' || spec.executionMode.length === 0) return null;
+  if (typeof spec.capitalBudget !== 'string' || spec.capitalBudget.length === 0) return null;
+  if (typeof spec.riskBudget !== 'string' || spec.riskBudget.length === 0) return null;
+  const horizon = spec.horizon;
+  if (!isRecord(horizon)) return null;
+  if (typeof horizon.startsAt !== 'number' || typeof horizon.endsAt !== 'number') return null;
+  return deepFreeze({
+    markets: Object.freeze([...spec.markets]) as readonly string[],
+    venues: Object.freeze([...spec.venues]) as readonly string[],
+    dataSources: Object.freeze([...spec.dataSources]) as readonly string[],
+    executionMode: spec.executionMode,
+    capitalBudget: spec.capitalBudget,
+    riskBudget: spec.riskBudget,
+    horizon: typeof horizon.label === 'string'
+      ? { startsAt: horizon.startsAt, endsAt: horizon.endsAt, label: horizon.label }
+      : { startsAt: horizon.startsAt, endsAt: horizon.endsAt },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -664,16 +888,73 @@ export function demoControlPlane(): ReturnType<typeof fakeControlPlane> & { read
   };
 }
 
+/**
+ * The demo job-submission port: the REAL fixture fake, wrapped so every
+ * job submission whose spec carries a CONSOLE LAUNCH WORLD (D-8, W-28 —
+ * launchWorldOfSpec) retains the world host-side per (tenant, project) —
+ * the DEMO backing's half of what the DURABLE seam persists into the
+ * goal-set row (the same world record, the same structural extraction;
+ * this backing's per-instance in-memory medium — a serverless cold start
+ * resets it, exactly like the goal-set capture, honest under the SIMULATED
+ * badge). The submitted responses themselves are the fixture's own
+ * records, verbatim (W-3f behavior unchanged). Only RESEARCH-submission
+ * console-launch specs exist in practice (the console's kickoff job); the
+ * wrapper is kind-agnostic and validates structurally, so a foreign or
+ * malformed spec captures nothing (R46 — never a crash).
+ */
+export function demoJobSubmission(): ReturnType<typeof fakeJobSubmission> & { readonly worlds: ReadonlyMap<string, LaunchWorldRecord> } {
+  const worlds = new Map<string, LaunchWorldRecord>();
+  const inner = fakeJobSubmission();
+  return {
+    ...inner, // the fake's own surface verbatim (the submissions log included)
+    get worlds(): ReadonlyMap<string, LaunchWorldRecord> {
+      return worlds;
+    },
+    submitJob(input) {
+      const world = launchWorldOfSpec(input.spec);
+      if (world !== null) {
+        worlds.set(`${input.tenant as string}/${input.project as string}`, world);
+      }
+      return inner.submitJob(input);
+    },
+  };
+}
+
+/**
+ * The demo backing's captured launch world of one project of one tenant
+ * (D-8, W-28 — the demo arm's goal-route read): the console-launch spec's
+ * world the job port retained at submission. L12 by construction on both
+ * axes: the pipeline injects the tenant at submission (a foreign tenant's
+ * world never exists in this composition's capture to begin with) and the
+ * fold keys on the AUTHORIZED tenant + the requested project (a foreign
+ * read finds nothing — the goal route then serves no `world` field, the
+ * console's teaching empty state). `null` for the demo project (its seed
+ * jobs carry `demo-seed` specs, never a console-launch one — the demo
+ * scope's teaching empty state is CORRECT and preserved by design).
+ */
+export function demoWorldOf(ports: DemoPorts, tenant: string, project: string): LaunchWorldRecord | null {
+  return ports.jobSubmission.worlds.get(`${tenant}/${project}`) ?? null;
+}
+
 /** The demo backing's ports (the REAL fixture fakes — the same objects the composition injects) + the seeded blotter. */
 export interface DemoPorts {
   /** The demo control plane (the fixture fake, wrapped to retain every create-project goal set — W-25B's capture seam). */
   readonly controlPlane: ReturnType<typeof demoControlPlane>;
   readonly firmMemory: ReturnType<typeof fakeFirmMemory>;
-  readonly outcomeLearning: ReturnType<typeof fakeOutcomeLearning>;
+  /** The outcome-learning port — the fixture fake WRAPPED with the per-project evidence fold (FW-MI-B, MI-D2). */
+  readonly outcomeLearning: OutcomeLearningPort;
   readonly executionGateway: ReturnType<typeof demoExecutionGateway>;
-  readonly jobSubmission: ReturnType<typeof fakeJobSubmission>;
+  /** The demo job-submission port (the fixture fake, wrapped to retain every console-launch world — D-8, W-28's capture seam). */
+  readonly jobSubmission: ReturnType<typeof demoJobSubmission>;
   /** The seeded execution blotter (R2 — read data, like the outcome records; served by the host-owned read route). */
   readonly submissions: readonly GatewaySubmissionRecord[];
+  /**
+   * THE PER-PROJECT EVIDENCE FOLD (FW-MI-B, MI-D2): the derived blotter
+   * rows of one launched project of one tenant (the same derivation the
+   * outcome-learning wrapper serves for the outcome/post-mortem reads).
+   * L12: keyed on the AUTHORIZED tenant — a foreign fold finds nothing.
+   */
+  readonly projectEvidenceOf: (tenant: string, project: string) => readonly GatewaySubmissionRecord[];
 }
 
 /**
@@ -690,6 +971,13 @@ export interface DemoSubstanceSource {
   readonly submissions: readonly GatewaySubmissionRecord[];
   /** A recording execution gateway — the fold reads its `recorded` live rows. */
   readonly executionGateway: { readonly recorded: readonly DemoGatewayRecording[] };
+  /**
+   * THE PER-PROJECT EVIDENCE FOLD (FW-MI-B, MI-D2): the derived blotter
+   * rows of one launched project of one tenant — OPTIONAL so pre-FW-MI-B
+   * constructions (tests, the seam-built pairs) stay valid; the demo arm
+   * (DemoPorts) and the durable arm's demoSubstance both provide it.
+   */
+  readonly projectEvidenceOf?: (tenant: string, project: string) => readonly GatewaySubmissionRecord[];
 }
 
 /**
@@ -711,19 +999,24 @@ export interface DurableDemoSubstance {
 
 /**
  * The demo project's full execution blotter at one instant: the SEEDED rows
- * (all scoped to the demo project) plus every LIVE submission the demo
- * gateway has routed for the requested project. Order-stable (seeded first,
- * then live in routing order). The parameter is the structural source
- * (W-26C: DemoSubstanceSource — DemoPorts satisfies it; the durable arm
- * passes its own seam-built pair through the SAME fold).
+ * (all scoped to the demo project) plus the DERIVED rows of the requested
+ * project (FW-MI-B, MI-D2 — every LAUNCHED desk's own evidence stream,
+ * derived from its captured envelope behind the compile gate) plus every
+ * LIVE submission the demo gateway has routed for the requested project.
+ * Order-stable (seeded first, then derived, then live in routing order).
+ * The parameters are the structural source (W-26C: DemoSubstanceSource —
+ * DemoPorts satisfies it; the durable arm passes its own seam-built pair
+ * through the SAME fold) and the AUTHORIZED tenant (L12: the derived rows
+ * key on it — a foreign tenant's fold finds nothing, never a leak).
  */
-export function demoSubmissionsOf(ports: DemoSubstanceSource, project: string): readonly GatewaySubmissionRecord[] {
+export function demoSubmissionsOf(ports: DemoSubstanceSource, tenant: string, project: string): readonly GatewaySubmissionRecord[] {
   // The seeded rows are the DEMO project's own (the record shape carries no
   // scope fields — the console's watch fold inherits the workspace scope,
   // and the host read route scopes by the project query parameter).
   const seeded = project === DEMO_PROJECT_ID ? ports.submissions : [];
+  const derived = ports.projectEvidenceOf === undefined ? [] : ports.projectEvidenceOf(tenant, project);
   const live = ports.executionGateway.recorded.filter((entry) => entry.project === project).map((entry) => entry.record);
-  return Object.freeze([...seeded, ...live]);
+  return Object.freeze([...seeded, ...derived, ...live]);
 }
 
 /**
@@ -772,13 +1065,24 @@ export function demoGoalSetOf(ports: DemoPorts, tenant: string, project: string)
  * entry state).
  */
 export function seedDemoBacking(tenant: string): DemoPorts {
+  const controlPlane = demoControlPlane();
+  const jobSubmission = demoJobSubmission();
+  const evidencePorts: DemoEvidencePorts = { controlPlane, jobSubmission };
   return {
-    controlPlane: demoControlPlane(),
+    controlPlane,
     firmMemory: fakeFirmMemory([...fixtureKnowledge(tenant, DEMO_PROJECT_ID)]),
-    outcomeLearning: fakeOutcomeLearning([demoOutcomeRecord(tenant, DEMO_PROJECT_ID)], [demoPostMortemRecord(tenant, DEMO_PROJECT_ID)]),
+    // FW-MI-B (MI-D2): the outcome-learning fake WRAPPED — the frozen
+    // outcome/post-mortem reads serve the demo project's seeded records
+    // AND every launched desk's own derived stream (same derivation as
+    // the blotter fold below; idempotent by content-addressed id).
+    outcomeLearning: outcomeLearningWithProjectEvidence(
+      fakeOutcomeLearning([demoOutcomeRecord(tenant, DEMO_PROJECT_ID)], [demoPostMortemRecord(tenant, DEMO_PROJECT_ID)]),
+      (evidenceTenant, evidenceProject) => demoProjectEvidenceOf(evidencePorts, evidenceTenant, evidenceProject),
+    ),
     executionGateway: demoExecutionGateway(),
-    jobSubmission: fakeJobSubmission(),
+    jobSubmission,
     submissions: demoSubmissionBlotter(),
+    projectEvidenceOf: (evidenceTenant, evidenceProject) => demoProjectEvidenceOf(evidencePorts, evidenceTenant, evidenceProject)?.submissions ?? [],
   };
 }
 

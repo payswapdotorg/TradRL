@@ -150,6 +150,47 @@ export interface ProjectRecord {
 export type ProjectLifecycleEvent = 'activate' | 'pause' | 'resume' | 'complete' | 'abandon' | 'archive';
 
 // ---------------------------------------------------------------------------
+// The launch world specification (D-8, W-28 — the HOST-OWNED goal route's
+// additive `world` field)
+// ---------------------------------------------------------------------------
+//
+// THE W-25B/W-23 AMENDMENT'S OWN AMENDMENT (D-8): the host-owned goal read
+// (GET /v1/projects/:projectId/goal — the demo-substance route the SDK
+// mirror extends for the console's boot read) serves, since W-28, the
+// launch's WORLD SPECIFICATION as an ADDITIVE third field of the bundle.
+// The world is what the launch wizard's markets/world steps collected
+// (markets/venues/data sources + execution mode, budgets, horizon); the
+// host persists it from the kickoff job's opaque spec into the goal-set
+// record's payload (tradrl_project_goals — the payload-side solution; the
+// frozen GoalStatement/ConstraintSetStatement shapes are untouched) and
+// serves it back so the console's Market World section can render the
+// PERSISTED world after a reload, a scope switch or a cold start (D-8's
+// defect: the section was bound to the in-session launch draft). The field
+// is OPTIONAL at the wire: pre-W-28 backings and world-less projects (the
+// demo scope — its seeded goal genuinely has no world fields) serve no
+// `world`, and the console falls back to its teaching empty state, exactly
+// like the pre-W-28 behavior.
+// ---------------------------------------------------------------------------
+
+/** The launch world specification (the host goal route's additive `world` field — the market world the project launched with). */
+export interface ProjectGoalWorldSpec {
+  /** The markets (instrument ids), e.g. ['BTC-USD', 'ETH-USD', 'SOL-USD']. */
+  readonly markets: readonly string[];
+  /** The venues, e.g. ['binance', 'kraken']. */
+  readonly venues: readonly string[];
+  /** The data source refs, e.g. ['candle-v1', 'depth-v1', 'trades-v1']. */
+  readonly dataSources: readonly string[];
+  /** The execution mode (simulation | shadow | live). */
+  readonly executionMode: string;
+  /** The capital budget — an exact decimal string. */
+  readonly capitalBudget: string;
+  /** The risk budget — an exact decimal string. */
+  readonly riskBudget: string;
+  /** The horizon (epoch ms bounds + the optional label). */
+  readonly horizon: { readonly startsAt: number; readonly endsAt: number; readonly label?: string };
+}
+
+// ---------------------------------------------------------------------------
 // The knowledge mirror (the firm-memory shape the /v1 route serves)
 // ---------------------------------------------------------------------------
 

@@ -19,6 +19,22 @@ export interface WorkspaceScope {
   readonly projectId: string;
 }
 
+/**
+ * THE LAUNCHPAD PROJECT ID (D-12, W-29 wave 2 — moved to the core scope
+ * module so the render layer can gate the per-scope affordances without
+ * importing the app layer): the workspace's pre-launch placeholder —
+ * the shipped shell boots here ('' as the env project id) until the
+ * primary flow's launch adopts a real project. Reads against it are a
+ * category error (no project exists); app/console.ts's read cadence
+ * skips it and every per-project affordance stays away.
+ */
+export const LAUNCHPAD_PROJECT_ID = '(launchpad)';
+
+/** True when a project id is the pre-launch launchpad placeholder (no project exists yet — the primary flow starts here). */
+export function isLaunchpadScope(projectId: string): boolean {
+  return projectId === LAUNCHPAD_PROJECT_ID;
+}
+
 /** Guard: a well-formed scope. */
 export function isWorkspaceScope(v: unknown): v is WorkspaceScope {
   if (typeof v !== 'object' || v === null) return false;

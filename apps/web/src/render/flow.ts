@@ -102,7 +102,7 @@ export function streamCard(props: StreamCardProps): VNode {
           : props.evidenceConsulted.map((entry) => capsuleBadge(entry.kind, entry.ref, props.openRef === `${entry.kind}:${entry.ref}`))),
         ...(props.openRef === null || props.openRef === undefined || !props.evidenceConsulted.some((entry) => `${entry.kind}:${entry.ref}` === props.openRef)
           ? []
-          : [capsulePayload(props.openRef, [`ref ${props.openRef}`], 'rendered as a reference — the evidence read family owns its payload (L20)')]),
+          : [capsulePayload(props.openRef, [`ref ${props.openRef}`], 'rendered as a reference — the evidence read family owns its payload (L20)', `ref ${props.openRef}`)]),
       ]),
       v('div', { class: 'stream-line' }, [
         v('span', { class: 'stream-label' }, ['Proposal']),
@@ -139,19 +139,27 @@ export function capsuleBadgeLabel(capsuleId: string): string {
   return capsuleId.length <= 12 ? capsuleId : `${capsuleId.slice(0, 8)}…${capsuleId.slice(-3)}`;
 }
 
-/** One inline capsule badge (§4.9): rounded-lg, hairline, mono content address; opens the payload + provenance. */
+/** One inline capsule badge (§4.9): rounded-lg, hairline, mono content address; opens the payload + provenance. D-18 (W-29 wave 2): the badge's label is abbreviated by design (the content-address style) — the FULL ref rides the hover tooltip (title) so a truncated label never hides the value (M5's finding: "evidence ref labels are hard-truncated — full ref only in aria-label"). */
 export function capsuleBadge(kind: string, ref: string, open = false): VNode {
-  return v('button', { class: `capsule-badge${open ? ' open' : ''}`, 'data-capsule': `${kind}:${ref}`, 'data-action': 'capsule-open', 'data-capsule-open': `${kind}:${ref}`, type: 'button', 'aria-label': `Open evidence capsule ${kind}:${ref}`, 'aria-expanded': open ? 'true' : 'false' }, [
+  const fullRef = `${kind}:${ref}`;
+  return v('button', { class: `capsule-badge${open ? ' open' : ''}`, 'data-capsule': fullRef, 'data-action': 'capsule-open', 'data-capsule-open': fullRef, type: 'button', 'aria-label': `Open evidence capsule ${fullRef}`, 'aria-expanded': open ? 'true' : 'false', title: fullRef }, [
     iconOf('box', 'ci ci-14'),
-    v('span', { class: 'capsule-address' }, [capsuleBadgeLabel(`${kind}:${ref}`)]),
+    v('span', { class: 'capsule-address' }, [capsuleBadgeLabel(fullRef)]),
   ]);
 }
 
-/** The capsule's opened payload render (§4.9): mono for raw records + the provenance line. */
-export function capsulePayload(capsuleId: string, payloadLines: readonly string[], provenance: string): VNode {
+/**
+ * The capsule's opened payload render (§4.9): mono for raw records +
+ * the provenance line. D-18 (W-29 wave 2): the refs line rides the
+ * mono block's hover tooltip (`title`) — the line WRAPS in CSS
+ * (`.capsule-mono { white-space: pre-wrap }`) and now the FULL refs
+ * are also hoverable verbatim, so no wrapping or abbreviation ever
+ * hides a ref (M5's truncated-refs finding).
+ */
+export function capsulePayload(capsuleId: string, payloadLines: readonly string[], provenance: string, refsLine?: string): VNode {
   return v('div', { class: 'capsule-payload', 'data-capsule-open': capsuleId }, [
     v('div', { class: 'capsule-address' }, [capsuleId]),
-    v('pre', { class: 'capsule-mono' }, [...payloadLines.join('\n')]),
+    v('pre', { class: 'capsule-mono', ...(refsLine === undefined ? {} : { title: refsLine, 'data-refs-line': refsLine }) }, [...payloadLines.join('\n')]),
     v('div', { class: 'capsule-provenance' }, [provenance]),
   ]);
 }
@@ -166,6 +174,8 @@ export interface CapsuleSurfaceProps {
   readonly open: boolean;
   /** The payload's mono lines (the capsule's typed facts + refs — rendered verbatim, never recomputed). */
   readonly payloadLines: readonly string[];
+  /** D-18 (W-29 wave 2): the full refs line — carried as the mono block's hover title (never truncated, never recomputed; L20). */
+  readonly refsLine?: string;
   /** The provenance line (§4.9 + R45: the source route + identity + availability). */
   readonly provenance: string;
 }
@@ -184,7 +194,7 @@ export function capsuleSurface(props: CapsuleSurfaceProps): VNode {
       capsuleBadge('evc', hex, props.open),
       v('span', { class: 'capsule-kind' }, [props.sourceKind]),
     ]),
-    ...(props.open ? [capsulePayload(props.capsuleId, props.payloadLines, props.provenance)] : []),
+    ...(props.open ? [capsulePayload(props.capsuleId, props.payloadLines, props.provenance, props.refsLine)] : []),
   ]);
 }
 
@@ -203,11 +213,33 @@ export const TIME_MACHINE_MODES: readonly TmModeEntry[] = Object.freeze([
   { key: 'playback', label: 'PLAYBACK' },
 ]);
 
-/** The projection state notice (§4.8): what the projection is doing at this view instant. */
-export function projectionNoticeOf(mode: string): string {
+/**
+ * D-18 (W-29 wave 2): each mode button's hover/aria explanation — the
+ * meaning exists BEFORE the click now (S2's finding: "T-x is cryptic
+ * pre-click — no tooltips on mode buttons; the meaning only appears in
+ * the post-click status line"). The copy is the product's own voice:
+ * plain, precise, one sentence per mode; T-x names the offset it arms.
+ */
+export const TIME_MACHINE_MODE_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
+  live: 'View the live world — every datum as the API serves it now.',
+  't-minus': 'T-x: view the world as of 60 seconds before the latest datum (x is the offset; Step back moves it further back).',
+  timestamp: 'View one explicit instant you pick — the availability projection decides what renders.',
+  playback: 'Play history forward — each step renders only what was knowable then.',
+});
+
+/**
+ * The projection state notice (§4.8): what the projection is doing at
+ * this view instant. MI-D9: a PAUSED playback says so — the pre-fix
+ * caption said "Playing history forward" while the view was frozen
+ * (M2/M5's mislabel); the paused caption names the manual steps that
+ * still work. The default (no second argument) keeps the playing
+ * caption — the pinned back-compat surface.
+ */
+export function projectionNoticeOf(mode: string, paused = false): string {
   if (mode === 'live') return 'Viewing the live world — every datum as the API serves it now.';
   if (mode === 't-minus') return 'Viewing a past instant — facts that were not yet knowable are hidden.';
   if (mode === 'timestamp') return 'Viewing one explicit instant — the availability projection decides what renders.';
+  if (paused) return 'Playback paused — the view instant is frozen; Step and Step back move it one controlled step at a time.';
   return 'Playing history forward — each step renders only what was knowable then.';
 }
 
@@ -233,6 +265,11 @@ export function timeMachineControls(options: {
       'data-action': `tm-mode-${entry.key}`,
       type: 'button',
       'aria-pressed': options.mode === entry.key ? 'true' : 'false',
+      // D-18 (W-29 wave 2): the mode's meaning renders BEFORE the click —
+      // the hover tooltip + the screen-reader description (S2's finding:
+      // the labels alone were cryptic jargon).
+      title: TIME_MACHINE_MODE_DESCRIPTIONS[entry.key] ?? entry.label,
+      'aria-description': TIME_MACHINE_MODE_DESCRIPTIONS[entry.key] ?? entry.label,
     }, [entry.label]))),
     v('input', {
       class: 'tm-scrubber',
@@ -245,11 +282,14 @@ export function timeMachineControls(options: {
     }, []),
     v('div', { class: 'tm-playback', role: 'group', 'aria-label': 'Playback controls' }, [
       v('button', { class: 'tm-button', 'data-action': 'playback-start', type: 'button', 'aria-label': options.playing ? 'Pause playback' : 'Play playback' }, [options.playing ? 'Pause' : 'Play']),
-      v('button', { class: 'tm-button', 'data-action': 'playback-step-back', type: 'button', 'aria-label': 'Step back' }, ['Step back']),
-      v('button', { class: 'tm-button', 'data-action': 'playback-step', type: 'button', 'aria-label': 'Step forward' }, ['Step']),
+      // MI-D9: the manual steps carry their meaning BEFORE the click (the
+      // D-18 law) — Step back steps the view BACK one controlled step (in
+      // T-x it grows the offset), Step steps it forward one.
+      v('button', { class: 'tm-button', 'data-action': 'playback-step-back', type: 'button', 'aria-label': 'Step back', title: 'Step the view instant back one controlled step (in T-x: grow the offset)' }, ['Step back']),
+      v('button', { class: 'tm-button', 'data-action': 'playback-step', type: 'button', 'aria-label': 'Step forward', title: 'Step the view instant forward one controlled step' }, ['Step']),
     ]),
     v('output', { class: 'tm-readout', 'aria-label': 'Selected view instant' }, [formatInstantUtc(options.viewAt)]),
-    v('span', { class: 'tm-notice' }, [projectionNoticeOf(options.mode)]),
+    v('span', { class: 'tm-notice' }, [projectionNoticeOf(options.mode, options.mode === 'playback' && !options.playing)]),
     ...(options.progress === null ? [] : [v('span', { class: 'tm-progress' }, [`${Math.round(options.progress * 100)}%`])]),
   ]);
 }
@@ -331,7 +371,14 @@ export function fieldError(field: FieldValidation): VNode | null {
   return v('p', { class: 'field-error', role: 'alert' }, [field.message]);
 }
 
-/** One labeled input (§4.11: the label sits ABOVE the input; validation rides under it). */
+/**
+ * One labeled input (§4.11: the label sits ABOVE the input; validation
+ * rides under it). The `vocabulary` picks the delegated data-field
+ * attribute — 'launch' (the wizard's data-launch-field, the default)
+ * or 'research' (the D-12 standalone research form's
+ * data-research-field) — so each form's inputs bind to their OWN
+ * beat-safe edit buffer.
+ */
 export function labeledInput(options: {
   readonly label: string;
   readonly name: string;
@@ -341,20 +388,23 @@ export function labeledInput(options: {
   readonly hint?: string;
   readonly validation?: FieldValidation;
   readonly required?: boolean;
+  readonly vocabulary?: 'launch' | 'research';
 }): VNode[] {
   const invalid = options.validation?.touched === true && (options.validation?.message.length ?? 0) > 0;
+  const idPrefix = options.vocabulary === 'research' ? 'research' : 'launch';
+  const fieldAttr = options.vocabulary === 'research' ? 'data-research-field' : 'data-launch-field';
   return [
     v('div', { class: `field${invalid ? ' field-invalid' : ''}`, 'data-field': options.name }, [
-      v('label', { class: 'field-label', for: `launch-${options.name}` }, [options.label, ...(options.required === true ? [' *'] : [])]),
+      v('label', { class: 'field-label', for: `${idPrefix}-${options.name}` }, [options.label, ...(options.required === true ? [' *'] : [])]),
       v('input', {
         class: 'field-input',
-        id: `launch-${options.name}`,
+        id: `${idPrefix}-${options.name}`,
         name: options.name,
         type: options.type ?? 'text',
         value: options.value,
         ...(options.placeholder === undefined ? {} : { placeholder: options.placeholder }),
         ...(invalid ? { 'aria-invalid': 'true' } : {}),
-        'data-launch-field': options.name,
+        [fieldAttr]: options.name,
       }, []),
       ...(options.hint === undefined ? [] : [v('p', { class: 'field-hint' }, [options.hint])]),
       ...(options.validation === undefined ? [] : [fieldError(options.validation)]),

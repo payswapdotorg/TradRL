@@ -29,6 +29,7 @@
 // surface — no @vercel/node import, no npm dependency).
 
 import type { ApiRequest, ApiResponse } from '../../../services/api/src/contracts';
+import { CONSOLE_SESSION_HEADER } from './session-routes';
 
 /**
  * The function's mount path: the prebuilt .func lives at
@@ -152,11 +153,17 @@ export type WrappedApiRequest =
 /** Build the ApiRequest the T041 pipeline consumes (the path recovered, the headers forwarded — everything untrusted). */
 export async function toApiRequest(request: FunctionRequest): Promise<WrappedApiRequest> {
   const method = (request.method ?? 'GET').toUpperCase();
-  const headers: { authorization?: string; 'idempotency-key'?: string } = {};
+  const headers: { authorization?: string; 'idempotency-key'?: string; 'x-tradrl-console-session'?: string } = {};
   const authorization = firstHeader(request, 'authorization');
   if (authorization !== undefined) headers.authorization = authorization;
   const idempotencyKey = firstHeader(request, 'idempotency-key');
   if (idempotencyKey !== undefined) headers['idempotency-key'] = idempotencyKey;
+  // FW-MI-A (MI-D1): the console session header rides the wrapped request
+  // through to the host-owned session routes + the create-ownership stamp
+  // (runtime/session-routes.ts — the frozen boundary itself ignores the
+  // extra key; only the host's additive routes read it).
+  const consoleSession = firstHeader(request, CONSOLE_SESSION_HEADER);
+  if (consoleSession !== undefined) headers[CONSOLE_SESSION_HEADER] = consoleSession;
   let body: unknown = undefined;
   if (method !== 'GET' && method !== 'HEAD') {
     const parsed = await readJsonBody(request);

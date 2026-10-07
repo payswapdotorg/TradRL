@@ -217,16 +217,38 @@ export function projectEventsStatement(tenant: string, projectId: string): Built
 // The goal-set surface (W-25D, D-5 — the W-3e seam's create-project records)
 // ---------------------------------------------------------------------------
 
-/** The shape one goal-set row round-trips (the create-project input's own goal + constraint set, verbatim). */
+/**
+ * The shape one goal-set row round-trips (the create-project input's own
+ * goal + constraint set, verbatim; since W-28 (D-8) optionally the LAUNCH
+ * WORLD SPECIFICATION the console's kickoff job carried — the payload
+ * column is opaque TEXT, so the additive `world` field rides the SAME row
+ * with no schema change: the goal-set write the launch's job-spec capture
+ * merges into is the row this record describes, and pre-W-28 rows simply
+ * carry no `world` (the console degrades to its teaching empty state)).
+ */
 export interface GoalSetRecord {
   readonly goal: unknown;
   readonly constraintSet: unknown;
+  /** The launch world specification (markets/venues/data sources + the world-shaped launch fields), when the kickoff job's spec carried one (W-28, D-8). */
+  readonly world?: unknown;
+  /**
+   * The owning CONSOLE SESSION id (FW-MI-A, MI-D1): stamped by the host
+   * at a successful create-project (the session header the console sent
+   * on POST /v1/projects), riding the SAME opaque payload column with no
+   * schema change — exactly the W-28 `world` precedent. Absent = the row
+   * predates session scoping or was written without a console session
+   * (the boot world's demo create, a direct SDK create): the project is
+   * UNOWNED, and the session-scoped surfaces serve it to no session.
+   */
+  readonly ownerSession?: unknown;
 }
 
 /**
  * The goal-set upsert (tenant = param 1 — L12). The payload is the
- * `{ goal, constraintSet }` pair as canonical JSON — the records ride the
- * create-project input, which the boundary always carries.
+ * `{ goal, constraintSet, world? }` record as canonical JSON — the records
+ * ride the create-project input, and the optional `world` (W-28, D-8) is
+ * the launch world specification the kickoff job's spec carried (the
+ * payload column is opaque TEXT; no schema change).
  */
 export function goalSetPutStatement(scopeTenant: string, projectId: string, goalSet: GoalSetRecord): StoreResult<BuiltStatement> {
   if (!isNonEmptyString(projectId)) return malformed('the goal set lacks projectId');
@@ -242,6 +264,62 @@ export function goalSetPutStatement(scopeTenant: string, projectId: string, goal
 /** The goal-set read (tenant = $1 ALWAYS — a foreign tenant finds nothing, indistinguishably). */
 export function goalSetGetStatement(tenant: string, projectId: string): BuiltStatement {
   return { sql: 'SELECT payload FROM tradrl_project_goals WHERE tenant = $1 AND project_id = $2', params: [tenant, projectId] };
+}
+
+// ---------------------------------------------------------------------------
+// The session-scoped project listing (FW-MI-A, MI-D1 — one fresh JOIN read)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of the session-listing JOIN: a tenant project record plus its
+ * goal-set payload's OWNERSHIP view (FW-MI-A, MI-D1). The `ownerSession` is
+ * the goal-set row's additive `ownerSession` field (a non-empty string) or
+ * null when the row carries none (unowned — pre-FW-MI-A creates, the demo
+ * world's seed, direct SDK creates). The `goalSet` is the FULL decoded
+ * goal-set payload when one exists (the session goal read serves from it),
+ * null when the project has no goal-set row.
+ */
+export interface SessionProjectRow {
+  readonly project: unknown;
+  readonly ownerSession: string | null;
+  readonly goalSet: GoalSetRecord | null;
+}
+
+/**
+ * THE SESSION-LISTING JOIN (FW-MI-A, MI-D1): every project row of one
+ * tenant LEFT JOINed with its goal-set row, in creation order — ONE round
+ * trip that carries everything the session-scoped surfaces need (the
+ * project records for the listing/detail reads, the ownership for the
+ * visibility gate, the goal sets for the session goal read). Fresh by
+ * construction: it reads the durable tables, never an in-memory
+ * projection, so a project created on ANOTHER serverless instance is
+ * visible the moment its write drained (the MI-D8 "own desks unreachable
+ * after reload" staleness — a warm instance's boot projection never
+ * re-read the registry). Tenant = $1 ALWAYS (L12 — a foreign tenant finds
+ * nothing, indistinguishably).
+ */
+export function projectSessionListStatement(tenant: string): BuiltStatement {
+  return {
+    sql: 'SELECT p.payload AS project_payload, g.payload AS goal_payload FROM tradrl_projects p LEFT JOIN tradrl_project_goals g ON g.tenant = p.tenant AND g.project_id = p.project_id WHERE p.tenant = $1 ORDER BY p.created_at',
+    params: [tenant],
+  };
+}
+
+/** Decode one JOIN row's goal-payload cell (null for the LEFT JOIN miss / an unparseable cell — fail-closed, never a throw). */
+function decodeSessionGoalSet(cell: unknown): GoalSetRecord | null {
+  if (typeof cell !== 'string' || cell.length === 0) return null;
+  try {
+    const parsed = JSON.parse(cell) as unknown;
+    return isRecord(parsed) ? (parsed as unknown as GoalSetRecord) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The owning console session of one decoded goal-set payload (a non-empty string field, else null — fail-closed). */
+export function ownerSessionOf(goalSet: GoalSetRecord | null): string | null {
+  const owner = goalSet?.ownerSession;
+  return typeof owner === 'string' && owner.length > 0 ? owner : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,14 +360,31 @@ export function jobListStatement(tenant: string, project: string): BuiltStatemen
   return { sql: 'SELECT payload FROM tradrl_jobs WHERE tenant = $1 AND project = $2 ORDER BY submitted_at', params: [tenant, project] };
 }
 
-/** Decode one goal-set row (`{ goal, constraintSet }`); a malformed row is the typed malformed failure. */
+/** Decode one goal-set row (`{ goal, constraintSet, world? }`); a malformed row is the typed malformed failure. */
 function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
   const payload = row[0];
   if (typeof payload !== 'string') return malformed('the stored goal set is not text');
   try {
     const value = JSON.parse(payload) as unknown;
     if (!isRecord(value) || !('goal' in value) || !('constraintSet' in value)) return malformed('the stored goal set lacks goal/constraintSet');
-    return { ok: true, value: { goal: value.goal, constraintSet: value.constraintSet } };
+    // W-28 (D-8): the optional launch world specification rides the same
+    // opaque payload — carried through verbatim when present (the host
+    // goal route re-validates it structurally before serving; a malformed
+    // world is dropped there, never a decode failure here — pre-W-28 rows
+    // never carry the field).
+    // FW-MI-A (MI-D1): the owning CONSOLE SESSION rides the same opaque
+    // payload column (the additive `ownerSession` field, the W-28 `world`
+    // precedent) — carried through verbatim when present; pre-FW-MI-A rows
+    // never carry the field (the project reads as UNOWNED, honestly).
+    return {
+      ok: true,
+      value: {
+        goal: value.goal,
+        constraintSet: value.constraintSet,
+        ...('world' in value ? { world: value.world } : {}),
+        ...('ownerSession' in value ? { ownerSession: value.ownerSession } : {}),
+      },
+    };
   } catch {
     return malformed('the stored goal set is not valid JSON');
   }
@@ -529,6 +624,37 @@ export class NeonProjectStore implements ProjectStoreMirror {
     const rows = selectRows(executed.value);
     if (rows.length === 0) return { ok: true, value: null };
     return decodeGoalSet(rows[0] ?? []);
+  }
+
+  /**
+   * THE SESSION-LISTING READ (FW-MI-A, MI-D1): every project row of the
+   * tenant LEFT JOINed with its goal-set row (projectSessionListStatement —
+   * one round trip). Fresh by construction (the durable tables, never an
+   * in-memory projection); a degraded Neon read is the typed failure (the
+   * caller surfaces the R46 503 — a session view is never served from a
+   * stale or partial read).
+   */
+  async projectSessionRowsOf(tenant: string): Promise<StoreResult<readonly SessionProjectRow[]>> {
+    const built = projectSessionListStatement(tenant);
+    const executed = await executeNeonStatement(this.deps.config, built.sql, built.params, this.fetchLike);
+    this.note('projectSessionRowsOf', tenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    const rows: SessionProjectRow[] = [];
+    for (const row of selectRows(executed.value)) {
+      const projectCell = row[0];
+      const goalCell = row[1];
+      if (typeof projectCell !== 'string' || projectCell.length === 0) continue; // a malformed payload row is skipped fail-closed (the projection's own law)
+      try {
+        rows.push({
+          project: JSON.parse(projectCell) as unknown,
+          ownerSession: ownerSessionOf(decodeSessionGoalSet(goalCell)),
+          goalSet: decodeSessionGoalSet(goalCell),
+        });
+      } catch {
+        continue; // an unparseable project payload never crosses (never a throw)
+      }
+    }
+    return { ok: true, value: Object.freeze(rows) };
   }
 
   private note(operation: string, tenant: string, ok: boolean): void {

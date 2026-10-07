@@ -104,7 +104,7 @@ import {
   type JobRecord,
   type RequestId,
 } from '../../../services/api/src/index';
-import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
+import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, demoWorldOf, isLaunchWorldRecord, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
 import type { DurableBackingHandle, DdlApplyResult, DdlVerifyResult } from './durable';
 
 /** The host auth's verdict: the credential tenant + principal behind the presented token. */
@@ -177,17 +177,24 @@ export const DEMO_SUBSTANCE_ROUTE_PATHS = deepFreeze(['/v1/execution/submissions
 // ---------------------------------------------------------------------------
 
 /** The minimal request surface the host routes consume (the wrapped ApiRequest carries exactly these). */
-type DemoSubstanceRequest = Pick<ApiRequest, 'method' | 'path' | 'query' | 'headers'>;
+export type DemoSubstanceRequest = Pick<ApiRequest, 'method' | 'path' | 'query' | 'headers'>;
 
-function demoRouteRequestId(request: DemoSubstanceRequest, serial: number): RequestId {
+/**
+ * The envelope helpers (shared with the session-scope routes — FW-MI-A):
+ * the SAME request-id minting + success/error envelope discipline the
+ * demo-substance routes built (imported, never duplicated).
+ */
+export function demoRouteRequestId(request: DemoSubstanceRequest, serial: number): RequestId {
   return mintRequestId(fnv1a32Hex(canonicalJson(['demo-substance-route', request.method, request.path, serial] as never)));
 }
 
-function demoRouteSuccess(requestId: RequestId, data: unknown, status = 200): ApiResponse {
+/** The shared success envelope (the boundary's own { requestId, data } shape + the version header). */
+export function demoRouteSuccess(requestId: RequestId, data: unknown, status = 200): ApiResponse {
   return deepFreeze({ status, headers: { 'x-request-id': requestId, 'x-api-version': CURRENT_API_VERSION }, body: { requestId, data } });
 }
 
-function demoRouteError(requestId: RequestId, error: ApiError): ApiResponse {
+/** The shared error envelope (the boundary's own { requestId, error } shape + the retry header when present). */
+export function demoRouteError(requestId: RequestId, error: ApiError): ApiResponse {
   const headers: Record<string, string> = { 'x-request-id': requestId, 'x-api-version': CURRENT_API_VERSION };
   if (error.retryAfterMs !== undefined) headers['retry-after-ms'] = String(error.retryAfterMs);
   return deepFreeze({ status: error.status, headers, body: { requestId, error } });
@@ -208,8 +215,9 @@ function executionSubmissionsRoute(input: FoldRouteInput, request: DemoSubstance
     return demoRouteError(requestId, apiError('validation_failed', 'the project query parameter is required (the execution blotter is project-scoped)'));
   }
   // L12 by construction: the served rows are the credential tenant's own
-  // (the demo world is seeded per composition for exactly this tenant).
-  return demoRouteSuccess(requestId, deepFreeze({ items: demoSubmissionsOf(input.ports, project) }));
+  // (the demo world is seeded per composition for exactly this tenant;
+  // the DERIVED per-project rows key on the authorized tenant — FW-MI-B).
+  return demoRouteSuccess(requestId, deepFreeze({ items: demoSubmissionsOf(input.ports, authorization.tenant, project) }));
 }
 
 /** GET /v1/jobs?project=<id> — the jobs list (D-3, the W-25A seam; both arms — W-26C R4). */
@@ -262,7 +270,10 @@ function projectGoalRoute(input: DemoSubstanceRouteInput, request: DemoSubstance
   }
   if (projectId === DEMO_PROJECT_ID) {
     // The seeded records — byte-identical to the pre-W-25B serve (the demo
-    // project's goal stays the fixed seed whatever the capture holds).
+    // project's goal stays the fixed seed whatever the capture holds). The
+    // demo project's goal set carries NO world by design (its seed jobs
+    // ride demo-seed specs — D-8's teaching empty state is correct for the
+    // demo scope), so the bundle serves no `world` field here either.
     return demoRouteSuccess(requestId, deepFreeze({ goal: demoGoalStatement(authorization.tenant), constraintSet: demoConstraintSet(authorization.tenant) }));
   }
   const captured = demoGoalSetOf(input.ports, authorization.tenant, projectId);
@@ -271,7 +282,18 @@ function projectGoalRoute(input: DemoSubstanceRouteInput, request: DemoSubstance
     // cross-tenant stay indistinguishable, the boundary's own law).
     return demoRouteError(requestId, apiError('not_found', `no goal statement exists for ${JSON.stringify(projectId)} at this host (the goal read serves each project's own create-project records; nothing is on record for this one)`));
   }
-  return demoRouteSuccess(requestId, deepFreeze({ goal: captured.goal, constraintSet: captured.constraintSet }));
+  // D-8 (W-28): the launch's world specification, retained at the job-port
+  // seam when this project's kickoff job carried a console-launch spec —
+  // served as the ADDITIVE `world` field so the console's Market World
+  // section renders the PERSISTED world after a reload or a scope switch
+  // (absent for a project launched pre-W-28 or without a world — the
+  // console degrades to its teaching empty state, never a fabricated one).
+  const world = demoWorldOf(input.ports, authorization.tenant, projectId);
+  return demoRouteSuccess(requestId, deepFreeze({
+    goal: captured.goal,
+    constraintSet: captured.constraintSet,
+    ...(world === null ? {} : { world }),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +417,17 @@ export function serveDurableSubstanceRoute(input: DurableSubstanceRouteInput, re
   if (read.value === null) {
     return demoRouteError(requestId, apiError('not_found', `no goal statement exists for ${JSON.stringify(goalProject)} in the durable projection of this tenant (the goal read serves the create-project input's persisted goal set)`));
   }
-  return demoRouteSuccess(requestId, deepFreeze({ goal: read.value.goal, constraintSet: read.value.constraintSet }));
+  // D-8 (W-28): the launch's world specification, persisted at the job-spec
+  // seam into the goal-set row's opaque payload (a cold start's projection
+  // hydrates it back) — served as the ADDITIVE `world` field, structurally
+  // re-validated (a pre-W-28 or malformed payload never crosses; the
+  // console degrades to its teaching empty state, never a fabricated one).
+  const world = read.value.world;
+  return demoRouteSuccess(requestId, deepFreeze({
+    goal: read.value.goal,
+    constraintSet: read.value.constraintSet,
+    ...(isLaunchWorldRecord(world) ? { world } : {}),
+  }));
 }
 
 // ---------------------------------------------------------------------------

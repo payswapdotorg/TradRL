@@ -15,11 +15,13 @@ import { describe, expect, it } from 'vitest';
 import { InvalidLaunchDraftError } from './errors';
 import {
   LAUNCH_STEPS,
+  elapsedMsOfJobRecord,
   initialLaunchState,
   isIdentifierPath,
   renderJobProgress,
   toCreateProjectInput,
   toLaunchJobSpec,
+  toLaunchWorldSpec,
   validateLaunchDraft,
   type LaunchDraft,
 } from './launch';
@@ -176,6 +178,28 @@ describe('launch: the composition (POST /v1/projects + the kickoff job spec)', (
     });
     expect(JSON.stringify(toLaunchJobSpec(validDraft()))).toBe(JSON.stringify(toLaunchJobSpec(validDraft()))); // deterministic
   });
+
+  it('D-8/W-28 — the world spec derives from the draft (the host goal route\'s additive `world` shape): the world fields, exact decimals, the horizon label, deterministic; an invalid draft refuses BEFORE any derivation', () => {
+    const world = toLaunchWorldSpec(validDraft());
+    expect(world).toEqual({
+      markets: ['SPY', 'GLD'],
+      venues: ['venue-x'],
+      dataSources: ['data:ohlcv-1d'],
+      executionMode: 'simulation',
+      capitalBudget: '1000000.00',
+      riskBudget: '0.02',
+      horizon: { startsAt: T0, endsAt: T0 + 90 * 86_400_000, label: 'Q1' },
+    });
+    // the horizon's OPTIONAL label stays optional — an unlabeled horizon derives an unlabeled world
+    const unlabeled = validDraft();
+    const unlabeledWorld = toLaunchWorldSpec({ ...unlabeled, horizon: { startsAt: T0, endsAt: T0 + 1000 } });
+    expect(unlabeledWorld.horizon).toEqual({ startsAt: T0, endsAt: T0 + 1000 });
+    expect('label' in unlabeledWorld.horizon).toBe(false);
+    // deterministic — identical draft -> identical world (the same derivation the job spec carries)
+    expect(JSON.stringify(toLaunchWorldSpec(validDraft()))).toBe(JSON.stringify(toLaunchWorldSpec(validDraft())));
+    // the typed gate refuses an invalid draft BEFORE any derivation (no partial world)
+    expect(() => toLaunchWorldSpec(validDraft({ venues: [] }))).toThrow(InvalidLaunchDraftError);
+  });
 });
 
 describe('launch: async job progress (submitted -> running -> complete, injected instants)', () => {
@@ -219,5 +243,35 @@ describe('launch: async job progress (submitted -> running -> complete, injected
   it('identical observations -> identical view bytes (determinism)', () => {
     const points = [{ status: 'submitted', at: T0 }, { status: 'complete', at: T0 + 5 }] as const;
     expect(JSON.stringify(renderJobProgress([...points]))).toBe(JSON.stringify(renderJobProgress([...points])));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-17 (W-29) — THE RECORD-DERIVED ELAPSED. The "elapsed: pending" the
+// personas and the Lead kept meeting on COMPLETE jobs with BOTH timestamps
+// present (L2's seed job:57d1815d; the Lead's fresh kickoff job:1f7a71dc)
+// came from deriving the elapsed from the SESSION's observation points —
+// which exist only for the current launch's tracked job and die at every
+// reload. The record's own timestamps are the truth; the derivation below
+// is independent of any observation collection.
+// ---------------------------------------------------------------------------
+
+describe('launch: D-17 — the record-derived elapsed (completedAt − submittedAt)', () => {
+  it('a record with BOTH timestamps derives its elapsed — exact integer arithmetic, no observations anywhere', () => {
+    expect(elapsedMsOfJobRecord({ submittedAt: T0, completedAt: T0 + 8_000 })).toBe(8_000);
+    expect(elapsedMsOfJobRecord({ submittedAt: T0, completedAt: T0 })).toBe(0); // completed in the same instant
+  });
+
+  it('an incomplete record (no completedAt) stays pending — and so does a corrupt one (never a fabricated negative)', () => {
+    expect(elapsedMsOfJobRecord({ submittedAt: T0 })).toBeNull();                       // genuinely incomplete
+    expect(elapsedMsOfJobRecord({ submittedAt: T0, completedAt: undefined })).toBeNull(); // explicit absence
+    expect(elapsedMsOfJobRecord({ submittedAt: T0, completedAt: T0 - 1 })).toBeNull();  // corrupt: completed BEFORE submitted
+    expect(elapsedMsOfJobRecord({ submittedAt: T0, completedAt: Number.NaN })).toBeNull(); // garbage, not an integer
+  });
+
+  it('the derivation is pure and deterministic (identical record -> identical elapsed)', () => {
+    const record = { submittedAt: T0, completedAt: T0 + 40 };
+    expect(elapsedMsOfJobRecord(record)).toBe(elapsedMsOfJobRecord(record));
+    expect(JSON.stringify(elapsedMsOfJobRecord(record))).toBe('40');
   });
 });

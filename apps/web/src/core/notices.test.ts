@@ -24,6 +24,7 @@ import {
   mergeNotices,
   noticeReadKey,
   parseStoredNoticeReads,
+  scopedInbox,
   serializeNoticeReads,
   storedReadNoticeIds,
   unreadCount,
@@ -234,6 +235,75 @@ describe('notices: L12 — cross-tenant reads never fold', () => {
     expect(() => foldNotices(SCOPE, foreign)).toThrow(CrossTenantRenderError);
     const foreignJob = { jobs: [{ ...job('learning', 'complete'), tenant: 'tenant-b' }] };
     expect(() => foldNotices(SCOPE, foreignJob)).toThrow(CrossTenantRenderError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-13 (W-29) — THE PROJECT-SCOPED INBOX VIEW. The inbox STATE keeps every
+// notice the session folded (append-only — a scope switch never un-happens
+// a notice), but the inbox SURFACE is project-scoped like every section
+// panel: a multi-desk tenant never sees the demo project's seed notices
+// inside their own desk's inbox (M4/M5/L5: 7 unread = 5 demo + 2 own).
+// ---------------------------------------------------------------------------
+
+describe('notices: D-13 — the project-scoped inbox view', () => {
+  const SCOPE_B = { tenantId: 'tenant-a', projectId: 'proj-b' } as const;
+
+  /** An inbox carrying one notice for EACH of two desks (the multi-desk tenant). */
+  function twoDeskInbox(): InboxState {
+    const deskA = foldNotices(SCOPE, { jobs: [job('learning', 'complete', undefined, T0 + 20)] });
+    const deskB = foldNotices(SCOPE_B, { jobs: [{ ...job('research', 'failed', undefined, T0 + 30), jobId: 'job-desk-b', project: 'proj-b' }] });
+    return mergeNotices(mergeNotices(emptyInbox(), deskA), deskB);
+  }
+
+  it('the scoped view lists ONLY the scope\'s own notices — cross-project notices never render in another desk\'s inbox', () => {
+    const inbox = twoDeskInbox();
+    expect(inbox.notices).toHaveLength(2); // the STATE keeps both desks' notices (append-only)
+    const viewA = scopedInbox(inbox, SCOPE);
+    expect(viewA.notices).toHaveLength(1);
+    expect(viewA.notices[0]?.projectId).toBe('proj-a');
+    const viewB = scopedInbox(inbox, SCOPE_B);
+    expect(viewB.notices).toHaveLength(1);
+    expect(viewB.notices[0]?.projectId).toBe('proj-b');
+  });
+
+  it('the scoped view\'s read marks apply to exactly the notices it lists (a foreign mark never leaks in)', () => {
+    let inbox = twoDeskInbox();
+    const deskAId = scopedInbox(inbox, SCOPE).notices[0]?.noticeId as string;
+    inbox = markNoticeRead(inbox, deskAId); // desk A's notice marked read while viewing desk A
+    const viewB = scopedInbox(inbox, SCOPE_B);
+    expect(viewB.readNoticeIds).toHaveLength(0);       // desk B's view carries no marks
+    expect(unreadCount(viewB)).toBe(1);                // desk B's own notice stays unread
+    const viewA = scopedInbox(inbox, SCOPE);
+    expect(unreadCount(viewA)).toBe(0);                // desk A's view shows its read notice
+  });
+
+  it('markAllNoticesRead WITH a scope marks exactly that scope\'s notices — the other desk keeps its unread state (and the unscoped call keeps the pre-D-13 behavior)', () => {
+    const inbox = twoDeskInbox();
+    const scoped = markAllNoticesRead(inbox, SCOPE_B); // "Mark all read" pressed on desk B's inbox
+    expect(unreadCount(scopedInbox(scoped, SCOPE_B))).toBe(0); // desk B's notice is read
+    expect(unreadCount(scopedInbox(scoped, SCOPE))).toBe(1);   // desk A's notice KEEPS its unread state
+    // the unscoped call marks everything (the pre-D-13 behavior, preserved)
+    const all = markAllNoticesRead(scoped);
+    expect(unreadCount(all)).toBe(0);
+    // idempotent in both shapes
+    expect(markAllNoticesRead(markAllNoticesRead(inbox, SCOPE_B), SCOPE_B)).toEqual(markAllNoticesRead(inbox, SCOPE_B));
+  });
+
+  it('every one of the eight charter kinds folds from PROJECT-SCOPED reads — no legitimately tenant-wide notice class exists to disclose (the audit behind the filter)', () => {
+    // The fold's every record family passes assertProjectScope (pinned by
+    // the L12 tests above), and every notice carries the fold scope's own
+    // project stamp — so the project filter drops NOTHING that a desk was
+    // ever entitled to see. Should a tenant-level system notice class ever
+    // be added, it must carry an explicit scope marker and the view must
+    // disclose it (notices.ts's scopedInbox docblock carries the law).
+    const folded = foldNotices(SCOPE, allEightReads());
+    expect(folded).toHaveLength(8);
+    for (const notice of folded) {
+      expect(notice.projectId).toBe(SCOPE.projectId); // every kind is project-labeled
+      expect(scopedInbox({ notices: folded, readNoticeIds: [] }, SCOPE).notices).toContain(notice);
+      expect(scopedInbox({ notices: folded, readNoticeIds: [] }, SCOPE_B).notices).not.toContain(notice);
+    }
   });
 });
 

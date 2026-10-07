@@ -144,6 +144,23 @@ export function fakeProviders(): FakeProviders {
         tables.set(table, rows);
         return responder(JSON.stringify({ command: 'INSERT 0 1', rowCount: 1 }));
       }
+      // FW-MI-A (MI-D1): the session-listing JOIN — the projects LEFT JOINed
+      // with their goal-set rows (one row per project, the goal cell NULL on
+      // the LEFT JOIN miss), ordered by created_at (params[4] of a
+      // tradrl_projects insert — tenant, project_id, name, lifecycle_status,
+      // created_at, updated_at, payload). The fake models the live wire
+      // (two named payload columns; array mode), never the adapter's
+      // expectations.
+      if (/^SELECT p\.payload AS project_payload, g\.payload AS goal_payload FROM tradrl_projects p LEFT JOIN tradrl_project_goals g/.test(parsed.query)) {
+        const projects = (tables.get('tradrl_projects') ?? []).filter((row) => row.params[0] === parsed.params[0]);
+        const goals = tables.get('tradrl_project_goals') ?? [];
+        const ordered = [...projects].sort((a, b) => Number(a.params[4]) - Number(b.params[4]));
+        const joined = ordered.map((row) => {
+          const goal = goals.find((entry) => entry.params[0] === row.params[0] && entry.params[1] === row.params[1]);
+          return [row.params[6] ?? null, goal === undefined ? null : goal.params[2] ?? null];
+        });
+        return responder(JSON.stringify({ fields: [{ name: 'project_payload', typeOID: 25 }, { name: 'goal_payload', typeOID: 25 }], rows: joined }));
+      }
       const select = /^SELECT payload FROM (tradrl_\w+)/.exec(parsed.query);
       if (select !== null) {
         const orderIndex = select[1] === 'tradrl_projects' ? 5 : select[1] === 'tradrl_project_goals' ? 1 : 3;

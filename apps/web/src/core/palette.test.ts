@@ -31,10 +31,12 @@ import {
   skipOnboarding,
 } from './onboarding';
 import {
+  capsuleRefOf,
   fuzzyScore,
   paletteAffordance,
   paletteIndex,
   paletteOverlay,
+  projectRefOf,
   rankPalette,
   type PaletteEntry,
 } from './palette';
@@ -294,5 +296,147 @@ describe('onboarding: the panel chrome (§4.13)', () => {
   it('the completed state renders the hidden marker (never blocks)', () => {
     const bytes = render(onboardingPanel(skipOnboarding(initialOnboarding())));
     expect(bytes).toContain('data-onboarding="completed"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-16 (W-29 wave 2) — THE PALETTE DEPTH: the cross-project jump entries,
+// the substitution-tolerant matcher, and the entity-open grammar (the
+// project/capsule ref parsers the app layer's Enter + click ride).
+// ---------------------------------------------------------------------------
+
+describe('palette: D-16 — the cross-project jump entries', () => {
+  /** A workspace scoped to proj-a with a THREE-desk directory (the current desk + two others). */
+  function multiDeskWorkspace(): WorkspaceState {
+    const project = (id: string, name: string) => ({
+      id, tenantId: 'tenant-a', name, executionMode: 'simulation',
+      lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+      lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+      createdAt: T0, updatedAt: T0,
+    });
+    const base = populatedWorkspace(); // scoped to proj-a with its project loaded
+    return reduceAll(base, [
+      { kind: 'projects-listed', at: T0 + 40, records: [project('proj-a', 'Console Test Project') as never, project('prj-meridian', 'Meridian Micro Fund') as never, project('prj-other', 'The Other Project') as never] },
+    ]);
+  }
+
+  it('every OTHER desk in the tenant directory is searchable — the current project is never duplicated', () => {
+    const index = paletteIndex(multiDeskWorkspace(), capsulesOf);
+    const projects = index.filter((entry) => entry.kind === 'PROJECT');
+    expect(projects.map((entry) => entry.ref)).toEqual(['project:proj-a', 'project:prj-meridian', 'project:prj-other']); // the current desk ONCE + one jump entry per other desk
+    const jump = projects.find((entry) => entry.ref === 'project:prj-meridian');
+    expect(jump?.title).toBe('Meridian Micro Fund');
+    expect(jump?.subtitle).toBe('switch desk · prj-meridian'); // the subtitle states what selecting it does
+    expect(jump?.target).toBe('goal'); // it lands on the adopted desk's own surface
+  });
+
+  it('a project-NAME query reaches the other desks — the jump entries rank by name and id', () => {
+    const ranked = rankPalette(paletteIndex(multiDeskWorkspace(), capsulesOf), 'meridian');
+    expect(ranked.length).toBeGreaterThan(0);
+    expect(ranked[0]?.ref).toBe('project:prj-meridian'); // the name query finds the other desk FIRST
+    const byIdFragment = rankPalette(paletteIndex(multiDeskWorkspace(), capsulesOf), 'prj-other');
+    expect(byIdFragment.some((entry) => entry.ref === 'project:prj-other')).toBe(true); // the id fragment works too
+  });
+
+  it('an empty directory adds nothing (the pre-D-16 index shape holds)', () => {
+    const index = paletteIndex(populatedWorkspace(), capsulesOf);
+    expect(index.filter((entry) => entry.kind === 'PROJECT').map((entry) => entry.ref)).toEqual(['project:proj-a']);
+  });
+
+  // FW-MI-A (MI-D8 — L4's finding: "command-palette project search by NAME
+  // returns zero results ('EQ Vol','Futures Roll','G7 Rates' all 0; only
+  // literal 'prj' lists anything, capped at 10) — after reload MY two desks
+  // became UNREACHABLE"): the FULL own-project registry (26 projects — the
+  // demo project + a session's 25 own desks, L4's two among them) is
+  // searchable END TO END — by name, by id fragment, with every desk
+  // reachable (no cap drops anything: the index carries every entry).
+  function largeDeskWorkspace(): WorkspaceState {
+    const project = (id: string, name: string) => ({
+      id, tenantId: 'tenant-a', name, executionMode: 'simulation',
+      lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+      lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+      createdAt: T0, updatedAt: T0,
+    });
+    const desks = Array.from({ length: 25 }, (_unused, index) => project(`prj-own-${String(index + 1).padStart(2, '0')}`, `Own Desk ${index + 1}`) as never);
+    desks[6] = project('prj-own-07', 'EQ Vol-Arb Execution Desk') as never; // L4's first desk
+    desks[11] = project('prj-own-12', 'Futures Roll Program') as never; // L4's second desk
+    const base = populatedWorkspace(); // scoped to the demo project
+    return reduceAll(base, [
+      { kind: 'projects-listed', at: T0 + 40, records: [project('prj-demo-console', 'the TradRL demo project') as never, ...desks] },
+    ]);
+  }
+
+  it('FW-MI-A/MI-D8: the FULL own-project registry indexes EVERY desk — the whole 26-project directory plus the current desk, nothing capped away', () => {
+    const index = paletteIndex(largeDeskWorkspace(), capsulesOf);
+    const projects = index.filter((entry) => entry.kind === 'PROJECT');
+    expect(projects.length).toBe(27); // the current desk's own entry + one jump entry per directory desk (26) — the WHOLE registry (no silent cap)
+    expect(projects.some((entry) => entry.ref === 'project:prj-own-25')).toBe(true); // the LAST desk is reachable too
+    expect(projects.some((entry) => entry.ref === 'project:prj-demo-console')).toBe(true); // the shared demo desk is reachable too
+  });
+
+  it('FW-MI-A/MI-D8: L4\'s exact zero-result searches now find his desks — by NAME', () => {
+    const byName = rankPalette(paletteIndex(largeDeskWorkspace(), capsulesOf), 'EQ Vol');
+    expect(byName.some((entry) => entry.ref === 'project:prj-own-07')).toBe(true); // 'EQ Vol' — 0 results pre-fix
+    const second = rankPalette(paletteIndex(largeDeskWorkspace(), capsulesOf), 'Futures Roll');
+    expect(second.some((entry) => entry.ref === 'project:prj-own-12')).toBe(true); // 'Futures Roll' — 0 results pre-fix
+  });
+
+  it('FW-MI-A/MI-D8: the id FRAGMENT search works over the full registry (L4\'s \'6682ce17\' was his desk\'s id fragment)', () => {
+    const byFragment = rankPalette(paletteIndex(largeDeskWorkspace(), capsulesOf), 'own-12');
+    expect(byFragment.some((entry) => entry.ref === 'project:prj-own-12')).toBe(true);
+    const byFullId = rankPalette(paletteIndex(largeDeskWorkspace(), capsulesOf), 'prj-own-25');
+    expect(byFullId.some((entry) => entry.ref === 'project:prj-own-25')).toBe(true); // the full id reaches the LAST desk
+  });
+});
+
+describe('palette: D-16 — the substitution-tolerant matcher (the personas\' own typos)', () => {
+  it('substitution typos match: "evdance" and "rezearch" score where the subsequence pass alone returned -1', () => {
+    expect(fuzzyScore('evidence evidence', 'evidnce')).toBeGreaterThan(0); // deletion — the subsequence pass (unchanged behavior)
+    expect(fuzzyScore('evidence evidence', 'evdance')).toBeGreaterThan(0); // substitution — the corrected pass (S2's own typo)
+    expect(fuzzyScore('research workspace', 'rezearch')).toBeGreaterThan(0); // S4's own typo
+  });
+
+  it('the sane rank: a genuine subsequence match outranks a corrected one for the same target', () => {
+    // 'evidnce' (deletion) hits the subsequence pass with a strong prefix run;
+    // 'evdance' (substitution) falls to the corrected pass — the deletion-tolerant
+    // match must rank ABOVE the corrected one, never below.
+    expect(fuzzyScore('evidence evidence', 'evidnce')).toBeGreaterThan(fuzzyScore('evidence evidence', 'evdance'));
+    // and both rank below the exact prefix match
+    expect(fuzzyScore('evidence evidence', 'ev')).toBeGreaterThan(fuzzyScore('evidence evidence', 'evdance'));
+  });
+
+  it('the correction stays bounded: garbage still matches nothing, and short queries are never corrected', () => {
+    expect(fuzzyScore('market world', 'xyz')).toBe(-1); // the pinned miss holds
+    expect(fuzzyScore('market world', 'zzzz')).toBe(-1); // distance 6 against a 2 allowance — rejected
+    expect(fuzzyScore('decisions every proposal challenge and decision', 'zzzzzzzz')).toBe(-1);
+    expect(fuzzyScore('evidence evidence', 'zz')).toBe(-1); // a 2-character query is too short to correct (it would match almost anything) and matches nothing as a subsequence
+    expect(fuzzyScore('research workspace', 'research!!!')).toBe(-1); // 3 substitutions sit beyond the bounded allowance
+  });
+
+  it('rankPalette end to end: the typo query finds the section (the pre-fix behavior was the teaching no-match state)', () => {
+    const ranked = rankPalette(paletteIndex(populatedWorkspace(), capsulesOf), 'evdance');
+    expect(ranked.length).toBeGreaterThan(0);
+    expect(ranked.some((entry) => entry.ref === 'nav:evidence')).toBe(true); // S2's typo now reaches Evidence
+    const research = rankPalette(paletteIndex(populatedWorkspace(), capsulesOf), 'rezearch');
+    expect(research.some((entry) => entry.ref === 'nav:research')).toBe(true); // S4's typo now reaches Research
+  });
+});
+
+describe('palette: D-16 — the entity-open grammar (project + capsule ref parsers)', () => {
+  it('projectRefOf parses project refs and rejects every other grammar', () => {
+    expect(projectRefOf('project:prj-meridian')).toBe('prj-meridian');
+    expect(projectRefOf('project:')).toBeNull();
+    expect(projectRefOf('nav:home')).toBeNull();
+    expect(projectRefOf('job:job-1')).toBeNull();
+    expect(projectRefOf('capsule:evc:abcd1234')).toBeNull();
+    expect(projectRefOf('notice:ntc-1')).toBeNull();
+  });
+
+  it('capsuleRefOf parses capsule refs into the §4.9 open key and rejects every other grammar', () => {
+    expect(capsuleRefOf('capsule:evc:abcd1234')).toBe('evc:abcd1234');
+    expect(capsuleRefOf('capsule:')).toBeNull();
+    expect(capsuleRefOf('nav:evidence')).toBeNull();
+    expect(capsuleRefOf('job:job-1')).toBeNull();
+    expect(capsuleRefOf('project:prj-a')).toBeNull();
   });
 });

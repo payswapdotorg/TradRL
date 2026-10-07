@@ -37,6 +37,7 @@ import type {
   PaginationParams,
   PostMortemQueryRequest,
   PostMortemRecord,
+  ProjectGoalWorldSpec,
   ProjectLifecycleEvent,
   ProjectRecord,
   StrategyIntent,
@@ -57,6 +58,16 @@ export interface ConsoleClientConfig {
   readonly transport: ApiTransport;
   /** The credential's bearer token (the host minted it at the secure boundary). */
   readonly token: string;
+  /**
+   * Extra headers carried on EVERY request (FW-MI-A, MI-D1): the boot
+   * wiring injects the console session header (`x-tradrl-console-session` —
+   * core/session.ts) so the host can scope the project listing/detail to
+   * THIS browser session (the demo project + the session's own projects).
+   * The credential's authorization header is always applied AFTER these
+   * (a caller can never override the token through this seam); per-request
+   * headers (the idempotency key) still win over these.
+   */
+  readonly headers?: Readonly<Record<string, string>>;
   /** The contract version this client speaks (default: the newest the mirror knows). */
   readonly apiVersion?: ApiVersion;
   /** The retry policy: the max attempts of the retryable families (default 4, immediate). */
@@ -86,14 +97,22 @@ export type ProjectLifecycleTransitionResult = { readonly record: ProjectRecord;
  * serves them — `{ data: { goal: GoalStatement, constraintSet: ConstraintSetStatement } }`,
  * field-for-field the T007 contract shapes (verified against the live
  * production origin; no field mapping needed — the wire IS the
- * contract). The erasable-subset law: no inline object types at
- * call-site generic arguments.
+ * contract). Since W-28 (D-8) the route serves the launch's WORLD
+ * SPECIFICATION as an ADDITIVE third field (`world:
+ * ProjectGoalWorldSpec`) when the project's kickoff job carried a
+ * console-launch spec — the optional mirror field below; a pre-W-28
+ * backing or a world-less project (the demo scope — its seeded goal
+ * genuinely has no world fields) serves no `world`, and the console
+ * keeps its teaching empty state. The erasable-subset law: no inline
+ * object types at call-site generic arguments.
  */
 export interface ProjectGoalBundle {
   /** The project's goal statement (the T007 shape behind the boundary). */
   readonly goal: GoalStatement;
   /** The project's constraint-set statement (the T007 shape behind the boundary). */
   readonly constraintSet: ConstraintSetStatement;
+  /** The launch world specification (D-8, W-28 — the ADDITIVE host-route field; absent for world-less projects and pre-W-28 backings). */
+  readonly world?: ProjectGoalWorldSpec;
 }
 
 /** The typed client over the boundary's public plane (the console's mirror of the SDK's resource surface). */
@@ -176,6 +195,7 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
   if (typeof config.token !== 'string' || config.token.length === 0) throw new Error('createConsoleClient: the credential token is required');
   const transport = config.transport;
   const token = config.token;
+  const extraHeaders = config.headers ?? {};
   const apiVersion = config.apiVersion ?? CURRENT_API_VERSION;
   const maxAttempts = config.retry?.maxAttempts ?? 4;
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error('createConsoleClient: retry.maxAttempts must be a positive integer');
@@ -184,7 +204,7 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
 
   /** One raw transport round-trip (no negotiation, no retry — the negotiation path uses it directly). */
   async function rawRequest(method: SdkRequest['method'], path: string, body?: unknown, headers: Record<string, string> = {}): Promise<SdkResponse> {
-    return transport({ method, path, headers: { authorization: `Bearer ${token}`, ...headers }, ...(body === undefined ? {} : { body }) });
+    return transport({ method, path, headers: { ...extraHeaders, authorization: `Bearer ${token}`, ...headers }, ...(body === undefined ? {} : { body }) });
   }
 
   /** Parse the envelope of a response (success data or the thrown typed error). */

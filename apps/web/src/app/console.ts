@@ -25,9 +25,9 @@ import type { ApiTransport, FetchLike } from '../api/transport';
 import { createFetchTransport } from '../api/transport';
 import { createConsoleClient, type ConsoleClient } from '../api/client';
 import type { ApiConsoleError } from '../api/errors';
-import type { LaunchDraft, LaunchIds } from '../core/launch';
-import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, validateLaunchDraft } from '../core/launch';
-import { InvalidLaunchDraftError } from '../core/errors';
+import type { LaunchDraft, LaunchIds, StandaloneResearchInput } from '../core/launch';
+import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, toLaunchWorldSpec, toStandaloneResearchSpec, validateLaunchDraft, validateStandaloneResearch, isResearchFieldName } from '../core/launch';
+import { InvalidLaunchDraftError, InvalidResearchSubmissionError } from '../core/errors';
 import { absorbedEdit, blankLaunchDraft, editLaunchField, isLaunchFieldName, launchFormValuesOfDraft, type LaunchFieldName } from '../core/launch-form';
 import { digestOf } from '../core/digest';
 import type { InstantSource, TickScheduler } from '../core/clock';
@@ -35,16 +35,18 @@ import { systemNowMs } from '../core/clock';
 import type { SectionId } from '../core/sections';
 import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
-import { openWorkspace, reduceWorkspace, serializeWorkspaceExport } from '../core/workspace';
+import { openWorkspace, reduceWorkspace, serializeWorkspaceExport, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
 import type { WorkspaceScope } from '../core/tenant';
+import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
 import { persistTheme } from '../core/theme';
 import { isShellTarget } from '../core/nav';
-import { paletteIndex, paletteOverlay, rankPalette, type PaletteEntry } from '../core/palette';
+import { capsuleRefOf, paletteIndex, paletteOverlay, projectRefOf, rankPalette, type PaletteEntry } from '../core/palette';
 import {
   NOTICE_READ_STORAGE_KEY,
   noticeReadKey,
   parseStoredNoticeReads,
+  scopedInbox,
   serializeNoticeReads,
   storedReadNoticeIds,
 } from '../core/notices';
@@ -60,7 +62,7 @@ import {
   type OnboardingState,
 } from '../core/onboarding';
 import { noticeCopyOf } from '../render/flow';
-import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
+import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs } from '../core/evidence';
 import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission, projectToView } from '../core/availability';
 import { parseSheetRef, SHELL_INTERACTION_CSS, type SheetRef, type ShellView } from '../render/shell';
 import { renderConsoleModel, homeFresh } from '../render/model';
@@ -83,6 +85,16 @@ export interface ConsoleBootOptions {
   readonly token: string;
   /** The workspace scope: the tenant, and either a real project id or the launchpad ('' until launched). */
   readonly scope: { readonly tenantId: string; readonly projectId: string };
+  /**
+   * THE CONSOLE SESSION HEADERS (FW-MI-A, MI-D1): extra headers the client
+   * carries on every request — the entry wires the session header
+   * (`x-tradrl-console-session`, core/session.ts's stable per-browser id)
+   * so the host scopes the project listing/detail/goal reads to THIS
+   * session (the demo project + the session's own projects — the wave-1
+   * #1 trust blocker, 9/9 professionals). Absent = the pre-fix behavior
+   * (the shared-tenant view), exactly as the headerless SDK caller sees.
+   */
+  readonly clientHeaders?: Readonly<Record<string, string>>;
   /** The INJECTED transport adapter (default: the browser fetch binding). */
   readonly transport?: ApiTransport;
   /** The fetch-like binding (tests); only used when no transport is injected. */
@@ -187,6 +199,19 @@ export interface DelegatedFieldEvent {
   readonly relatedTarget?: unknown;
 }
 
+/**
+ * MI-D7 (S5's ask — the in-UI chain verify): the selected export file's
+ * read surface — the browser's File, structurally (a name plus the
+ * async text read). Named with METHOD syntax per the erasable-subset
+ * law (no inline function types at depth zero).
+ */
+export interface SelectedExportFile {
+  /** The file's name (shown in the verification result card). */
+  readonly name: string;
+  /** The async text read (File.text() — the modern browser surface; absent when the selection cannot be read). */
+  text?(): Promise<string>;
+}
+
 /** The minimal document surface the mount needs (DOM APIs only). */
 export interface MountDocument {
   createElement(tag: string): Element;
@@ -202,8 +227,8 @@ export interface MountDocument {
   readonly documentElement?: Element | null;
 }
 
-/** The launchpad project id — the workspace's pre-launch scope placeholder. */
-export const LAUNCHPAD_PROJECT_ID = '(launchpad)';
+/** The launchpad project id — the workspace's pre-launch scope placeholder (core/tenant.ts owns the constant; re-exported for the existing imports). */
+export { LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 
 /** The persisted-scope storage key (R6b, W-22 — localStorage `tradrl_scope_project` in production). */
 export const SCOPE_STORAGE_KEY = 'tradrl_scope_project';
@@ -227,9 +252,27 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   const transport = options.transport ?? createFetchTransport(options.baseUrl, options.fetchLike);
   const instants: InstantSource = options.instants ?? { nowMs: systemNowMs };
   const scheduler: TickScheduler | undefined = options.scheduler;
-  const client: ConsoleClient = createConsoleClient({ transport, token: options.token });
+  const client: ConsoleClient = createConsoleClient({ transport, token: options.token, ...(options.clientHeaders === undefined ? {} : { headers: options.clientHeaders }) });
   const scope: WorkspaceScope = { tenantId: options.scope.tenantId, projectId: options.scope.projectId.length > 0 ? options.scope.projectId : LAUNCHPAD_PROJECT_ID };
   const beatMs = options.beatMs ?? 1000;
+  // D-15 (W-29 wave 2) — THE SESSION-SCOPE DISCIPLINE, part 1: the
+  // persisted scope is captured ONCE, synchronously, at boot — BEFORE
+  // any user interaction can happen and BEFORE the first read resolves.
+  // The pre-fix restore read the storage LATE (inside the async projects
+  // read), so a user-initiated scope change that landed between boot and
+  // that resolution raced the rehydration; the captured value plus the
+  // generation guard below make the restore exactly-once, boot-scoped,
+  // and structurally unable to clobber a user's choice.
+  const bootStoredScope = options.scopeStorage === undefined ? null : readStoredScopeProject(options.scopeStorage);
+  // D-15 part 2 — THE SCOPE GENERATION: 0 until the first scope move
+  // this session (a switcher choice, a palette jump, a launch adoption,
+  // or the boot-restore's own adoption — every one rides dispatch). The
+  // boot-restore applies ONLY at generation 0: once ANY scope move
+  // happened, the restore is done forever (the user is driving; the
+  // rehydration must never overwrite them — the switcher-rebind race
+  // the Lead reproduced twice: "the first select change did not take",
+  // the select snapping back to the boot scope).
+  let scopeGeneration = 0;
 
   let state: WorkspaceState = openWorkspace(scope, instants.nowMs());
   const listeners: WorkspaceListener[] = [];
@@ -246,6 +289,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   function dispatch(event: WorkspaceEvent): void {
     const scopeBefore = state.scope.projectId;
     state = reduceWorkspace(state, event);
+    // D-15 (W-29 wave 2): every scope move advances the generation — the
+    // boot-restore's own adoption included (one-shot by construction).
+    if (state.scope.projectId !== scopeBefore) scopeGeneration += 1;
     // THE SCOPE PERSISTENCE WRITE-THROUGH (R6b, W-22): the workspace
     // moved to another project (a launch adoption, a switcher choice,
     // a stored-scope restore) — persist the current project id so a
@@ -258,13 +304,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // THE READ-STATE WRITE-THROUGH (D-6c, W-25C): a mark-read /
     // mark-all-read persists the affected notices' read marks (keyed
     // tenant/project/notice — the map is scope-safe by construction).
+    // D-13 (W-29): mark-all marks exactly the CURRENT scope's own notices
+    // (the scoped inbox the user pressed the action on) — another desk's
+    // notices keep their unread state in their own scope.
     // A storage failure degrades silently: the session keeps the reads
     // (the workspace state is already reduced), only the durability
     // across reload is lost — exactly the pre-seam behavior.
     if (options.noticeReadStorage !== undefined && (event.kind === 'notice-read' || event.kind === 'notices-read-all')) {
       const marks: readonly NoticeRecord[] = event.kind === 'notice-read'
         ? state.inbox.notices.filter((record) => record.noticeId === event.noticeId)
-        : state.inbox.notices;
+        : scopedInbox(state.inbox, state.scope).notices;
       const next: Record<string, 1> = { ...storedNoticeReads };
       let changed = false;
       for (const record of marks) {
@@ -368,13 +417,29 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       await read('GET /v1/projects', async () => {
         const records = await client.projects.listAll();
         dispatch({ kind: 'projects-listed', at: instants.nowMs(), records: [...records] });
-        const stored = options.scopeStorage === undefined ? null : readStoredScopeProject(options.scopeStorage);
-        if (stored !== null && stored !== state.scope.projectId) {
-          if (records.some((record) => record.id === stored)) {
-            dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
-          } else if (options.scopeStorage !== undefined) {
-            persistScopeProject(options.scopeStorage, ''); // stale (deleted upstream) — clear it and keep the env pin
-          }
+        // THE STORED-SCOPE RESTORE (R6b/R6c, W-22) — D-15 (W-29 wave 2):
+        // the persisted scope was captured ONCE at boot (bootStoredScope);
+        // the restore applies ONLY while NO scope move has happened this
+        // session (the generation guard — the Lead's twice-reproduced
+        // switcher-rebind race: a user-initiated switch that lands during
+        // or immediately after boot must NEVER be overwritten by the
+        // async rehydration, and the rehydration itself must run exactly
+        // once, never again on a later beat-triggered refresh). When a
+        // stored project id exists in the directory and differs from the
+        // booted scope, the workspace ADOPTS it (the same reset+switch
+        // transition a launch rides; this bundle's captured-scope reads
+        // then drop through the dispatchIfCurrent guard and the beat
+        // refetches for the adopted scope). A stored id that no longer
+        // exists is stale — cleared and ignored, falling back to the env
+        // pin EXACTLY as the pre-W-22 boot behaved.
+        const stored = bootStoredScope;
+        if (stored === null) return;
+        if (scopeGeneration !== 0) return; // a scope move already happened — the user (or the restore itself) is driving
+        if (stored === state.scope.projectId) return;
+        if (records.some((record) => record.id === stored)) {
+          dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
+        } else if (options.scopeStorage !== undefined) {
+          persistScopeProject(options.scopeStorage, ''); // stale (deleted upstream) — clear it and keep the env pin
         }
       });
       const projectId = bundleScope;
@@ -423,7 +488,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // the host never promised this scope).
       try {
         const bundle = await client.projects.goal(projectId);
-        dispatchIfCurrent(projectId, { kind: 'goal-loaded', at: instants.nowMs(), goal: bundle.goal, constraintSet: bundle.constraintSet });
+        // D-8 (W-28): the bundle's ADDITIVE `world` (the scope's persisted
+        // launch world — the backing captured it from the kickoff job's
+        // spec into the goal-set record) rides the SAME event, so the
+        // Market World section renders the project's OWN world after a
+        // reload, a scope switch or a cold start; an absent world (the
+        // demo scope, a pre-W-28 launch) clears any prior one — the
+        // teaching empty state stays CORRECT for exactly those cases.
+        dispatchIfCurrent(projectId, {
+          kind: 'goal-loaded',
+          at: instants.nowMs(),
+          goal: bundle.goal,
+          constraintSet: bundle.constraintSet,
+          ...(bundle.world === undefined ? {} : { world: bundle.world }),
+        });
       } catch {
         // the goal route is host-owned demo-backing-only — an absent
         // goal is the host's answer, not a failure of the console's
@@ -649,7 +727,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: project.id });
       dispatch({ kind: 'project-loaded', at: instants.nowMs(), project });
       const goal = toCreateProjectInput(draft, ids, scope.tenantId, at).goal;
-      dispatch({ kind: 'goal-loaded', at: instants.nowMs(), goal, constraintSet: toCreateProjectInput(draft, ids, scope.tenantId, at).constraintSet });
+      // D-8 (W-28): the in-session bridge carries the draft's OWN world —
+      // the just-launched project's world renders immediately (the beat's
+      // scope-change refetch then re-reads the PERSISTED world from the
+      // goal route; the two agree by construction — same draft, same
+      // derivation the kickoff job's spec carried to the backing).
+      dispatch({ kind: 'goal-loaded', at: instants.nowMs(), goal, constraintSet: toCreateProjectInput(draft, ids, scope.tenantId, at).constraintSet, world: toLaunchWorldSpec(draft) });
       const job = await client.jobs.submitResearch({ projectId: project.id, spec: toLaunchJobSpec(draft) });
       dispatch({ kind: 'launch-submitted', at: instants.nowMs(), projectId: project.id, jobId: job.jobId });
       dispatch({ kind: 'job-updated', at: instants.nowMs(), job });
@@ -679,7 +762,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       confirm: null,
       touchedFields: [],
       launchEdits: {},
+      researchSubmit: null,
       openCapsule: null,
+      projectFilter: '',
+      exportVerify: null,
     };
     let paletteResults: readonly PaletteEntry[] = [];
     // §4.10's once-per-notice toast guard: the id of the notice the
@@ -723,11 +809,38 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const value = typeof element.value === 'string' ? element.value : '';
       return { field: name, value };
     };
+    /**
+     * D-12 (W-29 wave 2): read the standalone research form's field of an
+     * event target (null when the target is not one of its inputs) — the
+     * SAME delegated-vocabulary shape as launchFieldOf, on its own
+     * data-research-field attribute so each form buffers into its own
+     * edit map (a launch edit can never leak into the research form and
+     * vice versa).
+     */
+    const researchFieldOf = (target: unknown): { readonly field: string; readonly value: string } | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      const name = element.getAttribute('data-research-field');
+      if (name === null || !isResearchFieldName(name)) return null;
+      const value = typeof element.value === 'string' ? element.value : '';
+      return { field: name, value };
+    };
     /** Read the palette query of an event target (null when the target is not the palette input; the live value rides the DOM property). */
     const paletteQueryOf = (target: unknown): string | null => {
       const element = target as FieldEventTarget | null;
       if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
       if (element.getAttribute('data-palette-input') === null) return null;
+      return typeof element.value === 'string' ? element.value : '';
+    };
+    /**
+     * FW-MI-A (MI-D8): Read the project-switcher filter of an event
+     * target (null when the target is not the filter input; the live
+     * value rides the DOM property — the same pattern as the palette's).
+     */
+    const projectFilterOf = (target: unknown): string | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      if (element.getAttribute('data-project-filter') === null) return null;
       return typeof element.value === 'string' ? element.value : '';
     };
     /** Commit the buffered field edits into the state machine (one launch-draft-edited per flush; unabsorbed grammars stay buffered). */
@@ -756,11 +869,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       if (view.touchedFields.includes(field)) return;
       view = { ...view, touchedFields: [...view.touchedFields, field] };
     };
-    /** The focus-restore key of an element the browser was moving focus TO (its delegated-vocabulary identity), null when it carries none. */
+    /** The focus-restore key of an element the browser was moving focus TO (its delegated-vocabulary identity), null when it carries none. D-10 (W-29): the preference order puts the UNIQUE discriminators first (a row id, a notice id, a capsule id, a palette ref) so a restore never lands on a sibling that merely shares the action class. */
     const focusKeyOf = (element: unknown): { readonly attr: string; readonly value: string } | null => {
       const candidate = element as FieldEventTarget | null | undefined;
       if (candidate === null || candidate === undefined || typeof candidate.getAttribute !== 'function') return null;
-      for (const attr of ['data-launch-field', 'data-action', 'data-target']) {
+      for (const attr of ['data-row', 'data-notice-read', 'data-capsule-open', 'data-palette-ref', 'data-launch-field', 'data-research-field', 'data-palette-input', 'data-action', 'data-target']) {
         const value = candidate.getAttribute(attr);
         if (value !== null) return { attr, value };
       }
@@ -777,6 +890,24 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const element = target as FieldEventTarget | null;
       if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
       return element.getAttribute('data-action') === 'project-switch' ? element : null;
+    };
+    /**
+     * MI-D7 (S5's ask — the in-UI chain verify): THE EXPORT-VERIFY FILE
+     * INPUT — the delegated change on [data-action=export-verify-file].
+     * The user selected a downloaded export; the browser serves it as a
+     * File-like (name + text()). Null when the target is not the input
+     * or the selection is empty/not a readable file.
+     */
+    const verifyFileTargetOf = (target: unknown): { readonly element: FieldEventTarget; readonly file: SelectedExportFile } | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      if (element.getAttribute('data-action') !== 'export-verify-file') return null;
+      const files = (element as FieldEventTarget & { readonly files?: readonly unknown[] }).files;
+      const selected = Array.isArray(files) ? files[0] : null;
+      if (selected === null || selected === undefined) return null;
+      const candidate = selected as Partial<{ readonly name: unknown; readonly text: unknown }>;
+      if (typeof candidate.name !== 'string') return null;
+      return { element, file: candidate as SelectedExportFile };
     };
     // THE SCRUB BUFFER (the J5 wiring — the J3 pointer discipline): a
     // drag fires `input` per pointer move; those BUFFER here and never
@@ -799,10 +930,45 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
     };
+    /**
+     * D-10 (W-29) — INTERACTIVE FOCUS SURVIVES THE BEAT RE-PROJECTION: the
+     * keyboard user's focused affordance (a nav item, the bell, a notice
+     * toggle, a capsule badge) is replaced by the ~1s beat re-projection,
+     * which used to strand the focus on <body> — the persona finding
+     * ("keyboard focus+Enter failed to activate" the Settings nav item:
+     * Tab lands the focus, the beat replaces the tree, Enter hits a dead
+     * document). The capture/restore mirrors the launch-field + palette
+     * pair below: the focused element's delegated-vocabulary identity is
+     * captured BEFORE the re-projection and the FIRST VISIBLE equivalent
+     * node re-focuses after it (a display:none match — the hidden mobile
+     * header's brand row — never steals the restore; elements without a
+     * geometry probe, like the test harness's fakes, count as visible).
+     */
+    const restoreInteractiveFocusByKey = (key: { readonly attr: string; readonly value: string } | null): void => {
+      if (key === null || document.querySelectorAll === undefined) return;
+      let fallback: { focus(): void } | null = null;
+      for (const candidate of document.querySelectorAll(`[${key.attr}="${key.value}"]`)) {
+        const element = candidate as { focus(): void } & Partial<{ getClientRects(): readonly unknown[] }>;
+        if (typeof element.getClientRects !== 'function' || element.getClientRects().length > 0) {
+          element.focus();
+          return;
+        }
+        if (fallback === null) fallback = element;
+      }
+      if (fallback !== null) fallback.focus(); // best effort — a hidden match no-ops in the browser
+    };
     /** Focus the palette's input (the dialog's entry point — opening the palette and Clear search both leave typing ready; §4.14's keyboard-first journey). */
     const focusPaletteInput = (): void => {
       if (document.querySelectorAll === undefined) return;
       for (const candidate of document.querySelectorAll('[data-palette-input]')) {
+        (candidate as { focus(): void }).focus();
+        return;
+      }
+    };
+    /** FW-MI-A (MI-D8): re-focus the switcher filter after a re-projection (the caret survives the full tree rebuild). */
+    const focusProjectFilter = (): void => {
+      if (document.querySelectorAll === undefined) return;
+      for (const candidate of document.querySelectorAll('[data-project-filter]')) {
         (candidate as { focus(): void }).focus();
         return;
       }
@@ -836,6 +1002,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       let focusedSelection: { readonly start: number; readonly end: number } | null = null;
       let focusedPaletteInput = false;
       let focusedPaletteSelection: { readonly start: number; readonly end: number } | null = null;
+      // D-12 (W-29 wave 2): the focused standalone-research form field — the
+      // same capture/restore as the launch fields, on its own attribute
+      // (typing into the research form survives the beat re-projection).
+      let focusedResearchField: string | null = null;
+      let focusedResearchSelection: { readonly start: number; readonly end: number } | null = null;
+      // D-10 (W-29): the focused INTERACTIVE affordance's identity (nav
+      // items, the bell, notice toggles, capsule badges — anything in the
+      // delegated vocabulary), restored after the re-projection so a
+      // keyboard user's Tab position survives the beat (focus+Enter works).
+      let focusedInteractiveKey: { readonly attr: string; readonly value: string } | null = null;
       const active = document.activeElement as (FieldEventTarget & Partial<{ selectionStart: number | null; selectionEnd: number | null }>) | null | undefined;
       if (active !== null && active !== undefined && typeof active.getAttribute === 'function') {
         const name = active.getAttribute('data-launch-field');
@@ -849,6 +1025,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           if (typeof (active as { readonly selectionStart?: number | null }).selectionStart === 'number' && typeof (active as { readonly selectionEnd?: number | null }).selectionEnd === 'number') {
             focusedPaletteSelection = { start: (active as { readonly selectionStart: number }).selectionStart, end: (active as { readonly selectionEnd: number }).selectionEnd };
           }
+        } else if (active.getAttribute('data-research-field') !== null) {
+          focusedResearchField = active.getAttribute('data-research-field');
+          if (typeof (active as { readonly selectionStart?: number | null }).selectionStart === 'number' && typeof (active as { readonly selectionEnd?: number | null }).selectionEnd === 'number') {
+            focusedResearchSelection = { start: (active as { readonly selectionStart: number }).selectionStart, end: (active as { readonly selectionEnd: number }).selectionEnd };
+          }
+        } else {
+          focusedInteractiveKey = focusKeyOf(active);
         }
       }
       mountVTree(document, root, renderConsoleModel(state, instants.nowMs(), view, paletteResults));
@@ -870,6 +1053,24 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           break;
         }
       }
+      // D-12 (W-29 wave 2): the research form's focused field survives the
+      // re-projection (the same law as the launch fields — typing never
+      // breaks across a beat).
+      if (focusedResearchField !== null && document.querySelectorAll !== undefined) {
+        for (const candidate of document.querySelectorAll('[data-research-field]')) {
+          const element = candidate as { focus(): void; getAttribute(name: string): string | null; setSelectionRange?(start: number, end: number): void };
+          if (element.getAttribute('data-research-field') === focusedResearchField) {
+            element.focus();
+            if (focusedResearchSelection !== null && element.setSelectionRange !== undefined) element.setSelectionRange(focusedResearchSelection.start, focusedResearchSelection.end);
+            break;
+          }
+        }
+      }
+      // D-10 (W-29): the beat re-projection replaced the focused
+      // interactive affordance — re-focus its equivalent node so the
+      // keyboard journey (Tab into the nav, Enter to activate) survives
+      // every poll beat.
+      if (focusedInteractiveKey !== null) restoreInteractiveFocusByKey(focusedInteractiveKey);
     };
 
     /** The evidence capsules for the palette (the Evidence section's own fold — mirrors render/model.ts's capsule list, unprojected). */
@@ -878,6 +1079,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       ...workspace.postMortems.map((postMortem) => capsuleFromPostMortem(workspace.scope, postMortem)),
       ...workspace.knowledge.map((knowledge) => capsuleFromKnowledge(workspace.scope, knowledge)),
       ...workspace.submissions.map((submission) => capsuleFromSubmission(workspace.scope, submission)),
+      // D-9 (W-28): the jobs lane, the same fold the Evidence section
+      // renders — one capsule per COMPLETED job WITH a result, so the
+      // palette's EVIDENCE group reaches the job-derived capsules too
+      // (unprojected, mirroring the section's unprojected source list).
+      ...capsulesFromJobs(workspace.scope, workspace.jobs),
     ];
 
     /** The evidence capsules for the palette (the Evidence section's own fold). */
@@ -897,8 +1103,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // words — toasts are for NEW notices — so the latest notice toasts ONCE
       // (the W-14b re-fire guard: the old layer re-toasted the latest notice on
       // EVERY state change, which once auto-dismissal worked became an
-      // endless toast loop on every dispatch).
-      const latest = next.inbox.notices.length === 0 ? null : next.inbox.notices[next.inbox.notices.length - 1] as { readonly kind: string; readonly noticeId: string; readonly title: string; readonly at: number };
+      // endless toast loop on every dispatch). D-13 (W-29): the pick is the
+      // CURRENT SCOPE's latest notice — another desk's notice never toasts in
+      // this desk's session (the inbox state keeps them, the surface does not).
+      const scopedNow = scopedInbox(next.inbox, next.scope).notices;
+      const latest = scopedNow.length === 0 ? null : scopedNow[scopedNow.length - 1] as { readonly kind: string; readonly noticeId: string; readonly title: string; readonly at: number };
       if (latest !== null && view.toast === null && next.connection !== 'connecting' && latest.noticeId !== lastToastedNoticeId) {
         const copy = noticeCopyOf(latest.kind as 'failed_evaluation');
         const shown = { kind: latest.kind, title: copy.title, sentence: copy.sentence };
@@ -1041,6 +1250,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         return;
       }
+      // FW-MI-A (MI-D8): THE SWITCHER FILTER — typing in
+      // [data-project-filter] feeds view.projectFilter and re-renders
+      // the Settings row (the render narrows the select's options by fuzzy
+      // name + id, with the live count line). The render's focus
+      // preservation keeps the caret in the input across the projection.
+      const projectFilter = projectFilterOf(event.target);
+      if (projectFilter !== null) {
+        if (view.projectFilter !== projectFilter) {
+          view = { ...view, projectFilter };
+          render();
+          focusProjectFilter();
+        }
+        return;
+      }
       // THE SCRUBBER (the J5 wiring): a drag's input events BUFFER the
       // live position — never a dispatch, never a render (a re-projection
       // under the pointer replaces the range input and the browser
@@ -1052,10 +1275,65 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
       const entry = launchFieldOf(event.target);
-      if (entry === null) return;
+      if (entry === null) {
+        // D-12 (W-29 wave 2): THE STANDALONE RESEARCH FORM'S EDIT BUFFER —
+        // the same J3 pattern as the launch edits: buffer ONLY, never a
+        // dispatch, never a render (the buffer IS the live form — the
+        // render merges it, so a beat re-projection never reverts the
+        // user's text; the submit commits it through the frozen route).
+        const researchEntry = researchFieldOf(event.target);
+        if (researchEntry !== null && view.researchSubmit !== null) {
+          view = { ...view, researchSubmit: { ...view.researchSubmit, edits: { ...view.researchSubmit.edits, [researchEntry.field]: researchEntry.value } } };
+        }
+        return;
+      }
       view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } }; // NO render — the buffer IS the live form (merged at render time)
     });
+    /**
+     * MI-D7 (S5's ask) — THE IN-UI CHAIN VERIFY, the async half: read the
+     * selected export file, verify it with the SAME documented rules the
+     * file carries (core's verifyWorkspaceExportReport — one
+     * implementation, no drift), and render the counted report in the
+     * Settings Data export row. Every failure is an honest report, never
+     * a throw at the user: a non-JSON file, an unreadable file, a broken
+     * chain — each names itself in the card. The input's selection is
+     * cleared afterwards so re-selecting the SAME file re-fires the
+     * change (the browser otherwise swallows it as a no-op).
+     */
+    const verifySelectedExport = async (element: FieldEventTarget, file: SelectedExportFile): Promise<void> => {
+      const refusedReport = (reason: string): ExportVerificationReport => {
+        return { ok: false, reason, format: null, formatVersion: null, entryCount: 0, digestsOk: 0, linksOk: 0, headMatch: null };
+      };
+      let report: ExportVerificationReport;
+      if (typeof file.text !== 'function') {
+        report = refusedReport('the file could not be read (this browser cannot read the selected file)');
+      } else {
+        try {
+          const bytes = await file.text();
+          try {
+            report = verifyWorkspaceExportReport(JSON.parse(bytes));
+          } catch (error) {
+            report = refusedReport(`the file is not valid JSON (${error instanceof Error ? error.message : String(error)})`);
+          }
+        } catch (error) {
+          report = refusedReport(`the file could not be read (${error instanceof Error ? error.message : String(error)})`);
+        }
+      }
+      const clearable = element as FieldEventTarget & { value?: unknown };
+      if (typeof clearable.value === 'string') clearable.value = '';
+      view = { ...view, exportVerify: { fileName: file.name, report } };
+      render();
+    };
     document.addEventListener('change', (event) => {
+      // MI-D7 (S5's ask) — THE IN-UI CHAIN VERIFY: the verify input's
+      // change — the user selected a downloaded export file in Settings.
+      // Runs FIRST (the input is not a text field: none of the
+      // launch-field branches below may claim it).
+      const verifySelection = verifyFileTargetOf(event.target);
+      if (verifySelection !== null) {
+        void verifySelectedExport(verifySelection.element, verifySelection.file);
+        return;
+      }
       // THE PROJECT SWITCHER'S COMMIT (R6c, W-22): the select's change
       // event — the user's committed choice — adopts that project (the
       // same reset+switch transition a launch rides; the beat's
@@ -1089,7 +1367,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
       const entry = launchFieldOf(event.target);
-      if (entry === null) return;
+      if (entry === null) {
+        // D-12: the research form's select/keyboard commit buffers the
+        // same way (the launch form's own change-arm law: buffer only —
+        // the flush belongs to the submit click).
+        const researchEntry = researchFieldOf(event.target);
+        if (researchEntry !== null && view.researchSubmit !== null) {
+          view = { ...view, researchSubmit: { ...view.researchSubmit, edits: { ...view.researchSubmit.edits, [researchEntry.field]: researchEntry.value } } };
+        }
+        return;
+      }
       // Buffer ONLY — never a flush here: the browser fires `change`
       // on the field being LEFT (before focusout) whenever its value
       // changed, and an immediate flush would re-render UNDER the
@@ -1196,7 +1483,25 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           if (view.palette !== null) {
             const ref = target.getAttribute('data-palette-ref');
             openedSheet = ref === null ? null : parseSheetRef(ref);
-            view = { ...view, palette: null, ...(openedSheet === null ? {} : { sheet: openedSheet }) };
+            // D-16 (W-29 wave 2): EVERY ENTITY RESULT OPENS ITS ENTITY. An
+            // EVIDENCE entry's capsule opens INLINE (view.openCapsule is the
+            // §4.9 open key — the same one a capsule badge's click sets; a
+            // JOB entry already opened its dialog, and the inconsistency
+            // was S4's finding), and a cross-project JUMP entry adopts its
+            // project (the same user-initiated project-adopted the
+            // switcher rides — the D-15 generation guard counts it, so the
+            // boot restore can never clobber a palette jump).
+            const capsuleId = ref === null ? null : capsuleRefOf(ref);
+            const jumpTo = ref === null ? null : projectRefOf(ref);
+            view = {
+              ...view,
+              palette: null,
+              ...(openedSheet === null ? {} : { sheet: openedSheet }),
+              ...(capsuleId === null ? {} : { openCapsule: capsuleId }),
+            };
+            if (jumpTo !== null && jumpTo !== state.scope.projectId) {
+              dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: jumpTo }); // renders via onState (the palette is already closed)
+            }
             refreshPalette();
           }
           if (id === 'home' || id === 'inbox' || id === 'settings') {
@@ -1266,8 +1571,40 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (kind === 'tm-mode-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
         if (kind === 'tm-mode-t-minus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
         if (kind === 'tm-mode-timestamp') dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: state.timeMachine.anchorAt - 60_000 });
-        if (kind === 'playback-step') dispatch({ kind: 'playback-tick', at: instants.nowMs() });
-        if (kind === 'playback-step-back') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: state.timeMachine.tMinusMs + 500 });
+        // MI-D9 — THE MANUAL STEPS. Pre-fix, BOTH controls were wired to
+        // playback-tick / view-tminus(tMinusMs+500): Step while paused
+        // no-op'd under the freeze law (a dead control), and Step back
+        // while paused jumped the view FORWARD to (anchor - 500ms) — the
+        // wall-clock end — flipping the mode playback -> t-minus with the
+        // banner reading "Viewing a past instant" at 100% (the
+        // 6/9-professional finding). Now: in PLAYBACK, Step back steps
+        // the view BACK one controlled step and STAYS paused (a new pure
+        // transition, its own append-only event), and Step while paused
+        // is the user's own forward step (staying paused — the freeze
+        // stops the beat's auto ticks, never the Step control). Outside
+        // playback, Step back keeps its documented T-x meaning (the
+        // offset grows by one step) and Step is a safe no-op (the control
+        // belongs to playback — pre-fix it threw the typed "not armed"
+        // error at the user).
+        if (kind === 'playback-step') {
+          const timeMachine = state.timeMachine;
+          if (timeMachine.mode === 'playback' && timeMachine.playback !== null && timeMachine.playback.paused) {
+            // the user's own step: guard the anchor exactly like the beat loop (never past "now")
+            const nextViewAt = timeMachine.playback.fromAt + (timeMachine.playback.ticks + 1) * timeMachine.playback.stepMs;
+            if (nextViewAt <= timeMachine.anchorAt) dispatch({ kind: 'playback-step-forward', at: instants.nowMs() });
+          } else if (timeMachine.mode === 'playback' && timeMachine.playback !== null) {
+            dispatch({ kind: 'playback-tick', at: instants.nowMs() }); // playing: the manual nudge stays a tick
+          }
+          // outside playback: no-op — the control belongs to playback
+        }
+        if (kind === 'playback-step-back') {
+          const timeMachine = state.timeMachine;
+          if (timeMachine.mode === 'playback' && timeMachine.playback !== null) {
+            dispatch({ kind: 'playback-step-back', at: instants.nowMs() }); // one controlled step back, staying paused, never a mode flip
+          } else {
+            dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: timeMachine.tMinusMs + 500 }); // T-x: the offset grows (the tooltip's own words)
+          }
+        }
         if (kind === 'refresh') void refreshWithShell();
         // §4.14 the command palette
         if (kind === 'palette-open') {
@@ -1289,6 +1626,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             refreshPalette();
             render();
             focusPaletteInput();
+          }
+        }
+        // FW-MI-A (MI-D8): THE SWITCHER FILTER'S CLEAR — restores the
+        // whole session listing (every option renders; the count line
+        // leaves with the filter) and hands the focus back to the input.
+        if (kind === 'project-filter-clear') {
+          if (view.projectFilter.length > 0) {
+            view = { ...view, projectFilter: '' };
+            render();
           }
         }
         // §4.13 the onboarding wizard (completion persists; returning users never see it)
@@ -1355,6 +1701,94 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (kind === 'confirm-launch') {
           view = { ...view, confirm: null };
           if (state.launch.draft !== null) void submitLaunch(state.launch.draft);
+        }
+        // D-12 (W-29 wave 2): THE STANDALONE RESEARCH SUBMIT — the
+        // Research section's own affordance (the launch flow was the
+        // ONLY path before). The three actions follow the section's own
+        // design language: open (the closed card's single primary
+        // action), cancel (close + drop the buffered edits), and the
+        // submit itself — the typed validation gate FIRST (an invalid
+        // objective renders inline in the form's own card, never an
+        // API call), then the frozen POST /v1/jobs/research route with
+        // the CURRENT project's id (exactly what the launch's kickoff
+        // job submits into — the same plumbing, the same opaque-spec
+        // carrier, the same reducer merge by jobId). The returned
+        // record dispatches job-updated, so the job lands in the
+        // Research list immediately and the beat's poll cadence
+        // advances it through the async pattern (submitted -> running
+        // -> complete) like every other job.
+        if (kind === 'research-submit-open') {
+          if (view.researchSubmit === null) {
+            view = { ...view, researchSubmit: { edits: {}, error: null } };
+            render();
+          }
+          return;
+        }
+        if (kind === 'research-submit-cancel') {
+          if (view.researchSubmit !== null) {
+            view = { ...view, researchSubmit: null };
+            render();
+          }
+          return;
+        }
+        if (kind === 'research-submit') {
+          const form = view.researchSubmit;
+          if (form === null) {
+            render();
+            return;
+          }
+          const input: StandaloneResearchInput = {
+            objective: typeof form.edits.objective === 'string' ? form.edits.objective : '',
+            notes: typeof form.edits.notes === 'string' ? form.edits.notes : '',
+          };
+          try {
+            validateStandaloneResearch(input);
+          } catch (error) {
+            if (error instanceof InvalidResearchSubmissionError) {
+              view = { ...view, researchSubmit: { ...form, error: error.message } };
+              render();
+              return;
+            }
+            throw error;
+          }
+          // The scope THIS submission targets, captured at the click: a
+          // mid-flight desk switch supersedes the render but never the
+          // submission's own target (the job belongs to the project the
+          // user was looking at — the record carries it verbatim).
+          const projectId = state.scope.projectId;
+          if (isLaunchpadScope(projectId)) {
+            // The affordance never renders on the launchpad; a stale
+            // press landing here is refused honestly, never submitted
+            // into a scope that does not exist.
+            view = { ...view, researchSubmit: { ...form, error: 'There is no project yet — launch first; the wizard is the only path from the launchpad.' } };
+            render();
+            return;
+          }
+          view = { ...view, researchSubmit: { ...form, error: null } };
+          render();
+          void (async () => {
+            try {
+              const job = await client.jobs.submitResearch({ projectId, spec: toStandaloneResearchSpec(input) });
+              // Only the still-current scope receives the record (the
+              // reducer's cross-scope gate is the law; the other desk's
+              // refetch reads the job from GET /v1/jobs?project=… when
+              // the user returns to it — the W-25A seam).
+              if (state.scope.projectId === projectId) {
+                dispatch({ kind: 'job-updated', at: instants.nowMs(), job });
+              }
+              view = { ...view, researchSubmit: null }; // success closes the form
+              render();
+            } catch (error) {
+              const message = (error as Error)?.message ?? String(error);
+              // The form keeps the user's text (the edits buffer rides
+              // the view, and the CURRENT form state — whatever the
+              // user typed while the request was in flight — is the one
+              // the error renders into).
+              view = { ...view, researchSubmit: view.researchSubmit === null ? { edits: {}, error: message } : { ...view.researchSubmit, error: message } };
+              render();
+            }
+          })();
+          return;
         }
         // §4.9 capsule badges open their payload inline
         if (kind === 'capsule-open') {
@@ -1458,6 +1892,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           // no parsable sheet ref and navigate exactly as before.
           const openedSheet = parseSheetRef(selected.ref);
           if (openedSheet !== null) view = { ...view, sheet: openedSheet };
+          // D-16 (W-29 wave 2): an EVIDENCE entry's capsule opens INLINE
+          // (the §4.9 open key — Enter behaves exactly like the JOB
+          // entries' dialog open and the click path above), and a
+          // cross-project JUMP entry switches the desk through the same
+          // user-initiated adoption the switcher rides.
+          const capsuleId = capsuleRefOf(selected.ref);
+          if (capsuleId !== null) view = { ...view, openCapsule: capsuleId };
+          const jumpTo = projectRefOf(selected.ref);
+          if (jumpTo !== null && jumpTo !== state.scope.projectId) {
+            dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: jumpTo }); // renders via onState
+          }
           if (selected.target !== null) {
             if (selected.target === 'home' || selected.target === 'inbox' || selected.target === 'settings') {
               view = { ...view, accountView: selected.target };

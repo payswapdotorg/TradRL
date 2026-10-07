@@ -113,7 +113,8 @@ import type {
 } from '../../../services/api/src/index';
 import { canonicalJson, isJobRecord } from '../../../services/api/src/index';
 import { fakeJobSubmission } from '../../../services/api/src/fixtures';
-import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, type GoalSetRecord, type NeonStoreDeps } from '../../adapters/neon/stores';
+import { DEMO_PROJECT_ID, launchWorldOfSpec } from './demo';
+import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, ownerSessionOf, type GoalSetRecord, type NeonStoreDeps, type SessionProjectRow } from '../../adapters/neon/stores';
 import { executeNeonStatement, type NeonConfig } from '../../adapters/neon/client';
 import { NEON_DDL_RECORDS } from '../../adapters/neon/schema';
 import type { ServedKnowledgeMirror } from '../../adapters/neon/mirrors';
@@ -136,10 +137,17 @@ export interface DurableSeamDeps {
   readonly instants: InstantSourceMirror;
 }
 
-/** One hydrated goal set — the create-project input's goal + constraint set, verbatim (what main already carries). */
+/**
+ * One hydrated goal set — the create-project input's goal + constraint set,
+ * verbatim (what main already carries); since W-28 (D-8) optionally the
+ * LAUNCH WORLD SPECIFICATION the kickoff job's spec carried (merged into the
+ * same opaque goal-set payload — no schema change).
+ */
 export interface HydratedGoalSet {
   readonly goal: unknown;
   readonly constraintSet: unknown;
+  /** The launch world specification, when the goal-set row carries one (W-28, D-8). */
+  readonly world?: unknown;
 }
 
 /**
@@ -355,6 +363,37 @@ export interface DurableBackingHandle {
    * (deploy/README.md §neon).
    */
   readonly runbook: DurableRunbook;
+  /**
+   * THE SESSION-OWNERSHIP STAMP (FW-MI-A, MI-D1): record which console
+   * session owns a just-created project. The host (api/router.ts) calls
+   * this AFTER the boundary confirmed a create-project (POST /v1/projects
+   * answered 2xx) and BEFORE the drain, with the session header the
+   * console sent on the create — the stamp merges the additive
+   * `ownerSession` field into the project's goal-set row payload (the
+   * SAME opaque-column precedent as W-28's `world`) and queues the durable
+   * write onto the SAME drain the create's own writes ride (the ordering
+   * law: a failed stamp write is the typed 503 + the re-projection — the
+   * create is unconfirmed, exactly like a failed registry write). The
+   * merge source is the live goal-set overlay (the create just set it),
+   * falling back to a fresh store read (an idempotent REPLAY after a cold
+   * start — the port never re-ran); a read failure there skips the stamp
+   * (best-effort, disclosed — the common path is exact). IDEMPOTENT: a row
+   * already carrying the same owner queues nothing. A foreign tenant is
+   * refused (L12 — the stamp keys on the seam's credential tenant).
+   */
+  stampSessionOwner(tenant: string, projectId: string, session: string): Promise<{ readonly stamped: boolean }>;
+  /**
+   * THE SESSION-LISTING READ (FW-MI-A, MI-D1): the tenant's project rows
+   * LEFT JOINed with their goal-set rows (NeonProjectStore's
+   * projectSessionRowsOf — one round trip). FRESH BY CONSTRUCTION: the
+   * durable tables, never this instance's boot projection, so a project
+   * created on ANOTHER serverless instance is visible the moment its
+   * write drained (the MI-D8 staleness root cause — a warm instance's
+   * projection never re-read the registry). A degraded Neon read is the
+   * typed failure (the caller serves the R46 503 — a session view is
+   * never a stale or partial one).
+   */
+  sessionProjectRows(): Promise<StoreResult<readonly SessionProjectRow[]>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -846,8 +885,41 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
         // exact jobId, status, result and timestamps) — the frozen
         // pipeline's handler stores the port's return into the API-owned
         // job store, which is the whole point (the store the per-id GET
-        // and the list fold read now carries the durable record).
+        // and the list fold read now carries the durable record). The
+        // replay's spec is the seam's own `{ hydrated: true }` marker —
+        // never a console-launch spec, so no world capture rides this
+        // path (the world persisted at the ORIGINAL submission).
         return { ok: true, value: hydrationQueue.shift() as JobRecord };
+      }
+      // THE LAUNCH WORLD CAPTURE (D-8, W-28): a console-launch kickoff
+      // spec carries the launch's world specification — the only
+      // console->host carrier the frozen contracts leave room for (the
+      // create-project parser keeps exactly its own six fields). The
+      // world MERGES into the project's goal-set row: the live overlay
+      // serves it immediately (goalOf) and the durable write rides the
+      // drain like every control-plane write (the ordering law). The
+      // capture is structural (launchWorldOfSpec validates every field;
+      // a foreign or malformed spec captures nothing — R46), skips the
+      // DEMO project (its goal set stays world-less by design — the demo
+      // scope's teaching empty state is correct), requires a goal set on
+      // record for the project (the console's flow always creates the
+      // project first; an unknown project's world is skipped, never a
+      // crash), and is IDEMPOTENT — a goal set already carrying the same
+      // world (byte-identical, the W-27 recordJobs pattern) queues
+      // nothing.
+      const world = launchWorldOfSpec(input.spec);
+      if (world !== null) {
+        const projectId = input.project as string;
+        if (projectId !== DEMO_PROJECT_ID) {
+          const existing = liveGoalSets.get(projectId) ?? null;
+          if (existing !== null) {
+            const merged: GoalSetRecord = { ...existing, world };
+            if (canonicalJson((existing.world ?? null) as never) !== canonicalJson(world as never)) {
+              liveGoalSets.set(projectId, merged);
+              pending.push({ label: 'goalset.world.put', run: () => projectStore.putGoalSet(deps.tenant, projectId, merged) });
+            }
+          }
+        }
       }
       return innerJobSubmission.submitJob(input);
     },
@@ -1031,6 +1103,44 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
 
   const runbook: DurableRunbook = { applyDdl, verifyDdl };
 
+
+
+  // -------------------------------------------------------------------------
+  // THE SESSION-SCOPE SURFACES (FW-MI-A, MI-D1 — the ownership stamp + the
+  // fresh session-listing read)
+  // -------------------------------------------------------------------------
+
+  /**
+   * THE SESSION-OWNERSHIP STAMP: merge the owning console session into the
+   * project's goal-set row (the additive `ownerSession` field — the W-28
+   * `world` precedent) and queue the durable write onto the SAME drain the
+   * create's own writes ride. See the handle interface for the full law.
+   */
+  async function stampSessionOwner(tenant: string, projectId: string, session: string): Promise<{ readonly stamped: boolean }> {
+    if (tenant !== deps.tenant) return { stamped: false }; // L12 — the stamp keys on the seam's credential tenant, never a request value
+    // The merge source: the live overlay first (the common path — the create
+    // port just set it), else a fresh store read (the idempotent-replay
+    // after a cold start edge; a failed read there skips the stamp —
+    // best-effort, disclosed, never a thrown failure on the response path).
+    let existing: GoalSetRecord | null = liveGoalSets.get(projectId) ?? null;
+    if (existing === null) {
+      const read = await projectStore.goalSetOf(deps.tenant, projectId);
+      if (!read.ok) return { stamped: false };
+      existing = read.value;
+    }
+    if (existing === null) return { stamped: false }; // no goal set on record — the project cannot reconstruct either; nothing to stamp
+    if (ownerSessionOf(existing) === session) return { stamped: true }; // idempotent — the durable truth already carries this owner
+    const merged: GoalSetRecord = { ...existing, ownerSession: session };
+    liveGoalSets.set(projectId, merged);
+    pending.push({ label: 'goalset.session.put', run: () => projectStore.putGoalSet(deps.tenant, projectId, merged) });
+    return { stamped: true };
+  }
+
+  /** THE SESSION-LISTING READ: the fresh JOIN over the durable tables (projectSessionRowsOf — never the boot projection). */
+  async function sessionProjectRows(): Promise<StoreResult<readonly SessionProjectRow[]>> {
+    return projectStore.projectSessionRowsOf(deps.tenant);
+  }
+
   return {
     ports: { controlPlane: controlPlanePort, firmMemory: firmMemoryPort, outcomeLearning: outcomeLearningPort, jobSubmission: jobSubmissionPort },
     settled,
@@ -1041,6 +1151,8 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     recordJobs,
     beginJobHydration,
     endJobHydration,
+    stampSessionOwner,
+    sessionProjectRows,
     lastProjection: () => report,
     lastFailure: () => failure,
     runbook,

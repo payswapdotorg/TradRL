@@ -17,16 +17,17 @@
 
 import type {
   GatewaySubmissionRecord,
+  JobRecord,
   OutcomeRecord,
   PostMortemRecord,
   ServedKnowledge,
 } from '../api/contracts';
 import { digestOf } from './digest';
 import { assertProjectScope, type WorkspaceScope } from './tenant';
-import { availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission } from './availability';
+import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission } from './availability';
 
-/** The capsule sources (the API's outcome/evidence read families). */
-export type CapsuleSourceKind = 'outcome' | 'post-mortem' | 'knowledge' | 'submission';
+/** The capsule sources (the API's outcome/evidence read families + the jobs lane — D-9, W-28). */
+export type CapsuleSourceKind = 'outcome' | 'post-mortem' | 'knowledge' | 'submission' | 'job';
 
 /** One typed fact inside a capsule (closed vocabulary labels; decimal values verbatim). */
 export interface CapsuleFact {
@@ -175,6 +176,64 @@ export function capsuleFromSubmission(scope: WorkspaceScope, submission: Gateway
     facts,
     availableAt: availabilityOfSubmission(submission),
   };
+}
+
+/**
+ * Capsule from a COMPLETED job's result record (the /v1/jobs/:jobId read —
+ * D-9, W-28, the result->job lineage leg): the research result was a
+ * lineage LEAF before (outcome/decision/submission chains carried
+ * provenance, but a job's release-candidate result minted ZERO capsules
+ * and NO capsule referenced its job). The capsule bundles the result
+ * payload's key facts (the deliverable marker, the spec id + version, the
+ * project) and carries the JOB REFERENCE — the lineage leg L2 asked for
+ * ("the chain result -> job -> capsule"). The refs are the job's own id:
+ * the record's provenance, never recomputed (L20 — absent result fields
+ * simply render as nothing; the console never fabricates one).
+ */
+export function capsuleFromJob(scope: WorkspaceScope, job: JobRecord): EvidenceCapsule {
+  assertProjectScope(scope, job);
+  if (job.status !== 'complete' || job.result === undefined) {
+    // The fold's own law: only a COMPLETED job WITH a result mints a capsule
+    // (a pending job proves nothing about a deliverable — nothing fabricated).
+    throw new Error(`capsuleFromJob: the job ${JSON.stringify(job.jobId)} carries no completed result to bundle`);
+  }
+  const result = job.result as Record<string, unknown>;
+  const facts: CapsuleFact[] = [fact('job-kind', job.kind)];
+  if (typeof result.kind === 'string') facts.push(fact('deliverable', result.kind));
+  if (typeof result.specId === 'string') facts.push(fact('spec-id', result.specId));
+  if (typeof result.version === 'number') facts.push(fact('version', result.version));
+  if (typeof result.project === 'string') facts.push(fact('project', result.project));
+  if (typeof result.epochs === 'number') facts.push(fact('epochs', result.epochs));
+  const refs: readonly CapsuleRef[] = [{ kind: 'job', ref: job.jobId }];
+  return {
+    capsuleId: capsuleIdOf('job', job.jobId, facts, refs),
+    tenantId: job.tenant,
+    projectId: job.project,
+    sourceKind: 'job',
+    sourceRef: job.jobId,
+    sourceRoute: '/v1/jobs/:jobId',
+    refs,
+    facts: Object.freeze(facts),
+    availableAt: availabilityOfJob(job),
+  };
+}
+
+/**
+ * The capsule list of a job listing (D-9, W-28): one capsule per COMPLETED
+ * job WITH a result — the mint's fold. Deterministic (input order
+ * preserved), idempotent by construction (the state's job records are
+ * deduped by jobId upstream — the reducer's replace-by-id merge — and the
+ * capsule id is CONTENT-ADDRESSED: an identical job record derives the
+ * identical capsule, never a duplicate; a hydration replay or a re-read
+ * mints nothing new).
+ */
+export function capsulesFromJobs(scope: WorkspaceScope, jobs: readonly JobRecord[]): readonly EvidenceCapsule[] {
+  const capsules: EvidenceCapsule[] = [];
+  for (const job of jobs) {
+    if (job.status !== 'complete' || job.result === undefined) continue; // no result, no capsule
+    capsules.push(capsuleFromJob(scope, job));
+  }
+  return capsules;
 }
 
 /** The capsule list of a whole outcome listing (deterministic — input order preserved). */

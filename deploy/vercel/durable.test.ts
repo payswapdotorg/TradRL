@@ -574,6 +574,149 @@ describe('deploy/vercel — the durable seam: the goal read route', () => {
 });
 
 // ---------------------------------------------------------------------------
+// THE LAUNCH WORLD CAPTURE (D-8, W-28): the Market World section was bound to
+// the console's IN-SESSION launch draft, so after a reload (or a cold start)
+// it rendered its teaching empty state FOREVER for every launched project
+// (the re-run's ONLY project blocker). The durable fix: the kickoff job's
+// OPAQUE spec (the only console->host carrier the frozen contracts leave room
+// for — the create-project parser keeps exactly its own six fields) carries
+// the world; the seam's job port CAPTURES it structurally at submission and
+// MERGES it into the goal-set row's opaque payload (tradrl_project_goals —
+// no schema change), where it rehydrates at every cold start and the
+// host-owned goal route serves it back as the bundle's ADDITIVE `world`
+// field.
+// ---------------------------------------------------------------------------
+
+/** The console's kickoff-job spec (apps/web toLaunchJobSpec's shape — the world fields + the launch context). */
+function consoleLaunchSpec(): Record<string, unknown> {
+  return {
+    kind: 'console-launch',
+    objective: 'Find and keep an edge in momentum.',
+    horizon: { startsAt: T0, endsAt: T0 + 2_592_000_000, label: 'the launch window' },
+    capitalBudget: '500000.00',
+    riskBudget: '40000.00',
+    markets: ['BTC-USD', 'ETH-USD'],
+    venues: ['binance', 'kraken'],
+    dataSources: ['candle-v1', 'depth-v1'],
+    executionMode: 'simulation',
+    preferences: [{ key: 'rebalance', value: 'daily' }],
+  };
+}
+
+/** The extracted world the backings persist + serve (the world fields only — deploy/vercel's launchWorldOfSpec law). */
+function extractedWorld(): Record<string, unknown> {
+  return {
+    markets: ['BTC-USD', 'ETH-USD'],
+    venues: ['binance', 'kraken'],
+    dataSources: ['candle-v1', 'depth-v1'],
+    executionMode: 'simulation',
+    capitalBudget: '500000.00',
+    riskBudget: '40000.00',
+    horizon: { startsAt: T0, endsAt: T0 + 2_592_000_000, label: 'the launch window' },
+  };
+}
+
+describe('deploy/vercel — the durable seam: the launch world capture (D-8, W-28)', () => {
+  it('the launch story: create + a console-launch kickoff job -> the goal-set row carries the MERGED world, the goal route serves it as the ADDITIVE field, and a COLD START rehydrates it (the reload/cold-start path, closed)', async () => {
+    const providers = fakeProviders();
+    // Count ONLY the goal-set upserts (the world-merge write's own lane — the job rows' writes are a different table and must not pollute the count).
+    let goalSetInserts = 0;
+    const counting: FetchLike = (url, init) => {
+      if (typeof init?.body === 'string' && init.body.includes('INSERT INTO tradrl_project_goals')) goalSetInserts += 1;
+      return providers.fetchLike(url, init);
+    };
+    const deployment = composeInstance(durableSource(), counting);
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+    await deployment.durable!.settled();
+
+    // THE LAUNCH: the create (goal + constraint set), then the kickoff job whose spec carries the world.
+    const created = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/projects', headers: BEARER, body: createProjectBody('prj-world-desk') }));
+    expect(created.status).toBe(201); // the router drained the create's writes (goal set -> record)
+    const kickoff = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:w28:kickoff' }, body: { kind: 'research', projectId: 'prj-world-desk', spec: consoleLaunchSpec() } }));
+    expect(kickoff.status).toBe(202); // the router drained the world's merge write before serving
+
+    // THE DURABLE ROW: the goal set now carries the MERGED world (the opaque payload's additive field).
+    const direct = storesOver(providers.fetchLike);
+    const goalSet = await direct.project.goalSetOf(TENANT, 'prj-world-desk');
+    expect(goalSet.ok).toBe(true);
+    if (goalSet.ok && goalSet.value !== null) {
+      expect(goalSet.value.goal).toEqual(validGoal(TENANT));
+      expect(goalSet.value.constraintSet).toEqual(validConstraintSet(TENANT));
+      expect(goalSet.value.world).toEqual(extractedWorld()); // the captured world, merged into the same row
+    }
+
+    // THE GOAL ROUTE: the bundle serves the ADDITIVE `world` field.
+    const goal = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-desk/goal', headers: BEARER }));
+    expect(goal.status).toBe(200);
+    const goalBody = (goal.body as { data: { goal: unknown; constraintSet: unknown; world?: unknown } }).data;
+    expect(goalBody.goal).toEqual(validGoal(TENANT));
+    expect(goalBody.constraintSet).toEqual(validConstraintSet(TENANT));
+    expect(goalBody.world).toEqual(extractedWorld());
+
+    // IDEMPOTENCE (the W-27 byte-identical pattern): a re-submission of the
+    // SAME world queues NOTHING — the goal-set row is written once (the new
+    // job's own tradrl_jobs row is a different table and does not touch this count).
+    const insertsAfterFirst = goalSetInserts;
+    const resubmitted = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:w28:resubmit' }, body: { kind: 'research', projectId: 'prj-world-desk', spec: consoleLaunchSpec() } }));
+    expect(resubmitted.status).toBe(202);
+    expect(goalSetInserts).toBe(insertsAfterFirst); // no second goal-set write (the identical world is a no-op)
+
+    // THE COLD START: the projection rehydrates the world from the row, and the goal route serves it on the fresh instance.
+    const second = composeInstance(durableSource(), providers.fetchLike);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    await second.durable!.settled();
+    const hydrated = second.durable!.goalOf('prj-world-desk');
+    expect(hydrated.ok).toBe(true);
+    if (hydrated.ok && hydrated.value !== null) expect(hydrated.value.world).toEqual(extractedWorld());
+    const coldGoal = await drive(second, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-desk/goal', headers: BEARER }));
+    expect(coldGoal.status).toBe(200);
+    expect(((coldGoal.body as { data: { world?: unknown } }).data).world).toEqual(extractedWorld()); // the reloaded console renders the PERSISTED world
+
+    // THE DEMO PROJECT stays world-less (the teaching empty state's scope — preserved by design).
+    const demoGoal = await drive(second, streamingRequest({ method: 'GET', url: `/v1/projects/${DEMO_PROJECT_ID}/goal`, headers: BEARER }));
+    expect(demoGoal.status).toBe(200);
+    expect((demoGoal.body as { data: Record<string, unknown> }).data).not.toHaveProperty('world'); // NO world field — the pre-W-28 serve shape
+  });
+
+  it('the capture is STRUCTURAL: a non-console-launch spec (the demo seed\'s own shape) and the DEMO project never capture a world; a hydration replay never re-captures (the spec rides `{ hydrated: true }`)', async () => {
+    const providers = fakeProviders();
+    const deployment = composeInstance(durableSource(), providers.fetchLike);
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+    await deployment.durable!.settled();
+
+    // A launched desk whose kickoff job carried a DEMO-SEED-shaped spec (no console-launch kind marker): no world captured.
+    await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/projects', headers: BEARER, body: createProjectBody('prj-world-foreign') }));
+    const submitted = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:w28:foreign' }, body: { kind: 'research', projectId: 'prj-world-foreign', spec: { kind: 'demo-seed', note: 'not a console launch', feeds: ['candles:1m'] } } }));
+    expect(submitted.status).toBe(202);
+    const foreign = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-foreign/goal', headers: BEARER }));
+    expect(foreign.status).toBe(200);
+    expect((foreign.body as { data: Record<string, unknown> }).data).not.toHaveProperty('world'); // a malformed/foreign spec captures nothing (R46)
+
+    // A console-launch job for the DEMO project: the capture's demo-project guard keeps the demo goal world-less.
+    const demoJob = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:w28:demo' }, body: { kind: 'research', projectId: DEMO_PROJECT_ID, spec: consoleLaunchSpec() } }));
+    expect(demoJob.status).toBe(202);
+    const demoGoal = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/projects/${DEMO_PROJECT_ID}/goal`, headers: BEARER }));
+    expect(demoGoal.status).toBe(200);
+    expect((demoGoal.body as { data: Record<string, unknown> }).data).not.toHaveProperty('world'); // the demo scope's teaching empty state is preserved
+
+    // A hydration replay never re-captures: the boot world replays the durable job through the real
+    // POST route with the `{ hydrated: true }` marker spec (never a console-launch one). A second
+    // instance's hydration must leave the goal-set rows exactly as they are (no world churn).
+    const second = composeInstance(durableSource(), providers.fetchLike);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    const booted = await drive(second, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER })); // the first request runs the boot world (the jobs hydration included)
+    expect(booted.status).toBe(200);
+    const rehydrated = await storesOver(providers.fetchLike).project.goalSetOf(TENANT, 'prj-world-foreign');
+    expect(rehydrated.ok).toBe(true);
+    if (rehydrated.ok && rehydrated.value !== null) expect(rehydrated.value.world).toBeUndefined(); // still world-less — the replay never captured
+  });
+});
+
+// ---------------------------------------------------------------------------
 // (h) THE W-26B ACTIVATION — the durable resolution as a SUPERSET of demo
 // ---------------------------------------------------------------------------
 
@@ -1275,5 +1418,213 @@ describe('deploy/vercel — the W-27 durable jobs surface (D-7)', () => {
     const ready = deployment.durable!.jobsOf('prj-any');
     expect(ready.ok).toBe(true);
     if (ready.ok) expect(ready.value).toEqual([]); // an unknown project's page is empty (never a leak)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-MI-A (MI wave 1): THE SESSION-SCOPE SURFACES UNDER DURABLE — the
+// ownership stamp surviving cold starts + the FRESH session listing
+// (defects MI-D1 + MI-D8, the durable arm)
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-MI-A: the durable session scope (the ownership stamp, the fresh JOIN listing, the cross-instance freshness)', () => {
+  const SESSION_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; // 32-hex — the console's mint shape
+  const SESSION_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+  function sessionHeaders(session: string): Record<string, string> {
+    return { ...BEARER, 'x-tradrl-console-session': session };
+  }
+
+  it('the ownership stamp persists: a session-scoped create stamps the goal-set row, and a COLD instance serves the session view from it (the session\'s own desks survive reloads + cold starts)', async () => {
+    const providers = fakeProviders();
+    const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceA.ok).toBe(true);
+    if (!instanceA.ok) return;
+
+    // session A launches a desk through the FULL handler (the stamp rides the drain)
+    const created = await drive(instanceA, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: createProjectBody('prj-session-a-1'),
+    }));
+    expect(created.status).toBe(201);
+
+    // the goal-set row carries the OWNING session (the additive field on the opaque payload)
+    const direct = storesOver(providers.fetchLike);
+    const goalSet = await direct.project.goalSetOf(TENANT, 'prj-session-a-1');
+    expect(goalSet.ok).toBe(true);
+    if (!goalSet.ok) return;
+    expect(goalSet.value?.ownerSession).toBe(SESSION_A); // THE STAMP
+    expect(goalSet.value?.goal).toEqual(validGoal(TENANT)); // the create's own records, unchanged
+
+    // the COLD instance: session A still sees its desk (the durable ownership — the session's own projects hydrate for the session view)
+    const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceB.ok).toBe(true);
+    if (!instanceB.ok) return;
+    const ownListing = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_A) }));
+    expect(ownListing.status).toBe(200);
+    expect(((ownListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id)).toEqual([DEMO_PROJECT_ID, 'prj-session-a-1']);
+
+    // ...and session B still does NOT (the cold start changes nothing about isolation)
+    const otherListing = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_B) }));
+    expect(((otherListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id)).toEqual([DEMO_PROJECT_ID]);
+  });
+
+  it('cross-session reads by id answer the typed not-found under durable too — and the session\'s own goal read serves FRESH from the JOIN row (never the projection)', async () => {
+    const providers = fakeProviders();
+    const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceA.ok).toBe(true);
+    if (!instanceA.ok) return;
+    await drive(instanceA, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: createProjectBody('prj-session-a-1'),
+    }));
+
+    // a FRESH instance (the cold start): the session view, not the projection, answers
+    const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceB.ok).toBe(true);
+    if (!instanceB.ok) return;
+
+    // B's direct id read of A's desk: the typed not-found (unknown and foreign indistinguishable)
+    const foreignDetail = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1', headers: sessionHeaders(SESSION_B) }));
+    expect(foreignDetail.status).toBe(404);
+    const foreignGoal = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1/goal?project=prj-session-a-1', headers: sessionHeaders(SESSION_B) }));
+    expect(foreignGoal.status).toBe(404);
+
+    // A's own detail + goal read serve — the goal FRESH from the JOIN row, with the ownerSession field NEVER crossing the wire
+    const ownDetail = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1', headers: sessionHeaders(SESSION_A) }));
+    expect(ownDetail.status).toBe(200);
+    const ownGoal = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1/goal?project=prj-session-a-1', headers: sessionHeaders(SESSION_A) }));
+    expect(ownGoal.status).toBe(200);
+    const goalBundle = ownGoal.body.data as { goal: unknown; constraintSet: unknown; ownerSession?: unknown };
+    expect(goalBundle.goal).toEqual(validGoal(TENANT)); // the launch's own goal, served fresh
+    expect(goalBundle.constraintSet).toEqual(validConstraintSet(TENANT));
+    expect(goalBundle.ownerSession).toBeUndefined(); // the ownership field is host-side only — never in the console's read
+  });
+
+  it('MI-D8\'s root cause, closed: a WARM instance\'s session listing sees another instance\'s create IMMEDIATELY (the fresh JOIN) — where the frozen boundary\'s projection view still serves the boot snapshot', async () => {
+    const providers = fakeProviders();
+    // instance B boots FIRST (its projection settles over the pre-create world)
+    const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceB.ok).toBe(true);
+    if (!instanceB.ok) return;
+    const warmBoot = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: BEARER }));
+    expect(warmBoot.status).toBe(200); // the projection settled (the boundary's listing answered)
+
+    // instance A (a DIFFERENT serverless instance) creates a project for session A
+    const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instanceA.ok).toBe(true);
+    if (!instanceA.ok) return;
+    await drive(instanceA, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: createProjectBody('prj-warm-1'),
+    }));
+
+    // THE FIX: instance B's SESSION listing reads the durable tables (the JOIN) — the desk A just launched is ALREADY there (the wave-1 evidence: "after reload MY two desks became UNREACHABLE" — the warm projection never re-read the registry)
+    const sessionListing = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_A) }));
+    expect(sessionListing.status).toBe(200);
+    expect(((sessionListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id)).toEqual([DEMO_PROJECT_ID, 'prj-warm-1']);
+
+    // ...while the HEADERLESS boundary listing on the same warm instance still serves the boot projection (the frozen boundary's own, unchanged behavior — the session routes are the additive fix, never a re-implementation)
+    const boundaryListing = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: BEARER }));
+    const boundaryIds = ((boundaryListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id);
+    expect(boundaryIds).toEqual([DEMO_PROJECT_ID]); // the pre-fix projection staleness, preserved byte-identically for the headerless SDK caller
+  });
+});
+
+// THE LAUNCHED-DESK EVIDENCE STREAM UNDER DURABLE (FW-MI-B — MI-D2 +
+// MI-D10): the SAME per-project derivation the demo arm serves, over the
+// seam's OWN surfaces — the hydrated goal set (goal + constraint set +
+// the W-28 world) and the hydrated control plane's compile gate. The
+// derived stream is read-time derivation over durable rows, so a COLD
+// START serves the desk's evidence stream IDENTICALLY (the demo arm's
+// honest per-instance limitation does not apply here: the envelope
+// itself is durable).
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the launched-desk evidence stream under durable (FW-MI-B: the derived stream serves + survives the cold start)', () => {
+  it('launch -> the kickoff request\'s tick compiles the org -> the blotter + the outcome/post-mortem reads serve the desk\'s OWN stream (named bodies, the fixture constraint set\'s own position cap quoted in the refusal)', async () => {
+    const providers = fakeProviders();
+    const deployment = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+
+    // The first request pays the boot world (the demo project seeds).
+    await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+
+    // THE LAUNCH: the fixture goal/constraint set (validConstraintSet carries
+    // the k-position state cap — the packet's own example of a position limit
+    // from the project's constraint set) + the console-launch kickoff job
+    // (the world: BTC/ETH on binance/kraken, capital 500000.00, risk 40000.00).
+    // The create's `at` is a PAST instant on the REAL clock (the control
+    // plane's monotonic audit law: the tick's bind at Date.now() must be
+    // >= the record's updatedAt — the W-26B compile test's own law; the
+    // DERIVED records' instants derive from the goal's own createdAt, not
+    // from this wall clock, so the stream itself stays deterministic).
+    const created = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/projects', headers: BEARER, body: createProjectBody('prj-durable-evidence', Date.now() - 60_000) }));
+    expect(created.status).toBe(201);
+    const kickoff = await drive(deployment, streamingRequest({
+      method: 'POST',
+      url: '/v1/jobs/research',
+      headers: { ...BEARER, 'idempotency-key': 'idem:fwmib:durable:kickoff' },
+      body: { kind: 'research', projectId: 'prj-durable-evidence', spec: consoleLaunchSpec() },
+    }));
+    expect(kickoff.status).toBe(202); // the kickoff request's tick compiled the org (the R4 pass over the hydrated control plane)
+
+    // THE BLOTTER: the desk's own derived stream — 3 rows, named bodies, the
+    // numeric refusal quoting the project's OWN k-position cap (bound 2,
+    // observed 2.4 — the same constraint its fixture constraint set declares).
+    const blotter = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/execution/submissions?project=prj-durable-evidence', headers: BEARER }));
+    expect(blotter.status).toBe(200);
+    const rows = ((blotter.body as { data: { items: readonly Record<string, unknown>[] } }).data).items;
+    expect(rows).toHaveLength(3);
+    const routed = rows.filter((row) => row.kind === 'routed') as unknown as readonly { decisionBody: string; fill: { notional: string }; order: { quantity: string; price: string }; riskChecks: readonly unknown[] }[];
+    const refused = rows.find((row) => row.kind === 'refused') as unknown as { decisionBody: string; refusal: { stage: string; refusals: readonly { constraintId: string; subject: string; predicate: { kind: string; bound: number }; observed: string }[] } };
+    expect(routed).toHaveLength(2);
+    expect(routed.every((row) => row.decisionBody === 'desk:prj-durable-evidence-execution')).toBe(true); // NAMED — never "unknown" (MI-D10)
+    expect(refused.decisionBody).toBe('gate:pre-trade-risk');
+    expect(routed.every((row) => row.riskChecks.length === 7)).toBe(true);
+    expect(routed[0]!.fill.notional).toBe('48000'); // 0.8 x 60000 — exact (capital 500000.00, risk 40000.00)
+    const quoted = refused.refusal.refusals[0]!;
+    expect(quoted.constraintId).toBe('k-position'); // the project's OWN constraint-set position cap
+    expect(quoted.subject).toBe('position.grossExposure');
+    expect(quoted.predicate.kind).toBe('limit.max');
+    expect(quoted.predicate.bound).toBe(2);
+    expect(quoted.observed).toBe('2.4');
+
+    // THE OUTCOME + POST-MORTEM READS (the frozen routes over the WRAPPED seam port).
+    const outcomes = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/outcomes/query', headers: BEARER, body: { project: 'prj-durable-evidence', at: T0 + 10_000 } }));
+    expect(outcomes.status).toBe(200);
+    const outcomeItems = ((outcomes.body as { data: { items: readonly { outcomeId: string; outcomeClass: string; decisionBody: string; expectation: { declaredBy: string }; deviation: { realizedGap: string; withinTolerance: boolean } }[] } }).data).items;
+    expect(outcomeItems).toHaveLength(1);
+    expect(outcomeItems[0]!.outcomeClass).toBe('adverse_gap');
+    expect(outcomeItems[0]!.decisionBody).toBe('desk:prj-durable-evidence-execution');
+    expect(outcomeItems[0]!.expectation.declaredBy).toBe('spec-launch-director');
+    expect(outcomeItems[0]!.deviation.realizedGap).toBe('-60'); // -12 - 48, exact
+    expect(outcomeItems[0]!.deviation.withinTolerance).toBe(false);
+    const mortems = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/post-mortems/query', headers: BEARER, body: { project: 'prj-durable-evidence', at: T0 + 10_000, latestPerOutcome: true } }));
+    expect(mortems.status).toBe(200);
+    const mortemItems = ((mortems.body as { data: { items: readonly { postMortemId: string; subject: { outcomeRecordRef: string }; hypotheses: readonly { confidence: string; note: string }[] }[] } }).data).items;
+    expect(mortemItems).toHaveLength(1);
+    expect(mortemItems[0]!.subject.outcomeRecordRef).toBe(outcomeItems[0]!.outcomeId); // attached to its outcome
+    expect(mortemItems[0]!.hypotheses[0]!.confidence).toBe('0.8'); // confidence-rated
+    expect(mortemItems[0]!.hypotheses[0]!.note).toContain('simulated'); // the honesty discipline
+
+    // THE COLD START: a fresh instance over the same durable store — the
+    // goal set (with the world) + the bound project hydrate, so the SAME
+    // derived stream serves IDENTICALLY (read-time derivation over durable
+    // rows; the demo arm's per-instance limitation does not apply here).
+    const second = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    const coldBlotter = await drive(second, streamingRequest({ method: 'GET', url: '/v1/execution/submissions?project=prj-durable-evidence', headers: BEARER }));
+    expect(coldBlotter.status).toBe(200);
+    const coldRows = ((coldBlotter.body as { data: { items: readonly { submissionId: string; decisionBody?: string }[] } }).data).items;
+    expect(coldRows.map((row) => row.submissionId)).toEqual(rows.map((row) => (row as { submissionId: string }).submissionId)); // byte-identical ids — the same stream
+    const coldOutcomes = await drive(second, streamingRequest({ method: 'POST', url: '/v1/outcomes/query', headers: BEARER, body: { project: 'prj-durable-evidence', at: T0 + 10_000 } }));
+    expect((((coldOutcomes.body as { data: { items: readonly { outcomeId: string }[] } }).data).items).map((entry) => entry.outcomeId)).toEqual(outcomeItems.map((entry) => entry.outcomeId));
+
+    // THE DEMO PROJECT's fixture substance stays untouched under durable too (the derivation excludes it — the boot-world fixture rows are its story).
+    const demoOutcomes = await drive(second, streamingRequest({ method: 'POST', url: '/v1/outcomes/query', headers: BEARER, body: { project: DEMO_PROJECT_ID, at: T0 + 10_000 } }));
+    expect((((demoOutcomes.body as { data: { items: readonly { outcomeId: string }[] } }).data).items).map((entry) => entry.outcomeId)).toEqual(['out:demo0001']);
   });
 });

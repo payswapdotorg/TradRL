@@ -31,11 +31,11 @@
 import type { CriterionPredicate, GatewayRefusal, GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
 import { withRenderGuard } from '../core/clock';
 import { assertVisible, availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfProject, availabilityOfSubmission, projectToView } from '../core/availability';
-import { assertProjectScope, type WorkspaceScope } from '../core/tenant';
+import { assertProjectScope, isLaunchpadScope, type WorkspaceScope } from '../core/tenant';
 import { renderDecimal } from '../core/decimals';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { PolicyEnforcementError } from '../core/errors';
-import { renderJobProgress, LAUNCH_STEPS, type JobProgressView, type LaunchStep } from '../core/launch';
+import { elapsedMsOfJobRecord, initialLaunchState, renderJobProgress, LAUNCH_STEPS, researchFormValuesOf, type LaunchState, type LaunchStep } from '../core/launch';
 import { formatNumberGrouped } from './numbers';
 import {
   EXECUTION_MODES,
@@ -47,8 +47,8 @@ import {
   type LaunchFieldName,
 } from '../core/launch-form';
 import type { SectionId } from '../core/sections';
-import { unreadCount, type InboxState } from '../core/notices';
-import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, type EvidenceCapsule } from '../core/evidence';
+import { scopedInbox, unreadCount, type InboxState } from '../core/notices';
+import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, type WorkspaceState } from '../core/workspace';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
 import type { WatchEvent } from '../core/watch';
@@ -340,22 +340,39 @@ function jobPillOf(job: JobRecord): { tone: PillTone; label: string } {
   return { tone: pillToneOfDomain(status), label: job.status };
 }
 
-/** Render one job with its progress view. */
-function jobCard(scope: WorkspaceScope, job: JobRecord, viewAt: number, progress: JobProgressView | null): VNode {
+/**
+ * Render one job as an interactive list row (§4.4). D-17 (W-29): the row's
+ * duration meta derives from the RECORD's own timestamps (completedAt −
+ * submittedAt) — never from the session's observation points, which exist
+ * only for the current launch's tracked job and die at every reload. Every
+ * complete job with timestamps carries its duration on the row.
+ */
+function jobCard(scope: WorkspaceScope, job: JobRecord, viewAt: number): VNode {
   assertProjectScope(scope, job);
   visibleAt(job, availabilityOfJob(job), viewAt, job.jobId);
+  const elapsed = elapsedMsOfJobRecord(job);
   return listRow({
     icon: 'flask',
     title: job.jobId,
     subtitle: `${job.kind} job`,
     pill: jobPillOf(job),
-    ...(progress !== null && progress.elapsedMs !== null ? { meta: formatDurationMs(progress.elapsedMs) } : {}),
+    ...(elapsed !== null ? { meta: formatDurationMs(elapsed) } : {}),
     rowId: `job:${job.jobId}`,
   });
 }
 
-/** The job's detail sheet (§4.5a) — the same availability + scope gates as the row. */
-function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, progress: JobProgressView | null): VNode[] {
+/**
+ * The job's detail sheet (§4.5a) — the same availability + scope gates as
+ * the row. D-17 (W-29): the METRICS elapsed derives from the RECORD's own
+ * timestamps (completedAt − submittedAt, elapsedMsOfJobRecord) — the
+ * root-cause fix for the "elapsed: pending" the personas and the Lead met
+ * on COMPLETE jobs with BOTH timestamps present (the seed job:57d1815d, the
+ * Lead's fresh kickoff job:1f7a71dc): the sheet used renderJobProgress over
+ * the SESSION's observation points (empty for every non-tracked job and
+ * after every reload), so the truth sitting in the record never rendered.
+ * 'pending' shows ONLY while the record genuinely carries no completedAt.
+ */
+function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number): VNode[] {
   assertProjectScope(scope, job);
   visibleAt(job, availabilityOfJob(job), viewAt, job.jobId);
   const status: DefinitionSection = {
@@ -366,9 +383,10 @@ function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, progres
       ...(job.completedAt !== undefined ? ([['completed at', formatInstantUtc(job.completedAt)]] as const) : []),
     ],
   };
+  const elapsed = elapsedMsOfJobRecord(job);
   const metrics: DefinitionSection = {
     eyebrow: 'METRICS',
-    pairs: [['elapsed', progress === null || progress.elapsedMs === null ? 'pending' : formatDurationMs(progress.elapsedMs)]],
+    pairs: [['elapsed', elapsed === null ? 'pending' : formatDurationMs(elapsed)]],
   };
   // THE RESULT SECTION (the R1 fix): when the job record carries its
   // completion payload, the deliverable renders READABLY here — the
@@ -506,17 +524,21 @@ function outcomePostMortemCard(scope: WorkspaceScope, postMortem: PostMortemReco
   ]);
 }
 
-/** Render one knowledge entry. */
+/** Render one knowledge entry. D-18 (W-29 wave 2): the card leads with ONE human sentence — the claim in words + the confidence (L2's finding: the lessons rendered as raw field tuples; the Inbox's plain-English copy is the shape to follow) — with the full typed record beneath it. */
 function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt: number): VNode {
   assertProjectScope(scope, knowledge.record);
   visibleAt(knowledge, availabilityOfKnowledge(knowledge), viewAt, knowledge.record.knowledgeId);
-  return v('div', { class: 'card' }, [
+  const claim = knowledge.record.claim;
+  const dimension = claim.dimension === null || claim.dimension.length === 0 ? '' : ` (${claim.dimension})`;
+  const summary = `A ${claim.kind} lesson the firm treats as ${claim.polarity}${dimension} — confidence ${knowledge.record.confidence}, from ${knowledge.record.evidenceCount} piece${knowledge.record.evidenceCount === 1 ? '' : 's'} of evidence.`;
+  return v('div', { class: 'card lesson-card', 'data-lesson': knowledge.record.knowledgeId }, [
     v('div', { class: 'card-title' }, [knowledge.record.knowledgeId]),
     v('span', { class: `badge badge-knowledge-${knowledge.status}` }, [knowledge.status]),
+    v('p', { class: 'objective', 'data-lesson-summary': 'true' }, [summary]),
     ...factRows([
-      ['claim kind', knowledge.record.claim.kind],
-      ['polarity', knowledge.record.claim.polarity],
-      ['dimension', knowledge.record.claim.dimension ?? 'none'],
+      ['claim kind', claim.kind],
+      ['polarity', claim.polarity],
+      ['dimension', claim.dimension ?? 'none'],
       ['confidence', knowledge.record.confidence],
       ['evidence count', String(knowledge.record.evidenceCount)],
       ['valid from', formatInstantUtc(knowledge.record.validity.from)],
@@ -525,17 +547,19 @@ function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt
   ]);
 }
 
-/** Render one evidence capsule as the §4.9 inline surface: the monospace content-address badge (the open button) + the source kind; when open, the payload (mono) + the provenance line render inline (refs — never recomputed, L20). */
+/** Render one evidence capsule as the §4.9 inline surface: the monospace content-address badge (the open button) + the source kind; when open, the payload (mono) + the provenance line render inline (refs — never recomputed, L20). D-18 (W-29 wave 2): the refs line rides the payload's hover title (M5's truncated-refs finding) — the FULL refs are never hidden by wrapping or abbreviation. */
 function capsuleCard(capsule: EvidenceCapsule, viewAt: number, openCapsule: string | null): VNode {
   assertVisible({ datumRef: capsule.capsuleId, availableAt: capsule.availableAt }, viewAt);
+  const refsLine = capsule.refs.length === 0 ? 'refs: none' : `refs: ${capsule.refs.map((entry) => `${entry.kind}:${entry.ref}`).join(', ')}`;
   return capsuleSurface({
     capsuleId: capsule.capsuleId,
     sourceKind: capsule.sourceKind,
     open: openCapsule === capsule.capsuleId,
     payloadLines: [
       ...capsule.facts.map((entry) => `${entry.label}: ${entry.value}`),
-      capsule.refs.length === 0 ? 'refs: none' : `refs: ${capsule.refs.map((entry) => `${entry.kind}:${entry.ref}`).join(', ')}`,
+      refsLine,
     ],
+    refsLine,
     provenance: `read from ${capsule.sourceRoute} · ${capsule.sourceKind} ${capsule.sourceRef} · tenant ${capsule.tenantId} / project ${capsule.projectId} · available ${formatInstantUtc(capsule.availableAt)}`,
   });
 }
@@ -562,13 +586,18 @@ function watchEventRow(scope: WorkspaceScope, event: WatchEvent, viewAt: number,
   });
 }
 
-/** The inbox panel (§4.10): the bell + list rows with read/unread state + mark-all-read + the per-notice read toggle (the W-14b J6 wiring — the workspace's own notice-read event, dispatched by the row's explicit affordance). */
+/** The inbox panel (§4.10): the bell + list rows with read/unread state + mark-all-read + the per-notice read toggle (the W-14b J6 wiring — the workspace's own notice-read event, dispatched by the row's explicit affordance). D-13 (W-29): the panel renders the PROJECT-SCOPED inbox — only this scope's own folded notices list here (the state keeps every session notice, append-only; another desk's notices stay in their own desk's inbox). */
 function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
-  const unread = unreadCount(state.inbox);
-  const projected = projectToView(state.inbox.notices, viewAt, (record) => record.at);
+  // D-13: the scoped view — the fold-scoping pattern every section panel
+  // follows (the section folds derive from the state's own scope-gated
+  // records; the inbox's records predate the current scope, so the scope
+  // gate applies at the view).
+  const inbox = scopedInbox(state.inbox, state.scope);
+  const unread = unreadCount(inbox);
+  const projected = projectToView(inbox.notices, viewAt, (record) => record.at);
   const rows = projected.map((record) => {
     const copy = noticeCopyOf(record.kind);
-    const isRead = state.inbox.readNoticeIds.includes(record.noticeId);
+    const isRead = inbox.readNoticeIds.includes(record.noticeId);
     return accordionRow({
       icon: copy.icon,
       title: record.title,
@@ -591,6 +620,9 @@ function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
   });
   return v('aside', { class: 'inbox', 'data-unread': String(unread) }, [
     v('h2', {}, [`Notifications${unread > 0 ? ` (${unread} unread)` : ''}`]),
+    // D-13: the scoping is STATED, not implied — each desk sees its own
+    // notices; cross-project notices never render in another desk's inbox.
+    v('p', { class: 'hint', 'data-inbox-scope': state.scope.projectId }, [`Notices for this project (${state.scope.projectId}) — each desk sees its own; cross-project notices stay in their own desk's inbox.`]),
     v('button', { class: 'inbox-read-all', 'data-action': 'notices-read-all', type: 'button' }, ['Mark all read']),
     ...rows,
     ...(projected.length === 0 ? [sectionEmpty('inbox')] : []),
@@ -679,18 +711,30 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
   // THE HERO'S LAUNCH AFFORDANCE (the J3 entry, Home shape): the
   // primary flow's own CTA when nothing is running; a resume hint
   // while the wizard is open (the wizard renders in the launch panel
-  // directly below); a progress note while a launch is in flight or
-  // has finished. Mirrors launchPanel's own states — never a dead
-  // button (a launch-start while a draft is open would be refused by
-  // the handler; the hero shows the honest state instead).
-  const launch = state.launch;
+  // directly below); a progress note ONLY while a launch is genuinely
+  // IN FLIGHT. Mirrors launchPanel's own states — never a dead button
+  // (a launch-start while a draft is open would be refused by the
+  // handler; the hero shows the honest state instead).
+  // D-11 (W-29): the banner is PHASE-DRIVEN, never progress-presence-
+  // driven. The pre-fix test (draft === null && progress.length === 0
+  // && error === null) stayed false FOREVER after any launch — the
+  // progress array is append-only and no event ever cleared it, so a
+  // COMPLETED launch kept the "A launch is in progress" banner and hid
+  // the launch-entry buttons (M4's finding: a second launch required a
+  // page reload). A concluded launch (launched/failed, no open wizard)
+  // now restores the CTA; the launch panel below keeps the concluded
+  // launch's own cards (result, progress, Start over).
+  // D-15 (W-29 wave 2): the hero reads the SCOPE-GUARDED launch slice —
+  // another desk's concluded launch never drives this desk's hero (the
+  // CTA renders there; the launched desk keeps its own banner/cards).
+  const launch = launchOfScope(state);
   const draftActive = launch.draft !== null && (launch.phase === 'draft' || launch.phase === 'idle');
-  const launchQuiet = launch.draft === null && launch.progress.length === 0 && launch.error === null;
+  const launchInFlight = launch.phase === 'launching';
   const heroCta: VNode | undefined = draftActive
     ? v('p', { class: 'hero-note', 'data-hero-launch': 'draft' }, ['The launch wizard is open — continue below.'])
-    : launchQuiet
-      ? v('button', { class: 'hero-cta', 'data-action': 'launch-start', type: 'button' }, ['Describe your goal'])
-      : v('p', { class: 'hero-note', 'data-hero-launch': launch.phase }, ['A launch is in progress — details below.']);
+    : launchInFlight
+      ? v('p', { class: 'hero-note', 'data-hero-launch': launch.phase }, ['A launch is in progress — details below.'])
+      : v('button', { class: 'hero-cta', 'data-action': 'launch-start', type: 'button' }, ['Describe your goal']);
   const hero = heroPanel(heroCta);
   if (state.connection === 'connecting' && fresh) {
     return v('section', { class: 'panel home', 'data-section': 'home' }, [hero, loadingState('stat-grid')]);
@@ -711,7 +755,10 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
   const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
   const snapshots = projectToView(state.orgSnapshots, viewAt, availabilityOfOrgSnapshot);
   const capsuleCount = outcomes.length + postMortems.length + knowledge.length + submissions.length;
-  const unread = unreadCount(state.inbox);
+  // D-13 (W-29): the unread tile + the activity timeline render the
+  // PROJECT-SCOPED inbox — another desk's notices never count here.
+  const scopedNotices = scopedInbox(state.inbox, state.scope);
+  const unread = unreadCount(scopedNotices);
   const running = jobs.filter((job) => job.status === 'running').length;
   const snapshot = snapshots.length > 0 ? snapshots[0] : null;
   const tiles = statGrid([
@@ -731,7 +778,7 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
       ['Instances', snapshot === null ? '0' : String(snapshot.instanceRefs.length)],
     ],
   });
-  const notices = projectToView(state.inbox.notices, viewAt, (record) => record.at);
+  const notices = projectToView(scopedNotices.notices, viewAt, (record) => record.at);
   const entries: TimelineEntry[] = notices.map((record) => ({
     at: record.at,
     title: record.title,
@@ -758,11 +805,121 @@ function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView):
   if (sheet.kind === 'job') {
     const job = state.jobs.find((candidate) => candidate.jobId === sheet.id);
     if (job === undefined) return [];
-    return jobSheet(state.scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : []));
+    // D-9 (W-28): the completed job's OWN evidence capsule renders INLINE
+    // beside the sheet (the same §4.9 convention as the outcome's capsule
+    // under Outcomes and the submission's under Execution) — the
+    // bidirectional affordance: the result view links its capsule (the
+    // fold mints one only for a COMPLETED job WITH a result; a pending or
+    // failed job renders no capsule — nothing fabricated, L20).
+    return [
+      ...jobSheet(state.scope, job, viewAt),
+      ...capsulesFromJobs(state.scope, [job]).map((capsule) => capsuleInline(capsule, viewAt, view.openCapsule)),
+    ];
   }
   const snapshot = state.orgSnapshots.find((candidate) => candidate.organizationRef === sheet.id);
   if (snapshot === undefined) return [];
   return snapshotSheet(state.scope, snapshot, viewAt);
+}
+
+/**
+ * D-12 (W-29 wave 2): THE STANDALONE RESEARCH-SUBMIT CARD — the
+ * Research section's own submission affordance. Closed: ONE primary
+ * action ("Submit research") in a card that states the scope it will
+ * submit into. Open: the two-field form (objective + notes) riding the
+ * SAME labeled-input scaffold and beat-safe data-field pattern as the
+ * launch wizard, an inline error line for the typed validation gate or
+ * a failed submission (rendered in the form's own card — an error the
+ * user must read to fix is never a toast), and exactly TWO actions
+ * (Submit / Cancel). Null on the launchpad (no project exists — the
+ * launch wizard is the only path there, by design).
+ */
+function researchSubmitCard(state: WorkspaceState, view: ShellView): VNode | null {
+  if (isLaunchpadScope(state.scope.projectId)) return null;
+  if (view.researchSubmit === null) {
+    return v('div', { class: 'card research-submit', 'data-research-submit': 'closed' }, [
+      v('div', { class: 'card-title' }, ['Submit research']),
+      v('p', { class: 'card-note' }, [`Run a research job in this project (${state.scope.projectId}) directly — no launch wizard required. The job lists below and advances like any other.`]),
+      v('div', { class: 'tm-playback' }, [
+        v('button', { class: 'tm-button', 'data-action': 'research-submit-open', type: 'button' }, ['Submit research']),
+      ]),
+    ]);
+  }
+  const form = researchFormValuesOf(view.researchSubmit.edits);
+  return v('div', { class: 'card research-submit', 'data-research-submit': 'open' }, [
+    v('div', { class: 'card-title' }, ['Submit research']),
+    v('p', { class: 'card-note' }, [`The job submits into the current project (${state.scope.projectId}) through the same research route a launch's kickoff job rides.`]),
+    ...labeledInput({ label: 'Objective', name: 'objective', value: form.objective, required: true, hint: 'One sentence — what this research run should investigate.', vocabulary: 'research' }),
+    ...labeledInput({ label: 'Notes', name: 'notes', value: form.notes, hint: 'Optional context for the run.', vocabulary: 'research' }),
+    ...(view.researchSubmit.error === null ? [] : [v('p', { class: 'field-error', role: 'alert', 'data-research-error': view.researchSubmit.error }, [view.researchSubmit.error])]),
+    v('div', { class: 'tm-playback' }, [
+      v('button', { class: 'tm-button', 'data-action': 'research-submit', type: 'button' }, ['Submit research job']),
+      v('button', { class: 'tm-button', 'data-action': 'research-submit-cancel', type: 'button' }, ['Cancel']),
+    ]),
+  ]);
+}
+
+/**
+ * D-15 (W-29 wave 2): THE LAUNCH SLICE'S SCOPE GUARD. The launch flow
+ * leaves its CONCLUDED state (the launched params card, the progress
+ * card, the failure card) on the launch slice forever — and the
+ * workspace resets every record on a scope switch but NEVER the launch
+ * slice, so a desk switch rendered the PREVIOUS desk's launch params
+ * inside the OTHER scope's sections (M4/M5/L5/S1's finding; the Lead's
+ * W-28 note: the Market World panel showed the transient launch
+ * context's capital in another desk's view). The guard: the launch
+ * slice renders only within its OWN scope — launch.projectId (set by
+ * launch-submitted) equals the current scope. An open WIZARD DRAFT
+ * (projectId null — pre-project, the draft is what the user is typing
+ * now) renders everywhere: the primary flow is scope-independent and
+ * wiping it on a switch would lose the user's work. A foreign-scope
+ * concluded launch renders as the QUIET initial state in this desk's
+ * view — the hero shows its CTA, the launch panel its idle card — and
+ * switching BACK to the launched desk restores its own concluded cards.
+ */
+function launchOfScope(state: WorkspaceState): LaunchState {
+  const launch = state.launch;
+  if (launch.projectId === null) return launch;
+  return launch.projectId === state.scope.projectId ? launch : initialLaunchState();
+}
+
+/**
+ * D-15 (W-29 wave 2): THE ONE LIFECYCLE READ. The Goal section and the
+ * export both read the PROJECT RECORD's own lifecycle.status (the
+ * boundary's stamp — one source of truth); the ORGANIZATION's operating
+ * status is a DIFFERENT entity's own truth (the compiled team working
+ * the goal — Home's organization tile reads the same snapshot). The
+ * defect was the unexplained juxtaposition: a launched desk showed
+ * lifecycle 'draft' on Goal while Home/Organization showed 'active',
+ * with nothing telling the reader these are two different states (the
+ * frozen backing binds the organization without a lifecycle event —
+ * bindOrganization sets organizationRef and never the status; the
+ * lifecycle moves only through an explicit transition). The rows below
+ * render BOTH truths, each labeled as its own entity, and the note
+ * states the seam in plain words — never a fabricated 'active'.
+ */
+function lifecycleRowsOf(state: WorkspaceState, viewAt: number): { readonly rows: readonly (readonly [string, string])[]; readonly note: string | null } {
+  const project = state.project;
+  if (project === null) return { rows: [], note: null };
+  const bound = project.lifecycle.organizationRef;
+  let organization = 'not bound';
+  if (bound !== null) {
+    // The LATEST visible snapshot for the bound organization (the erasable-
+    // subset law: no call-site type arguments — a plain accumulator walk).
+    let latest: OrgStatusSnapshot | null = null;
+    for (const candidate of state.orgSnapshots) {
+      if (candidate.organizationRef !== bound || availabilityOfOrgSnapshot(candidate) > viewAt) continue;
+      if (latest === null || candidate.at > latest.at) latest = candidate;
+    }
+    organization = latest === null ? 'bound (no snapshot at this view instant)' : `${latest.status} (observed ${formatTimeUtc(latest.at)})`;
+  }
+  const rows: readonly (readonly [string, string])[] = [
+    ['lifecycle', project.lifecycle.status],
+    ['organization', organization],
+  ];
+  const note = bound !== null
+    ? 'The project record\'s lifecycle and the organization\'s operating status are separate states — the record moves only through an explicit lifecycle event.'
+    : null;
+  return { rows, note };
 }
 
 /** The per-section panel — the selected section's projection at the view instant. */
@@ -773,16 +930,23 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       const rows: VNode[] = [];
       if (state.project !== null) {
         visibleAt(state.project, availabilityOfProject(state.project), viewAt, state.project.id);
+        // D-15 (W-29 wave 2): THE ONE LIFECYCLE READ — the project record's
+        // own lifecycle status (the boundary's stamp — the same source the
+        // export's workspace block carries verbatim) with the bound
+        // organization's own operating status beside it, each labeled as
+        // its own entity, plus the plain-words note on the seam.
+        const lifecycle = lifecycleRowsOf(state, viewAt);
         rows.push(v('div', { class: 'card' }, [
           v('div', { class: 'card-title' }, [state.project.name]),
           ...factRows([
             ['project', state.project.id],
             ['tenant', state.project.tenantId],
-            ['lifecycle', state.project.lifecycle.status],
+            ...lifecycle.rows,
             ['execution mode', state.project.executionMode],
             ['goal ref', `${state.project.lineage.goal.goalId}@${state.project.lineage.goal.version}`],
             ['constraint set', `${state.project.lineage.constraintSet.id}@${state.project.lineage.constraintSet.version}`],
           ]),
+          ...(lifecycle.note === null ? [] : [v('p', { class: 'card-note', 'data-lifecycle-note': 'true' }, [lifecycle.note])]),
         ]));
       }
       if (state.goal !== null) {
@@ -829,6 +993,36 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...(projected.length === 0 ? [sectionEmpty('organization')] : []),
       ]);
   } else if (selector === 'market-world') {
+      // D-8 (W-28): the section is bound to the PROJECT'S OWN PERSISTED
+      // WORLD first (state.world — the host goal route's additive `world`
+      // field, read at boot and on every scope refetch), NOT to the
+      // in-session launch draft: after a reload, a scope switch or a cold
+      // start the section renders the SCOPE's own markets/venues/data
+      // sources (the pre-fix behavior — the draft was the only source —
+      // rendered the teaching empty state forever, and the session draft
+      // could BLEED across scopes when one stayed open). The in-session
+      // draft remains the source while the wizard is open in a scope that
+      // has no world yet (the launchpad, a fresh boot); the teaching empty
+      // state renders ONLY when the project genuinely has no world on
+      // record (the demo scope — its seeded goal carries no world fields).
+      const world = state.world;
+      if (world !== null) {
+        return v('section', { class: 'panel', 'data-section': 'market-world' }, [
+          v('div', { class: 'card', 'data-market-world': 'persisted' }, [
+            v('div', { class: 'card-title' }, ['Market world']),
+            ...factRows([
+              ['markets', world.markets.join(', ')],
+              ['venues', world.venues.join(', ')],
+              ['data sources', world.dataSources.join(', ')],
+              ['execution mode', world.executionMode],
+              ['capital budget', renderDecimal(world.capitalBudget)],
+              ['risk budget', renderDecimal(world.riskBudget)],
+              ['horizon', `${formatInstantUtc(world.horizon.startsAt)} -> ${formatInstantUtc(world.horizon.endsAt)}`],
+            ]),
+            v('p', { class: 'card-note' }, ['The launch specification this project\'s market world was set to — persisted with the project, restored on every visit.']),
+          ]),
+        ]);
+      }
       const draft = state.launch.draft;
       if (draft === null) {
         return v('section', { class: 'panel', 'data-section': 'market-world' }, [sectionEmpty('market-world')]);
@@ -857,14 +1051,39 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       ];
       return v('section', { class: 'panel', 'data-section': 'time-machine' }, [
         v('div', { class: 'card' }, [v('div', { class: 'card-title' }, ['Time Machine']), ...knowable]),
+        // D-18 (W-29 wave 2): the one-line explainer for the jargon labels
+        // (S2's finding: "T-x is cryptic pre-click") — the modes' meanings
+        // in plain words, right on the section that owns them.
+        v('p', { class: 'hint', 'data-tm-explainer': 'true' }, ['The modes: LIVE shows the world as the API serves it now; T-x views it as of x seconds before the latest datum; TIMESTAMP picks one explicit instant; PLAYBACK plays history forward, one knowable-then step at a time.']),
         v('p', { class: 'hint' }, ['Every visible datum above passed the availability projection for this view instant (L4).']),
       ]);
   } else if (selector === 'research') {
       const projected = projectToView(state.jobs.filter((job) => job.kind === 'research'), viewAt, availabilityOfJob);
-      const cards = projected.map((job) => jobCard(scope, job, viewAt, renderJobProgress(state.launch.jobId === job.jobId ? state.launch.progress : [])));
+      const cards = projected.map((job) => jobCard(scope, job, viewAt));
+      // D-12 (W-29 wave 2): THE STANDALONE RESEARCH-SUBMIT AFFORDANCE —
+      // the launch flow was the ONLY path to submit a research job
+      // (S4's P03 finding: "no direct submit-job control in Research —
+      // new jobs only originate from the launch wizard"). The
+      // affordance follows the section-action pattern (a card with ONE
+      // primary action, like the sibling sections' Refresh) and opens a
+      // two-field form that rides the SAME beat-safe data-field pattern
+      // as the launch wizard (buffered edits, committed on submit). It
+      // renders ONLY inside a project scope (the launchpad has no
+      // project to submit into — the wizard is the only path there, by
+      // design), and it submits into the CURRENT project through the
+      // frozen POST /v1/jobs/research route — the same plumbing the
+      // launch's kickoff job rides.
+      const submitCard = researchSubmitCard(state, view);
       return v('section', { class: 'panel', 'data-section': 'research' }, [
+        ...(submitCard === null ? [] : [submitCard]),
         ...cards,
-        ...(projected.length === 0 ? [sectionEmpty('research')] : []),
+        ...(projected.length === 0
+          ? [submitCard === null
+              ? sectionEmpty('research')
+              // The affordance changes what the teaching sentence must
+              // say: a research job no longer requires a launch.
+              : emptyState({ icon: 'flask', title: 'No research jobs at this view instant.', sentence: 'Research jobs start when a project launches — or submit one directly with the button above.', action: { label: 'Launch from Goal', target: 'goal' } })]
+          : []),
       ]);
   } else if (selector === 'experiments') {
       const projected = projectToView(state.jobs, viewAt, availabilityOfJob);
@@ -872,7 +1091,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       for (const outcome of projectToView(state.outcomes, viewAt, availabilityOfOutcome)) {
         if (outcome.lineage.experiment !== null) experiments.set(outcome.lineage.experiment.experimentRef, outcome.lineage.experiment.trialRef);
       }
-      const cards = projected.map((job) => jobCard(scope, job, viewAt, null));
+      const cards = projected.map((job) => jobCard(scope, job, viewAt));
       return v('section', { class: 'panel', 'data-section': 'experiments' }, [
         v('div', { class: 'card' }, [
           v('div', { class: 'card-title' }, ['Experiment lineage']),
@@ -897,7 +1116,14 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...decisionOutcomes.map((outcome) => v('div', { class: 'decision-block' }, [
           decisionCard(scope, outcome, viewAt, view.openCapsule),
         ])),
-        v('div', { class: 'watch' }, [v('h2', {}, ['Watch']), ...watchFeed.map((event) => watchEventRow(scope, event, viewAt, view.openCapsule))]),
+        // D-18 (W-29 wave 2): the "Watch" heading explains itself — the
+        // hover/aria description + ONE plain line beneath it (S2's finding:
+        // "'Watch' is unexplained jargon"; the heading alone named nothing).
+        v('div', { class: 'watch' }, [
+          v('h2', { class: 'watch-heading', title: 'Watch — the live decision stream: what each agent proposed and how the gateway answered', 'aria-label': 'Watch — the live decision stream' }, ['Watch']),
+          v('p', { class: 'hint', 'data-watch-explainer': 'true' }, ['The live decision stream — what each agent proposed, the evidence it consulted, and how the gateway answered.']),
+          ...watchFeed.map((event) => watchEventRow(scope, event, viewAt, view.openCapsule)),
+        ]),
         ...submissions.map((submission) => v('div', { class: 'decision-block' }, [
           submissionCard(scope, submission, viewAt),
           capsuleInline(capsuleFromSubmission(scope, submission), viewAt, view.openCapsule),
@@ -942,6 +1168,15 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...projectToView(state.postMortems, viewAt, availabilityOfPostMortem).map((postMortem) => capsuleFromPostMortem(scope, postMortem)),
         ...projectToView(state.knowledge, viewAt, availabilityOfKnowledge).map((knowledge) => capsuleFromKnowledge(scope, knowledge)),
         ...projectToView(state.submissions, viewAt, availabilityOfSubmission).map((submission) => capsuleFromSubmission(scope, submission)),
+        // D-9 (W-28): the jobs lane — one capsule per COMPLETED job WITH a
+        // result (the fold's own law), so the Evidence section lists the
+        // job-derived capsules ALONGSIDE the read families: the research
+        // result is no longer a lineage LEAF (no capsule referenced its
+        // job; a fresh release-candidate result minted zero capsules — L2's
+        // P10 finding). The jobs read (GET /v1/jobs) serves BOTH backings'
+        // records (the durable lane hydrates through the same route), so
+        // this fold covers the demo and the durable backing by construction.
+        ...capsulesFromJobs(scope, projectToView(state.jobs, viewAt, availabilityOfJob)),
       ];
       return v('section', { class: 'panel', 'data-section': 'evidence' }, [
         ...capsules.map((capsule) => capsuleCard(capsule, viewAt, view.openCapsule)),
@@ -1007,7 +1242,7 @@ function nextStepOf(step: LaunchStep): LaunchStep {
 
 /** The launch panel (the primary flow: the wizard's full field set + the review step + the two-step confirm + progress). */
 function launchPanel(state: WorkspaceState, view: ShellView): VNode {
-  const launch = state.launch;
+  const launch = launchOfScope(state); // D-15 (W-29 wave 2): the slice renders only within its OWN scope
   const progress = renderJobProgress(launch.progress);
   const rows: VNode[] = [];
   const draftActive = launch.draft !== null && (launch.phase === 'draft' || launch.phase === 'idle');

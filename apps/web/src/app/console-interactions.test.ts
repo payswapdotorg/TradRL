@@ -56,7 +56,8 @@ import { bootConsole, readStoredScopeProject, SCOPE_STORAGE_KEY } from './consol
 import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
 import { toCreateProjectInput } from '../core/launch';
-import type { JobRecord, OutcomeRecord } from '../api/contracts';
+import type { GatewaySubmissionRecord, JobRecord, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
+import { capsuleFromJob, capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
 import { verifyWorkspaceExport, viewAtOf } from '../core/workspace';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
 
@@ -184,7 +185,8 @@ class FakeDocument {
   private readonly listeners = new Map<string, Array<(event: Record<string, unknown>) => void>>();
   /** Every element ever created (the export-workspace anchor is found here). */
   readonly created: FakeElement[] = [];
-  readonly activeElement: FakeElement | null = null;
+  /** The document's active element (the browser's focus surface — D-10's focus-preservation tests set it directly; null everywhere else, exactly the pre-D-10 harness behavior). */
+  activeElement: FakeElement | null = null;
   /** The harness's focus tracker (the browser's focus semantics — typeField/blurField move it like the real thing). */
   focused: FakeElement | null = null;
   /** The document head (the R8 supplement's injection target — W-19); a fake element with an id-based querySelector. */
@@ -219,7 +221,7 @@ class FakeDocument {
     return this.rootsById.get(id) ?? null;
   }
 
-  /** The focus traps' query surface: descendant selectors of .class and [data-action="value"] tokens. */
+  /** The focus traps' query surface: descendant selectors of .class and [data-action="value"] tokens. D-10 (W-29): the walk is LIVE-ONLY — the document-connected tree (a created element whose parent is EXTERNAL to the created set, like the rig's mount host) matches; a detached node's parent is null and never does, so a re-projection's stale trees can never answer a query the way the browser's document never would. */
   querySelectorAll(selector: string): FakeElement[] {
     const tokens = selector.split(' ').filter((part) => part.length > 0);
     const matchesToken = (element: FakeElement, token: string): boolean => {
@@ -244,8 +246,10 @@ class FakeDocument {
       if (matches(element, tokens)) found.push(element);
       for (const child of element.children) walk(child);
     };
+    const createdSet = new Set<FakeElement>(this.created);
+    const isLiveRoot = (element: FakeElement): boolean => element.parent !== null && !createdSet.has(element.parent);
     for (const element of this.created) {
-      if (element.parent === null) walk(element);
+      if (isLiveRoot(element)) walk(element);
     }
     return found;
   }
@@ -1335,8 +1339,11 @@ describe('executed boot: J8 — the command palette query (the dead input wiring
     if (input === null) throw new Error('the palette input vanished mid-query');
     expect(input.getAttribute('value')).toBe('risk');
 
-    // every keystroke re-ranks live: a letter no haystack carries empties the list
-    typePaletteQuery(rig, 'risky');
+    // every keystroke re-ranks live: a letter no haystack carries empties
+    // the list ('risky' no longer qualifies — D-16's corrected pass
+    // legitimately reaches Risk at distance 1, which is the tolerance
+    // working as intended; pure garbage must still empty the palette)
+    typePaletteQuery(rig, 'zzzzz');
     expect(countByClass(rig.root, 'palette-item')).toBe(0);
   });
 
@@ -2602,6 +2609,215 @@ describe('executed boot: D-1 — the goal boot seam (the goal/constraint-set fet
 });
 
 // ---------------------------------------------------------------------------
+// D-8 (W-28) — THE PERSISTED LAUNCH WORLD: the Market World section was
+// bound to the IN-SESSION launch draft (apps/web render/model.ts read
+// state.launch.draft only), so after a page RELOAD — or a scope switch, or
+// a cold start — the section rendered its teaching empty state FOREVER for
+// every launched project (M4's + L5's re-run finding; the re-run's ONLY
+// project blocker). The fix persists the world at launch (the kickoff
+// job's opaque spec carries it to the backing, which captures it at the
+// job-port seam into the goal-set record's payload — tradrl_project_goals,
+// the payload-side solution; the frozen GoalStatement/ConstraintSet shapes
+// are untouched) and rebinds the section to the goal route's ADDITIVE
+// `world` field (state.world), with the in-session draft remaining only
+// while the wizard is open in a scope that has no world yet. The demo
+// scope keeps the teaching empty state (its seeded goal genuinely has no
+// world fields — the correct behavior, preserved).
+// ---------------------------------------------------------------------------
+
+/** The world-seam fixture: two LAUNCHED desks (each with its OWN persisted world in the goal bundle) + the demo project (no world — the teaching empty state's scope). The launch arm (POST /v1/projects + POST /v1/jobs/research) captures the submitted console-launch spec's world and serves it back on the created project's goal route — the W-28 backing's own law, mirrored. */
+function worldSeamTransport(): {
+  readonly transport: ApiTransport;
+  readonly goalReads: { count: number; projects: string[] };
+  readonly createdProjectId: () => string | null;
+  readonly submittedSpecs: Record<string, unknown>[];
+} {
+  const goalReads = { count: 0, projects: [] as string[] };
+  const submittedSpecs: Record<string, unknown>[] = [];
+  let created: string | null = null;
+  const goalOf = (id: string) => toCreateProjectInput(VALID_DRAFT, { projectId: id, goalId: `goal-${id}`, constraintSetId: `cs-${id}` }, 'tenant-a', T0);
+  const worldOf = (id: string): Record<string, unknown> | null => {
+    if (id === 'prj-desk-a') {
+      return {
+        markets: ['BTC-USD', 'ETH-USD'], venues: ['binance', 'kraken'], dataSources: ['candle-v1', 'depth-v1'],
+        executionMode: 'simulation', capitalBudget: '500000.00', riskBudget: '40000.00',
+        horizon: { startsAt: T0, endsAt: T0 + 2592000000 },
+      };
+    }
+    if (id === 'prj-desk-b') {
+      return {
+        markets: ['SOL-USD', 'AVAX-USD'], venues: ['coinbase', 'okx'], dataSources: ['candle-v1', 'trades-v1'],
+        executionMode: 'simulation', capitalBudget: '250000.00', riskBudget: '12000.00',
+        horizon: { startsAt: T0, endsAt: T0 + 2592000000 },
+      };
+    }
+    if (id === created && created !== null) {
+      // THE W-28 BACKING'S OWN LAW, mirrored: the goal route serves the world
+      // the backing CAPTURED from the created project's kickoff-job spec
+      // (exactly the world fields — the extraction deploy/vercel's
+      // launchWorldOfSpec performs host-side).
+      const spec = submittedSpecs[submittedSpecs.length - 1];
+      if (spec === undefined) return null;
+      return {
+        markets: spec.markets, venues: spec.venues, dataSources: spec.dataSources,
+        executionMode: spec.executionMode, capitalBudget: spec.capitalBudget, riskBudget: spec.riskBudget,
+        horizon: spec.horizon,
+      };
+    }
+    return null; // the demo scope: NO world on record (the seeded goal has none — the teaching empty state is CORRECT)
+  };
+  const projectOf = (id: string, name: string): Record<string, unknown> => ({
+    id, tenantId: 'tenant-a', name, executionMode: 'simulation',
+    lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+    lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: `goal-${id}`, version: 1 }, constraintSet: { id: `cs-${id}`, version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  });
+  const ok = (data: unknown, status = 200) => ({ status, headers: {}, body: { requestId: 'req-1', data } });
+  const notFound = () => ({ status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } });
+  const transport: ApiTransport = async (request) => {
+    const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+    const key = `${request.method} ${path}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-desk-a', 'Desk A'), projectOf('prj-desk-b', 'Desk B'), projectOf('prj-demo-console', 'the TradRL demo project')] });
+    if (path.startsWith('/v1/projects/') && path.endsWith('/goal')) {
+      const id = path.slice('/v1/projects/'.length, -'/goal'.length);
+      goalReads.count += 1;
+      goalReads.projects.push(decodeURIComponent(request.path.split('?project=')[1] ?? ''));
+      if (id !== 'prj-desk-a' && id !== 'prj-desk-b' && id !== 'prj-demo-console' && id !== created) return notFound();
+      const createdGoal = id === created && created !== null ? goalOf(id) : null;
+      if (id === 'prj-demo-console') {
+        // THE DEMO SCOPE: the seeded goal with NO world field (the W-25B serve shape, byte-identical).
+        return ok({ goal: goalOf(id).goal, constraintSet: goalOf(id).constraintSet });
+      }
+      const world = worldOf(id); // null only for a fresh launch pre-capture — the capture is immediate below
+      return ok({
+        goal: (createdGoal ?? goalOf(id)).goal,
+        constraintSet: (createdGoal ?? goalOf(id)).constraintSet,
+        ...(world === null ? {} : { world }),
+      });
+    }
+    if (key === 'POST /v1/projects') {
+      const body = request.body as { id?: string } | undefined;
+      created = body?.id ?? null;
+      return ok(projectOf(created ?? 'prj-created', 'Freshly Launched'), 201);
+    }
+    if (key === 'POST /v1/jobs/research') {
+      const body = request.body as { spec?: Record<string, unknown> } | undefined;
+      if (body?.spec !== undefined) submittedSpecs.push(body.spec);
+      return ok({ jobId: 'job:w28kickoff', kind: 'research', tenant: 'tenant-a', project: created, status: 'submitted', submittedAt: T0 + 10 }, 202);
+    }
+    for (const id of ['prj-desk-a', 'prj-desk-b', 'prj-demo-console', created]) {
+      if (id === null) continue;
+      if (key === `GET /v1/projects/${id}`) return ok(projectOf(id, 'scoped'));
+    }
+    if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: [] });
+    if (key === 'GET /v1/jobs') return ok({ items: [] });
+    if (path.startsWith('/v1/jobs/')) {
+      // the per-id poll of the kickoff job this transport minted (the launch flow's own poll cadence)
+      const jobId = path.slice('/v1/jobs/'.length);
+      if (jobId === 'job:w28kickoff' && created !== null) return ok({ jobId: 'job:w28kickoff', kind: 'research', tenant: 'tenant-a', project: created, status: 'submitted', submittedAt: T0 + 10 });
+      return notFound();
+    }
+    return notFound();
+  };
+  return { transport, goalReads, createdProjectId: () => created, submittedSpecs };
+}
+
+describe('executed boot: D-8 (W-28) — the persisted launch world (the Market World section reads the project\'s own world, not the session draft)', () => {
+  it('the RELOAD path: boot straight into a LAUNCHED scope and the Market World section renders the project\'s OWN persisted world (markets/venues/data sources) — never the teaching empty state', async () => {
+    const api = worldSeamTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-desk-a');
+    expect(goalReadsFor(api, 'prj-desk-a').length).toBeGreaterThan(0); // the boot goal read fired for the launched scope
+    // state.world carries the PERSISTED world (the goal bundle's additive field) — not null, not the session draft (none exists: fresh boot)
+    expect(rig.handle.state().world).not.toBe(null);
+    expect(rig.handle.state().world?.markets).toEqual(['BTC-USD', 'ETH-USD']);
+    expect(rig.handle.state().launch.draft).toBe(null); // no session draft — the pre-fix section rendered the teaching empty state HERE
+    // the Market World section renders the persisted world card (the whole-tree
+    // text — the sidebar's nav item carries data-section too, so the panel is
+    // asserted by its CONTENT, the file's standard pattern)
+    clickNav(rig, 'market-world');
+    const texts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(texts).toContain('BTC-USD, ETH-USD'); // the launched markets
+    expect(texts).toContain('binance, kraken'); // the launched venues
+    expect(texts).toContain('candle-v1, depth-v1'); // the launched data sources
+    expect(texts).toContain('500000.00'); // the capital budget, exact decimal
+    expect(texts).not.toContain('No launch context yet'); // the D-8 defect is gone on the reload path
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+  });
+
+  it('the SCOPE-SWITCH path: each desk keeps its OWN world (A -> B -> demo -> A), and the demo scope keeps the teaching empty state', async () => {
+    const api = worldSeamTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-desk-a');
+    expect(rig.handle.state().world?.markets).toEqual(['BTC-USD', 'ETH-USD']); // desk A's own world loaded at boot
+
+    // switch to desk B: the adoption resets the world, the beat's refetch loads B's OWN world
+    await switchScope(rig, 'prj-desk-b');
+    expect(rig.handle.state().world?.markets).toEqual(['SOL-USD', 'AVAX-USD']); // desk B's world, never A's
+    expect(rig.handle.state().world?.venues).toEqual(['coinbase', 'okx']);
+    clickNav(rig, 'market-world');
+    const bTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(bTexts).toContain('SOL-USD, AVAX-USD');
+    expect(bTexts).not.toContain('BTC-USD, ETH-USD'); // no cross-scope bleed (D-15's market-world half)
+
+    // switch to the DEMO scope: no world on record -> the TEACHING EMPTY STATE (the correct, preserved behavior)
+    await switchScope(rig, 'prj-demo-console');
+    expect(rig.handle.state().world).toBe(null); // the goal bundle served no world — any prior one is CLEARED
+    clickNav(rig, 'market-world');
+    const demoTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(demoTexts).toContain('No launch context yet — the market world is specified at launch.'); // the teaching empty state stays
+    expect(demoTexts).toContain('Open Goal'); // its single action stays
+
+    // switch back to desk A: A's OWN world returns (per-scope truth, no stale carry)
+    await switchScope(rig, 'prj-desk-a');
+    expect(rig.handle.state().world?.markets).toEqual(['BTC-USD', 'ETH-USD']);
+    clickNav(rig, 'market-world');
+    expect(elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ')).toContain('BTC-USD, ETH-USD');
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+  });
+
+  it('the IN-SESSION launch bridge: the kickoff job\'s spec carries the world to the backing, and the world renders IMMEDIATELY after the launch (before any beat) — then the refetch keeps it from the wire', async () => {
+    const api = worldSeamTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-desk-a');
+    await rig.handle.submitLaunch(VALID_DRAFT);
+    const adopted = api.createdProjectId();
+    if (adopted === null) throw new Error('the launch created no project');
+    expect(rig.handle.state().scope.projectId).toBe(adopted);
+    // the kickoff job's spec CARRIED the world (the console->host carrier — the backing's capture surface)
+    expect(api.submittedSpecs.length).toBe(1);
+    expect(api.submittedSpecs[0]?.kind).toBe('console-launch');
+    expect(api.submittedSpecs[0]?.markets).toEqual(['binance:BTC-USDT']);
+    expect(api.submittedSpecs[0]?.venues).toEqual(['binance']);
+    expect(api.submittedSpecs[0]?.dataSources).toEqual(['candles:1m']);
+    // the in-session bridge dispatched the draft's OWN world — the section renders it immediately (no beat yet)
+    expect(rig.handle.state().world?.markets).toEqual(['binance:BTC-USDT']);
+    expect(rig.handle.state().world?.capitalBudget).toBe('10000.00');
+    clickNav(rig, 'market-world');
+    expect(elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ')).toContain('binance:BTC-USDT');
+    // the beat's scope refetch re-reads the goal route: the PERSISTED world (what the backing captured from the spec) keeps the section rendered
+    await rig.handle.beat();
+    expect(rig.handle.state().world).not.toBe(null);
+    expect(rig.handle.state().degraded).toEqual([]); // honest throughout
+  });
+});
+
+/** The goal-route reads recorded for one project (the world-seam fixture's own log). */
+function goalReadsFor(api: { readonly goalReads: { readonly count: number; readonly projects: readonly string[] } }, project: string): readonly string[] {
+  return api.goalReads.projects.filter((read) => read === project);
+}
+
+/** Switch the workspace scope through the Settings switcher (the R6c machinery — the committed choice adopts the project). */
+async function switchScope(rig: Rig, project: string): Promise<void> {
+  clickNav(rig, 'settings');
+  const switcher = findByData(rig.root, 'data-action', 'project-switch');
+  if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+  switcher.value = project;
+  rig.doc.fire('change', { target: switcher });
+  expect(rig.handle.state().scope.projectId).toBe(project); // the adoption landed
+  await rig.handle.beat(); // the scope-change refetch (the goal read included — D-8's read path)
+}
+
+// ---------------------------------------------------------------------------
 // D-3 (W-25A) — THE JOBS SEAM, executed: the backing serves the project's
 // job records at GET /v1/jobs?project=<id> (the W-25A host route — the
 // backing's API-owned job store, the same store the per-id GET reads),
@@ -2704,7 +2920,7 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     const api = jobsSeamTransport();
     const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(18); // 15 navigation + the project + the TWO seeded jobs (the JOB group has entries to find)
+    expect(countByClass(rig.root, 'palette-item')).toBe(20); // 15 navigation + the project + the TWO seeded jobs + the TWO cross-project jump entries (D-16: the directory's other desks)
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(true); // the JOB group renders in the grouped results
 
     // by ID: the exact job the operator typed
@@ -2789,10 +3005,149 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     if (empty === undefined) throw new Error('the Research section renders no empty state');
     expect(elementsOf(rig.root).some((element) => textOf(element) === 'No research jobs at this view instant.')).toBe(true);
 
-    // the palette carries no JOB entries (15 navigation + the project — the pre-fix shape)
+    // the palette carries no JOB entries (15 navigation + the project + the two cross-project jump entries — the D-16 directory depth)
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(16);
+    expect(countByClass(rig.root, 'palette-item')).toBe(18);
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-9 (W-28) — THE RESULT->JOB LINEAGE LEG, executed: the demo scope's
+// OWN seed shape (the re-run's exact observation surface — 6 seed capsules:
+// one outcome, one post-mortem, one knowledge, three submissions — plus the
+// two SEEDED demo jobs, both completed WITH results: the research
+// release-candidate and the learning training-summary). L2's P10 finding
+// was that a fresh release-candidate result minted ZERO capsules and NO
+// capsule referenced its job — the research result was a lineage leaf.
+// These journeys pin the fix at the executed-boot level: the Evidence
+// section lists the job-derived capsules ALONGSIDE the 6 unchanged seed
+// capsules, and the job capsule opens its payload + provenance inline
+// (route · entity id · tenant/project · available-at — the lineage leg).
+// ---------------------------------------------------------------------------
+
+/** The demo evidence transport: the demo scope's full capsule seed (outcome + post-mortem + knowledge + the 3-row blotter) + BOTH seeded demo jobs completed with their results (the jobs the W-25A seam serves — the same records GET /v1/jobs reads in EITHER backing; the durable lane hydrates through the same route). */
+function demoEvidenceTransport(): ApiTransport {
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+  const project = {
+    id: 'prj-a', tenantId: 'tenant-a', name: 'Console Test Project', executionMode: 'simulation',
+    lifecycle: { projectId: 'prj-a', status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+    lineage: { projectId: 'prj-a', createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  };
+  const postMortem = {
+    postMortemId: 'pmr:demo0001', ordinal: 1,
+    subject: { outcomeRecordRef: 'out:demo0001', decisionRef: 'xd:demo0001', intentRef: 'si:demo0001', outcomeClass: 'adverse_gap' },
+    expected: { expectedQuantity: '0.75', expectedRealized: '45.5', tolerance: '0.05' },
+    happened: { disposition: 'filled', filledQuantity: '0.75', realizedOutcome: '-12.5', feeTotal: '0.02', notionalTotal: '45750.375' },
+    gap: { quantityShortfall: '0', realizedGap: '-12.5', withinTolerance: false },
+    hypotheses: [{ class: 'decision', confidence: '0.8', detail: { dimension: 'timing' }, evidence: [{ kind: 'decision', ref: 'xd:demo0001' }], note: 'the demo hypothesis: the rebalance window was missed by the simulated venue lag' }],
+    evidence: [{ kind: 'shadow_outcome', ref: 'swo:demo0001' }],
+    lineage: { tenant: 'tenant-a', project: 'prj-a', shadowSessionRef: 'shs:demo0001', shadowOutcomeRef: 'swo:demo0001', trajectoryRef: null, experiment: null },
+    asOf: T0 + 150, priorChainHead: '00000000',
+  };
+  const knowledge = {
+    record: {
+      knowledgeId: 'fkr:ee46c14d', ordinal: 1, tenant: 'tenant-a', project: 'prj-a',
+      claim: { kind: 'decision_pattern', polarity: 'harmful', dimension: 'timing', lagBand: null },
+      confidence: '0.8', evidenceCount: 2,
+      provenance: { postMortemRefs: ['pmr:demo0001'], outcomeRefs: ['out:demo0001'], experimentRefs: [], trialRefs: [], trajectoryRefs: [], sessionRefs: [] },
+      validity: { from: T0, to: T0 + 10_000 }, asOf: T0 + 160, priorChainHead: '00000000',
+    },
+    status: 'active', supersededBy: null,
+  };
+  const demoJobs: readonly JobRecord[] = [
+    { jobId: 'job:57d1815d', kind: 'research', tenant: 'tenant-a', project: 'prj-a', status: 'complete', submittedAt: T0 + 100, completedAt: T0 + 200, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'prj-a' } },
+    { jobId: 'job:9c81a2b0', kind: 'learning', tenant: 'tenant-a', project: 'prj-a', status: 'complete', submittedAt: T0 + 110, completedAt: T0 + 210, result: { kind: 'training-summary', epochs: 3, project: 'prj-a' } },
+  ];
+  const transport: ApiTransport = async (request) => {
+    const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+    const key = `${request.method} ${path}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects/prj-a') return ok(project);
+    if (key === 'POST /v1/knowledge/query') return ok({ items: [knowledge] });
+    if (key === 'POST /v1/post-mortems/query') return ok({ items: [postMortem] });
+    if (key === 'POST /v1/outcomes/query') return ok({ items: [enrichedOutcome()] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: seededSubmissions() });
+    if (key === 'GET /v1/jobs') return ok({ items: demoJobs });
+    if (path.startsWith('/v1/jobs/')) {
+      const job = demoJobs.find((candidate) => candidate.jobId === path.slice('/v1/jobs/'.length));
+      if (job !== undefined) return ok(job);
+    }
+    if (key === 'GET /v1/projects') return ok({ items: [project] });
+    return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
+  };
+  return transport;
+}
+
+describe('executed boot: D-9 (W-28) — the result->job lineage leg (the Evidence section lists the job capsules beside the seed capsules)', () => {
+  it('the demo scope renders its 6 seed capsules UNCHANGED plus ONE capsule per completed job WITH a result — and the job capsule opens the lineage leg inline (the job ref + the provenance line)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, demoEvidenceTransport(), 'prj-a');
+    expect(rig.handle.state().degraded).toEqual([]); // every read answered — honest throughout
+    expect(rig.handle.state().jobs).toHaveLength(2); // both seeded demo jobs entered through the W-25A seam
+
+    // THE EVIDENCE SECTION: the fold lists every source family
+    clickNav(rig, 'evidence');
+    const scope = rig.handle.state().scope;
+    const state = rig.handle.state();
+    const seedIds = [
+      capsuleFromOutcome(scope, state.outcomes[0] as OutcomeRecord).capsuleId,
+      capsuleFromPostMortem(scope, state.postMortems[0] as PostMortemRecord).capsuleId,
+      capsuleFromKnowledge(scope, state.knowledge[0] as ServedKnowledge).capsuleId,
+      ...state.submissions.map((submission) => capsuleFromSubmission(scope, submission as GatewaySubmissionRecord).capsuleId),
+    ];
+    expect(seedIds).toHaveLength(6); // the demo scope's seed capsules: 1 outcome + 1 post-mortem + 1 knowledge + 3 submissions
+    const jobIds = state.jobs.map((job) => capsuleFromJob(scope, job).capsuleId);
+    expect(jobIds).toHaveLength(2); // one per completed job WITH a result (research + learning)
+    for (const capsuleId of [...seedIds, ...jobIds]) {
+      const badge = findByData(rig.root, 'data-capsule-open', capsuleId);
+      if (badge === null) throw new Error(`the Evidence section renders no capsule badge for ${capsuleId}`);
+    }
+    expect(countByData(rig.root, 'data-action', 'capsule-open')).toBeGreaterThanOrEqual(8); // 6 seed + 2 job capsules
+
+    // THE LINEAGE LEG: opening the research job's capsule renders its facts + the JOB REF + the provenance line
+    const researchJob = state.jobs.find((job) => job.kind === 'research');
+    if (researchJob === undefined) throw new Error('the fixture served no research job');
+    const researchCapsule = capsuleFromJob(scope, researchJob);
+    const badge = findByData(rig.root, 'data-capsule-open', researchCapsule.capsuleId) as FakeElement;
+    click(rig, badge);
+    const payload = elementsOf(rig.root).find((element) => element.hasClass('capsule-payload') && element.getAttribute('data-capsule-open') === researchCapsule.capsuleId);
+    if (payload === undefined) throw new Error('the opened job capsule rendered no inline payload');
+    const payloadTexts = elementsOf(payload).map((element) => textOf(element)).join(' ');
+    expect(payloadTexts).toContain('refs: job:job:57d1815d');            // the capsule references its job (the leg L2 asked for)
+    expect(payloadTexts).toContain('deliverable: release-candidate');   // the result payload's own facts
+    expect(payloadTexts).toContain('spec-id: spec-demo-director');
+    expect(payloadTexts).toContain('read from /v1/jobs/:jobId');        // the provenance line's route
+    expect(payloadTexts).toContain('job job:57d1815d');                 // the entity id in the provenance line
+    expect(payloadTexts).toContain(`tenant tenant-a / project prj-a`);  // the scope line (L12's own render)
+    expect(payloadTexts).toContain('available ');                       // the available-at stamp (L4)
+
+    // the LEARNING job's capsule carries its own deliverable marker (the training summary)
+    const learningJob = state.jobs.find((job) => job.kind === 'learning');
+    if (learningJob === undefined) throw new Error('the fixture served no learning job');
+    const learningCapsule = capsuleFromJob(scope, learningJob);
+    const learningBadge = findByData(rig.root, 'data-capsule-open', learningCapsule.capsuleId) as FakeElement;
+    click(rig, learningBadge);
+    const learningPayload = elementsOf(rig.root).find((element) => element.hasClass('capsule-payload') && element.getAttribute('data-capsule-open') === learningCapsule.capsuleId);
+    if (learningPayload === undefined) throw new Error('the opened learning capsule rendered no inline payload');
+    expect(elementsOf(learningPayload).map((element) => textOf(element)).join(' ')).toContain('epochs: 3');
+  });
+
+  it('a scope with NO completed jobs keeps the Evidence teaching empty state (no capsule fabricated for pending work)', async () => {
+    const transport = demoEvidenceTransport();
+    const pendingOnly: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'GET' && path === '/v1/jobs') {
+        return { status: 200, headers: {}, body: { requestId: 'req-1', data: { items: [{ jobId: 'job:pending01', kind: 'research', tenant: 'tenant-a', project: 'prj-a', status: 'running', submittedAt: T0 + 100 }] } } };
+      }
+      return transport(request);
+    };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, pendingOnly, 'prj-a');
+    clickNav(rig, 'evidence');
+    // the seed families still render their capsules (6 — the read families are untouched by the jobs fold)
+    const badges = elementsOf(rig.root).filter((element) => element.getAttribute('data-action') === 'capsule-open');
+    expect(badges).toHaveLength(6); // the running job minted NOTHING (a pending job proves nothing about a deliverable — L20)
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'No evidence capsules at this view instant.')).toBe(false); // the seed capsules render, not the empty state
   });
 });
 
@@ -2898,6 +3253,209 @@ describe('executed boot: R10 (W-25C) — the Time Machine pause', () => {
     // and a fresh arm from the timestamp view still starts playback playing (never stuck paused)
     clickAction(rig, 'tm-mode-playback');
     expect(rig.handle.state().timeMachine.playback?.paused).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MI-D9 (MI wave 1, 6/9 professionals) — THE STEP-BACK WHILE PAUSED,
+// executed: the pre-fix wiring sent the control to view-tminus with
+// tMinusMs + 500, so a PAUSED session jumped FORWARD to (anchor - 500ms)
+// — the wall-clock end — flipped playback -> t-minus, and left the
+// banner reading "Viewing a past instant" at 100% (M2 paused at
+// 02:35:53.575Z -> jumped to the 02:41:42.529Z end; L4, M1, S2, S5
+// reproduced variants; the paused caption also mislabeled "Playing
+// history forward"). The fix: Step back steps the view BACK one
+// controlled step and STAYS paused, in the playback mode, under the
+// paused caption.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: MI-D9 — Step back / Step while paused', () => {
+  it('Step back while PAUSED steps the view BACK one step, stays paused in the playback mode, renders the PAUSED caption (not "Viewing a past instant") and the % follows the stepped-back view (not stuck at 100%)', async () => {
+    const scheduler = new ScriptedScheduler();
+    let nowMs = T0;
+    const instants: InstantSource = { nowMs: () => (nowMs += 100) };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler, instants });
+    nowMs = T0 + 60_000; // the scripted clock jumps forward — the playback span is real
+    rig.handle.dispatch({ kind: 'view-live', at: instants.nowMs() });
+    clickAction(rig, 'tm-mode-playback'); // arm playback from the opened instant, step 500ms
+    for (let beat = 0; beat < 3; beat += 1) {
+      expect(scheduler.fireNext(), `beat ${beat + 1} was scheduled`).toBe(true);
+      await settle();
+    }
+    let playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('playback not armed');
+    const frozenAt = playback.fromAt + playback.ticks * playback.stepMs; // 3 ticks
+    clickAction(rig, 'playback-start'); // pause (the control's pause face)
+    expect(rig.handle.state().timeMachine.playback?.paused).toBe(true);
+    const anchor = rig.handle.state().timeMachine.anchorAt;
+
+    // THE PRE-FIX DEFECT PATH: this click used to flip the mode to
+    // t-minus and jump the view to (anchor - 500ms) — FORWARD, to the
+    // wall-clock end — with the banner reading "Viewing a past instant".
+    clickAction(rig, 'playback-step-back');
+    const timeMachine = rig.handle.state().timeMachine;
+    expect(timeMachine.mode).toBe('playback');                    // NO mode flip
+    expect(timeMachine.playback?.paused).toBe(true);              // stays PAUSED
+    expect(timeMachine.playback?.ticks).toBe(2);                  // one controlled step back
+    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - 500);    // BACK one step — not the anchor-500ms end-jump
+    expect(viewAtOf(rig.handle.state())).toBeLessThan(anchor - 500); // (the pre-fix landing instant, for the record)
+    const readout = elementsOf(rig.root).find((element) => element.hasClass('tm-readout'));
+    if (readout === undefined) throw new Error('the mono readout is missing');
+    expect(textOf(readout)).toBe(formatInstantUtc(frozenAt - 500)); // the readout follows the stepped-back instant
+    const notice = elementsOf(rig.root).find((element) => element.hasClass('tm-notice'));
+    if (notice === undefined) throw new Error('the projection notice is missing');
+    expect(textOf(notice)).toContain('paused');                   // the PAUSED caption (was "Viewing a past instant")
+    expect(textOf(notice)).not.toContain('Viewing a past instant');
+    const progress = elementsOf(rig.root).find((element) => element.hasClass('tm-progress'));
+    if (progress === undefined) throw new Error('the progress readout is missing');
+    expect(textOf(progress)).not.toBe('100%');                    // the % follows the stepped-back view
+
+    // a second Step back steps back again (manual stepping works while paused, repeatedly)
+    clickAction(rig, 'playback-step-back');
+    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - 1_000);
+    expect(rig.handle.state().timeMachine.playback?.paused).toBe(true);
+
+    // Step FORWARD while paused is the user's own step: one forward, STAYING paused
+    clickAction(rig, 'playback-step');
+    playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('the step disarmed playback');
+    expect(playback.paused).toBe(true);                            // still paused — a manual step is not a resume
+    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - 500);     // back forward one step
+  });
+
+  it('Step back keeps its documented T-x meaning OUTSIDE playback: the offset grows by one step (the tooltip\'s own words) — and the playback arm keeps the floor (no jump before the arm instant)', async () => {
+    const scheduler = new ScriptedScheduler();
+    let nowMs = T0;
+    const instants: InstantSource = { nowMs: () => (nowMs += 100) };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler, instants });
+    nowMs = T0 + 60_000;
+    rig.handle.dispatch({ kind: 'view-live', at: instants.nowMs() });
+    // T-x: Step back grows the offset (the pre-existing, documented behavior).
+    // NOTE: every dispatched event ADVANCES the anchor to its injected
+    // instant (the rig's source steps +100 per read), so the anchor is
+    // recomputed AFTER each click — never assumed stale.
+    clickAction(rig, 'tm-mode-t-minus'); // arms T-60_000
+    let anchorNow = rig.handle.state().timeMachine.anchorAt;
+    expect(viewAtOf(rig.handle.state())).toBe(anchorNow - 60_000);
+    clickAction(rig, 'playback-step-back');
+    anchorNow = rig.handle.state().timeMachine.anchorAt;
+    expect(rig.handle.state().timeMachine.mode).toBe('t-minus');   // stays T-x
+    expect(viewAtOf(rig.handle.state())).toBe(anchorNow - 60_500); // the offset grew by one 500ms step
+
+    // the playback floor: arm, tick once, pause, step back TWICE — the second no-ops at the arm instant (never before it, never a throw)
+    clickAction(rig, 'tm-mode-playback');
+    expect(scheduler.fireNext()).toBe(true);
+    await settle();
+    const armed = rig.handle.state().timeMachine.playback;
+    if (armed === null) throw new Error('playback not armed');
+    clickAction(rig, 'playback-start'); // pause
+    clickAction(rig, 'playback-step-back');
+    expect(viewAtOf(rig.handle.state())).toBe(armed.fromAt);       // stepped back to the arm instant
+    clickAction(rig, 'playback-step-back');
+    expect(viewAtOf(rig.handle.state())).toBe(armed.fromAt);       // the floor holds — no throw, no jump
+  });
+
+  it('Step OUTSIDE playback is a safe no-op (the control belongs to playback — the pre-fix wiring dispatched a playback-tick that threw the typed "not armed" error at the user)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    const before = rig.handle.state().timeMachine;
+    expect(() => clickAction(rig, 'playback-step')).not.toThrow(); // live mode — nothing armed
+    expect(rig.handle.state().timeMachine.mode).toBe(before.mode); // nothing changed
+    expect(viewAtOf(rig.handle.state())).toBe(viewAtOf({ timeMachine: before } as never)); // the view holds
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MI-D7 (MI wave 1, S5's explicit ask) — THE IN-UI EXPORT VERIFICATION,
+// executed: "in-UI chain verify" — the user selects the downloaded export
+// file in Settings and the console verifies it with the SAME documented
+// rules the file carries (N/N digests, N/N links, head match), honestly
+// scoped to the file's internal consistency. No script required.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: MI-D7 — the in-UI export verification affordance', () => {
+  /** The fake File the harness selects into the verify input (the browser's File.text() surface). */
+  const fakeFile = (name: string, text: string): { readonly name: string; readonly text: () => Promise<string> } => {
+    return { name, text: async () => text };
+  };
+  /** The concatenated text of an element's WHOLE subtree (the verify card's facts live in nested rows — textOf is direct-children-only). */
+  const deepTextOf = (element: FakeElement): string => {
+    const parts: string[] = [];
+    for (const node of element.childNodes) {
+      if (node instanceof FakeText) parts.push(node.text);
+      else parts.push(deepTextOf(node as FakeElement));
+    }
+    return parts.join('');
+  };
+
+  it('Settings renders the verify affordance beside the export button; selecting the JUST-DOWNLOADED export verifies it N/N with the head match, under the honest internal-consistency scope note', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'settings');
+    // the affordance renders beside the download
+    const verifyInput = findByData(rig.root, 'data-action', 'export-verify-file');
+    if (verifyInput === null) throw new Error('no export-verify-file affordance in Settings');
+    expect(verifyInput.tagName).toBe('INPUT');
+    expect(verifyInput.getAttribute('type')).toBe('file');
+    // download the export first (the bytes the user would re-select)
+    const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
+    if (exportButton === null) throw new Error('no export-workspace action');
+    click(rig, exportButton);
+    const anchor = rig.doc.created.filter((element) => element.tagName === 'A').slice(-1)[0];
+    if (anchor === undefined) throw new Error('the download anchor is missing');
+    const href = anchor.getAttribute('href') ?? '';
+    const bytes = decodeURIComponent(href.slice('data:application/json;charset=utf-8,'.length));
+    const eventCount = rig.handle.state().history.length;
+
+    // SELECT THE FILE — the delegated change fires the verification
+    (verifyInput as FakeElement & { files?: unknown[] }).files = [fakeFile('tradrl-workspace-prj-a.json', bytes)];
+    rig.doc.fire('change', { target: verifyInput });
+    await settle(); // the async file read
+
+    const card = findByData(rig.root, 'data-export-verify', 'verified');
+    if (card === null) throw new Error('the verified card did not render');
+    const cardText = deepTextOf(card);
+    expect(cardText).toContain(`${eventCount}/${eventCount}`);        // N/N digests + links
+    expect(cardText).toContain('head match');                          // the head-match fact
+    expect(cardText).toContain('internal consistency');                // the honest scope note
+    expect(cardText).toContain('tradrl-workspace-prj-a.json');        // the file that was verified
+    expect(cardText).toContain('does not prove who authored');         // the honesty line, verbatim
+  });
+
+  it('a TAMPERED export reports the break with the counts up to it (verified -> broken, the first failing event named) — and a non-JSON file reports itself honestly, never a throw', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'settings');
+    const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
+    if (exportButton === null) throw new Error('no export-workspace action');
+    click(rig, exportButton);
+    const anchor = rig.doc.created.filter((element) => element.tagName === 'A').slice(-1)[0];
+    if (anchor === undefined) throw new Error('the download anchor is missing');
+    const href = anchor.getAttribute('href') ?? '';
+    const bytes = decodeURIComponent(href.slice('data:application/json;charset=utf-8,'.length));
+    const doc = JSON.parse(bytes) as Record<string, unknown>;
+    const events = doc.events as Array<Record<string, unknown>>;
+    ((events[1] as Record<string, unknown>).payload as Record<string, unknown>).at = T0 + 999_999; // tamper event 2's payload
+    const tamperedBytes = JSON.stringify(doc);
+
+    const verifyInput = findByData(rig.root, 'data-action', 'export-verify-file');
+    if (verifyInput === null) throw new Error('no export-verify-file affordance in Settings');
+    (verifyInput as FakeElement & { files?: unknown[] }).files = [fakeFile('tampered.json', tamperedBytes)];
+    rig.doc.fire('change', { target: verifyInput });
+    await settle();
+    const brokenCard = findByData(rig.root, 'data-export-verify', 'broken');
+    if (brokenCard === null) throw new Error('the broken card did not render');
+    const brokenText = deepTextOf(brokenCard);
+    expect(brokenText).toContain('NOT verified');
+    expect(brokenText).toContain("event 2's digest does not match");
+    expect(brokenText).toContain(`1/${events.length}`); // the counts stopped at the break
+
+    // a file that is not even JSON is refused honestly
+    const again = findByData(rig.root, 'data-action', 'export-verify-file');
+    if (again === null) throw new Error('the verify affordance vanished');
+    (again as FakeElement & { files?: unknown[] }).files = [fakeFile('notes.txt', 'this is not json')];
+    rig.doc.fire('change', { target: again });
+    await settle();
+    const refusedCard = findByData(rig.root, 'data-export-verify', 'broken');
+    if (refusedCard === null) throw new Error('the refused card did not render');
+    expect(deepTextOf(refusedCard)).toContain('not valid JSON');
   });
 });
 
@@ -3087,5 +3645,616 @@ describe('executed boot: D-6d (W-25C) — the documentElement data-theme at pain
     click(rig, findByData(rig.root, 'data-action', 'theme-light') as FakeElement);
     expect(rig.doc.documentElement.getAttribute('data-theme')).toBe('light');
     expect(shellOf(rig.root).getAttribute('data-theme')).toBe('light');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-10 (W-29) — THE KEYBOARD PATH SURVIVES THE BEAT RE-PROJECTION. The
+// persona finding (L5, even at 1440x900): "keyboard focus+Enter failed
+// to activate" the Settings nav item — Tab lands the focus, the ~1s
+// beat re-projection replaces the WHOLE tree (the focused button is a
+// detached node), the focus falls back to <body> and Enter activates
+// nothing. The render pass now captures the focused affordance's
+// delegated-vocabulary identity and re-focuses its equivalent node on
+// the fresh projection. (The layout half of D-10 — the sidebar's
+// single scroll flow so nothing covers the nav's tail — is pinned as
+// CSS-as-data in src/shell/sidebar-layout.test.ts; the two together
+// are the fix.)
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-10 (W-29) — the keyboard focus survives the beat re-projection', () => {
+  it('a focused NAV ITEM re-gains focus on the next re-projection: Tab -> beat -> Enter stays on the Settings item (the persona path)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    // the keyboard user Tabs to the Settings nav item (the browser's focus surface carries it)
+    const settingsItem = elementsOf(rig.root).find((element) => element.getAttribute('data-target') === 'settings' && element.hasClass('nav-item'));
+    if (settingsItem === undefined) throw new Error('no Settings nav item in the tree');
+    rig.doc.activeElement = settingsItem;
+    // a beat lands (the poll cadence re-observes now and re-projects the whole tree — the focused element is replaced)
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 2000 });
+    // the fresh projection's Settings item received the focus restore
+    const freshItem = elementsOf(rig.root).find((element) => element.getAttribute('data-target') === 'settings' && element.hasClass('nav-item'));
+    if (freshItem === undefined) throw new Error('no Settings nav item on the fresh projection');
+    expect(freshItem.focusCount, 'the replaced Settings item was re-focused').toBeGreaterThan(0);
+    expect(freshItem).not.toBe(settingsItem); // the beat really replaced the node (the pin is not vacuous)
+  });
+
+  it('a focused notice READ TOGGLE restores by its UNIQUE notice id (never a sibling that shares the action class)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 21, job: FAILED_JOB_2 });
+    clickNav(rig, 'inbox');
+    const notices = rig.handle.state().inbox.notices;
+    expect(notices.length).toBe(2); // two failed_evaluation notices (distinct content-addressed ids)
+    const second = notices[1];
+    if (second === undefined) throw new Error('fixture: two notices required');
+    const secondToggle = findByData(rig.root, 'data-notice-read', second.noticeId);
+    if (secondToggle === null) throw new Error('the second notice carries no read toggle');
+    rig.doc.activeElement = secondToggle;
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 2000 }); // the beat's re-projection
+    // the restore landed on the SECOND notice's toggle — its own id — not the first sibling's
+    const freshSecond = findByData(rig.root, 'data-notice-read', second.noticeId);
+    const freshFirst = findByData(rig.root, 'data-notice-read', (notices[0] as { readonly noticeId: string }).noticeId);
+    if (freshSecond === null || freshFirst === null) throw new Error('the fresh projection carries both toggles');
+    expect(freshSecond.focusCount).toBeGreaterThan(0);
+    expect(freshFirst.focusCount).toBe(0); // the sibling was never focused
+  });
+
+  it('a re-projection with NOTHING focused restores nothing (the pass never invents a focus)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    rig.doc.activeElement = null; // the browser's <body> — no affordance carried the focus
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 2000 });
+    for (const element of elementsOf(rig.root)) {
+      expect(element.focusCount, `an unfocused beat must focus nothing (${element.tagName})`).toBe(0);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-13 (W-29) — THE PROJECT-SCOPED INBOX, executed. The persona finding
+// (M4/M5/L5): the Inbox was tenant-scoped while every section panel was
+// project-scoped — a multi-desk tenant saw the demo project's seed notices
+// inside their own desk's inbox (7 unread = 5 demo + 2 own). The inbox
+// SURFACE is now project-scoped (the state keeps every session notice,
+// append-only); the bell badge, the toast and mark-all-read follow the same
+// scoped fold.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-13 (W-29) — the project-scoped inbox across a desk switch', () => {
+  /** A second desk's failed job (the failed_evaluation signal, scoped to proj-b). */
+  const FAILED_JOB_B: JobRecord = {
+    jobId: 'job-desk-b',
+    kind: 'research',
+    tenant: 'tenant-a',
+    project: 'prj-b',
+    status: 'failed',
+    submittedAt: T0 + 40,
+  };
+
+  it('the Inbox lists ONLY the current desk\'s notices after a scope switch; mark-all-read marks the CURRENT desk only; switching back restores the other desk\'s unread state', async () => {
+    const noticeReadStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { noticeReadStorage });
+    // desk A (prj-a, the booted scope) folds its notice
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    expect(rig.handle.state().inbox.notices).toHaveLength(1);
+    // the switcher adopts desk B (prj-b) — the same reset+switch transition a launch rides
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 30, projectId: 'prj-b' });
+    // desk B folds its own notice (the state now carries BOTH desks' notices)
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 41, job: FAILED_JOB_B });
+    expect(rig.handle.state().inbox.notices).toHaveLength(2); // the STATE keeps both (append-only)
+
+    clickNav(rig, 'inbox');
+    // the panel renders ONLY desk B's row — the demo/desk-A notice never renders here
+    expect(findByData(rig.root, 'data-notice-read', (rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-b') as { readonly noticeId: string }).noticeId)).not.toBeNull();
+    expect(findByData(rig.root, 'data-notice-read', (rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-a') as { readonly noticeId: string }).noticeId)).toBeNull(); // desk A's row is not in THIS desk's inbox
+    expect(findByData(rig.root, 'data-inbox-scope', 'prj-b')).not.toBeNull(); // the scoping is stated in the copy
+    const aside = elementsOf(rig.root).find((element) => element.hasClass('inbox'));
+    if (aside === undefined) throw new Error('no inbox aside');
+    expect(aside.getAttribute('data-unread')).toBe('1'); // the scoped count, never the two-desk total
+
+    // "Mark all read" on desk B's inbox marks desk B's notice ONLY
+    clickAction(rig, 'notices-read-all');
+    const deskANotice = rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-a');
+    const deskBNotice = rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-b');
+    if (deskANotice === undefined || deskBNotice === undefined) throw new Error('fixture: both desks folded');
+    expect(rig.handle.state().inbox.readNoticeIds).toContain(deskBNotice.noticeId); // desk B marked
+    expect(rig.handle.state().inbox.readNoticeIds).not.toContain(deskANotice.noticeId); // desk A KEEPS its unread state
+
+    // switching BACK to desk A: its notice is still there and still unread
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 50, projectId: 'prj-a' });
+    clickNav(rig, 'inbox');
+    const restoredToggle = findByData(rig.root, 'data-notice-read', deskANotice.noticeId);
+    expect(restoredToggle).not.toBeNull(); // desk A's row is back in ITS inbox, still unread (the toggle renders on unread rows)
+    expect(findByData(rig.root, 'data-inbox-scope', 'prj-a')).not.toBeNull();
+  });
+
+  it('the read-state write-through persists exactly the marks the SCOPED mark-all applied (another desk\'s notice stays unread across reloads)', async () => {
+    const noticeReadStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { noticeReadStorage });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB });
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 30, projectId: 'prj-b' });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 41, job: FAILED_JOB_B });
+    clickNav(rig, 'inbox');
+    clickAction(rig, 'notices-read-all'); // marks desk B's notice only
+    const stored = noticeReadStorage.map.get('tradrl_notice_read');
+    if (stored === undefined) throw new Error('the mark-all write-through persisted nothing');
+    const marks = JSON.parse(stored) as Record<string, 1>;
+    const deskAKey = `tenant-a/prj-a/${(rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-a') as { readonly noticeId: string }).noticeId}`;
+    const deskBKey = `tenant-a/prj-b/${(rig.handle.state().inbox.notices.find((record) => record.projectId === 'prj-b') as { readonly noticeId: string }).noticeId}`;
+    expect(marks[deskBKey]).toBe(1);  // desk B's mark persisted
+    expect(marks[deskAKey]).toBeUndefined(); // desk A's notice was never marked by desk B's action
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// D-12 (W-29 wave 2) — THE STANDALONE RESEARCH-SUBMIT AFFORDANCE. The
+// launch flow was the ONLY path to submit a research job (S4's P03
+// finding: "no direct submit-job control in Research"); the Research
+// section now carries its own submit affordance — a card with ONE
+// primary action opening a two-field form (objective + notes) that
+// rides the SAME beat-safe data-field pattern as the launch wizard and
+// submits through the SAME frozen POST /v1/jobs/research plumbing into
+// the CURRENT project. Pinned here end to end: the affordance renders
+// per scope (never on the launchpad), the submission flows through the
+// client (the transport log carries the POST with the current
+// project's id + the console-research spec), the returned job lands in
+// the tracked list + the Research section renders it, and the beat's
+// poll advances it through the async pattern (submitted -> running ->
+// complete) exactly like a launch's kickoff job.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-12 (W-29 wave 2) — the standalone research-submit affordance', () => {
+  /**
+   * A research-jobs transport wrapper: serves POST /v1/jobs/research
+   * (returning a submitted record for the REQUESTING project — the
+   * route's own law) and GET /v1/jobs/:id with a status that advances
+   * per read (submitted -> running -> complete), so the tests pin the
+   * async pattern end to end. Everything else delegates to the wrapped
+   * backing.
+   */
+  function researchJobsTransport(inner: ApiTransport): {
+    readonly transport: ApiTransport;
+    readonly submissions: { count: number; projects: string[]; specs: unknown[] };
+    readonly polls: { count: number; jobIds: string[] };
+  } {
+    const submissions = { count: 0, projects: [] as string[], specs: [] as unknown[] };
+    const polls = { count: 0, jobIds: [] as string[] };
+    const jobs = new Map<string, { readonly jobId: string; readonly project: string; reads: number }>();
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'POST' && path === '/v1/jobs/research') {
+        submissions.count += 1;
+        const body = request.body as { readonly projectId: string; readonly spec: unknown };
+        submissions.projects.push(body.projectId);
+        submissions.specs.push(body.spec);
+        const jobId = `job:research-${submissions.count}`;
+        jobs.set(jobId, { jobId, project: body.projectId, reads: 0 });
+        return { status: 200, headers: {}, body: { requestId: 'req-r', data: { jobId, kind: 'research', tenant: 'tenant-a', project: body.projectId, status: 'submitted', submittedAt: T0 + 500 } } };
+      }
+      const jobMatch = /^\/v1\/jobs\/([^/]+)$/.exec(path);
+      if (request.method === 'GET' && jobMatch !== null && jobs.has(jobMatch[1] ?? '')) {
+        const entry = jobs.get(jobMatch[1] ?? '') as { readonly jobId: string; readonly project: string; reads: number };
+        entry.reads += 1;
+        polls.count += 1;
+        polls.jobIds.push(entry.jobId);
+        const status = entry.reads === 1 ? 'running' : 'complete';
+        return {
+          status: 200,
+          headers: {},
+          body: {
+            requestId: 'req-r',
+            data: {
+              jobId: entry.jobId, kind: 'research', tenant: 'tenant-a', project: entry.project, status, submittedAt: T0 + 500,
+              ...(status === 'complete' ? { completedAt: T0 + 900, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: entry.project, summary: 'a standalone research run' } } : {}),
+            },
+          },
+        };
+      }
+      return inner(request);
+    };
+    return { transport, submissions, polls };
+  }
+
+  it('the affordance renders ONLY inside a project scope — the launchpad (no project yet) keeps the wizard as the only path', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    expect(findByData(rig.root, 'data-research-submit', 'closed')).not.toBeNull(); // the closed affordance card
+    expect(findByData(rig.root, 'data-action', 'research-submit-open')).not.toBeNull(); // with its single primary action
+    const texts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(texts).toContain('Run a research job in this project (prj-a) directly'); // the card STATES the scope it submits into
+
+    // the launchpad: no project exists — the affordance stays away and the teaching empty state keeps its wizard CTA
+    const launchpad = await bootRig({ tradrl_onboarded: 'true' }, api.transport, '');
+    clickNav(launchpad, 'research');
+    expect(findByData(launchpad.root, 'data-research-submit', 'closed')).toBeNull();
+    expect(findByData(launchpad.root, 'data-research-submit', 'open')).toBeNull();
+    expect(findByData(launchpad.root, 'data-empty', 'No research jobs at this view instant.')).not.toBeNull(); // the teaching empty state (unchanged copy — the wizard is the only path from the launchpad, by design)
+  });
+
+  it('the submission flows through the EXISTING plumbing: open -> type (beat-safe) -> submit posts /v1/jobs/research with the CURRENT project + the console-research spec, and the job lands in the tracked Research list', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    clickAction(rig, 'research-submit-open'); // the card opens the form
+    expect(findByData(rig.root, 'data-research-submit', 'open')).not.toBeNull();
+    expect(findByData(rig.root, 'data-research-field', 'objective')).not.toBeNull();
+    expect(findByData(rig.root, 'data-research-field', 'notes')).not.toBeNull();
+
+    // THE BEAT-SAFE DATA-FIELD PATTERN: a re-projection between keystrokes
+    // never reverts the text — the buffered edit rides the render (the
+    // same J3 law the launch fields follow; a click on the section's own
+    // nav item is the harness's user-realistic re-projection)
+    typeResearchField(rig, 'objective', 'Investigate the momentum edge under higher volatility.');
+    clickNav(rig, 'research'); // re-project the whole tree
+    const objectiveAfter = findByData(rig.root, 'data-research-field', 'objective');
+    if (objectiveAfter === null) throw new Error('the research form vanished on the re-projection');
+    expect(objectiveAfter.getAttribute('value')).toBe('Investigate the momentum edge under higher volatility.'); // the buffered edit survived
+    typeResearchField(rig, 'notes', 'Focus on the last 30 days.');
+
+    // SUBMIT: the frozen route receives the CURRENT project's id + the spec
+    clickAction(rig, 'research-submit');
+    await settle();
+    expect(api.submissions.count).toBe(1); // exactly one POST
+    expect(api.submissions.projects).toEqual(['prj-a']); // the CURRENT project — the same scope law the launch's kickoff job follows
+    expect(api.submissions.specs[0]).toEqual({ kind: 'console-research', objective: 'Investigate the momentum edge under higher volatility.', notes: 'Focus on the last 30 days.' }); // the spec carries the objective + notes, marked with its own kind
+
+    // the returned record landed through the EXISTING reducer merge and the section renders it
+    expect(rig.handle.state().jobs.map((job) => job.jobId)).toContain('job:research-1');
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('submitted');
+    expect(findByData(rig.root, 'data-research-submit', 'open')).toBeNull(); // success closes the form
+    expect(findByData(rig.root, 'data-research-submit', 'closed')).not.toBeNull(); // the affordance returns to its closed state
+    expect(findByData(rig.root, 'data-row', 'job:job:research-1')).not.toBeNull(); // the job row renders in the Research list
+  });
+
+  it('the submitted job ANIMATES through the async pattern on the beat (submitted -> running -> complete with its result + elapsed)', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    clickAction(rig, 'research-submit-open');
+    typeResearchField(rig, 'objective', 'Investigate the momentum edge.');
+    clickAction(rig, 'research-submit');
+    await settle();
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('submitted');
+
+    await rig.handle.beat(); // the beat's poll cadence (the SAME cadence a launch's kickoff job rides)
+    expect(api.polls.jobIds).toEqual(['job:research-1']); // the poll read the submitted job
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('running');
+
+    await rig.handle.beat();
+    expect(rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1')?.status).toBe('complete');
+    const completed = rig.handle.state().jobs.find((job) => job.jobId === 'job:research-1');
+    if (completed === undefined) throw new Error('fixture: the completed job record is missing');
+    expect(completed.completedAt).toBe(T0 + 900); // the record's own timestamps (D-17's derivation reads these)
+    clickNav(rig, 'research');
+    const row = findByData(rig.root, 'data-row', 'job:job:research-1');
+    if (row === null) throw new Error('the completed job row is missing from the Research list');
+    const rowTexts = elementsOf(row).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(rowTexts).toContain('complete');
+    expect(rowTexts).toContain('400ms'); // D-17's record-derived elapsed (T0+900 - T0+500)
+  });
+
+  it('the typed validation gate: an empty objective renders the inline error in the form card and NEVER fires the route; a failed POST renders the transport error and keeps the user\'s text', async () => {
+    const api = researchJobsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    clickAction(rig, 'research-submit-open');
+    clickAction(rig, 'research-submit'); // no objective typed
+    await settle();
+    expect(api.submissions.count).toBe(0); // the gate fired BEFORE any API call
+    const error = findByData(rig.root, 'data-research-error', 'objective: the objective statement is required (one sentence — what this research run should investigate)');
+    expect(error).not.toBeNull(); // the typed error renders inline, in the form's own card
+    expect(findByData(rig.root, 'data-research-submit', 'open')).not.toBeNull(); // the form stays open for the fix
+  });
+});
+
+/** Type into a standalone research form field (the browser's semantics, mirroring typeField: the live value rides the DOM property, the input event carries it into the buffer). */
+function typeResearchField(rig: Rig, field: string, value: string): void {
+  const input = findByData(rig.root, 'data-research-field', field);
+  if (input === null) throw new Error(`no research field ${field} in the current tree`);
+  input.value = value;
+  rig.doc.fire('input', { target: input });
+}
+
+// ---------------------------------------------------------------------------
+// D-15 (W-29 wave 2) — THE SESSION-SCOPE DISCIPLINE. Three symptoms, one
+// root theme — session state bleeding across scope boundaries: (a) the
+// concluded launch panel rendering the PREVIOUS desk's params inside
+// another scope's sections (the reducer resets every record on
+// project-adopted but never the launch slice); (b) the Goal section's
+// lifecycle reading the project record's 'draft' while Home/Organization
+// show the compiled organization's 'active' with nothing reconciling the
+// two (they are two DIFFERENT entities' truths — the frozen backing
+// binds the organization without a lifecycle event); (c) THE SWITCHER
+// REBIND RACE the Lead reproduced twice ("the first select change did
+// not take", the select snapping back to the boot scope): the boot
+// restore read the persisted scope LATE (inside the async projects
+// read), so a user-initiated scope change that landed before the boot
+// bundle settled raced the rehydration. The fix: the stored scope is
+// captured ONCE at boot; the restore applies ONLY at generation 0 (no
+// scope move this session — a switcher choice, a palette jump, a launch
+// adoption, or the restore's own adoption all advance the generation,
+// making the restore exactly-once and structurally unable to clobber a
+// user's choice); the select's rendered value always mirrors the
+// CURRENT scope (a disabled current-scope option when the scope is not
+// in the readable list); and the lifecycle reads one truth per entity.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-15 (W-29 wave 2) — the session-scope discipline', () => {
+  /** A third desk's project record (the launched-desk shape: draft lifecycle, a bound organization). */
+  const launchedProject = (id: string, status: string): Record<string, unknown> => ({
+    id, tenantId: 'tenant-a', name: 'The Launched Desk', executionMode: 'simulation',
+    lifecycle: { projectId: id, status, acceptanceCriteriaId: null, organizationRef: 'org:seeded' },
+    lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  });
+
+  /**
+   * THE EXACT REPRO SHAPE (c): a three-desk directory where the boot
+   * bundle's directory read (GET /v1/projects) is HELD until the test
+   * releases it — the user's select change lands DURING boot, before the
+   * boot-restore's check ever runs, exactly like the Lead's synthetic
+   * select against a mid-boot tree.
+   */
+  function gatedBootTransport(): {
+    readonly transport: ApiTransport;
+    readonly release: () => void;
+  } {
+    const base = demoSubstanceTransport();
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-g', data } });
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'GET' && path === '/v1/projects') {
+        await gate; // HELD: the boot bundle's directory read
+        const inner = await base.transport(request);
+        const body = (inner as { readonly body?: { readonly data?: { readonly items?: readonly Record<string, unknown>[] } } }).body;
+        const items = body?.data?.items ?? [];
+        return ok({ items: [...items, launchedProject('prj-launched', 'draft')] }); // THREE readable desks (the Page shape the client walks)
+      }
+      if (request.method === 'GET' && path === '/v1/projects/prj-launched') return ok(launchedProject('prj-launched', 'draft'));
+      if (request.method === 'GET' && path === '/v1/execution/submissions' && request.path.includes('prj-launched')) return ok({ items: [] }); // the launched desk serves no blotter rows (the seeded blotter belongs to prj-a — a cross-scope record is a typed error, never served here)
+      return base.transport(request);
+    };
+    return { transport, release: () => releaseGate() };
+  }
+
+  it('(c) the boot-restore NEVER clobbers a user-initiated scope change: a select change DURING boot (before the boot bundle settles) holds — the restore skips, the select mirrors the chosen scope, and the choice persists', async () => {
+    const gated = gatedBootTransport();
+    const scopeStorage = new MapStorage();
+    scopeStorage.map.set(SCOPE_STORAGE_KEY, 'prj-other'); // the PREVIOUS session's world (what the boot captured)
+    const handle = bootConsole({
+      baseUrl: 'http://scripted.invalid',
+      token: 'token-test',
+      scope: { tenantId: 'tenant-a', projectId: 'prj-a' }, // the env pin
+      transport: gated.transport,
+      instants: { nowMs: () => T0 + 1000 },
+      theme: 'light',
+      storage: scopeStorage,
+      onboardingStorage: scopeStorage,
+      simulated: true,
+      scopeStorage,
+    });
+    const storage = new MapStorage();
+    storage.map.set('tradrl_onboarded', 'true');
+    const doc = new FakeDocument();
+    const root = new FakeElement('div');
+    handle.mount(root as unknown as Parameters<ConsoleHandle['mount']>[0], doc as unknown as Parameters<ConsoleHandle['mount']>[1]);
+    // the boot bundle is held at the directory read; the Settings panel already renders
+    clickNav({ handle, doc, root, storage, scheduler: null }, 'settings');
+
+    // THE USER'S CHOICE, during boot (the synthetic-select pattern: set the value, dispatch the change)
+    const switcher = findByData(root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    switcher.value = 'prj-launched';
+    doc.fire('change', { target: switcher });
+    expect(handle.state().scope.projectId).toBe('prj-launched'); // the user is driving
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-launched'); // persisted by the write-through
+
+    // THE BOOT BUNDLE SETTLES — the pre-fix restore would adopt the
+    // captured stored scope ('prj-other') right here, snapping the desk
+    // back (the Lead's twice-reproduced symptom)
+    gated.release();
+    await handle.refresh(); // a fresh bundle for the user's chosen scope (the restore check runs again — generation > 0 skips it)
+    expect(handle.state().scope.projectId).toBe('prj-launched'); // NEVER clobbered
+    expect(handle.state().project?.id).toBe('prj-launched'); // the chosen desk's world read
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-launched'); // still the user's choice
+
+    // the select's rendered value mirrors the CURRENT scope (not stale state)
+    clickNav({ handle, doc, root, storage, scheduler: null }, 'settings');
+    const reprojected = findByData(root, 'data-action', 'project-switch');
+    if (reprojected === null) throw new Error('the switcher vanished');
+    const selected = elementsOf(reprojected).filter((element) => element.tagName === 'OPTION').find((element) => element.getAttribute('selected') === 'selected');
+    expect(selected?.getAttribute('value')).toBe('prj-launched');
+    expect(handle.state().degraded).toEqual([]); // honest throughout
+  });
+
+  it('(c) after boot settles the restore is DONE — a later refresh never re-adopts the boot-time stored scope over the user\'s later choices', async () => {
+    const api = demoSubstanceTransport();
+    const scopeStorage = new MapStorage();
+    scopeStorage.map.set(SCOPE_STORAGE_KEY, 'prj-other'); // the boot restore adopts this once
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    expect(rig.handle.state().scope.projectId).toBe('prj-other'); // the restore ran (generation 0 -> 1)
+
+    // the user switches back to the env pin's project AFTER boot settled
+    clickNav(rig, 'settings');
+    const switcher = findByData(rig.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    switcher.value = 'prj-a';
+    rig.doc.fire('change', { target: switcher });
+    expect(rig.handle.state().scope.projectId).toBe('prj-a');
+
+    // a later bundle (the beat's refetch, a manual refresh) re-runs the
+    // restore check with the SAME boot-captured stored scope — the
+    // generation guard keeps it from ever re-adopting 'prj-other'
+    await rig.handle.refresh();
+    expect(rig.handle.state().scope.projectId).toBe('prj-a'); // the user's choice holds
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-a');
+    await rig.handle.beat();
+    expect(rig.handle.state().scope.projectId).toBe('prj-a');
+    expect(rig.handle.state().degraded).toEqual([]);
+  });
+
+  it('(c) the select\'s rendered value ALWAYS mirrors the current scope — a scope not in the readable directory renders a disabled current-scope option, never a silent fallback to the first entry', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a'); // every read degrades — the directory never loads
+    clickNav(rig, 'settings');
+    const switcher = findByData(rig.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    const options = elementsOf(switcher).filter((element) => element.tagName === 'OPTION');
+    expect(options).toHaveLength(1); // the disabled current-scope option alone
+    expect(options[0]?.getAttribute('value')).toBe('prj-a'); // the CURRENT scope's id
+    expect(options[0]?.getAttribute('selected')).toBe('selected'); // selected — the DOM value mirrors the state
+    expect(options[0]?.getAttribute('disabled')).toBe('disabled'); // not selectable (there is nothing to re-choose)
+  });
+
+  it('(a) the concluded launch panel renders ONLY within its OWN scope — a desk switch clears it from the other desk\'s view; switching back restores it', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a');
+    // a CONCLUDED launch on prj-a, seeded through the handle's sanctioned dispatch path
+    rig.handle.dispatch({ kind: 'launch-draft-started', at: T0 + 5, draft: VALID_DRAFT });
+    rig.handle.dispatch({ kind: 'launch-submitted', at: T0 + 10, projectId: 'prj-a', jobId: 'job-kickoff' });
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-kickoff', kind: 'research', tenant: 'tenant-a', project: 'prj-a', status: 'complete', submittedAt: T0 + 10, completedAt: T0 + 20 } });
+    expect(rig.handle.state().launch.phase).toBe('launched'); // the D-11 terminal-record close
+    expect(rig.handle.state().launch.projectId).toBe('prj-a'); // the slice knows its OWN scope
+    const launchedTexts = () => elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(launchedTexts()).toContain('Launch (launched)'); // the concluded card renders in its own scope
+    expect(findByData(rig.root, 'data-launch-idle', 'true')).toBeNull(); // the panel is NOT idle here
+
+    // THE SWITCH: another desk — the previous desk's launch params must NOT bleed into it
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 30, projectId: 'prj-b' });
+    const foreignTexts = launchedTexts();
+    expect(foreignTexts).not.toContain('Launch (launched)'); // the concluded card is GONE in the other desk's view
+    expect(findByData(rig.root, 'data-launch-idle', 'true')).not.toBeNull(); // the panel renders its own idle state
+    expect(findByData(rig.root, 'data-action', 'launch-start')).not.toBeNull(); // the hero shows its CTA (the guarded slice reads idle)
+
+    // switching BACK restores the launched desk's own concluded cards
+    rig.handle.dispatch({ kind: 'project-adopted', at: T0 + 40, projectId: 'prj-a' });
+    expect(launchedTexts()).toContain('Launch (launched)');
+  });
+
+  it('(b) the lifecycle reads ONE truth per entity: the Goal section renders the project record\'s own lifecycle beside the bound organization\'s operating status, each labeled, with the plain-words note on the seam', async () => {
+    // The deployed backing's real shape for a launched desk: the
+    // organization binds (organizationRef set, snapshot active) while the
+    // project record's lifecycle stays 'draft' (bindOrganization never
+    // transitions the lifecycle — the frozen contract's own law).
+    const base = demoSubstanceTransport();
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      if (request.method === 'GET' && path === '/v1/projects/prj-a') {
+        const inner = await base.transport(request);
+        const body = (inner as { readonly body?: { readonly data?: Record<string, unknown> } }).body;
+        const project = body?.data;
+        if (project !== undefined && (project.lifecycle as Record<string, unknown>) !== undefined) {
+          return { ...inner, body: { ...body, data: { ...project, lifecycle: { ...(project.lifecycle as Record<string, unknown>), status: 'draft' } } } };
+        }
+      }
+      return base.transport(request);
+    };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, transport, 'prj-a');
+    expect(rig.handle.state().project?.lifecycle.status).toBe('draft'); // the record's own truth
+    expect(rig.handle.state().orgSnapshots.map((snapshot) => snapshot.status)).toContain('active'); // the organization's own truth
+
+    clickNav(rig, 'goal');
+    const goalTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(goalTexts).toContain('draft'); // the record's lifecycle — verbatim, never fabricated 'active'
+    expect(goalTexts).toMatch(/active \(observed/); // the organization's status beside it, labeled as its own entity
+    expect(findByData(rig.root, 'data-lifecycle-note', 'true')).not.toBeNull(); // the seam is STATED in plain words
+    expect(elementsOf(rig.root).some((element) => textOf(element) === 'The project record\'s lifecycle and the organization\'s operating status are separate states — the record moves only through an explicit lifecycle event.')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-16 (W-29 wave 2) — THE PALETTE DEPTH, executed: the cross-project
+// jump (search offers "jump to project X" entries for the tenant's other
+// desks — selecting one switches the scope through the same
+// user-initiated adoption the switcher rides), and EVERY ENTITY RESULT'S
+// ENTER OPENS ITS ENTITY (a JOB entry opens its dialog — the J8 fix; an
+// EVIDENCE entry now opens its capsule inline; a PROJECT entry switches
+// the desk — the pre-fix inconsistency was S4's finding: "palette
+// EVIDENCE Enter does NOT auto-open the capsule while JOB results
+// auto-open their dialog").
+// ---------------------------------------------------------------------------
+
+describe('executed boot: D-16 (W-29 wave 2) — the palette depth (the cross-project jump + the entity-open Enter)', () => {
+  /** Open the palette and type a query (the §4.14 wiring: the input event feeds the pure rank). */
+  function typePaletteQuery(rig: Rig, query: string): void {
+    clickAction(rig, 'palette-open');
+    const input = findByData(rig.root, 'data-palette-input', 'true');
+    if (input === null) throw new Error('the palette input is not rendered');
+    input.value = query;
+    rig.doc.fire('input', { target: input });
+  }
+
+  /** Press Enter in the palette (the keyboard contract's open action). */
+  function pressEnter(rig: Rig): void {
+    const input = findByData(rig.root, 'data-palette-input', 'true');
+    if (input === null) throw new Error('the palette input is not rendered');
+    rig.doc.fire('keydown', { key: 'Enter', target: input });
+  }
+
+  it('a project query offers the OTHER desk as a jump entry; Enter switches the scope (the beat refetches the adopted desk — the Settings select was the only path before)', async () => {
+    const api = demoSubstanceTransport();
+    const scopeStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    expect(rig.handle.state().projectDirectory.map((project) => project.id)).toEqual(['prj-a', 'prj-other']);
+
+    typePaletteQuery(rig, 'prj-other');
+    const jump = findByData(rig.root, 'data-palette-ref', 'project:prj-other');
+    if (jump === null) throw new Error('the palette offers no jump entry for the other desk');
+    expect(elementsOf(jump).map((element) => textOf(element)).join(' ')).toContain('switch desk'); // the entry states what it does
+    // the top result is the jump entry — Enter adopts the other desk
+    pressEnter(rig);
+    expect(rig.handle.state().scope.projectId).toBe('prj-other'); // THE SCOPE SWITCHED through the palette
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-other'); // the same write-through the switcher rides
+    expect(findByData(rig.root, 'data-palette-input', 'true')).toBeNull(); // the palette closed
+    expect(rig.handle.state().selectedSection).toBe('goal'); // it landed on the adopted desk's own surface
+
+    // the beat's scope-change refetch reads the adopted desk's world — no reload, no Settings trip
+    await rig.handle.beat();
+    expect(rig.handle.state().project?.id).toBe('prj-other');
+    expect(rig.handle.state().degraded).toEqual([]);
+  });
+
+  it('Enter on an EVIDENCE entry navigates to the Evidence section AND opens the matched capsule inline (the same open a badge click performs — the JOB entries\' dialog behavior, consistent now)', async () => {
+    const api = demoSubstanceTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    expect(rig.handle.state().outcomes).toHaveLength(1); // the enriched outcome carries the capsule the fold mints
+
+    // the capsule's content-address id, derived the same way the fold does
+    const capsule = capsuleFromOutcome(rig.handle.state().scope, rig.handle.state().outcomes[0] as unknown as OutcomeRecord);
+    const fragment = capsule.capsuleId.slice(0, 12); // a distinctive id fragment (S4's own navigation pattern)
+    typePaletteQuery(rig, fragment);
+    const evidenceEntry = findByData(rig.root, 'data-palette-ref', `capsule:${capsule.capsuleId}`);
+    if (evidenceEntry === null) throw new Error('the palette offers no evidence entry for the capsule');
+
+    pressEnter(rig);
+    expect(findByData(rig.root, 'data-palette-input', 'true')).toBeNull(); // the palette closed
+    expect(rig.handle.state().selectedSection).toBe('evidence'); // it navigated to the section
+    expect(findByData(rig.root, 'data-capsule-open', capsule.capsuleId)).not.toBeNull(); // AND the capsule's payload renders INLINE (the §4.9 open state)
+    const payload = elementsOf(rig.root).find((element) => element.hasClass('capsule-payload'));
+    if (payload === undefined) throw new Error('the opened capsule renders no payload block');
+    const payloadTexts = elementsOf(payload).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(payloadTexts).toContain('outcome-class: adverse_gap'); // the capsule's own facts render (L20 — verbatim)
+  });
+
+  it('a CLICK on a jump entry behaves exactly like Enter (the palette\'s click affordance switches the desk too)', async () => {
+    const api = demoSubstanceTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    typePaletteQuery(rig, 'prj-other');
+    const jump = findByData(rig.root, 'data-palette-ref', 'project:prj-other');
+    if (jump === null) throw new Error('the palette offers no jump entry for the other desk');
+    click(rig, jump);
+    expect(rig.handle.state().scope.projectId).toBe('prj-other'); // the click path adopts too
+    expect(findByData(rig.root, 'data-palette-input', 'true')).toBeNull(); // the palette closed
+    await rig.handle.beat();
+    expect(rig.handle.state().project?.id).toBe('prj-other');
+  });
+
+  it('the substitution-tolerant matcher, executed: the personas\' typo queries reach the sections through the live palette', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a');
+    typePaletteQuery(rig, 'evdance'); // S2's own typo — the pre-fix palette rendered the teaching no-match state
+    const evidence = findByData(rig.root, 'data-palette-ref', 'nav:evidence');
+    if (evidence === null) throw new Error('the typo query did not reach the Evidence section');
+    expect(findByData(rig.root, 'data-palette-empty', 'evdance')).toBeNull(); // no teaching empty state — a real result
   });
 });

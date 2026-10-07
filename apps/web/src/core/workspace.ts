@@ -50,6 +50,7 @@ import type {
   OrgStatusSnapshot,
   OutcomeRecord,
   PostMortemRecord,
+  ProjectGoalWorldSpec,
   ProjectRecord,
   ServedKnowledge,
 } from '../api/contracts';
@@ -61,6 +62,7 @@ import {
   capsuleFromOutcome,
   capsuleFromPostMortem,
   capsuleFromSubmission,
+  capsulesFromJobs,
   type EvidenceCapsule,
 } from './evidence';
 import {
@@ -72,6 +74,8 @@ import {
   setTimestamp,
   setTMinus,
   startPlayback,
+  stepBackPlayback,
+  stepForwardPlayback,
   tickPlayback,
   viewAtOf as viewAtOfTimeMachine,
   type TimeMachineState,
@@ -132,6 +136,16 @@ export interface WorkspaceState {
   readonly project: ProjectRecord | null;
   readonly goal: GoalStatement | null;
   readonly constraintSet: ConstraintSetStatement | null;
+  /**
+   * THE PROJECT'S PERSISTED LAUNCH WORLD (D-8, W-28): the market world the
+   * scope's project launched with, read back from the host goal route's
+   * ADDITIVE `world` field (the backing persists it from the kickoff job's
+   * spec into the goal-set record's payload). Null when the project
+   * genuinely has no world on record (the demo scope — its seeded goal
+   * carries no world fields; a pre-W-28 launch) — the Market World
+   * section's teaching empty state is CORRECT for exactly those cases.
+   */
+  readonly world: ProjectGoalWorldSpec | null;
   readonly launch: LaunchState;
   readonly orgSnapshots: readonly OrgStatusSnapshot[];
   readonly jobs: readonly JobRecord[];
@@ -159,6 +173,7 @@ export function openWorkspace(scope: WorkspaceScope, at: number): WorkspaceState
     project: null,
     goal: null,
     constraintSet: null,
+    world: null,
     launch: initialLaunchState(),
     orgSnapshots: [],
     jobs: [],
@@ -183,7 +198,7 @@ export type WorkspaceEvent =
   | { readonly kind: 'connection-changed'; readonly at: number; readonly status: ConnectionStatus }
   | { readonly kind: 'project-adopted'; readonly at: number; readonly projectId: string }
   | { readonly kind: 'project-loaded'; readonly at: number; readonly project: ProjectRecord }
-  | { readonly kind: 'goal-loaded'; readonly at: number; readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement }
+  | { readonly kind: 'goal-loaded'; readonly at: number; readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; /** The scope's persisted launch world, when the host goal route served one (D-8, W-28) — absent = the project has none on record. */ readonly world?: ProjectGoalWorldSpec }
   | { readonly kind: 'org-snapshot'; readonly at: number; readonly snapshot: OrgStatusSnapshot }
   | { readonly kind: 'job-updated'; readonly at: number; readonly job: JobRecord }
   | { readonly kind: 'outcomes-loaded'; readonly at: number; readonly records: readonly OutcomeRecord[] }
@@ -200,6 +215,8 @@ export type WorkspaceEvent =
   | { readonly kind: 'playback-tick'; readonly at: number }
   | { readonly kind: 'playback-paused'; readonly at: number }
   | { readonly kind: 'playback-resumed'; readonly at: number }
+  | { readonly kind: 'playback-step-back'; readonly at: number }
+  | { readonly kind: 'playback-step-forward'; readonly at: number }
   | { readonly kind: 'notice-read'; readonly at: number; readonly noticeId: string }
   | { readonly kind: 'notices-read-all'; readonly at: number }
   | { readonly kind: 'degraded-read'; readonly at: number; readonly route: string; readonly family: string; readonly message: string }
@@ -230,10 +247,38 @@ export const CHAIN_FORMAT_VERSION = 2;
 export const CHAIN_GENESIS = '0'.repeat(64);
 
 /** The published digest rule, embedded verbatim in every export. */
-export const CHAIN_DIGEST_RULE = 'digest = sha256Hex(canonicalJson({seq,tenantId,projectId,payload})) as lowercase 64-hex; canonicalJson recursively sorts object keys (apps/web/src/core/digest.ts)';
+export const CHAIN_DIGEST_RULE = 'digest = sha256Hex(canonicalJson({seq,tenantId,projectId,payload})) as lowercase 64-hex; canonicalJson is the byte-exact grammar published as the canonicalRule — recursively sorted keys alone are NOT sufficient (apps/web/src/core/digest.ts)';
 
 /** The published link rule, embedded verbatim in every export. */
 export const CHAIN_LINK_RULE = 'chainHead = sha256Hex(previousChainHead + digest) as lowercase 64-hex; plain concatenation of two fixed-width 64-hex strings; the genesis previousChainHead is 64 zero hex chars';
+
+/**
+ * THE PUBLISHED CANONICAL RULE (MI-D7, chain format v2): the byte-exact
+ * canonical-JSON grammar every digest input is serialized under — the
+ * third published rule, embedded verbatim in every export beside the
+ * digest and link rules. WHY IT EXISTS: the pre-MI-D7 digest rule said
+ * only "canonicalJson recursively sorts object keys", and an independent
+ * verifier's reasonable reading of that (Python json.dumps' DEFAULT
+ * ensure_ascii=True) escaped the file's one non-ASCII payload string —
+ * an em dash, U+2014, in the demo outcome's decisionRationale
+ * (deploy/vercel/runtime/demo.ts:319, the only non-ASCII character the
+ * seeded records serve into an event payload), carried by an
+ * outcomes-loaded event — as \u2014, recomputing a different SHA-256
+ * for exactly that event and reading exactly like "payload mutated
+ * after sealing without re-hash" (M5's seq-179 finding; the eight other
+ * professionals' 142-268-link chains verified clean — consistent with
+ * raw-UTF-8 verifiers and/or ASCII-only payload sessions). No code path
+ * mutates a sealed entry (the reducer is append-only), and the export
+ * verifies end to end under the raw-UTF-8 form — the file was
+ * internally consistent the whole time; the RULE was underdetermined.
+ * This rule closes every degree of freedom a reimplementer could take
+ * (string escaping, number formatting, key collation), so any verifier
+ * implementing the
+ * documented grammar — Python with ensure_ascii=False, jq, Node
+ * JSON.stringify plus the key sort — recomputes every digest. (Aligned
+ * with RFC 8785 JCS in string, number and key-order form.)
+ */
+export const CHAIN_CANONICAL_RULE = 'canonicalJson: UTF-8 JSON; object keys recursively sorted by UTF-16 code unit; strings in JSON minimal escaping (only double-quote, backslash and U+0000-U+001F escaped; every other character, including ALL non-ASCII, stays RAW UTF-8 and is never backslash-u-escaped; Python verifiers MUST pass ensure_ascii=False — the json.dumps default escapes non-ASCII and will NOT match); numbers in ECMAScript Number::toString form (0.00001, never 1e-05 — Python repr switches to exponent form, implement the decimal form explicitly); arrays keep their order; null for null or absent values (apps/web/src/core/digest.ts canonicalJson; string/number/key-order forms aligned with RFC 8785 JCS)';
 
 /** The 64-hex shape of every v2 digest and chain head. */
 const HEX_64 = /^[0-9a-f]{64}$/;
@@ -248,11 +293,43 @@ function chainLinkOf(priorHead: string, digest: string): string {
   return sha256Hex(priorHead + digest);
 }
 
+/**
+ * IMMUTABILITY AFTER SEAL (MI-D7): deep-freeze a linked event — the
+ * payload IS the digest's input, so once an entry is linked, neither
+ * the entry nor any byte of its payload may ever be mutated in place
+ * (the append-only law: a change to a record arrives as a NEW event,
+ * linked as its own entry — never a rewrite of a sealed one). The
+ * freeze makes the law mechanical: an in-place mutation attempt is
+ * refused by the platform (silently in sloppy code, a TypeError in
+ * strict code) instead of silently diverging the runtime digest from
+ * its payload. Frozen payloads are shared with the state's own record
+ * arrays (the reducer never mutates them — every update replaces
+ * wholesale), so the freeze can never bite an honest caller.
+ */
+function deepFreezeSealed(value: unknown, seen: Set<object>): void {
+  if (value === null || typeof value !== 'object') return;
+  // A shared reference is frozen once (defensive: payloads are acyclic JSON).
+  if (Array.isArray(value)) {
+    const elements = value as readonly unknown[];
+    if (seen.has(elements)) return;
+    seen.add(elements);
+    for (const element of elements) deepFreezeSealed(element, seen);
+    Object.freeze(elements);
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  if (seen.has(record)) return;
+  seen.add(record);
+  for (const key of Object.keys(record)) deepFreezeSealed(record[key], seen);
+  Object.freeze(record);
+}
+
 /** Link one event onto the history chain (pure). */
 function linkHistory(state: WorkspaceState, event: WorkspaceEvent): readonly HistoryEntry[] {
   const prior = state.history.length === 0 ? null : (state.history[state.history.length - 1] as HistoryEntry);
   const seq = state.history.length + 1;
   const digest = chainDigestOf(seq, state.scope.tenantId, state.scope.projectId, event);
+  deepFreezeSealed(event, new Set());
   const entry: HistoryEntry = {
     seq,
     at: event.at,
@@ -263,7 +340,7 @@ function linkHistory(state: WorkspaceState, event: WorkspaceEvent): readonly His
     digest,
     chainHead: chainLinkOf(prior === null ? CHAIN_GENESIS : prior.chainHead, digest),
   };
-  return [...state.history, entry];
+  return [...state.history, Object.freeze(entry)];
 }
 
 /** The notice reads of a state (the fold's input — the state's own records). */
@@ -316,6 +393,7 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         project: null,
         goal: null,
         constraintSet: null,
+        world: null,
         orgSnapshots: [],
         jobs: [],
         outcomes: [],
@@ -333,7 +411,12 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         // The goal statement carries its own tenant id (the T007 shape): a foreign goal never enters the workspace.
         assertProjectScope(state.scope, event.goal);
       }
-      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet };
+      // D-8 (W-28): the goal bundle's ADDITIVE world field mirrors the
+      // scope's OWN persisted launch world — a read that serves no `world`
+      // (the demo scope, a pre-W-28 launch) CLEARS any prior one, exactly
+      // like goal/constraintSet: the state always mirrors THIS scope's
+      // read-back truth, never a stale world from a prior scope.
+      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet, world: event.world ?? null };
   } else if (selector === 'org-snapshot') {
       assertProjectScope(state.scope, event.snapshot);
       const seen = state.orgSnapshots.some((existing) => existing.organizationRef === event.snapshot.organizationRef && existing.at === event.snapshot.at);
@@ -349,9 +432,32 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         : state.jobs.map((job, index) => (index === existing ? event.job : job));
       const next: WorkspaceState = { ...withHistory, jobs };
       // The launch flow tracks its own kickoff job's progress.
-      const launch = state.launch.jobId === event.job.jobId
-        ? { ...state.launch, progress: [...state.launch.progress, { status: event.job.status, at: event.at }] as readonly JobProgressPoint[] }
-        : state.launch;
+      const tracked = state.launch.jobId === event.job.jobId;
+      const progress = tracked
+        ? [...state.launch.progress, { status: event.job.status, at: event.at }] as readonly JobProgressPoint[]
+        : state.launch.progress;
+      // D-11 (W-29): THE PHASE FOLLOWS THE RECORD, NOT THE OBSERVER. The
+      // pre-fix law transitioned launch.phase ONLY on the dedicated
+      // launch-completed / launch-failed events, which app/console.ts
+      // dispatches from pollJobs — and pollJobs SKIPS jobs already
+      // terminal in state, so the common race (the beat's jobs-list read
+      // serves the kickoff job already complete: job-updated(complete),
+      // no poll observation of the transition) left phase='launching'
+      // FOREVER — Home kept the "A launch is in progress" banner and hid
+      // the launch-entry buttons until a page reload (M4's finding: a
+      // second launch required a reload). The reducer now closes the
+      // loop itself: a tracked job's TERMINAL record closes the launch,
+      // whatever path carried the record in. The dedicated events stay
+      // (idempotent for the poll path — setting the same phase twice
+      // changes nothing).
+      let launch = tracked ? { ...state.launch, progress } : state.launch;
+      if (tracked && state.launch.phase === 'launching') {
+        if (event.job.status === 'complete') {
+          launch = { ...launch, phase: 'launched' };
+        } else if (event.job.status === 'failed') {
+          launch = { ...launch, phase: 'failed', error: `the kickoff job ${event.job.jobId} failed` };
+        }
+      }
       return { ...next, launch, inbox: refoldNotices({ ...next, launch }) };
   } else if (selector === 'outcomes-loaded') {
       for (const record of event.records) assertProjectScope(state.scope, record);
@@ -436,11 +542,36 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       // left the view (no jump-back, no re-arm).
       return { ...withHistory, timeMachine: resumePlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
 
+  } else if (selector === 'playback-step-back') {
+      // MI-D9 — THE MANUAL STEP BACK: the view instant steps BACK one
+      // controlled step and the machine STAYS EXACTLY WHERE IT WAS
+      // (paused stays paused, the mode never flips). Pre-fix, the app
+      // layer wired the Step back control to view-tminus with
+      // tMinusMs + 500: in a PAUSED session that offset is 500ms before
+      // the anchor — which follows the observed now — so the view jumped
+      // FORWARD to the wall-clock end, the mode flipped playback ->
+      // t-minus, and the banner read "Viewing a past instant" at 100%
+      // (the 6/9-professional MI-D9 finding). The step is its own
+      // append-only event — a change to the view is never a rewrite of
+      // a sealed one.
+      return { ...withHistory, timeMachine: stepBackPlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
+
+  } else if (selector === 'playback-step-forward') {
+      // MI-D9 — THE MANUAL STEP FORWARD: the user's own Step control.
+      // While paused the beat's auto ticks are frozen (R10), but the
+      // user's explicit step still moves the view one controlled step
+      // FORWARD, staying paused (a manual step is not a resume).
+      return { ...withHistory, timeMachine: stepForwardPlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
+
   } else if (selector === 'notice-read') {
       return { ...withHistory, inbox: markNoticeRead(withHistory.inbox, event.noticeId) };
 
   } else if (selector === 'notices-read-all') {
-      return { ...withHistory, inbox: markAllNoticesRead(withHistory.inbox) };
+      // D-13 (W-29): "Mark all read" marks exactly what the SCOPED inbox
+      // showed — the current scope's own notices (another desk's notices
+      // keep their marks and their unread state; the inbox state itself
+      // keeps every folded notice, append-only).
+      return { ...withHistory, inbox: markAllNoticesRead(withHistory.inbox, withHistory.scope) };
 
   } else if (selector === 'degraded-read') {
       const notes = [...withHistory.degraded, { route: event.route, family: event.family, message: event.message, at: event.at }];
@@ -594,6 +725,14 @@ export interface ExportChainDescriptor {
   readonly genesis: string;
   readonly digestRule: string;
   readonly linkRule: string;
+  /**
+   * THE PUBLISHED CANONICAL GRAMMAR (MI-D7), verbatim — the byte-exact
+   * canonical-JSON form every digest input is serialized under. ADDITIVE:
+   * pre-MI-D7 v2 documents carry no such field and still verify (the
+   * grammar they were sealed under is the one this constant documents);
+   * the format version stays 2.
+   */
+  readonly canonicalRule?: string;
   readonly entryCount: number;
   readonly head: string;
 }
@@ -616,6 +755,20 @@ export type ExportedWorkspaceState = Omit<WorkspaceState, 'history'>;
 export interface ExportManifest {
   readonly included: readonly string[];
   readonly counts: Record<string, number>;
+  /**
+   * D-14 (W-29): THE CHAIN-SCOPE AUDIT NOTE — present ONLY when the events
+   * chain spans MORE THAN ONE project id under this project-scoped export
+   * label (the L1/L2/L5 finding: a session that switched desks — a launch
+   * adoption, a switcher choice — links its history entries under EACH
+   * scope at link time, so the chain legitimately spans projects while the
+   * export label names the FINAL scope). The note states the audit facts:
+   * every entry self-labels its own projectId, each digest covers its own
+   * entry's {seq, tenantId, projectId, payload}, and the chain's integrity
+   * is unaffected by the span (the personas' independent recomputes — L2
+   * 535+602 entries, L5 149+112 — verified every link). Absent = the chain
+   * is single-project (or empty): nothing to disclose.
+   */
+  readonly chainScopeNote?: string;
 }
 
 /** THE EXPORT DOCUMENT — everything the console knows about the workspace. */
@@ -625,6 +778,22 @@ export interface WorkspaceExportDocument {
   readonly scope: WorkspaceScope;
   readonly chain: ExportChainDescriptor;
   readonly manifest: ExportManifest;
+  /**
+   * D-14 (W-29): THE LAUNCH'S WORLD SPECIFICATION, first-class — the
+   * markets/venues/data sources (+ execution mode, budgets, horizon) the
+   * scope's project launched with, as the host goal route serves it (the
+   * ADDITIVE `world` sibling of the goal in the bundle — the same shape,
+   * the same precedence: the frozen GoalStatement itself stays untouched).
+   * L5's P19 finding: the world spec was NOWHERE in the export file (the
+   * goal object carries no world fields, launch.draft was null) — the
+   * launch config was unrecoverable downstream. Null when the scope has no
+   * world on record (the demo scope — its seeded goal carries no world
+   * fields; a pre-W-28 launch) — the honest absence, never a fabricated
+   * world. ADDITIVE by construction: v2 readers that do not know the field
+   * ignore it (verifyWorkspaceExport accepts documents with and without
+   * it — the format version stays 2).
+   */
+  readonly launchWorld: ProjectGoalWorldSpec | null;
   readonly workspace: ExportedWorkspaceState;
   readonly events: readonly ExportChainEntry[];
   readonly capsules: readonly EvidenceCapsule[];
@@ -664,13 +833,18 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
   // R9b: the evidence capsules — the same content-addressed bundles
   // the Evidence section renders (one per outcome, post-mortem,
   // served-knowledge entry and execution submission), in the
-  // section's order. Unprojected: the export is the complete record,
-  // and every capsule carries its own availability instant (L4).
+  // section's order. Since W-28 (D-9) also one per COMPLETED job WITH a
+  // result (the result->job lineage leg — the export's capsules
+  // collection is the audit pack; a research result that mints no
+  // capsule is a lineage leaf, exactly what L2's P19 recompute found).
+  // Unprojected: the export is the complete record, and every capsule
+  // carries its own availability instant (L4).
   const capsules: EvidenceCapsule[] = [
     ...state.outcomes.map((outcome) => capsuleFromOutcome(state.scope, outcome)),
     ...state.postMortems.map((postMortem) => capsuleFromPostMortem(state.scope, postMortem)),
     ...state.knowledge.map((knowledge) => capsuleFromKnowledge(state.scope, knowledge)),
     ...state.submissions.map((submission) => capsuleFromSubmission(state.scope, submission)),
+    ...capsulesFromJobs(state.scope, state.jobs),
   ];
 
   // R9b: the decisions — the seven-lens watch records (agent,
@@ -693,8 +867,26 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
   // block IS the history, rebuilt as the v2 chain)
   const { history: _retainedHistory, ...workspaceWithoutHistory } = state;
 
+  // D-14 (W-29): THE LAUNCH WORLD, first-class — the same additive-sibling
+  // shape the host goal route serves (the goal bundle's `world`). The
+  // manifest declares + counts it so an auditor reading the manifest alone
+  // knows the world spec is in the file (L5's finding: it was nowhere —
+  // the launch config was unrecoverable downstream).
+  const launchWorld: ProjectGoalWorldSpec | null = state.world;
+
+  // D-14 (W-29): THE CHAIN-SCOPE AUDIT NOTE — the events chain's distinct
+  // project ids, disclosed when the span crosses projects under this
+  // project-scoped export label. Every entry self-labels its own projectId
+  // (the digest covers it) and the chain's integrity is unaffected by the
+  // span; the note states exactly that, with the span's count.
+  const chainProjectIds = new Set(events.map((entry) => entry.projectId));
+  const chainScopeNote = chainProjectIds.size > 1
+    ? `This export is labeled for project ${JSON.stringify(state.scope.projectId)}, but its events chain spans ${chainProjectIds.size} project ids (${[...chainProjectIds].join(', ')}): the session linked history entries under each scope it held (a launch adoption, a project switch). Every entry self-labels its own projectId — each digest covers its own entry's {seq, tenantId, projectId, payload} — so the chain's integrity is unaffected by the span.`
+    : undefined;
+
   const manifest: ExportManifest = {
     included: [
+      'launchWorld',
       'workspace.state',
       'events.chain',
       'evidence.capsules',
@@ -703,6 +895,7 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
       'readState',
     ],
     counts: {
+      launchWorld: launchWorld === null ? 0 : 1,
       events: events.length,
       capsules: capsules.length,
       decisionsWatch: decisions.watch.length,
@@ -711,6 +904,7 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
       readNotices: readNoticeIds.length,
       unreadNotices: unreadNoticeIds.length,
     },
+    ...(chainScopeNote === undefined ? {} : { chainScopeNote }),
   };
 
   return {
@@ -723,10 +917,12 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
       genesis: CHAIN_GENESIS,
       digestRule: CHAIN_DIGEST_RULE,
       linkRule: CHAIN_LINK_RULE,
+      canonicalRule: CHAIN_CANONICAL_RULE,
       entryCount: events.length,
       head: priorHead,
     },
     manifest,
+    launchWorld,
     workspace: workspaceWithoutHistory,
     events,
     capsules,
@@ -741,6 +937,130 @@ export function serializeWorkspaceExport(state: WorkspaceState): string {
 }
 
 /**
+ * THE COUNTED VERIFICATION REPORT (MI-D7 — the in-UI verification
+ * affordance, S5's ask): verifyWorkspaceExport's own checks, COUNTED —
+ * how many digests recomputed, how many chain links recomputed, whether
+ * the descriptor's head matches the recomputed head — so the Settings
+ * affordance can show the user "N/N digests, N/N links, head match"
+ * without anyone writing a script. The rules are EXACTLY the documented
+ * ones (verifyWorkspaceExport delegates to the walk below, so the two
+ * surfaces can never drift).
+ */
+export interface ExportVerificationReport {
+  /** True when every documented check passed (the file verifies end to end). */
+  readonly ok: boolean;
+  /** The first failure, verbatim (null when ok) — the same strings verifyWorkspaceExport returns. */
+  readonly reason: string | null;
+  /** The document's declared format (null when unreadable). */
+  readonly format: string | null;
+  /** The document's declared format version (null when unreadable). */
+  readonly formatVersion: number | null;
+  /** How many events the file carries (0 when the events array is unreadable). */
+  readonly entryCount: number;
+  /** How many event digests recomputed from their own chained record under the published digest rule. */
+  readonly digestsOk: number;
+  /** How many chain heads recomputed from the prior head under the published link rule. */
+  readonly linksOk: number;
+  /** Whether the chain descriptor's head matches the recomputed head (null when neither side is computable). */
+  readonly headMatch: boolean | null;
+}
+
+/**
+ * Verify an exported document's chain end to end from the file alone,
+ * WITH THE COUNTS (the in-UI verification affordance's data — the same
+ * walk, the same rules, the same first-failure reasons as
+ * verifyWorkspaceExport). Pure — anyone with the file and the published
+ * rules can run exactly this.
+ */
+export function verifyWorkspaceExportReport(doc: unknown): ExportVerificationReport {
+  const refused = (reason: string, format: string | null = null, formatVersion: number | null = null, entryCount = 0, digestsOk = 0, linksOk = 0, headMatch: boolean | null = null): ExportVerificationReport => {
+    return { ok: false, reason, format, formatVersion, entryCount, digestsOk, linksOk, headMatch };
+  };
+  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) {
+    return refused('the export is not a JSON object');
+  }
+  const record = doc as Record<string, unknown>;
+  if (record.format !== EXPORT_FORMAT) {
+    return refused(`the document's format is ${JSON.stringify(record.format)} (expected ${JSON.stringify(EXPORT_FORMAT)})`, typeof record.format === 'string' ? record.format : null);
+  }
+  if (record.formatVersion !== EXPORT_FORMAT_VERSION) {
+    return refused(`the document's format version is ${JSON.stringify(record.formatVersion)} (expected ${JSON.stringify(EXPORT_FORMAT_VERSION)})`, EXPORT_FORMAT, typeof record.formatVersion === 'number' ? record.formatVersion : null);
+  }
+  const chain = record.chain;
+  if (typeof chain !== 'object' || chain === null) {
+    return refused('the export carries no chain descriptor', EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  const chainRecord = chain as Record<string, unknown>;
+  if (chainRecord.algorithm !== CHAIN_ALGORITHM) {
+    return refused(`the chain's algorithm is ${JSON.stringify(chainRecord.algorithm)} (expected ${JSON.stringify(CHAIN_ALGORITHM)})`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  if (chainRecord.version !== CHAIN_FORMAT_VERSION) {
+    return refused(`the chain's format version is ${JSON.stringify(chainRecord.version)} (expected ${JSON.stringify(CHAIN_FORMAT_VERSION)})`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  if (chainRecord.genesis !== CHAIN_GENESIS) {
+    return refused('the chain declares a foreign genesis', EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  const scope = record.scope;
+  if (typeof scope !== 'object' || scope === null) {
+    return refused('the export carries no scope', EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  const scopeRecord = scope as Record<string, unknown>;
+  if (typeof scopeRecord.tenantId !== 'string') {
+    return refused('the export scope carries no tenant id', EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  const events = record.events;
+  if (!Array.isArray(events)) {
+    return refused('the export carries no events array', EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  let priorHead = CHAIN_GENESIS;
+  let digestsOk = 0;
+  let linksOk = 0;
+  // The head match AT THE BREAK: the descriptor's declared head vs the
+  // head recomputed so far (null when the descriptor declares no head).
+  const headSoFar = (): boolean | null => (typeof chainRecord.head === 'string' ? chainRecord.head === priorHead : null);
+  for (let index = 0; index < events.length; index++) {
+    const entry = events[index];
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      return refused(`event ${index + 1} is not a JSON object`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    const eventRecord = entry as Record<string, unknown>;
+    if (eventRecord.seq !== index + 1) {
+      return refused(`event ${index + 1} carries seq ${JSON.stringify(eventRecord.seq)}`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    // The tenant is one per workspace (adoptions change the project,
+    // never the tenant) — a foreign-tenant entry is a broken export.
+    if (eventRecord.tenantId !== scopeRecord.tenantId) {
+      return refused(`event ${index + 1} does not belong to the export's tenant`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    if (typeof eventRecord.digest !== 'string' || !HEX_64.test(eventRecord.digest)) {
+      return refused(`event ${index + 1}'s digest is not a 64-hex SHA-256 digest (chain format v2)`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    if (typeof eventRecord.chainHead !== 'string' || !HEX_64.test(eventRecord.chainHead)) {
+      return refused(`event ${index + 1}'s chain head is not 64-hex (chain format v2)`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    const digest = sha256Of({ seq: eventRecord.seq, tenantId: eventRecord.tenantId, projectId: eventRecord.projectId, payload: eventRecord.payload });
+    if (digest !== eventRecord.digest) {
+      return refused(`event ${index + 1}'s digest does not match its chained record (seq, scope, payload)`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    digestsOk += 1;
+    const head = sha256Hex(priorHead + (eventRecord.digest as string));
+    if (head !== eventRecord.chainHead) {
+      return refused(`event ${index + 1}'s chain head does not link to event ${index}`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    linksOk += 1;
+    priorHead = eventRecord.chainHead;
+  }
+  const headMatch = typeof chainRecord.head === 'string' ? chainRecord.head === priorHead : null;
+  if (chainRecord.entryCount !== events.length) {
+    return refused(`the chain counts ${JSON.stringify(chainRecord.entryCount)} events but the export carries ${events.length}`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headMatch);
+  }
+  if (chainRecord.head !== priorHead) {
+    return refused('the chain head does not match the last event', EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headMatch);
+  }
+  return { ok: true, reason: null, format: EXPORT_FORMAT, formatVersion: EXPORT_FORMAT_VERSION, entryCount: events.length, digestsOk, linksOk, headMatch: headMatch === null ? false : headMatch };
+}
+
+/**
  * Verify an exported document's chain end to end from the file alone:
  * the format and chain descriptors must carry the published v2
  * algorithm and genesis, every event's digest must recompute from its
@@ -751,78 +1071,10 @@ export function serializeWorkspaceExport(state: WorkspaceState): string {
  * with the file and the published rules can run exactly this.
  */
 export function verifyWorkspaceExport(doc: unknown): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
-  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) {
-    return { ok: false, reason: 'the export is not a JSON object' };
-  }
-  const record = doc as Record<string, unknown>;
-  if (record.format !== EXPORT_FORMAT) {
-    return { ok: false, reason: `the document's format is ${JSON.stringify(record.format)} (expected ${JSON.stringify(EXPORT_FORMAT)})` };
-  }
-  if (record.formatVersion !== EXPORT_FORMAT_VERSION) {
-    return { ok: false, reason: `the document's format version is ${JSON.stringify(record.formatVersion)} (expected ${EXPORT_FORMAT_VERSION})` };
-  }
-  const chain = record.chain;
-  if (typeof chain !== 'object' || chain === null) {
-    return { ok: false, reason: 'the export carries no chain descriptor' };
-  }
-  const chainRecord = chain as Record<string, unknown>;
-  if (chainRecord.algorithm !== CHAIN_ALGORITHM) {
-    return { ok: false, reason: `the chain's algorithm is ${JSON.stringify(chainRecord.algorithm)} (expected ${JSON.stringify(CHAIN_ALGORITHM)})` };
-  }
-  if (chainRecord.version !== CHAIN_FORMAT_VERSION) {
-    return { ok: false, reason: `the chain's format version is ${JSON.stringify(chainRecord.version)} (expected ${CHAIN_FORMAT_VERSION})` };
-  }
-  if (chainRecord.genesis !== CHAIN_GENESIS) {
-    return { ok: false, reason: 'the chain declares a foreign genesis' };
-  }
-  const scope = record.scope;
-  if (typeof scope !== 'object' || scope === null) {
-    return { ok: false, reason: 'the export carries no scope' };
-  }
-  const scopeRecord = scope as Record<string, unknown>;
-  if (typeof scopeRecord.tenantId !== 'string') {
-    return { ok: false, reason: 'the export scope carries no tenant id' };
-  }
-  const events = record.events;
-  if (!Array.isArray(events)) {
-    return { ok: false, reason: 'the export carries no events array' };
-  }
-  let priorHead = CHAIN_GENESIS;
-  for (let index = 0; index < events.length; index++) {
-    const entry = events[index];
-    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
-      return { ok: false, reason: `event ${index + 1} is not a JSON object` };
-    }
-    const eventRecord = entry as Record<string, unknown>;
-    if (eventRecord.seq !== index + 1) {
-      return { ok: false, reason: `event ${index + 1} carries seq ${JSON.stringify(eventRecord.seq)}` };
-    }
-    // The tenant is one per workspace (adoptions change the project,
-    // never the tenant) — a foreign-tenant entry is a broken export.
-    if (eventRecord.tenantId !== scopeRecord.tenantId) {
-      return { ok: false, reason: `event ${index + 1} does not belong to the export's tenant` };
-    }
-    if (typeof eventRecord.digest !== 'string' || !HEX_64.test(eventRecord.digest)) {
-      return { ok: false, reason: `event ${index + 1}'s digest is not a 64-hex SHA-256 digest (chain format v2)` };
-    }
-    if (typeof eventRecord.chainHead !== 'string' || !HEX_64.test(eventRecord.chainHead)) {
-      return { ok: false, reason: `event ${index + 1}'s chain head is not 64-hex (chain format v2)` };
-    }
-    const digest = sha256Of({ seq: eventRecord.seq, tenantId: eventRecord.tenantId, projectId: eventRecord.projectId, payload: eventRecord.payload });
-    if (digest !== eventRecord.digest) {
-      return { ok: false, reason: `event ${index + 1}'s digest does not match its chained record (seq, scope, payload)` };
-    }
-    const head = sha256Hex(priorHead + (eventRecord.digest as string));
-    if (head !== eventRecord.chainHead) {
-      return { ok: false, reason: `event ${index + 1}'s chain head does not link to event ${index}` };
-    }
-    priorHead = eventRecord.chainHead;
-  }
-  if (chainRecord.entryCount !== events.length) {
-    return { ok: false, reason: `the chain counts ${JSON.stringify(chainRecord.entryCount)} events but the export carries ${events.length}` };
-  }
-  if (chainRecord.head !== priorHead) {
-    return { ok: false, reason: 'the chain head does not match the last event' };
-  }
-  return { ok: true };
+  // MI-D7: one implementation, two surfaces — the counted walk above is
+  // THE verification; this signature (pinned across the suite and the
+  // interop surfaces) simply drops the counts.
+  const report = verifyWorkspaceExportReport(doc);
+  if (report.ok) return { ok: true };
+  return { ok: false, reason: report.reason as string };
 }
