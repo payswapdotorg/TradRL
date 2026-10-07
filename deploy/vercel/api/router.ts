@@ -52,7 +52,7 @@
 import { getDeploymentService, type DeploymentComposition } from '../runtime/compose';
 import { demoJobsOf } from '../runtime/demo';
 import { toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
-import { drainedFailureResponse, serveDemoSubstanceRoute, serveDurableSubstanceRoute } from '../runtime/routes';
+import { drainedFailureResponse, serveDemoSubstanceRoute, serveDurableSubstanceRoute, serveRunbookRoute } from '../runtime/routes';
 import { consoleSessionOf, serveSessionScopedRoute } from '../runtime/session-routes';
 import { isProjectId, isTenantId, type ApiRequest, type ApiResponse } from '../../../services/api/src/index';
 
@@ -142,7 +142,32 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
     return;
   }
 
-  // 3b. THE SESSION-SCOPED ROUTES (FW-MI-A, defects MI-D1 + MI-D8): a
+  // 3b. THE HOST-OWNED INTERNAL DDL RUNBOOK ROUTES (W-28, lane B):
+  //     POST /internal/deploy/ddl/apply + GET /internal/deploy/ddl/verify —
+  //     the Lead's governed API surface to heal production (and any future
+  //     database) with a single authenticated call. Internal-credential
+  //     auth FIRST (the typed 401 envelope the boundary uses — authn
+  //     before any work), then the durable-presence check (the typed
+  //     `deploy_adapter_absent` 503 when the seam was not built — the
+  //     matrix's Neon-absent row), then the operation. The EXACT host-owned
+  //     pattern the W-8/W-25A demo-substance routes use (the runbook
+  //     routes are served BEFORE the boundary wrap, declared nowhere in
+  //     the frozen route table; without this section they would answer the
+  //     typed not-found). The runbook rides the SAME Neon SQL-over-HTTP
+  //     client the durable stores compose over (no new dependency, no
+  //     re-implementation of the wire format). L12 — the routes read NO
+  //     tenant data (the DDL is schema-level; the verify query is
+  //     information_schema only). See runtime/routes.ts.
+  const runbookRoute = await serveRunbookRoute(
+    {
+      durable: deployment.durable,
+      verifyInternalAuthorization: deployment.verifyInternalAuthorization,
+    },
+    wrapped.request,
+    demoSubstanceSerial++,
+  );
+
+  // 3c. THE SESSION-SCOPED ROUTES (FW-MI-A, defects MI-D1 + MI-D8): a
   //     request carrying the console session header is served the
   //     SESSION'S view — the demo project + the session's own projects —
   //     for the project listing/detail/goal reads, and the host-owned
@@ -166,6 +191,12 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
     wrapped.request,
     demoSubstanceSerial++,
   );
+  if (runbookRoute !== null) {
+    writeApiResponse(response, runbookRoute);
+
+    return;
+  }
+
   if (sessionRoute !== null) {
     // THE WRITE-THROUGH DRAIN ON THE HOST-ROUTE PATH (the W-27 ordering
     // law — the same drain the demo-substance host routes run): the
