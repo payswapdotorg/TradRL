@@ -74,6 +74,8 @@ import {
   setTimestamp,
   setTMinus,
   startPlayback,
+  stepBackPlayback,
+  stepForwardPlayback,
   tickPlayback,
   viewAtOf as viewAtOfTimeMachine,
   type TimeMachineState,
@@ -213,6 +215,8 @@ export type WorkspaceEvent =
   | { readonly kind: 'playback-tick'; readonly at: number }
   | { readonly kind: 'playback-paused'; readonly at: number }
   | { readonly kind: 'playback-resumed'; readonly at: number }
+  | { readonly kind: 'playback-step-back'; readonly at: number }
+  | { readonly kind: 'playback-step-forward'; readonly at: number }
   | { readonly kind: 'notice-read'; readonly at: number; readonly noticeId: string }
   | { readonly kind: 'notices-read-all'; readonly at: number }
   | { readonly kind: 'degraded-read'; readonly at: number; readonly route: string; readonly family: string; readonly message: string }
@@ -243,10 +247,38 @@ export const CHAIN_FORMAT_VERSION = 2;
 export const CHAIN_GENESIS = '0'.repeat(64);
 
 /** The published digest rule, embedded verbatim in every export. */
-export const CHAIN_DIGEST_RULE = 'digest = sha256Hex(canonicalJson({seq,tenantId,projectId,payload})) as lowercase 64-hex; canonicalJson recursively sorts object keys (apps/web/src/core/digest.ts)';
+export const CHAIN_DIGEST_RULE = 'digest = sha256Hex(canonicalJson({seq,tenantId,projectId,payload})) as lowercase 64-hex; canonicalJson is the byte-exact grammar published as the canonicalRule — recursively sorted keys alone are NOT sufficient (apps/web/src/core/digest.ts)';
 
 /** The published link rule, embedded verbatim in every export. */
 export const CHAIN_LINK_RULE = 'chainHead = sha256Hex(previousChainHead + digest) as lowercase 64-hex; plain concatenation of two fixed-width 64-hex strings; the genesis previousChainHead is 64 zero hex chars';
+
+/**
+ * THE PUBLISHED CANONICAL RULE (MI-D7, chain format v2): the byte-exact
+ * canonical-JSON grammar every digest input is serialized under — the
+ * third published rule, embedded verbatim in every export beside the
+ * digest and link rules. WHY IT EXISTS: the pre-MI-D7 digest rule said
+ * only "canonicalJson recursively sorts object keys", and an independent
+ * verifier's reasonable reading of that (Python json.dumps' DEFAULT
+ * ensure_ascii=True) escaped the file's one non-ASCII payload string —
+ * an em dash, U+2014, in the demo outcome's decisionRationale
+ * (deploy/vercel/runtime/demo.ts:319, the only non-ASCII character the
+ * seeded records serve into an event payload), carried by an
+ * outcomes-loaded event — as \u2014, recomputing a different SHA-256
+ * for exactly that event and reading exactly like "payload mutated
+ * after sealing without re-hash" (M5's seq-179 finding; the eight other
+ * professionals' 142-268-link chains verified clean — consistent with
+ * raw-UTF-8 verifiers and/or ASCII-only payload sessions). No code path
+ * mutates a sealed entry (the reducer is append-only), and the export
+ * verifies end to end under the raw-UTF-8 form — the file was
+ * internally consistent the whole time; the RULE was underdetermined.
+ * This rule closes every degree of freedom a reimplementer could take
+ * (string escaping, number formatting, key collation), so any verifier
+ * implementing the
+ * documented grammar — Python with ensure_ascii=False, jq, Node
+ * JSON.stringify plus the key sort — recomputes every digest. (Aligned
+ * with RFC 8785 JCS in string, number and key-order form.)
+ */
+export const CHAIN_CANONICAL_RULE = 'canonicalJson: UTF-8 JSON; object keys recursively sorted by UTF-16 code unit; strings in JSON minimal escaping (only double-quote, backslash and U+0000-U+001F escaped; every other character, including ALL non-ASCII, stays RAW UTF-8 and is never backslash-u-escaped; Python verifiers MUST pass ensure_ascii=False — the json.dumps default escapes non-ASCII and will NOT match); numbers in ECMAScript Number::toString form (0.00001, never 1e-05 — Python repr switches to exponent form, implement the decimal form explicitly); arrays keep their order; null for null or absent values (apps/web/src/core/digest.ts canonicalJson; string/number/key-order forms aligned with RFC 8785 JCS)';
 
 /** The 64-hex shape of every v2 digest and chain head. */
 const HEX_64 = /^[0-9a-f]{64}$/;
@@ -261,11 +293,43 @@ function chainLinkOf(priorHead: string, digest: string): string {
   return sha256Hex(priorHead + digest);
 }
 
+/**
+ * IMMUTABILITY AFTER SEAL (MI-D7): deep-freeze a linked event — the
+ * payload IS the digest's input, so once an entry is linked, neither
+ * the entry nor any byte of its payload may ever be mutated in place
+ * (the append-only law: a change to a record arrives as a NEW event,
+ * linked as its own entry — never a rewrite of a sealed one). The
+ * freeze makes the law mechanical: an in-place mutation attempt is
+ * refused by the platform (silently in sloppy code, a TypeError in
+ * strict code) instead of silently diverging the runtime digest from
+ * its payload. Frozen payloads are shared with the state's own record
+ * arrays (the reducer never mutates them — every update replaces
+ * wholesale), so the freeze can never bite an honest caller.
+ */
+function deepFreezeSealed(value: unknown, seen: Set<object>): void {
+  if (value === null || typeof value !== 'object') return;
+  // A shared reference is frozen once (defensive: payloads are acyclic JSON).
+  if (Array.isArray(value)) {
+    const elements = value as readonly unknown[];
+    if (seen.has(elements)) return;
+    seen.add(elements);
+    for (const element of elements) deepFreezeSealed(element, seen);
+    Object.freeze(elements);
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  if (seen.has(record)) return;
+  seen.add(record);
+  for (const key of Object.keys(record)) deepFreezeSealed(record[key], seen);
+  Object.freeze(record);
+}
+
 /** Link one event onto the history chain (pure). */
 function linkHistory(state: WorkspaceState, event: WorkspaceEvent): readonly HistoryEntry[] {
   const prior = state.history.length === 0 ? null : (state.history[state.history.length - 1] as HistoryEntry);
   const seq = state.history.length + 1;
   const digest = chainDigestOf(seq, state.scope.tenantId, state.scope.projectId, event);
+  deepFreezeSealed(event, new Set());
   const entry: HistoryEntry = {
     seq,
     at: event.at,
@@ -276,7 +340,7 @@ function linkHistory(state: WorkspaceState, event: WorkspaceEvent): readonly His
     digest,
     chainHead: chainLinkOf(prior === null ? CHAIN_GENESIS : prior.chainHead, digest),
   };
-  return [...state.history, entry];
+  return [...state.history, Object.freeze(entry)];
 }
 
 /** The notice reads of a state (the fold's input — the state's own records). */
@@ -478,6 +542,27 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       // left the view (no jump-back, no re-arm).
       return { ...withHistory, timeMachine: resumePlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
 
+  } else if (selector === 'playback-step-back') {
+      // MI-D9 — THE MANUAL STEP BACK: the view instant steps BACK one
+      // controlled step and the machine STAYS EXACTLY WHERE IT WAS
+      // (paused stays paused, the mode never flips). Pre-fix, the app
+      // layer wired the Step back control to view-tminus with
+      // tMinusMs + 500: in a PAUSED session that offset is 500ms before
+      // the anchor — which follows the observed now — so the view jumped
+      // FORWARD to the wall-clock end, the mode flipped playback ->
+      // t-minus, and the banner read "Viewing a past instant" at 100%
+      // (the 6/9-professional MI-D9 finding). The step is its own
+      // append-only event — a change to the view is never a rewrite of
+      // a sealed one.
+      return { ...withHistory, timeMachine: stepBackPlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
+
+  } else if (selector === 'playback-step-forward') {
+      // MI-D9 — THE MANUAL STEP FORWARD: the user's own Step control.
+      // While paused the beat's auto ticks are frozen (R10), but the
+      // user's explicit step still moves the view one controlled step
+      // FORWARD, staying paused (a manual step is not a resume).
+      return { ...withHistory, timeMachine: stepForwardPlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
+
   } else if (selector === 'notice-read') {
       return { ...withHistory, inbox: markNoticeRead(withHistory.inbox, event.noticeId) };
 
@@ -640,6 +725,14 @@ export interface ExportChainDescriptor {
   readonly genesis: string;
   readonly digestRule: string;
   readonly linkRule: string;
+  /**
+   * THE PUBLISHED CANONICAL GRAMMAR (MI-D7), verbatim — the byte-exact
+   * canonical-JSON form every digest input is serialized under. ADDITIVE:
+   * pre-MI-D7 v2 documents carry no such field and still verify (the
+   * grammar they were sealed under is the one this constant documents);
+   * the format version stays 2.
+   */
+  readonly canonicalRule?: string;
   readonly entryCount: number;
   readonly head: string;
 }
@@ -824,6 +917,7 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
       genesis: CHAIN_GENESIS,
       digestRule: CHAIN_DIGEST_RULE,
       linkRule: CHAIN_LINK_RULE,
+      canonicalRule: CHAIN_CANONICAL_RULE,
       entryCount: events.length,
       head: priorHead,
     },
@@ -843,6 +937,130 @@ export function serializeWorkspaceExport(state: WorkspaceState): string {
 }
 
 /**
+ * THE COUNTED VERIFICATION REPORT (MI-D7 — the in-UI verification
+ * affordance, S5's ask): verifyWorkspaceExport's own checks, COUNTED —
+ * how many digests recomputed, how many chain links recomputed, whether
+ * the descriptor's head matches the recomputed head — so the Settings
+ * affordance can show the user "N/N digests, N/N links, head match"
+ * without anyone writing a script. The rules are EXACTLY the documented
+ * ones (verifyWorkspaceExport delegates to the walk below, so the two
+ * surfaces can never drift).
+ */
+export interface ExportVerificationReport {
+  /** True when every documented check passed (the file verifies end to end). */
+  readonly ok: boolean;
+  /** The first failure, verbatim (null when ok) — the same strings verifyWorkspaceExport returns. */
+  readonly reason: string | null;
+  /** The document's declared format (null when unreadable). */
+  readonly format: string | null;
+  /** The document's declared format version (null when unreadable). */
+  readonly formatVersion: number | null;
+  /** How many events the file carries (0 when the events array is unreadable). */
+  readonly entryCount: number;
+  /** How many event digests recomputed from their own chained record under the published digest rule. */
+  readonly digestsOk: number;
+  /** How many chain heads recomputed from the prior head under the published link rule. */
+  readonly linksOk: number;
+  /** Whether the chain descriptor's head matches the recomputed head (null when neither side is computable). */
+  readonly headMatch: boolean | null;
+}
+
+/**
+ * Verify an exported document's chain end to end from the file alone,
+ * WITH THE COUNTS (the in-UI verification affordance's data — the same
+ * walk, the same rules, the same first-failure reasons as
+ * verifyWorkspaceExport). Pure — anyone with the file and the published
+ * rules can run exactly this.
+ */
+export function verifyWorkspaceExportReport(doc: unknown): ExportVerificationReport {
+  const refused = (reason: string, format: string | null = null, formatVersion: number | null = null, entryCount = 0, digestsOk = 0, linksOk = 0, headMatch: boolean | null = null): ExportVerificationReport => {
+    return { ok: false, reason, format, formatVersion, entryCount, digestsOk, linksOk, headMatch };
+  };
+  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) {
+    return refused('the export is not a JSON object');
+  }
+  const record = doc as Record<string, unknown>;
+  if (record.format !== EXPORT_FORMAT) {
+    return refused(`the document's format is ${JSON.stringify(record.format)} (expected ${JSON.stringify(EXPORT_FORMAT)})`, typeof record.format === 'string' ? record.format : null);
+  }
+  if (record.formatVersion !== EXPORT_FORMAT_VERSION) {
+    return refused(`the document's format version is ${JSON.stringify(record.formatVersion)} (expected ${JSON.stringify(EXPORT_FORMAT_VERSION)})`, EXPORT_FORMAT, typeof record.formatVersion === 'number' ? record.formatVersion : null);
+  }
+  const chain = record.chain;
+  if (typeof chain !== 'object' || chain === null) {
+    return refused('the export carries no chain descriptor', EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  const chainRecord = chain as Record<string, unknown>;
+  if (chainRecord.algorithm !== CHAIN_ALGORITHM) {
+    return refused(`the chain's algorithm is ${JSON.stringify(chainRecord.algorithm)} (expected ${JSON.stringify(CHAIN_ALGORITHM)})`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  if (chainRecord.version !== CHAIN_FORMAT_VERSION) {
+    return refused(`the chain's format version is ${JSON.stringify(chainRecord.version)} (expected ${JSON.stringify(CHAIN_FORMAT_VERSION)})`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  if (chainRecord.genesis !== CHAIN_GENESIS) {
+    return refused('the chain declares a foreign genesis', EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  const scope = record.scope;
+  if (typeof scope !== 'object' || scope === null) {
+    return refused('the export carries no scope', EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  const scopeRecord = scope as Record<string, unknown>;
+  if (typeof scopeRecord.tenantId !== 'string') {
+    return refused('the export scope carries no tenant id', EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  const events = record.events;
+  if (!Array.isArray(events)) {
+    return refused('the export carries no events array', EXPORT_FORMAT, EXPORT_FORMAT_VERSION);
+  }
+  let priorHead = CHAIN_GENESIS;
+  let digestsOk = 0;
+  let linksOk = 0;
+  // The head match AT THE BREAK: the descriptor's declared head vs the
+  // head recomputed so far (null when the descriptor declares no head).
+  const headSoFar = (): boolean | null => (typeof chainRecord.head === 'string' ? chainRecord.head === priorHead : null);
+  for (let index = 0; index < events.length; index++) {
+    const entry = events[index];
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      return refused(`event ${index + 1} is not a JSON object`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    const eventRecord = entry as Record<string, unknown>;
+    if (eventRecord.seq !== index + 1) {
+      return refused(`event ${index + 1} carries seq ${JSON.stringify(eventRecord.seq)}`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    // The tenant is one per workspace (adoptions change the project,
+    // never the tenant) — a foreign-tenant entry is a broken export.
+    if (eventRecord.tenantId !== scopeRecord.tenantId) {
+      return refused(`event ${index + 1} does not belong to the export's tenant`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    if (typeof eventRecord.digest !== 'string' || !HEX_64.test(eventRecord.digest)) {
+      return refused(`event ${index + 1}'s digest is not a 64-hex SHA-256 digest (chain format v2)`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    if (typeof eventRecord.chainHead !== 'string' || !HEX_64.test(eventRecord.chainHead)) {
+      return refused(`event ${index + 1}'s chain head is not 64-hex (chain format v2)`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    const digest = sha256Of({ seq: eventRecord.seq, tenantId: eventRecord.tenantId, projectId: eventRecord.projectId, payload: eventRecord.payload });
+    if (digest !== eventRecord.digest) {
+      return refused(`event ${index + 1}'s digest does not match its chained record (seq, scope, payload)`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    digestsOk += 1;
+    const head = sha256Hex(priorHead + (eventRecord.digest as string));
+    if (head !== eventRecord.chainHead) {
+      return refused(`event ${index + 1}'s chain head does not link to event ${index}`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headSoFar());
+    }
+    linksOk += 1;
+    priorHead = eventRecord.chainHead;
+  }
+  const headMatch = typeof chainRecord.head === 'string' ? chainRecord.head === priorHead : null;
+  if (chainRecord.entryCount !== events.length) {
+    return refused(`the chain counts ${JSON.stringify(chainRecord.entryCount)} events but the export carries ${events.length}`, EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headMatch);
+  }
+  if (chainRecord.head !== priorHead) {
+    return refused('the chain head does not match the last event', EXPORT_FORMAT, EXPORT_FORMAT_VERSION, events.length, digestsOk, linksOk, headMatch);
+  }
+  return { ok: true, reason: null, format: EXPORT_FORMAT, formatVersion: EXPORT_FORMAT_VERSION, entryCount: events.length, digestsOk, linksOk, headMatch: headMatch === null ? false : headMatch };
+}
+
+/**
  * Verify an exported document's chain end to end from the file alone:
  * the format and chain descriptors must carry the published v2
  * algorithm and genesis, every event's digest must recompute from its
@@ -853,78 +1071,10 @@ export function serializeWorkspaceExport(state: WorkspaceState): string {
  * with the file and the published rules can run exactly this.
  */
 export function verifyWorkspaceExport(doc: unknown): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
-  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) {
-    return { ok: false, reason: 'the export is not a JSON object' };
-  }
-  const record = doc as Record<string, unknown>;
-  if (record.format !== EXPORT_FORMAT) {
-    return { ok: false, reason: `the document's format is ${JSON.stringify(record.format)} (expected ${JSON.stringify(EXPORT_FORMAT)})` };
-  }
-  if (record.formatVersion !== EXPORT_FORMAT_VERSION) {
-    return { ok: false, reason: `the document's format version is ${JSON.stringify(record.formatVersion)} (expected ${EXPORT_FORMAT_VERSION})` };
-  }
-  const chain = record.chain;
-  if (typeof chain !== 'object' || chain === null) {
-    return { ok: false, reason: 'the export carries no chain descriptor' };
-  }
-  const chainRecord = chain as Record<string, unknown>;
-  if (chainRecord.algorithm !== CHAIN_ALGORITHM) {
-    return { ok: false, reason: `the chain's algorithm is ${JSON.stringify(chainRecord.algorithm)} (expected ${JSON.stringify(CHAIN_ALGORITHM)})` };
-  }
-  if (chainRecord.version !== CHAIN_FORMAT_VERSION) {
-    return { ok: false, reason: `the chain's format version is ${JSON.stringify(chainRecord.version)} (expected ${CHAIN_FORMAT_VERSION})` };
-  }
-  if (chainRecord.genesis !== CHAIN_GENESIS) {
-    return { ok: false, reason: 'the chain declares a foreign genesis' };
-  }
-  const scope = record.scope;
-  if (typeof scope !== 'object' || scope === null) {
-    return { ok: false, reason: 'the export carries no scope' };
-  }
-  const scopeRecord = scope as Record<string, unknown>;
-  if (typeof scopeRecord.tenantId !== 'string') {
-    return { ok: false, reason: 'the export scope carries no tenant id' };
-  }
-  const events = record.events;
-  if (!Array.isArray(events)) {
-    return { ok: false, reason: 'the export carries no events array' };
-  }
-  let priorHead = CHAIN_GENESIS;
-  for (let index = 0; index < events.length; index++) {
-    const entry = events[index];
-    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
-      return { ok: false, reason: `event ${index + 1} is not a JSON object` };
-    }
-    const eventRecord = entry as Record<string, unknown>;
-    if (eventRecord.seq !== index + 1) {
-      return { ok: false, reason: `event ${index + 1} carries seq ${JSON.stringify(eventRecord.seq)}` };
-    }
-    // The tenant is one per workspace (adoptions change the project,
-    // never the tenant) — a foreign-tenant entry is a broken export.
-    if (eventRecord.tenantId !== scopeRecord.tenantId) {
-      return { ok: false, reason: `event ${index + 1} does not belong to the export's tenant` };
-    }
-    if (typeof eventRecord.digest !== 'string' || !HEX_64.test(eventRecord.digest)) {
-      return { ok: false, reason: `event ${index + 1}'s digest is not a 64-hex SHA-256 digest (chain format v2)` };
-    }
-    if (typeof eventRecord.chainHead !== 'string' || !HEX_64.test(eventRecord.chainHead)) {
-      return { ok: false, reason: `event ${index + 1}'s chain head is not 64-hex (chain format v2)` };
-    }
-    const digest = sha256Of({ seq: eventRecord.seq, tenantId: eventRecord.tenantId, projectId: eventRecord.projectId, payload: eventRecord.payload });
-    if (digest !== eventRecord.digest) {
-      return { ok: false, reason: `event ${index + 1}'s digest does not match its chained record (seq, scope, payload)` };
-    }
-    const head = sha256Hex(priorHead + (eventRecord.digest as string));
-    if (head !== eventRecord.chainHead) {
-      return { ok: false, reason: `event ${index + 1}'s chain head does not link to event ${index}` };
-    }
-    priorHead = eventRecord.chainHead;
-  }
-  if (chainRecord.entryCount !== events.length) {
-    return { ok: false, reason: `the chain counts ${JSON.stringify(chainRecord.entryCount)} events but the export carries ${events.length}` };
-  }
-  if (chainRecord.head !== priorHead) {
-    return { ok: false, reason: 'the chain head does not match the last event' };
-  }
-  return { ok: true };
+  // MI-D7: one implementation, two surfaces — the counted walk above is
+  // THE verification; this signature (pinned across the suite and the
+  // interop surfaces) simply drops the counts.
+  const report = verifyWorkspaceExportReport(doc);
+  if (report.ok) return { ok: true };
+  return { ok: false, reason: report.reason as string };
 }

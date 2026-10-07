@@ -155,6 +155,45 @@ export function resumePlayback(state: TimeMachineState): TimeMachineState {
   return { ...state, playback: { ...state.playback, paused: false } };
 }
 
+/**
+ * Transition: ONE MANUAL STEP BACK (MI-D9 — the manual stepping law):
+ * ticks - 1, floored at the arm instant (ticks 0 — the view never
+ * passes the playback's own start; earlier instants belong to a fresh
+ * arm). The paused flag is UNTOUCHED — a paused playback steps back and
+ * STAYS paused (the freeze stops the beat's AUTO ticks, never the
+ * user's own steps) — and the mode is untouched too: Step back is a
+ * PLAYBACK control, never a mode flip. (The pre-MI-D9 app wiring sent
+ * this control to view-tminus with tMinusMs + 500, which in a paused
+ * session jumped the view FORWARD to the wall-clock end and flipped
+ * the mode — 6/9 professionals' finding.) The view only moves BACK,
+ * so the never-after-the-anchor law cannot be violated.
+ */
+export function stepBackPlayback(state: TimeMachineState): TimeMachineState {
+  if (state.mode !== 'playback' || state.playback === null) {
+    throw new Error('time machine: stepping back with playback not armed is a typed input error');
+  }
+  if (state.playback.ticks === 0) return state; // the floor: at the arm instant, stepping back no-ops
+  return { ...state, playback: { ...state.playback, ticks: state.playback.ticks - 1 } };
+}
+
+/**
+ * Transition: ONE MANUAL STEP FORWARD (MI-D9): ticks + 1 EVEN WHILE
+ * PAUSED — the user's own Step is not an auto tick (the freeze law
+ * above stops the beat's scheduled ticks, never the Step control), and
+ * a manual step never resumes playback (paused stays paused). A step
+ * that would pass the anchor is the same typed input error an auto
+ * tick raises — the app layer guards the click path the way it guards
+ * the beat.
+ */
+export function stepForwardPlayback(state: TimeMachineState): TimeMachineState {
+  if (state.mode !== 'playback' || state.playback === null) {
+    throw new Error('time machine: stepping forward with playback not armed is a typed input error');
+  }
+  const next: TimeMachineState = { ...state, playback: { ...state.playback, ticks: state.playback.ticks + 1 } };
+  requireNotAfterAnchor(viewAtOf(next), next.anchorAt);
+  return next;
+}
+
 /** Transition: return to the live view. */
 export function backToLive(state: TimeMachineState): TimeMachineState {
   return { ...state, mode: 'live', playback: null };

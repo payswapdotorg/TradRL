@@ -1251,6 +1251,52 @@ details.list-row > summary::-webkit-details-marker { display: none; }
 .onboarding-hidden { display: none; }
 
 /* ---------------------------------------------------------------------------
+   MI-D7 (S5's ask — the in-UI chain verify): the Settings Data export
+   row's verify affordance. A real, labeled file input (the browser's
+   own picker — no script, no upload: the read stays in the page), and
+   the counted result card beneath it: ok teal / broken rose on the
+   border, and the verdict line always carries the WORDS too (§7
+   anti-deception — never color alone).
+   --------------------------------------------------------------------------- */
+.export-verify-label {
+  display: grid;
+  gap: 4px;
+  width: fit-content;
+  margin-top: 4px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--card-foreground);
+  cursor: pointer;
+}
+.export-verify-input { font-size: 0.8125rem; color: var(--muted-foreground); max-width: 100%; }
+.export-verify-input::file-selector-button {
+  all: unset;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--accent-foreground);
+  background: var(--accent);
+  margin-right: 8px;
+}
+.export-verify-input::file-selector-button:hover { filter: brightness(0.97); }
+.export-verify {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+.export-verify.ok { border-color: var(--tradrl-live); }
+.export-verify.broken { border-color: var(--tradrl-down); }
+.export-verify-verdict { font-size: 0.875rem; font-weight: 600; overflow-wrap: anywhere; }
+.export-verify.ok .export-verify-verdict { color: var(--tradrl-live-text); }
+.export-verify.broken .export-verify-verdict { color: var(--tradrl-down-text); }
+
+/* ---------------------------------------------------------------------------
    §6 J12 THE TOUCH-TARGET FLOOR (the W-17b fix, placement corrected by
    W-18b): at mobile widths (<768px — the same breakpoint the drawer/
    header rule uses) every interactive surface measures >= 44px in BOTH
@@ -1296,6 +1342,10 @@ details.list-row > summary::-webkit-details-marker { display: none; }
   .icon-button { min-width: 44px; min-height: 44px; }
   /* The styled scrubber: the whole range input is the touch surface. */
   .tm-scrubber { min-height: 44px; }
+  /* The verify affordance's picker button — the file input is the touch
+     surface (the D-11 law: no 19px targets, not even on a Settings side
+     path; the ::file-selector-button box is what grows). */
+  .export-verify-input { min-height: 44px; }
   /* The toast's manual dismiss — a grid box centers the × in the 44px square. */
   .toast-close { display: grid; place-items: center; min-width: 44px; min-height: 44px; }
   /* The inline evidence capsule chips + the palette surfaces. */

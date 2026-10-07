@@ -25,6 +25,8 @@ import {
   setTimestamp,
   setTMinus,
   startPlayback,
+  stepBackPlayback,
+  stepForwardPlayback,
   tickPlayback,
   viewAtOf,
 } from './timemachine';
@@ -199,6 +201,80 @@ describe('timemachine: THE PAUSE (R10, W-25C — pause freezes the view, resume 
     state = tickPlayback(state);
     const paused = pausePlayback(state);
     expect(playbackProgressOf(paused)).toBe(0.25);
+  });
+});
+
+describe('timemachine: THE MANUAL STEPPING LAW (MI-D9 — Step back / Step while paused)', () => {
+  // The defect (6/9 professionals, MI wave 1): "Step back" while PAUSED
+  // jumped FORWARD to the wall-clock end, flipped the mode
+  // playback -> t-minus, and left the banner reading "Viewing a past
+  // instant" at 100% (M2 paused at 02:35:53.575Z -> jumped to the
+  // 02:41:42.529Z end; L4, M1, S2, S5 reproduced variants). Root cause:
+  // the app layer wired the control to view-tminus with tMinusMs + 500 —
+  // in a session that never armed T-x that offset is 500ms before the
+  // ANCHOR, which follows the observed now: the end-jump. The fix is
+  // this machine's own law: Step back steps the view instant BACK one
+  // controlled step and STAYS paused, in the playback mode; Step
+  // forward is the user's own step (the freeze stops the beat's ticks,
+  // never the user's steps).
+
+  it('Step back while PAUSED steps the view BACK one step and STAYS paused, in the playback mode (no mode flip, no end-jump)', () => {
+    let state = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 10_000, 1_000);
+    state = tickPlayback(state);
+    state = tickPlayback(state);
+    state = tickPlayback(state); // viewAt = ANCHOR - 7_000
+    const paused = pausePlayback(state);
+    const steppedBack = stepBackPlayback(paused);
+    expect(steppedBack.mode).toBe('playback');            // STILL the playback mode (was flipping to t-minus)
+    expect(steppedBack.playback?.paused).toBe(true);      // STILL paused
+    expect(steppedBack.playback?.ticks).toBe(2);          // one controlled step back
+    expect(viewAtOf(steppedBack)).toBe(ANCHOR - 8_000);   // the view moved BACK, toward the past (was jumping to anchor-500ms)
+    expect(playbackProgressOf(steppedBack)).toBeLessThan(1); // the % follows the stepped-back view (was stuck at 100%)
+  });
+
+  it('Step back floors at the arm instant (ticks 0 — the view never passes the playback\'s own start) and is idempotent there', () => {
+    let state = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 10_000, 1_000);
+    state = tickPlayback(state); // ticks 1
+    const paused = pausePlayback(state);
+    const once = stepBackPlayback(paused);
+    expect(once.playback?.ticks).toBe(0);
+    expect(viewAtOf(once)).toBe(ANCHOR - 10_000); // the arm instant
+    const twice = stepBackPlayback(once);
+    expect(twice).toEqual(once);                  // the floor no-ops, never before the arm
+    expect(viewAtOf(twice)).toBe(ANCHOR - 10_000);
+  });
+
+  it('Step back works while PLAYING too (a manual nudge back — the step never passes the future, so no guard is needed)', () => {
+    let state = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 10_000, 1_000);
+    state = tickPlayback(state);
+    state = tickPlayback(state);
+    const steppedBack = stepBackPlayback(state);
+    expect(steppedBack.playback?.paused).toBe(false);     // still playing
+    expect(steppedBack.playback?.ticks).toBe(1);
+    expect(viewAtOf(steppedBack)).toBe(ANCHOR - 9_000);
+  });
+
+  it('Step FORWARD while paused is the user\'s own step: one controlled step forward, STAYING paused (the freeze stops the beat\'s ticks, never the Step control)', () => {
+    let state = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 10_000, 1_000);
+    state = tickPlayback(state);
+    const paused = pausePlayback(state);
+    const steppedForward = stepForwardPlayback(paused);
+    expect(steppedForward.mode).toBe('playback');
+    expect(steppedForward.playback?.paused).toBe(true);   // still paused — a manual step is not a resume
+    expect(steppedForward.playback?.ticks).toBe(2);
+    expect(viewAtOf(steppedForward)).toBe(ANCHOR - 8_000);
+    // a manual step past the anchor is refused exactly like an auto tick
+    let atTheEnd = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 1_000, 1_000);
+    atTheEnd = tickPlayback(atTheEnd); // viewAt = ANCHOR, the boundary
+    const pausedAtTheEnd = pausePlayback(atTheEnd);
+    expect(() => stepForwardPlayback(pausedAtTheEnd)).toThrow(/after the anchor/);
+  });
+
+  it('stepping with playback not armed is a typed input error (the same law as tick/pause/resume)', () => {
+    expect(() => stepBackPlayback(liveTimeMachine(ANCHOR))).toThrow(/not armed/);
+    expect(() => stepForwardPlayback(liveTimeMachine(ANCHOR))).toThrow(/not armed/);
+    expect(() => stepBackPlayback(setTMinus(liveTimeMachine(ANCHOR), 5))).toThrow(/not armed/);
+    expect(() => stepForwardPlayback(setTimestamp(liveTimeMachine(ANCHOR), ANCHOR - 5))).toThrow(/not armed/);
   });
 });
 

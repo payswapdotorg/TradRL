@@ -14,6 +14,8 @@ import { describe, expect, it } from 'vitest';
 import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ServedKnowledge } from '../api/contracts';
 import {
   CHAIN_ALGORITHM,
+  CHAIN_CANONICAL_RULE,
+  CHAIN_DIGEST_RULE,
   CHAIN_FORMAT_VERSION,
   CHAIN_GENESIS,
   composeWorkspaceExport,
@@ -24,6 +26,7 @@ import {
   serializeWorkspaceExport,
   verifyWorkspaceChain,
   verifyWorkspaceExport,
+  verifyWorkspaceExportReport,
   viewAtOf,
   watchEventsOf,
   type WorkspaceEvent,
@@ -970,5 +973,216 @@ describe('workspace: D-14 — the chain-scope audit note (a cross-project chain 
   it('a SINGLE-project chain carries NO note (nothing to disclose) — and the empty-workspace export carries none either', () => {
     expect(composeWorkspaceExport(richState()).manifest.chainScopeNote).toBeUndefined();
     expect(composeWorkspaceExport(openWorkspace(SCOPE, T0)).manifest.chainScopeNote).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MI-D7 (MI wave 1, M5's finding — the export chain under INDEPENDENT
+// verification): "export event seq 179's payload recomputes to a different
+// digest than stored (mutated after sealing without re-hash)". Reproduced
+// and root-caused here FIRST, byte-exact: the deployed demo data's outcome
+// decisionRationale (deploy/vercel/runtime/demo.ts:319) carries the only
+// non-ASCII character in any string the seeded records serve into an event
+// payload (an em dash, U+2014) — so a demo-scope session's outcomes-loaded
+// event carries exactly one non-ASCII payload string. The console's
+// canonicalJson serializes it RAW (UTF-8 — JSON.stringify never escapes
+// non-ASCII); an independent verifier whose canonical-JSON reading escapes
+// non-ASCII (Python json.dumps' DEFAULT ensure_ascii=True, the natural
+// reading of the then-published rule "canonicalJson recursively sorts
+// object keys") recomputes it as \u2014 — same payload, two defensible
+// readings of an underdetermined rule, two different SHA-256 digests, and
+// the divergence reads exactly like M5's seq-179 symptom (one event
+// mismatching in an otherwise clean chain; the eight other professionals'
+// 142-268-link chains verified clean — consistent with raw-UTF-8 verifiers
+// and/or ASCII-only payload sessions). ROOT CAUSE: the code path NEVER
+// mutates a sealed entry (the reducer is append-only — every fold replaces
+// wholesale; no write into history exists anywhere in the tree), and the
+// export verifies end to end under the raw-UTF-8 form — so the defect is
+// the UNDERDETERMINED canonical rule, not a mutation. The fixes below make
+// the invariant hold — EVERY exported chain must verify under the
+// documented in-file rules — three ways: (1) the rule now pins the
+// byte-exact grammar (CHAIN_CANONICAL_RULE, embedded in every export),
+// (2) the linked payload is deeply FROZEN at seal time so an in-place
+// mutation after sealing is impossible BY CONSTRUCTION (append-only: a
+// change arrives as a NEW event — closing the mutation hypothesis
+// mechanically even though no such path existed), and (3) the console
+// itself verifies the downloaded file in the UI
+// (verifyWorkspaceExportReport — S5's explicit ask: no script required).
+// ---------------------------------------------------------------------------
+
+describe('workspace: MI-D7 — the non-ASCII canonical divergence + the published canonical rule', () => {
+  /** The M5 shape: the demo outcome's own decisionRationale prose, em dash and all (deploy/vercel/runtime/demo.ts line 319 — the seeded adverse-gap outcome). */
+  function unicodeOutcomeRecord(): OutcomeRecord {
+    return {
+      ...outcomeRecord(),
+      outcomeId: 'out:demo0001',
+      outcomeClass: 'adverse_gap',
+      decisionRationale: 'The desk approved the 0.75 BTC-USD rebalance on a 0.07 weight drift against the 0.25 target; the realized fill landed -12.5 against the 45.5 expectation (tolerance 0.05) — the adverse gap post-mortem pmr:demo0001 attributes to the simulated venue lag.',
+    } as unknown as OutcomeRecord;
+  }
+
+  /** A session whose outcomes-loaded event carries the non-ASCII payload (the M5 export's seq-179 class). */
+  function unicodeState(): WorkspaceState {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'connection-changed', at: T0 + 1, status: 'connected' });
+    state = reduceWorkspace(state, { kind: 'outcomes-loaded', at: T0 + 30, records: [unicodeOutcomeRecord()] });
+    state = reduceWorkspace(state, { kind: 'view-live', at: T0 + 40 });
+    return state;
+  }
+
+  /**
+   * An INDEPENDENT canonical-JSON implementation — the careful verifier's
+   * reimplementation of the documented rule from the file alone (recursive
+   * key sort + JSON escaping), with the one degree of freedom the
+   * pre-MI-D7 rule left open: whether non-ASCII characters stay RAW
+   * (UTF-8 — ensure_ascii=False / jq / JSON.stringify) or escape to
+   * \uXXXX (Python json.dumps' DEFAULT ensure_ascii=True).
+   */
+  function independentCanonicalJson(value: unknown, asciiEscaped: boolean): string {
+    if (value === null) return 'null';
+    if (typeof value === 'string') {
+      if (!asciiEscaped) return JSON.stringify(value); // the raw-UTF-8 form
+      let out = '"';
+      for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        if (code === 0x22) out += '\\"';
+        else if (code === 0x5c) out += '\\\\';
+        else if (code < 0x20) out += `\\u${code.toString(16).padStart(4, '0')}`;
+        else if (code > 0x7e) out += `\\u${code.toString(16).padStart(4, '0')}`; // python's default: every non-ASCII code unit escapes
+        else out += value[index];
+      }
+      return `${out}"`;
+    }
+    if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'null';
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (Array.isArray(value)) return `[${value.map((element) => independentCanonicalJson(element, asciiEscaped)).join(',')}]`;
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${independentCanonicalJson(record[key], asciiEscaped)}`).join(',')}}`;
+    }
+    return 'null';
+  }
+
+  it('REPRODUCTION (the mismatch class, byte-exact): an independent ASCII-ESCAPED canonical form — Python json.dumps\' default — recomputes a DIFFERENT digest for the non-ASCII payload (the exact "recomputes to a different digest than stored" symptom class M5 reported), while the RAW-UTF-8 form recomputes the STORED digest exactly (the sealed bytes and the stored digest agree — the mismatch lives in the verifier\'s reading of the rule, not in the file)', () => {
+    const state = unicodeState();
+    const entry = state.history.find((candidate) => candidate.payload.kind === 'outcomes-loaded');
+    if (entry === undefined) throw new Error('fixture: the outcomes-loaded event must be linked');
+    // the payload carries the non-ASCII byte class (an em dash, U+2014)
+    expect(JSON.stringify(entry.payload)).toContain('—');
+    const chainedRecord = { seq: entry.seq, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload };
+    const rawFormDigest = sha256Hex(independentCanonicalJson(chainedRecord, false));
+    const asciiFormDigest = sha256Hex(independentCanonicalJson(chainedRecord, true));
+    expect(asciiFormDigest).not.toBe(entry.digest); // the divergent reading — a different digest for exactly the one non-ASCII payload
+    expect(rawFormDigest).toBe(entry.digest);       // the raw-UTF-8 reading recomputes the stored digest — internal consistency never broke
+    // and the two independent readings themselves disagree (the underdetermined rule is the defect)
+    expect(asciiFormDigest).not.toBe(rawFormDigest);
+  });
+
+  it('the export carrying the non-ASCII payload verifies END TO END under the console\'s own file-alone verifier (the invariant holds for every payload shape — the export composes, serializes, round-trips and verifies)', () => {
+    const state = unicodeState();
+    expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state)))).toEqual({ ok: true });
+  });
+
+  it('the published CANONICAL RULE now pins the byte-exact grammar — raw UTF-8 non-ASCII (never \\u-escaped), minimal JSON string escaping, the ECMAScript number form, UTF-16 code-unit key order — and names the ensure_ascii pitfall; it is embedded ADDITIVELY in every export (format version stays 2) and survives the serialized bytes', () => {
+    expect(CHAIN_CANONICAL_RULE).toContain('recursively sorted');
+    expect(CHAIN_CANONICAL_RULE).toContain('UTF-16 code unit');
+    expect(CHAIN_CANONICAL_RULE).toContain('RAW UTF-8');
+    expect(CHAIN_CANONICAL_RULE).toContain('ensure_ascii=False');
+    expect(CHAIN_CANONICAL_RULE).toContain('1e-05'); // the number-form pitfall is named too (ECMAScript 0.00001, not Python repr 1e-05)
+    const doc = composeWorkspaceExport(unicodeState());
+    expect(doc.chain.canonicalRule).toBe(CHAIN_CANONICAL_RULE);
+    expect(doc.formatVersion).toBe(2); // additive — the format version does not move
+    const parsed = exportedDoc(unicodeState());
+    expect((parsed.chain as Record<string, unknown>).canonicalRule).toBe(CHAIN_CANONICAL_RULE); // survives the bytes
+    // a PRE-MI-D7 v2 document (the field absent — M5's own file shape) still verifies: no reader breaks, old exports stay verifiable
+    const stripped = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
+    delete (stripped.chain as Record<string, unknown>).canonicalRule;
+    expect(verifyWorkspaceExport(stripped)).toEqual({ ok: true });
+    // the digest rule POINTS at the canonical rule (sorted keys alone were never sufficient)
+    expect(CHAIN_DIGEST_RULE).toContain('canonicalRule');
+  });
+
+  it('IMMUTABILITY AFTER SEAL: the linked history payload is deeply frozen at link time — an in-place mutation attempt does NOT take, the runtime chain still verifies, and the digest can never diverge from its payload (a change must arrive as a NEW event)', () => {
+    const state = unicodeState();
+    const entry = state.history.find((candidate) => candidate.payload.kind === 'outcomes-loaded');
+    if (entry === undefined) throw new Error('fixture: the outcomes-loaded event must be linked');
+    expect(Object.isFrozen(entry)).toBe(true);               // the entry itself
+    expect(Object.isFrozen(entry.payload)).toBe(true);       // the payload
+    const records = (entry.payload as { records?: unknown }).records;
+    if (!Array.isArray(records)) throw new Error('fixture: the payload carries its records');
+    expect(Object.isFrozen(records)).toBe(true);             // ...and the nested records, deeply
+    expect(Object.isFrozen(records[0])).toBe(true);
+    // the in-place mutation attempt (sloppy mode: silently refused; strict mode: TypeError) does NOT take
+    const hostile = entry.payload as unknown as { records: Array<{ outcomeId: string }> };
+    expect(() => {
+      'use strict';
+      hostile.records[0].outcomeId = 'out:forged';
+    }).toThrow(); // a sealed record refuses the write
+    expect(hostile.records[0].outcomeId).toBe('out:demo0001'); // the payload is UNCHANGED
+    expect(verifyWorkspaceChain(state.history)).toEqual({ ok: true }); // the chain still verifies — the digest still matches its payload
+  });
+
+  it('the COUNTED report (the in-UI verification affordance, S5\'s ask): an honest export reports N/N digests, N/N links and the head match; a tampered one names the break with the counts up to it', () => {
+    const state = unicodeState();
+    const honest = verifyWorkspaceExportReport(JSON.parse(serializeWorkspaceExport(state)));
+    expect(honest.ok).toBe(true);
+    expect(honest.reason).toBeNull();
+    expect(honest.entryCount).toBe(state.history.length);
+    expect(honest.digestsOk).toBe(state.history.length);
+    expect(honest.linksOk).toBe(state.history.length);
+    expect(honest.headMatch).toBe(true);
+    expect(honest.format).toBe('tradrl-workspace-export');
+    expect(honest.formatVersion).toBe(2);
+    // the tampered file: the LAST event's payload field is rewritten — the digest fails there, the counts stop one short, the head can no longer match
+    const tampered = exportedDoc(state);
+    const events = tampered.events as Array<Record<string, unknown>>;
+    const last = events[events.length - 1] as Record<string, unknown>;
+    const lastPayload = last.payload as Record<string, unknown>;
+    lastPayload.at = T0 + 99_999;
+    const broken = verifyWorkspaceExportReport(tampered);
+    expect(broken.ok).toBe(false);
+    expect(broken.reason).toContain(`event ${events.length}'s digest does not match`);
+    expect(broken.entryCount).toBe(events.length);
+    expect(broken.digestsOk).toBe(events.length - 1); // every digest before the break recomputed
+    expect(broken.linksOk).toBe(events.length - 1);
+    expect(broken.headMatch).toBe(false);
+    // a non-document (not JSON of an export) is refused with a counted zero report, never a throw
+    const notAnExport = verifyWorkspaceExportReport({ hello: 'world' });
+    expect(notAnExport.ok).toBe(false);
+    expect(notAnExport.entryCount).toBe(0);
+    expect(notAnExport.headMatch).toBeNull();
+  });
+});
+
+describe('workspace: MI-D9 — the manual stepping events (Step back / Step while paused, append-only)', () => {
+  it('playback-step-back steps the paused view BACK one controlled step, STAYS paused, stays in the playback mode — and links as its own history entry (append-only: the step is an EVENT, never a rewrite)', () => {
+    // The TM events' injected instants all sit at T0 + 2_000 — the
+    // anchor must stay PAST the stepping view (the view may never point
+    // after the anchor; the span here is a real 2s).
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'playback-start', at: T0 + 2_000, fromAt: T0, stepMs: 500 });
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 2_000 });
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 2_000 });
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 2_000 });
+    state = reduceWorkspace(state, { kind: 'playback-paused', at: T0 + 2_000 });
+    expect(viewAtOf(state)).toBe(T0 + 1_500); // three ticks of 500ms from T0
+    const before = state.history.length;
+    state = reduceWorkspace(state, { kind: 'playback-step-back', at: T0 + 2_000 });
+    expect(state.timeMachine.mode).toBe('playback');            // no mode flip (the MI-D9 defect: playback -> t-minus)
+    expect(state.timeMachine.playback?.paused).toBe(true);      // stays paused
+    expect(viewAtOf(state)).toBe(T0 + 1_000);                   // one step BACK (the defect: jumped to anchor-500ms)
+    expect(state.history.length).toBe(before + 1);              // append-only — the step linked as its own event
+    expect(state.history[state.history.length - 1]?.kind).toBe('playback-step-back');
+    expect(verifyWorkspaceChain(state.history)).toEqual({ ok: true }); // the chain still verifies
+  });
+
+  it('playback-step-forward is the user\'s own step while paused: one step forward, STAYING paused (the freeze stops the beat\'s ticks, never the Step control)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'playback-start', at: T0 + 2_000, fromAt: T0, stepMs: 500 });
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 2_000 });
+    state = reduceWorkspace(state, { kind: 'playback-paused', at: T0 + 2_000 });
+    state = reduceWorkspace(state, { kind: 'playback-step-forward', at: T0 + 2_000 });
+    expect(state.timeMachine.playback?.paused).toBe(true);  // still paused — a manual step is not a resume
+    expect(viewAtOf(state)).toBe(T0 + 1_000);                // one step forward from the frozen T0+500
   });
 });
