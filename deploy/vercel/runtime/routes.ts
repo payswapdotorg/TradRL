@@ -190,8 +190,9 @@ function executionSubmissionsRoute(input: FoldRouteInput, request: DemoSubstance
     return demoRouteError(requestId, apiError('validation_failed', 'the project query parameter is required (the execution blotter is project-scoped)'));
   }
   // L12 by construction: the served rows are the credential tenant's own
-  // (the demo world is seeded per composition for exactly this tenant).
-  return demoRouteSuccess(requestId, deepFreeze({ items: demoSubmissionsOf(input.ports, project) }));
+  // (the demo world is seeded per composition for exactly this tenant;
+  // the DERIVED per-project rows key on the authorized tenant — FW-MI-B).
+  return demoRouteSuccess(requestId, deepFreeze({ items: demoSubmissionsOf(input.ports, authorization.tenant, project) }));
 }
 
 /** GET /v1/jobs?project=<id> — the jobs list (D-3, the W-25A seam; both arms — W-26C R4). */
