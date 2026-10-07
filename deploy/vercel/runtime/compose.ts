@@ -64,11 +64,14 @@ import {
   type ApiResponse,
   type ApiService,
   type ApiServiceConstruction,
+  type ConstraintSetStatement,
   type ControlPlanePort,
   type ExecutionGatewayPort,
   type FirmMemoryPort,
+  type GoalStatement,
   type JobSubmissionPort,
   type OutcomeLearningPort,
+  type TenantId,
 } from '../../../services/api/src/index';
 import { missingApiEnvKeys, readApiEnv, resolveDeployBacking, DEPLOY_BACKING_VALUES, type ApiDeploymentEnv, type DeployBacking } from './env';
 import { buildDurableBacking, neonStoreDepsOf, type DurableBackingHandle, type DurableSeamDeps } from './durable';
@@ -76,7 +79,7 @@ import { buildDurableActivation, type DurableActivation } from './durable-world'
 import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import type { NeonStoreDeps } from '../../adapters/neon/stores';
-import { DEMO_PROJECT_ID, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance } from './demo';
+import { DEMO_PROJECT_ID, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableProjectEvidenceOf, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization } from './routes';
 
 // ---------------------------------------------------------------------------
@@ -287,6 +290,16 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
   const stubs = degradedPorts();
   let durable: DurableDeploymentHandle | null = null;
   let durableStores: NeonStoreDeps | null = null;
+  /**
+   * THE FW-MI-B DURABLE EVIDENCE SOURCE (MI-D2 + MI-D10): the same
+   * per-project derivation the demo arm serves, over the seam's OWN
+   * surfaces — the hydrated goal set (goal + constraint set + the W-28
+   * world, rehydrated at every cold start) and the hydrated control
+   * plane's project listing (the compile gate). Assigned exactly when the
+   * seam built; `null` everywhere else (the folds answer nothing — the
+   * honest pre-fix emptiness, R46).
+   */
+  let durableEvidenceSource: DurableEvidenceSource | null = null;
   // The seam-live recording gateway (W-26C): the same instance the port
   // map injects under durable — its `recorded` blotter is the live half of
   // the durable demo-substance submissions fold (R4). Non-null exactly
@@ -307,6 +320,37 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     };
     const seamHandle = buildDurableBacking(seamDeps);
     if (seamHandle !== null) {
+      // THE FW-MI-B DURABLE EVIDENCE SOURCE: the same derivation the demo
+      // arm serves, over the seam's own hydrated surfaces — the derived
+      // stream rides the WRAPPED outcome-learning port (the frozen
+      // outcome/post-mortem reads serve it alongside the hydrated rows)
+      // and the demoSubstance submissions fold (the blotter route) — the
+      // same pure generator under both backings (imported, never
+      // duplicated). Defensive by construction: a degraded goalOf read,
+      // a malformed row or a world-less record answers null (R46 — the
+      // reads keep their honest pre-fix emptiness).
+      durableEvidenceSource = {
+        goalSetOf(project) {
+          const read = seamHandle.goalOf(project);
+          if (!read.ok || read.value === null) return null;
+          const goal = read.value.goal;
+          const constraintSet = read.value.constraintSet;
+          if (typeof goal !== 'object' || goal === null || typeof constraintSet !== 'object' || constraintSet === null) return null;
+          return {
+            goal: goal as GoalStatement,
+            constraintSet: constraintSet as ConstraintSetStatement,
+            world: isLaunchWorldRecord(read.value.world) ? read.value.world : null,
+          };
+        },
+        organizationRefOf(tenant, project) {
+          const listed = seamHandle.ports.controlPlane.projectsOf(tenant as TenantId);
+          if (!listed.ok) return null; // R46: a degraded projection answers nothing
+          const record = listed.value.find((entry) => (entry.id as string) === project);
+          if (record === undefined) return null;
+          const organizationRef = record.lifecycle.organizationRef;
+          return typeof organizationRef === 'string' && organizationRef.length > 0 ? organizationRef : null;
+        },
+      };
       // THE W-26B ACTIVATION (the durable superset law): the seam-live
       // durable resolution composes the SAME simulated execution +
       // job-submission engines the demo backing composes — imported, zero
@@ -328,6 +372,14 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
       ports = {
         ...stubs,
         ...seamHandle.ports, // controlPlane + firmMemory + outcomeLearning + the W-27 hydration-aware jobSubmission
+        // FW-MI-B (MI-D2): the seam's outcome-learning port WRAPPED — the
+        // frozen outcome/post-mortem reads serve the hydrated rows AND
+        // every launched desk's own derived stream (idempotent by
+        // content-addressed id; the degraded states pass through).
+        outcomeLearning: outcomeLearningWithProjectEvidence(
+          seamHandle.ports.outcomeLearning,
+          (evidenceTenant, evidenceProject) => durableProjectEvidenceOf(durableEvidenceSource as DurableEvidenceSource, evidenceTenant, evidenceProject),
+        ),
         executionGateway: seamGateway,
       };
       // The base seam handle, carried DORMANT (tick null, the boot world a
@@ -431,10 +483,17 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
       // demo arm serves, over THIS composition's per-instance stores —
       // bound only when the composition owns the world (under port
       // overrides the injection seam owns it and the routes fall through).
-      const demoSubstance: DurableDemoSubstance | null = hasOverrides || seamGateway === null
+      const demoSubstance: DurableDemoSubstance | null = hasOverrides || seamGateway === null || durableEvidenceSource === null
         ? null
         : {
-            ports: { submissions: demoSubmissionBlotter(), executionGateway: seamGateway },
+            ports: {
+              submissions: demoSubmissionBlotter(),
+              executionGateway: seamGateway,
+              // FW-MI-B (MI-D2): the durable arm's blotter fold carries the
+              // per-project derived rows — the same derivation the wrapped
+              // outcome-learning port serves, over the same evidence source.
+              projectEvidenceOf: (evidenceTenant, evidenceProject) => durableProjectEvidenceOf(durableEvidenceSource as DurableEvidenceSource, evidenceTenant, evidenceProject)?.submissions ?? [],
+            },
             jobsOf: (tenant, project) => demoJobsOf(serving, tenant, project),
           };
       durable = { ...durable, tick: activation.tick, ensureBootWorld: activation.ensureBootWorld, demoSubstance };

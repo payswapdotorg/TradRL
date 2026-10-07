@@ -1420,3 +1420,102 @@ describe('deploy/vercel — the W-27 durable jobs surface (D-7)', () => {
     if (ready.ok) expect(ready.value).toEqual([]); // an unknown project's page is empty (never a leak)
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE LAUNCHED-DESK EVIDENCE STREAM UNDER DURABLE (FW-MI-B — MI-D2 +
+// MI-D10): the SAME per-project derivation the demo arm serves, over the
+// seam's OWN surfaces — the hydrated goal set (goal + constraint set +
+// the W-28 world) and the hydrated control plane's compile gate. The
+// derived stream is read-time derivation over durable rows, so a COLD
+// START serves the desk's evidence stream IDENTICALLY (the demo arm's
+// honest per-instance limitation does not apply here: the envelope
+// itself is durable).
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the launched-desk evidence stream under durable (FW-MI-B: the derived stream serves + survives the cold start)', () => {
+  it('launch -> the kickoff request\'s tick compiles the org -> the blotter + the outcome/post-mortem reads serve the desk\'s OWN stream (named bodies, the fixture constraint set\'s own position cap quoted in the refusal)', async () => {
+    const providers = fakeProviders();
+    const deployment = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+
+    // The first request pays the boot world (the demo project seeds).
+    await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+
+    // THE LAUNCH: the fixture goal/constraint set (validConstraintSet carries
+    // the k-position state cap — the packet's own example of a position limit
+    // from the project's constraint set) + the console-launch kickoff job
+    // (the world: BTC/ETH on binance/kraken, capital 500000.00, risk 40000.00).
+    // The create's `at` is a PAST instant on the REAL clock (the control
+    // plane's monotonic audit law: the tick's bind at Date.now() must be
+    // >= the record's updatedAt — the W-26B compile test's own law; the
+    // DERIVED records' instants derive from the goal's own createdAt, not
+    // from this wall clock, so the stream itself stays deterministic).
+    const created = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/projects', headers: BEARER, body: createProjectBody('prj-durable-evidence', Date.now() - 60_000) }));
+    expect(created.status).toBe(201);
+    const kickoff = await drive(deployment, streamingRequest({
+      method: 'POST',
+      url: '/v1/jobs/research',
+      headers: { ...BEARER, 'idempotency-key': 'idem:fwmib:durable:kickoff' },
+      body: { kind: 'research', projectId: 'prj-durable-evidence', spec: consoleLaunchSpec() },
+    }));
+    expect(kickoff.status).toBe(202); // the kickoff request's tick compiled the org (the R4 pass over the hydrated control plane)
+
+    // THE BLOTTER: the desk's own derived stream — 3 rows, named bodies, the
+    // numeric refusal quoting the project's OWN k-position cap (bound 2,
+    // observed 2.4 — the same constraint its fixture constraint set declares).
+    const blotter = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/execution/submissions?project=prj-durable-evidence', headers: BEARER }));
+    expect(blotter.status).toBe(200);
+    const rows = ((blotter.body as { data: { items: readonly Record<string, unknown>[] } }).data).items;
+    expect(rows).toHaveLength(3);
+    const routed = rows.filter((row) => row.kind === 'routed') as unknown as readonly { decisionBody: string; fill: { notional: string }; order: { quantity: string; price: string }; riskChecks: readonly unknown[] }[];
+    const refused = rows.find((row) => row.kind === 'refused') as unknown as { decisionBody: string; refusal: { stage: string; refusals: readonly { constraintId: string; subject: string; predicate: { kind: string; bound: number }; observed: string }[] } };
+    expect(routed).toHaveLength(2);
+    expect(routed.every((row) => row.decisionBody === 'desk:prj-durable-evidence-execution')).toBe(true); // NAMED — never "unknown" (MI-D10)
+    expect(refused.decisionBody).toBe('gate:pre-trade-risk');
+    expect(routed.every((row) => row.riskChecks.length === 7)).toBe(true);
+    expect(routed[0]!.fill.notional).toBe('48000'); // 0.8 x 60000 — exact (capital 500000.00, risk 40000.00)
+    const quoted = refused.refusal.refusals[0]!;
+    expect(quoted.constraintId).toBe('k-position'); // the project's OWN constraint-set position cap
+    expect(quoted.subject).toBe('position.grossExposure');
+    expect(quoted.predicate.kind).toBe('limit.max');
+    expect(quoted.predicate.bound).toBe(2);
+    expect(quoted.observed).toBe('2.4');
+
+    // THE OUTCOME + POST-MORTEM READS (the frozen routes over the WRAPPED seam port).
+    const outcomes = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/outcomes/query', headers: BEARER, body: { project: 'prj-durable-evidence', at: T0 + 10_000 } }));
+    expect(outcomes.status).toBe(200);
+    const outcomeItems = ((outcomes.body as { data: { items: readonly { outcomeId: string; outcomeClass: string; decisionBody: string; expectation: { declaredBy: string }; deviation: { realizedGap: string; withinTolerance: boolean } }[] } }).data).items;
+    expect(outcomeItems).toHaveLength(1);
+    expect(outcomeItems[0]!.outcomeClass).toBe('adverse_gap');
+    expect(outcomeItems[0]!.decisionBody).toBe('desk:prj-durable-evidence-execution');
+    expect(outcomeItems[0]!.expectation.declaredBy).toBe('spec-launch-director');
+    expect(outcomeItems[0]!.deviation.realizedGap).toBe('-60'); // -12 - 48, exact
+    expect(outcomeItems[0]!.deviation.withinTolerance).toBe(false);
+    const mortems = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/post-mortems/query', headers: BEARER, body: { project: 'prj-durable-evidence', at: T0 + 10_000, latestPerOutcome: true } }));
+    expect(mortems.status).toBe(200);
+    const mortemItems = ((mortems.body as { data: { items: readonly { postMortemId: string; subject: { outcomeRecordRef: string }; hypotheses: readonly { confidence: string; note: string }[] }[] } }).data).items;
+    expect(mortemItems).toHaveLength(1);
+    expect(mortemItems[0]!.subject.outcomeRecordRef).toBe(outcomeItems[0]!.outcomeId); // attached to its outcome
+    expect(mortemItems[0]!.hypotheses[0]!.confidence).toBe('0.8'); // confidence-rated
+    expect(mortemItems[0]!.hypotheses[0]!.note).toContain('simulated'); // the honesty discipline
+
+    // THE COLD START: a fresh instance over the same durable store — the
+    // goal set (with the world) + the bound project hydrate, so the SAME
+    // derived stream serves IDENTICALLY (read-time derivation over durable
+    // rows; the demo arm's per-instance limitation does not apply here).
+    const second = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    const coldBlotter = await drive(second, streamingRequest({ method: 'GET', url: '/v1/execution/submissions?project=prj-durable-evidence', headers: BEARER }));
+    expect(coldBlotter.status).toBe(200);
+    const coldRows = ((coldBlotter.body as { data: { items: readonly { submissionId: string; decisionBody?: string }[] } }).data).items;
+    expect(coldRows.map((row) => row.submissionId)).toEqual(rows.map((row) => (row as { submissionId: string }).submissionId)); // byte-identical ids — the same stream
+    const coldOutcomes = await drive(second, streamingRequest({ method: 'POST', url: '/v1/outcomes/query', headers: BEARER, body: { project: 'prj-durable-evidence', at: T0 + 10_000 } }));
+    expect((((coldOutcomes.body as { data: { items: readonly { outcomeId: string }[] } }).data).items).map((entry) => entry.outcomeId)).toEqual(outcomeItems.map((entry) => entry.outcomeId));
+
+    // THE DEMO PROJECT's fixture substance stays untouched under durable too (the derivation excludes it — the boot-world fixture rows are its story).
+    const demoOutcomes = await drive(second, streamingRequest({ method: 'POST', url: '/v1/outcomes/query', headers: BEARER, body: { project: DEMO_PROJECT_ID, at: T0 + 10_000 } }));
+    expect((((demoOutcomes.body as { data: { items: readonly { outcomeId: string }[] } }).data).items).map((entry) => entry.outcomeId)).toEqual(['out:demo0001']);
+  });
+});
