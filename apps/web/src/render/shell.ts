@@ -18,13 +18,14 @@
 //   CONNECTING neutral (gentle pulse, reduced-motion disabled).
 
 import type { ConnectionStatus, WorkspaceState } from '../core/workspace';
+import type { ProjectRecord } from '../api/contracts';
 import { scopedInbox, unreadCount } from '../core/notices';
 import type { ThemeName } from '../core/theme';
 import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellTarget } from '../core/nav';
 import { isLaunchpadScope } from '../core/tenant';
 import { formatInstantUtc } from '../core/format';
 import { notificationBell, toastRecord } from './flow';
-import { paletteAffordance, paletteOverlay } from '../core/palette';
+import { paletteAffordance, paletteOverlay, fuzzyScore } from '../core/palette';
 import { onboardingPanel, onboardingReopenAffordance, type OnboardingState } from '../core/onboarding';
 import { v, type VNode } from './vtree';
 
@@ -68,6 +69,13 @@ export interface ShellView {
   readonly researchSubmit: { readonly edits: Readonly<Record<string, string>>; readonly error: string | null } | null;
   /** The inline-opened evidence capsule (§4.9): its data-capsule ref, or null. */
   readonly openCapsule: string | null;
+  /**
+   * FW-MI-A (MI-D8 — L4's finding): the Settings project switcher's FILTER
+   * — the live text that narrows the switcher's options by fuzzy name +
+   * id (the same matcher the palette rides), so a session with many desks
+   * never loses one to list depth. Empty string = the unfiltered list.
+   */
+  readonly projectFilter: string;
 }
 
 /** A reference to the record a detail sheet shows (§4.5a). */
@@ -93,7 +101,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '' };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */
@@ -328,6 +336,33 @@ function settingsRow(title: string, description: string, body: readonly VNode[])
   ]);
 }
 
+/**
+ * FW-MI-A (MI-D8): the switcher's FILTERED options — the session's whole
+ * directory when the filter is empty, else the fuzzy name+id matches
+ * (the palette's own matcher — fuzzyScore over `${id} ${name}`
+ * lowercased). Pure + deterministic: identical (directory, filter) pairs
+ * render identical option lists.
+ */
+export function switcherOptions(state: WorkspaceState, view: ShellView): readonly ProjectRecord[] {
+  const filter = view.projectFilter.trim().toLowerCase();
+  if (filter.length === 0) return state.projectDirectory;
+  return state.projectDirectory.filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), filter) >= 0);
+}
+
+/**
+ * FW-MI-A (MI-D8): the switcher's live count line — null when not
+ * filtering (the whole list is showing, the count would be noise), else
+ * the "N of M" line, or the teaching no-match line when N is 0 (never a
+ * blank region — D3's law inside the row).
+ */
+export function switcherCountLine(state: WorkspaceState, view: ShellView): string | null {
+  const trimmed = view.projectFilter.trim();
+  if (trimmed.length === 0) return null;
+  const matches = switcherOptions(state, view).length;
+  if (matches === 0) return `No project matches “${trimmed}” — clear the filter to see all ${state.projectDirectory.length}.`;
+  return `${matches} of ${state.projectDirectory.length} projects match “${trimmed}”.`;
+}
+
 export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
   return v('section', { class: 'panel', 'data-section': 'settings' }, [
     // D7 row 1 — theme (with the persistence seam write-through)
@@ -348,9 +383,11 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
       shellFactRow('project', state.scope.projectId),
     ]),
     // THE PROJECT SWITCHER (R6c, W-22 — the minimal switcher): the
-    // current project, stated plainly, + a select of the tenant's
+    // current project, stated plainly, + a select of the session's
     // readable projects (the workspace state's projectDirectory, read
-    // from GET /v1/projects). A committed choice ADOPTS that project —
+    // from GET /v1/projects — the session-scoped listing since FW-MI-A:
+    // the demo project + THIS session's own desks, never another
+    // session's). A committed choice ADOPTS that project —
     // every section refetches for it (the beat's scope-change refetch)
     // and the choice persists across reloads (the scope storage seam).
     //
@@ -363,17 +400,41 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
     // directory entry (the select "showing the wrong project" half of
     // the rebind race: a mismatched value is either the truth or a lie,
     // never a default).
-    settingsRow('Project', 'Switch the workspace to another project; every section refetches for the project you choose, and your choice is remembered for future visits.', [
+    //
+    // FW-MI-A (MI-D8 — L4's finding: "palette+switcher project list
+    // capped at 10 — after reload MY two desks became UNREACHABLE"): THE
+    // SWITCHER FILTER. Every directory option always renders (the
+    // session's whole own registry — no silent cap), and a filter input
+    // narrows them by FUZZY NAME + ID (the palette's own matcher —
+    // fuzzyScore), with a live count line so the narrowing is always
+    // legible (never a blank region, never a silently hidden desk: the
+    // line states "N of M"). The current-scope mirroring law extends to
+    // the filtered view: when the filter hides the current project, the
+    // disabled current-scope option renders (selected) so the value
+    // still mirrors the truth.
+    settingsRow('Project', 'Switch the workspace to another project; every section refetches for the project you choose, and your choice is remembered for future visits. The list is your session\u2019s own projects plus the shared demo project; type to filter by name or id.', [
       shellFactRow('current project', isLaunchpadScope(state.scope.projectId) ? 'the launchpad (no project yet)' : state.scope.projectId),
+      ...(state.projectDirectory.length > 1
+        ? [v('input', {
+          class: 'project-filter-input',
+          type: 'text',
+          value: view.projectFilter,
+          placeholder: 'Filter projects by name or id\u2026',
+          'aria-label': 'Filter the project list by name or id',
+          'data-project-filter': 'true',
+          autocomplete: 'off',
+        }, []),
+        ...(view.projectFilter.trim().length === 0 ? [] : [v('button', { class: 'empty-action', 'data-action': 'project-filter-clear', type: 'button' }, ['Clear filter'])])]
+        : []),
       v('select', { class: 'project-select', 'data-action': 'project-switch', 'data-project-select': 'true', 'aria-label': 'Switch the workspace to another project' }, [
-        ...(state.projectDirectory.some((project) => project.id === state.scope.projectId)
+        ...(switcherOptions(state, view).some((project) => project.id === state.scope.projectId)
           ? []
           : [v('option', { value: state.scope.projectId, selected: 'selected', disabled: 'disabled' }, [
               isLaunchpadScope(state.scope.projectId)
                 ? 'the launchpad (no project yet)'
-                : `${state.scope.projectId} — the current project (not in the readable list yet)`,
+                : `${state.scope.projectId} — the current project (not in the list${view.projectFilter.trim().length === 0 ? ' yet' : ' — hidden by the filter'})`,
             ])]),
-        ...state.projectDirectory.map((project) => v('option', {
+        ...switcherOptions(state, view).map((project) => v('option', {
           value: project.id,
           ...(project.id === state.scope.projectId ? { selected: 'selected' } : {}),
         }, [`${project.id} — ${project.name}`])),
@@ -381,6 +442,9 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
       ...(state.projectDirectory.length === 0
         ? [v('p', { class: 'card-note' }, ['No projects readable yet — the list loads with the next refresh.'])]
         : []),
+      ...(switcherCountLine(state, view) === null
+        ? []
+        : [v('p', { class: 'card-note', 'data-project-filter-count': 'true' }, [switcherCountLine(state, view) as string])]),
     ]),
     // THE PRICING DISCLOSURE (W-19, the S5 CFO finding — "zero pricing
     // information" was a stated adoption blocker; QuantConnect's only

@@ -78,6 +78,7 @@ import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import type { NeonStoreDeps } from '../../adapters/neon/stores';
 import { DEMO_PROJECT_ID, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance } from './demo';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization } from './routes';
+import type { DemoSessionWorld } from './session-routes';
 
 // ---------------------------------------------------------------------------
 // The typed degraded port stubs (R46 — checkpoint 1)
@@ -212,6 +213,17 @@ export interface DemoBackingHandle {
    * jobs stay in their submitted state; honest under SIMULATED).
    */
   readonly tick: ((at: number) => void) | null;
+  /**
+   * THE DEMO SESSION WORLD (FW-MI-A, MI-D1): the per-instance project
+   * OWNERSHIP map (which console session created which project — the
+   * router records into it at create time; a cold start resets it WITH the
+   * whole demo world, honestly under SIMULATED) plus the records read the
+   * session routes serve the listing/detail from (the composition's own
+   * control-plane store — the same store the boundary reads).
+   */
+  readonly session: DemoSessionWorld;
+  /** Record the owning console session of a just-created project (the router's create-time stamp — MI-D1). */
+  readonly recordSessionOwner: (projectId: string, session: string) => void;
 }
 
 export type DeploymentComposition =
@@ -444,6 +456,20 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
   }
   const seed = seedDemoWorld(construction.service, { tenant, developerToken: token, internalToken }, Date.now());
   const machinery: DemoMachineryContext = { ports: demoPorts, tenant, developerToken: token, internalToken: internalToken as string };
+  // THE DEMO SESSION WORLD (FW-MI-A, MI-D1): the per-instance ownership
+  // map + the records read. The map is host-owned composition state (the
+  // router records into it the moment a session-scoped create succeeds);
+  // the records read unwraps the demo control plane's own projectsOf (the
+  // SAME store the boundary reads — the session routes filter it, never a
+  // second source of truth).
+  const sessionOwners = new Map<string, string>();
+  const demoSession: DemoSessionWorld = {
+    sessionOwners,
+    recordsOf: (tenantOfRead: string) => {
+      const result = demoPorts.controlPlane.projectsOf(tenantOfRead as never);
+      return result.ok ? [...result.value] : [];
+    },
+  };
   return {
     ok: true,
     service: construction.service,
@@ -452,6 +478,10 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
       ports: demoPorts,
       orgStatusSeeded: seed.orgStatusSeeded,
       tick: internalToken === null ? null : (at: number) => demoMachineryTick(construction.service, machinery, at),
+      session: demoSession,
+      recordSessionOwner: (projectId: string, session: string) => {
+        sessionOwners.set(projectId, session);
+      },
     },
     durable,
     verifyDeveloperAuthorization,

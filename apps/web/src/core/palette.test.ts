@@ -342,6 +342,51 @@ describe('palette: D-16 — the cross-project jump entries', () => {
     const index = paletteIndex(populatedWorkspace(), capsulesOf);
     expect(index.filter((entry) => entry.kind === 'PROJECT').map((entry) => entry.ref)).toEqual(['project:proj-a']);
   });
+
+  // FW-MI-A (MI-D8 — L4's finding: "command-palette project search by NAME
+  // returns zero results ('EQ Vol','Futures Roll','G7 Rates' all 0; only
+  // literal 'prj' lists anything, capped at 10) — after reload MY two desks
+  // became UNREACHABLE"): the FULL own-project registry (26 projects — the
+  // demo project + a session's 25 own desks, L4's two among them) is
+  // searchable END TO END — by name, by id fragment, with every desk
+  // reachable (no cap drops anything: the index carries every entry).
+  function largeDeskWorkspace(): WorkspaceState {
+    const project = (id: string, name: string) => ({
+      id, tenantId: 'tenant-a', name, executionMode: 'simulation',
+      lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+      lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+      createdAt: T0, updatedAt: T0,
+    });
+    const desks = Array.from({ length: 25 }, (_unused, index) => project(`prj-own-${String(index + 1).padStart(2, '0')}`, `Own Desk ${index + 1}`) as never);
+    desks[6] = project('prj-own-07', 'EQ Vol-Arb Execution Desk') as never; // L4's first desk
+    desks[11] = project('prj-own-12', 'Futures Roll Program') as never; // L4's second desk
+    const base = populatedWorkspace(); // scoped to the demo project
+    return reduceAll(base, [
+      { kind: 'projects-listed', at: T0 + 40, records: [project('prj-demo-console', 'the TradRL demo project') as never, ...desks] },
+    ]);
+  }
+
+  it('FW-MI-A/MI-D8: the FULL own-project registry indexes EVERY desk — the whole 26-project directory plus the current desk, nothing capped away', () => {
+    const index = paletteIndex(largeDeskWorkspace(), capsulesOf);
+    const projects = index.filter((entry) => entry.kind === 'PROJECT');
+    expect(projects.length).toBe(27); // the current desk's own entry + one jump entry per directory desk (26) — the WHOLE registry (no silent cap)
+    expect(projects.some((entry) => entry.ref === 'project:prj-own-25')).toBe(true); // the LAST desk is reachable too
+    expect(projects.some((entry) => entry.ref === 'project:prj-demo-console')).toBe(true); // the shared demo desk is reachable too
+  });
+
+  it('FW-MI-A/MI-D8: L4\'s exact zero-result searches now find his desks — by NAME', () => {
+    const byName = rankPalette(paletteIndex(largeDeskWorkspace(), capsulesOf), 'EQ Vol');
+    expect(byName.some((entry) => entry.ref === 'project:prj-own-07')).toBe(true); // 'EQ Vol' — 0 results pre-fix
+    const second = rankPalette(paletteIndex(largeDeskWorkspace(), capsulesOf), 'Futures Roll');
+    expect(second.some((entry) => entry.ref === 'project:prj-own-12')).toBe(true); // 'Futures Roll' — 0 results pre-fix
+  });
+
+  it('FW-MI-A/MI-D8: the id FRAGMENT search works over the full registry (L4\'s \'6682ce17\' was his desk\'s id fragment)', () => {
+    const byFragment = rankPalette(paletteIndex(largeDeskWorkspace(), capsulesOf), 'own-12');
+    expect(byFragment.some((entry) => entry.ref === 'project:prj-own-12')).toBe(true);
+    const byFullId = rankPalette(paletteIndex(largeDeskWorkspace(), capsulesOf), 'prj-own-25');
+    expect(byFullId.some((entry) => entry.ref === 'project:prj-own-25')).toBe(true); // the full id reaches the LAST desk
+  });
 });
 
 describe('palette: D-16 — the substitution-tolerant matcher (the personas\' own typos)', () => {
