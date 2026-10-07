@@ -3257,6 +3257,209 @@ describe('executed boot: R10 (W-25C) — the Time Machine pause', () => {
 });
 
 // ---------------------------------------------------------------------------
+// MI-D9 (MI wave 1, 6/9 professionals) — THE STEP-BACK WHILE PAUSED,
+// executed: the pre-fix wiring sent the control to view-tminus with
+// tMinusMs + 500, so a PAUSED session jumped FORWARD to (anchor - 500ms)
+// — the wall-clock end — flipped playback -> t-minus, and left the
+// banner reading "Viewing a past instant" at 100% (M2 paused at
+// 02:35:53.575Z -> jumped to the 02:41:42.529Z end; L4, M1, S2, S5
+// reproduced variants; the paused caption also mislabeled "Playing
+// history forward"). The fix: Step back steps the view BACK one
+// controlled step and STAYS paused, in the playback mode, under the
+// paused caption.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: MI-D9 — Step back / Step while paused', () => {
+  it('Step back while PAUSED steps the view BACK one step, stays paused in the playback mode, renders the PAUSED caption (not "Viewing a past instant") and the % follows the stepped-back view (not stuck at 100%)', async () => {
+    const scheduler = new ScriptedScheduler();
+    let nowMs = T0;
+    const instants: InstantSource = { nowMs: () => (nowMs += 100) };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler, instants });
+    nowMs = T0 + 60_000; // the scripted clock jumps forward — the playback span is real
+    rig.handle.dispatch({ kind: 'view-live', at: instants.nowMs() });
+    clickAction(rig, 'tm-mode-playback'); // arm playback from the opened instant, step 500ms
+    for (let beat = 0; beat < 3; beat += 1) {
+      expect(scheduler.fireNext(), `beat ${beat + 1} was scheduled`).toBe(true);
+      await settle();
+    }
+    let playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('playback not armed');
+    const frozenAt = playback.fromAt + playback.ticks * playback.stepMs; // 3 ticks
+    clickAction(rig, 'playback-start'); // pause (the control's pause face)
+    expect(rig.handle.state().timeMachine.playback?.paused).toBe(true);
+    const anchor = rig.handle.state().timeMachine.anchorAt;
+
+    // THE PRE-FIX DEFECT PATH: this click used to flip the mode to
+    // t-minus and jump the view to (anchor - 500ms) — FORWARD, to the
+    // wall-clock end — with the banner reading "Viewing a past instant".
+    clickAction(rig, 'playback-step-back');
+    const timeMachine = rig.handle.state().timeMachine;
+    expect(timeMachine.mode).toBe('playback');                    // NO mode flip
+    expect(timeMachine.playback?.paused).toBe(true);              // stays PAUSED
+    expect(timeMachine.playback?.ticks).toBe(2);                  // one controlled step back
+    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - 500);    // BACK one step — not the anchor-500ms end-jump
+    expect(viewAtOf(rig.handle.state())).toBeLessThan(anchor - 500); // (the pre-fix landing instant, for the record)
+    const readout = elementsOf(rig.root).find((element) => element.hasClass('tm-readout'));
+    if (readout === undefined) throw new Error('the mono readout is missing');
+    expect(textOf(readout)).toBe(formatInstantUtc(frozenAt - 500)); // the readout follows the stepped-back instant
+    const notice = elementsOf(rig.root).find((element) => element.hasClass('tm-notice'));
+    if (notice === undefined) throw new Error('the projection notice is missing');
+    expect(textOf(notice)).toContain('paused');                   // the PAUSED caption (was "Viewing a past instant")
+    expect(textOf(notice)).not.toContain('Viewing a past instant');
+    const progress = elementsOf(rig.root).find((element) => element.hasClass('tm-progress'));
+    if (progress === undefined) throw new Error('the progress readout is missing');
+    expect(textOf(progress)).not.toBe('100%');                    // the % follows the stepped-back view
+
+    // a second Step back steps back again (manual stepping works while paused, repeatedly)
+    clickAction(rig, 'playback-step-back');
+    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - 1_000);
+    expect(rig.handle.state().timeMachine.playback?.paused).toBe(true);
+
+    // Step FORWARD while paused is the user's own step: one forward, STAYING paused
+    clickAction(rig, 'playback-step');
+    playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('the step disarmed playback');
+    expect(playback.paused).toBe(true);                            // still paused — a manual step is not a resume
+    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - 500);     // back forward one step
+  });
+
+  it('Step back keeps its documented T-x meaning OUTSIDE playback: the offset grows by one step (the tooltip\'s own words) — and the playback arm keeps the floor (no jump before the arm instant)', async () => {
+    const scheduler = new ScriptedScheduler();
+    let nowMs = T0;
+    const instants: InstantSource = { nowMs: () => (nowMs += 100) };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler, instants });
+    nowMs = T0 + 60_000;
+    rig.handle.dispatch({ kind: 'view-live', at: instants.nowMs() });
+    // T-x: Step back grows the offset (the pre-existing, documented behavior).
+    // NOTE: every dispatched event ADVANCES the anchor to its injected
+    // instant (the rig's source steps +100 per read), so the anchor is
+    // recomputed AFTER each click — never assumed stale.
+    clickAction(rig, 'tm-mode-t-minus'); // arms T-60_000
+    let anchorNow = rig.handle.state().timeMachine.anchorAt;
+    expect(viewAtOf(rig.handle.state())).toBe(anchorNow - 60_000);
+    clickAction(rig, 'playback-step-back');
+    anchorNow = rig.handle.state().timeMachine.anchorAt;
+    expect(rig.handle.state().timeMachine.mode).toBe('t-minus');   // stays T-x
+    expect(viewAtOf(rig.handle.state())).toBe(anchorNow - 60_500); // the offset grew by one 500ms step
+
+    // the playback floor: arm, tick once, pause, step back TWICE — the second no-ops at the arm instant (never before it, never a throw)
+    clickAction(rig, 'tm-mode-playback');
+    expect(scheduler.fireNext()).toBe(true);
+    await settle();
+    const armed = rig.handle.state().timeMachine.playback;
+    if (armed === null) throw new Error('playback not armed');
+    clickAction(rig, 'playback-start'); // pause
+    clickAction(rig, 'playback-step-back');
+    expect(viewAtOf(rig.handle.state())).toBe(armed.fromAt);       // stepped back to the arm instant
+    clickAction(rig, 'playback-step-back');
+    expect(viewAtOf(rig.handle.state())).toBe(armed.fromAt);       // the floor holds — no throw, no jump
+  });
+
+  it('Step OUTSIDE playback is a safe no-op (the control belongs to playback — the pre-fix wiring dispatched a playback-tick that threw the typed "not armed" error at the user)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    const before = rig.handle.state().timeMachine;
+    expect(() => clickAction(rig, 'playback-step')).not.toThrow(); // live mode — nothing armed
+    expect(rig.handle.state().timeMachine.mode).toBe(before.mode); // nothing changed
+    expect(viewAtOf(rig.handle.state())).toBe(viewAtOf({ timeMachine: before } as never)); // the view holds
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MI-D7 (MI wave 1, S5's explicit ask) — THE IN-UI EXPORT VERIFICATION,
+// executed: "in-UI chain verify" — the user selects the downloaded export
+// file in Settings and the console verifies it with the SAME documented
+// rules the file carries (N/N digests, N/N links, head match), honestly
+// scoped to the file's internal consistency. No script required.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: MI-D7 — the in-UI export verification affordance', () => {
+  /** The fake File the harness selects into the verify input (the browser's File.text() surface). */
+  const fakeFile = (name: string, text: string): { readonly name: string; readonly text: () => Promise<string> } => {
+    return { name, text: async () => text };
+  };
+  /** The concatenated text of an element's WHOLE subtree (the verify card's facts live in nested rows — textOf is direct-children-only). */
+  const deepTextOf = (element: FakeElement): string => {
+    const parts: string[] = [];
+    for (const node of element.childNodes) {
+      if (node instanceof FakeText) parts.push(node.text);
+      else parts.push(deepTextOf(node as FakeElement));
+    }
+    return parts.join('');
+  };
+
+  it('Settings renders the verify affordance beside the export button; selecting the JUST-DOWNLOADED export verifies it N/N with the head match, under the honest internal-consistency scope note', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'settings');
+    // the affordance renders beside the download
+    const verifyInput = findByData(rig.root, 'data-action', 'export-verify-file');
+    if (verifyInput === null) throw new Error('no export-verify-file affordance in Settings');
+    expect(verifyInput.tagName).toBe('INPUT');
+    expect(verifyInput.getAttribute('type')).toBe('file');
+    // download the export first (the bytes the user would re-select)
+    const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
+    if (exportButton === null) throw new Error('no export-workspace action');
+    click(rig, exportButton);
+    const anchor = rig.doc.created.filter((element) => element.tagName === 'A').slice(-1)[0];
+    if (anchor === undefined) throw new Error('the download anchor is missing');
+    const href = anchor.getAttribute('href') ?? '';
+    const bytes = decodeURIComponent(href.slice('data:application/json;charset=utf-8,'.length));
+    const eventCount = rig.handle.state().history.length;
+
+    // SELECT THE FILE — the delegated change fires the verification
+    (verifyInput as FakeElement & { files?: unknown[] }).files = [fakeFile('tradrl-workspace-prj-a.json', bytes)];
+    rig.doc.fire('change', { target: verifyInput });
+    await settle(); // the async file read
+
+    const card = findByData(rig.root, 'data-export-verify', 'verified');
+    if (card === null) throw new Error('the verified card did not render');
+    const cardText = deepTextOf(card);
+    expect(cardText).toContain(`${eventCount}/${eventCount}`);        // N/N digests + links
+    expect(cardText).toContain('head match');                          // the head-match fact
+    expect(cardText).toContain('internal consistency');                // the honest scope note
+    expect(cardText).toContain('tradrl-workspace-prj-a.json');        // the file that was verified
+    expect(cardText).toContain('does not prove who authored');         // the honesty line, verbatim
+  });
+
+  it('a TAMPERED export reports the break with the counts up to it (verified -> broken, the first failing event named) — and a non-JSON file reports itself honestly, never a throw', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'settings');
+    const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
+    if (exportButton === null) throw new Error('no export-workspace action');
+    click(rig, exportButton);
+    const anchor = rig.doc.created.filter((element) => element.tagName === 'A').slice(-1)[0];
+    if (anchor === undefined) throw new Error('the download anchor is missing');
+    const href = anchor.getAttribute('href') ?? '';
+    const bytes = decodeURIComponent(href.slice('data:application/json;charset=utf-8,'.length));
+    const doc = JSON.parse(bytes) as Record<string, unknown>;
+    const events = doc.events as Array<Record<string, unknown>>;
+    ((events[1] as Record<string, unknown>).payload as Record<string, unknown>).at = T0 + 999_999; // tamper event 2's payload
+    const tamperedBytes = JSON.stringify(doc);
+
+    const verifyInput = findByData(rig.root, 'data-action', 'export-verify-file');
+    if (verifyInput === null) throw new Error('no export-verify-file affordance in Settings');
+    (verifyInput as FakeElement & { files?: unknown[] }).files = [fakeFile('tampered.json', tamperedBytes)];
+    rig.doc.fire('change', { target: verifyInput });
+    await settle();
+    const brokenCard = findByData(rig.root, 'data-export-verify', 'broken');
+    if (brokenCard === null) throw new Error('the broken card did not render');
+    const brokenText = deepTextOf(brokenCard);
+    expect(brokenText).toContain('NOT verified');
+    expect(brokenText).toContain("event 2's digest does not match");
+    expect(brokenText).toContain(`1/${events.length}`); // the counts stopped at the break
+
+    // a file that is not even JSON is refused honestly
+    const again = findByData(rig.root, 'data-action', 'export-verify-file');
+    if (again === null) throw new Error('the verify affordance vanished');
+    (again as FakeElement & { files?: unknown[] }).files = [fakeFile('notes.txt', 'this is not json')];
+    rig.doc.fire('change', { target: again });
+    await settle();
+    const refusedCard = findByData(rig.root, 'data-export-verify', 'broken');
+    if (refusedCard === null) throw new Error('the refused card did not render');
+    expect(deepTextOf(refusedCard)).toContain('not valid JSON');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // D-6a (W-25C) — THE BEAT-RENDER CLICK RACE, executed: a press on the
 // primary flow's buttons survives the mid-press re-projection (the
 // pending press replays through the same action branch a live click

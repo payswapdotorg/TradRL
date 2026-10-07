@@ -227,11 +227,19 @@ export const TIME_MACHINE_MODE_DESCRIPTIONS: Readonly<Record<string, string>> = 
   playback: 'Play history forward — each step renders only what was knowable then.',
 });
 
-/** The projection state notice (§4.8): what the projection is doing at this view instant. */
-export function projectionNoticeOf(mode: string): string {
+/**
+ * The projection state notice (§4.8): what the projection is doing at
+ * this view instant. MI-D9: a PAUSED playback says so — the pre-fix
+ * caption said "Playing history forward" while the view was frozen
+ * (M2/M5's mislabel); the paused caption names the manual steps that
+ * still work. The default (no second argument) keeps the playing
+ * caption — the pinned back-compat surface.
+ */
+export function projectionNoticeOf(mode: string, paused = false): string {
   if (mode === 'live') return 'Viewing the live world — every datum as the API serves it now.';
   if (mode === 't-minus') return 'Viewing a past instant — facts that were not yet knowable are hidden.';
   if (mode === 'timestamp') return 'Viewing one explicit instant — the availability projection decides what renders.';
+  if (paused) return 'Playback paused — the view instant is frozen; Step and Step back move it one controlled step at a time.';
   return 'Playing history forward — each step renders only what was knowable then.';
 }
 
@@ -274,11 +282,14 @@ export function timeMachineControls(options: {
     }, []),
     v('div', { class: 'tm-playback', role: 'group', 'aria-label': 'Playback controls' }, [
       v('button', { class: 'tm-button', 'data-action': 'playback-start', type: 'button', 'aria-label': options.playing ? 'Pause playback' : 'Play playback' }, [options.playing ? 'Pause' : 'Play']),
-      v('button', { class: 'tm-button', 'data-action': 'playback-step-back', type: 'button', 'aria-label': 'Step back' }, ['Step back']),
-      v('button', { class: 'tm-button', 'data-action': 'playback-step', type: 'button', 'aria-label': 'Step forward' }, ['Step']),
+      // MI-D9: the manual steps carry their meaning BEFORE the click (the
+      // D-18 law) — Step back steps the view BACK one controlled step (in
+      // T-x it grows the offset), Step steps it forward one.
+      v('button', { class: 'tm-button', 'data-action': 'playback-step-back', type: 'button', 'aria-label': 'Step back', title: 'Step the view instant back one controlled step (in T-x: grow the offset)' }, ['Step back']),
+      v('button', { class: 'tm-button', 'data-action': 'playback-step', type: 'button', 'aria-label': 'Step forward', title: 'Step the view instant forward one controlled step' }, ['Step']),
     ]),
     v('output', { class: 'tm-readout', 'aria-label': 'Selected view instant' }, [formatInstantUtc(options.viewAt)]),
-    v('span', { class: 'tm-notice' }, [projectionNoticeOf(options.mode)]),
+    v('span', { class: 'tm-notice' }, [projectionNoticeOf(options.mode, options.mode === 'playback' && !options.playing)]),
     ...(options.progress === null ? [] : [v('span', { class: 'tm-progress' }, [`${Math.round(options.progress * 100)}%`])]),
   ]);
 }

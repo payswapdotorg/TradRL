@@ -35,7 +35,7 @@ import { systemNowMs } from '../core/clock';
 import type { SectionId } from '../core/sections';
 import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
-import { openWorkspace, reduceWorkspace, serializeWorkspaceExport } from '../core/workspace';
+import { openWorkspace, reduceWorkspace, serializeWorkspaceExport, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
 import type { WorkspaceScope } from '../core/tenant';
 import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
@@ -197,6 +197,19 @@ export interface DelegatedFieldEvent {
   readonly target: FieldEventTarget | null;
   /** The element the focus is moving TO (focusout only; null when the focus leaves to nothing — the browser binding provides it). */
   readonly relatedTarget?: unknown;
+}
+
+/**
+ * MI-D7 (S5's ask — the in-UI chain verify): the selected export file's
+ * read surface — the browser's File, structurally (a name plus the
+ * async text read). Named with METHOD syntax per the erasable-subset
+ * law (no inline function types at depth zero).
+ */
+export interface SelectedExportFile {
+  /** The file's name (shown in the verification result card). */
+  readonly name: string;
+  /** The async text read (File.text() — the modern browser surface; absent when the selection cannot be read). */
+  text?(): Promise<string>;
 }
 
 /** The minimal document surface the mount needs (DOM APIs only). */
@@ -752,6 +765,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       researchSubmit: null,
       openCapsule: null,
       projectFilter: '',
+      exportVerify: null,
     };
     let paletteResults: readonly PaletteEntry[] = [];
     // §4.10's once-per-notice toast guard: the id of the notice the
@@ -876,6 +890,24 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const element = target as FieldEventTarget | null;
       if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
       return element.getAttribute('data-action') === 'project-switch' ? element : null;
+    };
+    /**
+     * MI-D7 (S5's ask — the in-UI chain verify): THE EXPORT-VERIFY FILE
+     * INPUT — the delegated change on [data-action=export-verify-file].
+     * The user selected a downloaded export; the browser serves it as a
+     * File-like (name + text()). Null when the target is not the input
+     * or the selection is empty/not a readable file.
+     */
+    const verifyFileTargetOf = (target: unknown): { readonly element: FieldEventTarget; readonly file: SelectedExportFile } | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      if (element.getAttribute('data-action') !== 'export-verify-file') return null;
+      const files = (element as FieldEventTarget & { readonly files?: readonly unknown[] }).files;
+      const selected = Array.isArray(files) ? files[0] : null;
+      if (selected === null || selected === undefined) return null;
+      const candidate = selected as Partial<{ readonly name: unknown; readonly text: unknown }>;
+      if (typeof candidate.name !== 'string') return null;
+      return { element, file: candidate as SelectedExportFile };
     };
     // THE SCRUB BUFFER (the J5 wiring — the J3 pointer discipline): a
     // drag fires `input` per pointer move; those BUFFER here and never
@@ -1257,7 +1289,51 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       }
       view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } }; // NO render — the buffer IS the live form (merged at render time)
     });
+    /**
+     * MI-D7 (S5's ask) — THE IN-UI CHAIN VERIFY, the async half: read the
+     * selected export file, verify it with the SAME documented rules the
+     * file carries (core's verifyWorkspaceExportReport — one
+     * implementation, no drift), and render the counted report in the
+     * Settings Data export row. Every failure is an honest report, never
+     * a throw at the user: a non-JSON file, an unreadable file, a broken
+     * chain — each names itself in the card. The input's selection is
+     * cleared afterwards so re-selecting the SAME file re-fires the
+     * change (the browser otherwise swallows it as a no-op).
+     */
+    const verifySelectedExport = async (element: FieldEventTarget, file: SelectedExportFile): Promise<void> => {
+      const refusedReport = (reason: string): ExportVerificationReport => {
+        return { ok: false, reason, format: null, formatVersion: null, entryCount: 0, digestsOk: 0, linksOk: 0, headMatch: null };
+      };
+      let report: ExportVerificationReport;
+      if (typeof file.text !== 'function') {
+        report = refusedReport('the file could not be read (this browser cannot read the selected file)');
+      } else {
+        try {
+          const bytes = await file.text();
+          try {
+            report = verifyWorkspaceExportReport(JSON.parse(bytes));
+          } catch (error) {
+            report = refusedReport(`the file is not valid JSON (${error instanceof Error ? error.message : String(error)})`);
+          }
+        } catch (error) {
+          report = refusedReport(`the file could not be read (${error instanceof Error ? error.message : String(error)})`);
+        }
+      }
+      const clearable = element as FieldEventTarget & { value?: unknown };
+      if (typeof clearable.value === 'string') clearable.value = '';
+      view = { ...view, exportVerify: { fileName: file.name, report } };
+      render();
+    };
     document.addEventListener('change', (event) => {
+      // MI-D7 (S5's ask) — THE IN-UI CHAIN VERIFY: the verify input's
+      // change — the user selected a downloaded export file in Settings.
+      // Runs FIRST (the input is not a text field: none of the
+      // launch-field branches below may claim it).
+      const verifySelection = verifyFileTargetOf(event.target);
+      if (verifySelection !== null) {
+        void verifySelectedExport(verifySelection.element, verifySelection.file);
+        return;
+      }
       // THE PROJECT SWITCHER'S COMMIT (R6c, W-22): the select's change
       // event — the user's committed choice — adopts that project (the
       // same reset+switch transition a launch rides; the beat's
@@ -1495,8 +1571,40 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (kind === 'tm-mode-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
         if (kind === 'tm-mode-t-minus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
         if (kind === 'tm-mode-timestamp') dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: state.timeMachine.anchorAt - 60_000 });
-        if (kind === 'playback-step') dispatch({ kind: 'playback-tick', at: instants.nowMs() });
-        if (kind === 'playback-step-back') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: state.timeMachine.tMinusMs + 500 });
+        // MI-D9 — THE MANUAL STEPS. Pre-fix, BOTH controls were wired to
+        // playback-tick / view-tminus(tMinusMs+500): Step while paused
+        // no-op'd under the freeze law (a dead control), and Step back
+        // while paused jumped the view FORWARD to (anchor - 500ms) — the
+        // wall-clock end — flipping the mode playback -> t-minus with the
+        // banner reading "Viewing a past instant" at 100% (the
+        // 6/9-professional finding). Now: in PLAYBACK, Step back steps
+        // the view BACK one controlled step and STAYS paused (a new pure
+        // transition, its own append-only event), and Step while paused
+        // is the user's own forward step (staying paused — the freeze
+        // stops the beat's auto ticks, never the Step control). Outside
+        // playback, Step back keeps its documented T-x meaning (the
+        // offset grows by one step) and Step is a safe no-op (the control
+        // belongs to playback — pre-fix it threw the typed "not armed"
+        // error at the user).
+        if (kind === 'playback-step') {
+          const timeMachine = state.timeMachine;
+          if (timeMachine.mode === 'playback' && timeMachine.playback !== null && timeMachine.playback.paused) {
+            // the user's own step: guard the anchor exactly like the beat loop (never past "now")
+            const nextViewAt = timeMachine.playback.fromAt + (timeMachine.playback.ticks + 1) * timeMachine.playback.stepMs;
+            if (nextViewAt <= timeMachine.anchorAt) dispatch({ kind: 'playback-step-forward', at: instants.nowMs() });
+          } else if (timeMachine.mode === 'playback' && timeMachine.playback !== null) {
+            dispatch({ kind: 'playback-tick', at: instants.nowMs() }); // playing: the manual nudge stays a tick
+          }
+          // outside playback: no-op — the control belongs to playback
+        }
+        if (kind === 'playback-step-back') {
+          const timeMachine = state.timeMachine;
+          if (timeMachine.mode === 'playback' && timeMachine.playback !== null) {
+            dispatch({ kind: 'playback-step-back', at: instants.nowMs() }); // one controlled step back, staying paused, never a mode flip
+          } else {
+            dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: timeMachine.tMinusMs + 500 }); // T-x: the offset grows (the tooltip's own words)
+          }
+        }
         if (kind === 'refresh') void refreshWithShell();
         // §4.14 the command palette
         if (kind === 'palette-open') {

@@ -205,6 +205,20 @@ describe('flow §4.8: the Time Machine control bar', () => {
     expect(projectionNoticeOf('playback')).toContain('Playing history');
   });
 
+  it('MI-D9: a PAUSED playback carries the PAUSED caption — never "Playing history forward" while frozen (M2/M5\'s mislabel)', () => {
+    expect(projectionNoticeOf('playback', true)).toContain('paused');
+    expect(projectionNoticeOf('playback', true)).not.toContain('Playing history forward');
+    expect(projectionNoticeOf('playback', false)).toContain('Playing history forward'); // the playing caption stays
+    expect(projectionNoticeOf('playback')).toContain('Playing history forward');        // the default (back-compat) stays
+    // the bar renders the paused caption when playback is paused (playing = false in playback mode)
+    const pausedBar = render(timeMachineControls({ mode: 'playback', viewAt: T - 5_000, openedAt: T, anchorAt: T, playing: false, progress: 0.5 }));
+    expect(pausedBar).toContain(projectionNoticeOf('playback', true));
+    expect(pausedBar).not.toContain('Playing history forward');
+    // and the playing bar keeps its caption
+    const playingBar = render(timeMachineControls({ mode: 'playback', viewAt: T - 5_000, openedAt: T, anchorAt: T, playing: true, progress: 0.5 }));
+    expect(playingBar).toContain('Playing history forward');
+  });
+
   it('D-18 (W-29 wave 2): every mode button carries its meaning BEFORE the click — the description rides the hover title + the aria-description (S2: "T-x is cryptic pre-click — no tooltips on mode buttons")', () => {
     const bytes = render(bar);
     for (const entry of TIME_MACHINE_MODES) {

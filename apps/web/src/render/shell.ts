@@ -17,7 +17,7 @@
 //   LIVE teal (steady) / DEGRADED amber (steady) / UNREACHABLE rose /
 //   CONNECTING neutral (gentle pulse, reduced-motion disabled).
 
-import type { ConnectionStatus, WorkspaceState } from '../core/workspace';
+import type { ConnectionStatus, ExportVerificationReport, WorkspaceState } from '../core/workspace';
 import type { ProjectRecord } from '../api/contracts';
 import { scopedInbox, unreadCount } from '../core/notices';
 import type { ThemeName } from '../core/theme';
@@ -76,6 +76,13 @@ export interface ShellView {
    * never loses one to list depth. Empty string = the unfiltered list.
    */
   readonly projectFilter: string;
+  /**
+   * MI-D7 (S5's ask — the in-UI chain verify): the LAST verification's
+   * result, shown in the Settings Data export row — null until the user
+   * selects a downloaded export file (and after a re-selection replaces
+   * it). Carries the file's name and the counted report.
+   */
+  readonly exportVerify: { readonly fileName: string; readonly report: ExportVerificationReport } | null;
 }
 
 /** A reference to the record a detail sheet shows (§4.5a). */
@@ -101,7 +108,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '' };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */
@@ -363,6 +370,30 @@ export function switcherCountLine(state: WorkspaceState, view: ShellView): strin
   return `${matches} of ${state.projectDirectory.length} projects match “${trimmed}”.`;
 }
 
+/**
+ * MI-D7 (S5's ask): THE IN-UI VERIFICATION RESULT card — the counted
+ * report of the file the user selected, rendered inside the Data
+ * export row. Honest by construction: the verdict names the file and
+ * the counts; the scope note states exactly what the check proves —
+ * the file's INTERNAL consistency (that no field changed since it was
+ * sealed) — and never claims authorship.
+ */
+function exportVerifyCard(result: { readonly fileName: string; readonly report: ExportVerificationReport }): VNode {
+  const { report } = result;
+  const headMatchWord = report.headMatch === null ? 'unreadable' : report.headMatch ? 'yes' : 'no';
+  return v('div', { class: `export-verify${report.ok ? ' ok' : ' broken'}`, 'data-export-verify': report.ok ? 'verified' : 'broken' }, [
+    v('div', { class: 'export-verify-verdict' }, [report.ok
+      ? `Verified — ${result.fileName}: every digest and every chain link recomputed from the file alone, under the same published rules the file documents.`
+      : `NOT verified — ${result.fileName}: ${report.reason ?? 'the file did not verify'}`]),
+    shellFactRow('digests recomputed', `${report.digestsOk}/${report.entryCount}`),
+    shellFactRow('chain links recomputed', `${report.linksOk}/${report.entryCount}`),
+    shellFactRow('head match', headMatchWord),
+    shellFactRow('events', String(report.entryCount)),
+    ...(report.format === null ? [] : [shellFactRow('format', `${report.format} v${report.formatVersion ?? '?'}`)]),
+    v('p', { class: 'card-note' }, ['This verifies the file\u2019s internal consistency — that no field changed since it was sealed. It does not prove who authored the file.']),
+  ]);
+}
+
 export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
   return v('section', { class: 'panel', 'data-section': 'settings' }, [
     // D7 row 1 — theme (with the persistence seam write-through)
@@ -458,8 +489,25 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
       shellFactRow('commercial pricing', 'not published yet'),
     ]),
     // D7 row 4 — data export (an action that works: the deterministic serialized workspace record)
-    settingsRow('Data export', 'Download everything the console currently knows about this workspace, as a JSON file.', [
+    // + MI-D7 (S5's ask): THE IN-UI CHAIN VERIFY — select the downloaded
+    // export file here and the console verifies it with the SAME
+    // documented rules the file carries (no script required). The
+    // result renders beneath, honestly scoped to the file's internal
+    // consistency.
+    settingsRow('Data export', 'Download everything the console currently knows about this workspace as a JSON file — then verify a downloaded export right here: the check recomputes every digest and chain link from the file alone, under the same published rules the file documents.', [
       v('button', { class: 'connection-retry', 'data-action': 'export-workspace', type: 'button' }, ['Export workspace data']),
+      v('label', { class: 'export-verify-label', for: 'export-verify-file' }, [
+        'Verify an export file',
+        v('input', {
+          class: 'export-verify-input',
+          id: 'export-verify-file',
+          type: 'file',
+          accept: 'application/json,.json',
+          'data-action': 'export-verify-file',
+          'aria-label': 'Select a downloaded TradRL export file to verify its chain',
+        }, []),
+      ]),
+      ...(view.exportVerify === null ? [] : [exportVerifyCard(view.exportVerify)]),
     ]),
     // §4.13 the "?" affordance — re-opens the guided intro
     settingsRow('Guided intro', 'Show the three-step introduction to how the console works.', [
