@@ -1528,6 +1528,9 @@ describe('deploy/vercel — FW-MI-A: the durable session scope (the ownership st
     const boundaryListing = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: BEARER }));
     const boundaryIds = ((boundaryListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id);
     expect(boundaryIds).toEqual([DEMO_PROJECT_ID]); // the pre-fix projection staleness, preserved byte-identically for the headerless SDK caller
+  });
+});
+
 // THE LAUNCHED-DESK EVIDENCE STREAM UNDER DURABLE (FW-MI-B — MI-D2 +
 // MI-D10): the SAME per-project derivation the demo arm serves, over the
 // seam's OWN surfaces — the hydrated goal set (goal + constraint set +
