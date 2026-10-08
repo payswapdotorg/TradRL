@@ -43,12 +43,19 @@
 //                         replay=true — never a duplicate.
 //
 // DISCLOSED LIMITATIONS (honest — UX-DESIGN §7 anti-deception):
-//   - The promotion registry is PER-INSTANCE host state (the demo backing's
-//     own per-instance law): a serverless cold start resets it. The record
-//     is SIMULATED-substance class, disclosed under the console's badge;
-//     durable persistence is the durable seam's own future surface (this
-//     route rides the SAME wrapper seam, so a future durable registry needs
-//     no route change).
+//   - Under the DEMO backing the promotion registry is PER-INSTANCE host
+//     state (the demo backing's own per-instance law): a serverless cold
+//     start resets it. The record is SIMULATED-substance class, disclosed
+//     under the console's badge. Under the DURABLE backing (FW-33-A) the
+//     minted record WRITE-THROUGHS into tradrl_outcomes (the outcome lane,
+//     the same putOutcome path the boot-world fixtures ride): it queues at
+//     MINT time onto the seam's pending drain — the write CONFIRMS on the
+//     next request's drain (the promote route itself is sync-hosted, so its
+//     own response precedes the confirmation; the console's 1s beat poll
+//     drains it within a beat, and the serve-time backstop re-queues on
+//     every outcomes read that still lacks the record — a failed write
+//     degrades the draining request per the ordering law and heals on the
+//     idempotent re-promotion, which mints the SAME id).
 //   - Host-owned routes run outside the T041 pipeline's metering/audit tail
 //     — the one W-8 limitation every host route carries. The minted record
 //     itself serves through the FROZEN /v1/outcomes/query read (full
@@ -89,6 +96,7 @@ import {
   type RequestId,
   type TimestampMs,
 } from '../../../services/api/src/index';
+import { outcomeDurableLaneOf, type OutcomeDurableWriteLane } from './demo';
 
 // ---------------------------------------------------------------------------
 // The route's own grammar
@@ -247,7 +255,30 @@ export interface PromotedDecisionEntry {
   readonly replay: boolean;
 }
 
-/** The host-owned promotion registry (per instance — see the disclosed limitations above). */
+/**
+ * The composition-private registry lookup (FW-33-A): `createPromotionRegistry`
+ * registers each registry under its own `outcomesOf` fold — the outcome
+ * wrapper's composition-time lane binding (below) finds the registry the
+ * composition wired it to, with no ambient state and no cross-instance
+ * aliasing (every registry owns its own fold function, so concurrent
+ * compositions in one process — the test harness's instance-per-compose
+ * law — never cross). A hand-rolled fold (the port-override arm's `() => []`)
+ * is not in the map: no registry, no binding.
+ */
+const registryOfOutcomeFold = new WeakMap<object, PromotionRegistry>();
+
+/**
+ * The host-owned promotion registry (per instance — see the disclosed
+ * limitations above). FW-33-A: under the DURABLE backing the registry
+ * carries a BOUND durable write lane (bound at composition time by the
+ * outcome wrapper below, when the wrapper chain carries one): every
+ * minted record — first mint AND idempotent replay — queues its putOutcome
+ * write-through onto the seam's pending drain, so a promoted decision
+ * becomes DURABLE TRUTH the moment it mints (the write confirms on the
+ * next request's drain; the wrapper's serve-time backstop re-queues where
+ * it never landed). Under the DEMO backing no lane ever binds: the
+ * per-instance law, unchanged, honestly under SIMULATED.
+ */
 export interface PromotionRegistry {
   /** Register (or return the existing) promotion of one job — idempotent per job, keyed tenant+job. */
   record(tenant: string, job: JobRecord, at: number): PromotedDecisionEntry;
@@ -255,18 +286,35 @@ export interface PromotionRegistry {
   outcomesOf(tenant: string, project: string): readonly PromotedDecisionRecord[];
   /** The existing promotion of one job, when this instance already minted it. */
   decisionOfJob(tenant: string, jobId: string): PromotedDecisionRecord | null;
+  /**
+   * FW-33-A: bind the durable write-through lane (idempotent — the last
+   * binding wins; the composition binds at most once per registry).
+   */
+  bindDurableLane(lane: OutcomeDurableWriteLane): void;
 }
 
 /** Build one per-instance promotion registry (the composition owns exactly one). */
 export function createPromotionRegistry(): PromotionRegistry {
   const byJob = new Map<string, PromotedDecisionRecord>();
-  return {
+  let durableLane: OutcomeDurableWriteLane | null = null;
+  const registry: PromotionRegistry = {
     record(tenant, job, at) {
       const key = `${tenant}/${job.jobId}`;
       const existing = byJob.get(key);
-      if (existing !== undefined) return { decision: existing, replay: true };
+      if (existing !== undefined) {
+        // FW-33-A: the REPLAY re-queues the write-through too — a first
+        // mint whose durable write never confirmed (a failed drain, an
+        // instance that died before the next request) heals here; the
+        // lane's own idempotence (projection match + pending match) keeps
+        // the confirmed case a no-op.
+        durableLane?.recordOutcome(existing);
+        return { decision: existing, replay: true };
+      }
       const decision = mintPromotedDecision(tenant, job, at);
       byJob.set(key, decision);
+      // FW-33-A: the mint queues its durable write-through IMMEDIATELY — a
+      // promoted decision becomes durable TRUTH, not per-instance state.
+      durableLane?.recordOutcome(decision);
       return { decision, replay: false };
     },
     outcomesOf(tenant, project) {
@@ -279,7 +327,16 @@ export function createPromotionRegistry(): PromotionRegistry {
     decisionOfJob(tenant, jobId) {
       return byJob.get(`${tenant}/${jobId}`) ?? null;
     },
+    bindDurableLane(lane) {
+      durableLane = lane;
+    },
   };
+  // FW-33-A: the registry is discoverable through its own outcomesOf fold
+  // — the outcome wrapper's composition-time binding (the only seam where
+  // the durable port chain and this registry meet). Keyed by the fold
+  // function object itself: two compositions in one process never alias.
+  registryOfOutcomeFold.set(registry.outcomesOf, registry);
+  return registry;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,11 +353,33 @@ export function createPromotionRegistry(): PromotionRegistry {
  * (idempotent by content-addressed outcomeId; the base port's typed
  * failures pass through untouched — R46). The post-mortem read passes
  * through untouched (a promotion mints no post-mortem).
+ *
+ * FW-33-A (Round B blocker 1 — the launched-desk record durability wave):
+ * the wrapper is the composition's one meeting point of the DURABLE
+ * port chain (carrying the seam's outcome write lane, propagated by demo.ts's
+ * outcomeLearningWithProjectEvidence) and the promotion registry (whose own
+ * `outcomesOf` fold is registered in `registryOfOutcomeFold`), so at
+ * CONSTRUCTION time it binds the lane to the registry — every mint queues
+ * its putOutcome write-through at MINT time. And per SERVE, the wrapper
+ * re-queues every promoted record the durable truth lacks (the additions it
+ * is about to serve): the write rides the QUERYING request's own drain (the
+ * W-25D ordering law, the W-27 recordJobs pattern) — the backstop that
+ * heals a mint whose first write never confirmed, and the lane that makes a
+ * fresh instance's boot projection + a warm instance's staleness heal serve
+ * the record EVERYWHERE. Under the DEMO backing (or port overrides) the
+ * lane/registry probes find nothing: the per-instance law, byte-identical.
  */
 export function outcomeLearningWithPromotedDecisions(
   inner: OutcomeLearningPort,
   promotedOutcomesOf: (tenant: string, project: string) => readonly PromotedDecisionRecord[],
 ): OutcomeLearningPort {
+  // FW-33-A — the composition-time binding: the durable seam's lane (when
+  // the inner chain carries one) meets the registry (when the fold is the
+  // registry's own). Both probes are structural (null/undefined under demo
+  // and port overrides — no binding, no writes, the pre-law).
+  const durableLane = outcomeDurableLaneOf(inner);
+  const registry = registryOfOutcomeFold.get(promotedOutcomesOf);
+  if (durableLane !== null && registry !== undefined) registry.bindDurableLane(durableLane);
   return {
     queryOutcomes(query, options) {
       const result = inner.queryOutcomes(query, options);
@@ -310,6 +389,12 @@ export function outcomeLearningWithPromotedDecisions(
       const present = new Set(result.value.map((record) => record.outcomeId));
       const additions = promoted.filter((record) => !present.has(record.outcomeId));
       if (additions.length === 0) return result; // idempotent — never a duplicate
+      // FW-33-A — THE SERVE-TIME BACKSTOP: every promoted record the
+      // durable truth lacks (these additions) re-queues its write-through;
+      // THIS request's own drain confirms them before the response serves
+      // (the ordering law). A record the durable truth already holds never
+      // queues (the lane's projection-match skip).
+      for (const addition of additions) durableLane?.recordOutcome(addition);
       return { ok: true, value: Object.freeze([...result.value, ...additions]) };
     },
     queryPostMortems(query, options) {

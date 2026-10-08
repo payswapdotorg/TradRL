@@ -99,6 +99,34 @@
 // the write-through lane skips them — a fresh instance would otherwise
 // accumulate one seeded pair per cold start in the durable table).
 //
+// FW-33-A (Round B blocker 1 — the launched-desk record durability wave):
+// the DERIVED records of the durable surfaces now ride write-through +
+// re-read lanes of their own:
+//   - a PROMOTED DECISION (the host promote route's mint, runtime/
+//     job-promote.ts) write-throughs into tradrl_outcomes through the
+//     outcome lane (recordOutcome below — the same putOutcome store path
+//     the boot-world fixtures ride, queued onto the SAME pending drain;
+//     idempotent on (tenant, outcome id)); it queues at MINT time (the
+//     registry's bound lane) and again at SERVE time (the derived-rows
+//     wrapper's backstop, riding the querying request's own drain), so a
+//     fresh instance's boot projection reads it and a warm instance's
+//     staleness heal re-reads it (runtime/durable-world.ts).
+//   - the STALENESS HEAL (FW-31-B) now re-reads the outcome/post-mortem/
+//     knowledge surfaces too (three more CONSTANT tenant-wide reads per
+//     bounded interval — the W-30 round-trip law holds) and, when the
+//     fresh truth carries records the serving projection lacks, commits a
+//     QUIET re-projection (reprojectQuietly below: no serving degradation
+//     at any point — the W-25D mid-instance law); the derived streams
+//     (the FW-MI-B folds) re-fold from the fresh truth automatically.
+//   - HONEST LIMITATION (never fabricated, the teaching note): the LIVE
+//     gateway rows of the recording execution gateway (POST
+//     /v1/execution/requests routed on THIS instance) remain per-instance
+//     — no durable submissions table exists (adding one is a schema change
+//     outside this wave's surface); the DERIVED blotter rows (the launched
+//     desk's evidence stream) remain re-derivable everywhere, and the
+//     promotion registry's records are re-minted idempotently on
+//     re-promotion where a write never confirmed.
+//
 // Zero-dep law: platform APIs only. Spec anchors: ARCHITECTURE-LOCK
 // invariant-9 (ports injected, never imported by adapters), L4/L8/L12/L15,
 // R46, D-033, D-5; deploy/wire/production.md (the composition law).
@@ -126,7 +154,7 @@ import type {
 } from '../../../services/api/src/index';
 import { canonicalJson, isJobRecord } from '../../../services/api/src/index';
 import { fakeJobSubmission } from '../../../services/api/src/fixtures';
-import { DEMO_PROJECT_ID, demoSeedJobPrimingLatch, launchWorldOfSpec } from './demo';
+import { DEMO_PROJECT_ID, demoSeedJobPrimingLatch, launchWorldOfSpec, OUTCOME_DURABLE_LANE_FIELD, type OutcomeDurableWriteLane, type OutcomeLearningPortWithDurableLane } from './demo';
 import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, ownerSessionOf, type GoalSetRecord, type NeonStoreDeps, type SessionProjectRow } from '../../adapters/neon/stores';
 import { executeNeonStatement, type NeonConfig } from '../../adapters/neon/client';
 import { NEON_DDL_RECORDS } from '../../adapters/neon/schema';
@@ -193,6 +221,22 @@ interface PendingDurableWrite {
 
 /** The drain verdict: ok, or the typed failure of the first failed durable write. */
 export type DrainResult = { readonly ok: true } | { readonly ok: false; readonly error: StoreFailure };
+
+/**
+ * The serving projection's membership snapshot (FW-33-A — the staleness
+ * probe's comparison base). Every set is keyed by the record's own
+ * content-addressed identity (the id the durable rows carry).
+ */
+export interface ProjectionMembership {
+  /** The registry project ids the projection has SEEN (reconstructed OR skipped — a skipped row never asks for a refresh it cannot use). */
+  readonly registryProjectIds: ReadonlySet<string>;
+  /** The outcome ids the projection serves (the tenant-wide boot read's rows of the reconstructed projects). */
+  readonly outcomeIds: ReadonlySet<string>;
+  /** The post-mortem ids the projection serves. */
+  readonly postMortemIds: ReadonlySet<string>;
+  /** The knowledge ids the projection serves. */
+  readonly knowledgeIds: ReadonlySet<string>;
+}
 
 // ---------------------------------------------------------------------------
 // THE DDL RUNBOOK (W-28, lane B): the host-owned internal route pair the
@@ -424,6 +468,52 @@ export interface DurableBackingHandle {
    * never a crash, retried on a later interval).
    */
   freshJobRecordsOfTenant(): Promise<StoreResult<readonly JobRecord[]>>;
+  /**
+   * THE OUTCOME WRITE-THROUGH LANE (FW-33-A, Round B blocker 1): queue the
+   * durable putOutcome write for one outcome record onto the SAME pending
+   * drain every control-plane write rides — a promoted decision minted by
+   * the host promote route (runtime/job-promote.ts) becomes durable TRUTH,
+   * not per-instance state (the same putOutcome lane the boot-world
+   * fixtures ride). IDEMPOTENT by construction: a record whose exact
+   * payload the serving projection (or an already-queued write) already
+   * carries queues nothing (the recordJobs pattern); a foreign tenant's
+   * record is refused (L12 — never queued). The port-level twin of this
+   * surface is attached to `ports.outcomeLearning` under
+   * OUTCOME_DURABLE_LANE_FIELD (the ports-with-extra-surfaces precedent)
+   * so the composition's derived-rows wrapper chain carries the lane
+   * end-to-end and the promote route's mint can write through at mint
+   * time + at serve time (the wrapper's own backstop).
+   */
+  recordOutcome(record: OutcomeRecordMirror): void;
+  /**
+   * THE STALENESS PROBE (FW-33-A): the serving projection's membership
+   * snapshot — the registry project ids it has SEEN (reconstructed or
+   * skipped: a skipped row never asks for a heal it cannot use), and the
+   * outcome/post-mortem/knowledge ids it serves. The staleness heal
+   * (runtime/durable-world.ts) compares its FRESH tenant-wide reads
+   * against this set at its bounded interval: any record the durable
+   * truth carries that the projection lacks (a promotion minted on
+   * ANOTHER instance, a launch this instance's projection predates) is
+   * the heal's refresh trigger. Null while the projection is degraded
+   * or in flight (R46 — the heal skips, never a stale probe).
+   */
+  projectionMembership(): ProjectionMembership | null;
+  /**
+   * THE QUIET RE-PROJECTION (FW-33-A): re-read the durable truth (the boot
+   * projection's SAME seven batched tenant-wide reads — the W-30 law) and
+   * swap the serving projection in ATOMICALLY — with NO serving
+   * degradation at any point: the current projection keeps serving while
+   * the fresh one builds, and the swap lands only if the seam stays clean
+   * through the reads (a failed write's dirty flag, an in-flight drain, a
+   * queued pending lane — any of them discards the refresh; the next
+   * interval retries). A failed read keeps the current projection serving
+   * (the W-25D mid-instance law: never a crash, never a degraded read).
+   * Returns whether a fresh projection was committed. The staleness heal
+   * drives this when its probe finds the truth moved; the derived streams
+   * (the FW-MI-B folds over goalOf + the control-plane listing) re-fold
+   * from the fresh truth automatically — they read the projection.
+   */
+  reprojectQuietly(): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -510,9 +600,8 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   // `state` gates every port call — a stale (failed-write) projection is
   // never served, even though `current` still holds it.
   type Phase = 'idle' | 'projecting' | 'ready' | 'failed';
-  let phase: Phase = 'idle';
-  let liveGoalSets: Map<string, GoalSetRecord> = new Map();
-  let current: {
+  /** One committed serving projection — the shape `current` holds. */
+  type ServingProjection = {
     readonly controlPlane: ControlPlane;
     readonly knowledge: readonly ServedKnowledgeMirror[];
     readonly outcomes: readonly unknown[];
@@ -520,10 +609,19 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     readonly goalSets: ReadonlyMap<string, GoalSetRecord>;
     readonly jobs: ReadonlyMap<string, readonly JobRecord[]>;
     readonly report: ProjectionReport;
-  } | null = null;
+  };
+  let phase: Phase = 'idle';
+  let liveGoalSets: Map<string, GoalSetRecord> = new Map();
+  let current: ServingProjection | null = null;
   let failure: StoreFailure | null = null;
   let report: ProjectionReport | null = null;
   let inFlight: Promise<void> | null = null;
+  /**
+   * FW-33-A: a drain is in flight — the QUIET re-projection's swap guard
+   * (a fresh projection built while a request's writes are mid-drain may
+   * lack those writes; the swap discards, the next interval retries).
+   */
+  let draining = false;
   /**
    * W-26C (the boot-world race hardening): a failed durable write marks
    * the seam DIRTY — a projection whose reads PREDATE that failure (an
@@ -544,6 +642,14 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   // -------------------------------------------------------------------------
 
   async function project(): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: StoreFailure }> {
+    const built = await buildProjection();
+    if (!built.ok) return built;
+    commitProjection(built.value);
+    return { ok: true };
+  }
+
+  /** One fully-built (not yet committed) projection — FW-33-A's split: the build reads the truth, the commit swaps it in. */
+  async function buildProjection(): Promise<{ readonly ok: true; readonly value: ServingProjection } | { readonly ok: false; readonly error: StoreFailure }> {
     const controlPlane = createControlPlane(); // the REAL T007 service — a FRESH instance per projection (the universal recovery)
     const knowledge: ServedKnowledgeMirror[] = [];
     const outcomes: unknown[] = [];
@@ -710,20 +816,37 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
       jobCount += records.length;
     }
 
-    // THE ATOMIC SWAP — the projection becomes the serving state.
-    current = {
-      controlPlane,
-      knowledge: Object.freeze(knowledge),
-      outcomes: Object.freeze(outcomes),
-      postMortems: Object.freeze(postMortems),
-      goalSets,
-      jobs,
-      report: { projects: reconstructed.length, events, knowledge: knowledge.length, outcomes: outcomes.length, postMortems: postMortems.length, jobs: jobCount, skipped: Object.freeze([...skipped]) },
+    // THE BUILD'S RESULT (FW-33-A: the caller commits — the boot lane
+    // unconditionally on success, the quiet refresh only while the seam
+    // stayed clean through the reads).
+    return {
+      ok: true,
+      value: {
+        controlPlane,
+        knowledge: Object.freeze(knowledge),
+        outcomes: Object.freeze(outcomes),
+        postMortems: Object.freeze(postMortems),
+        goalSets,
+        jobs,
+        report: { projects: reconstructed.length, events, knowledge: knowledge.length, outcomes: outcomes.length, postMortems: postMortems.length, jobs: jobCount, skipped: Object.freeze([...skipped]) },
+      },
     };
-    liveGoalSets = goalSets; // the live overlay the createProject write-through extends
-    report = current.report;
+  }
+
+  /**
+   * THE COMMIT (FW-33-A's split, the old atomic swap): the projection
+   * becomes the serving state; the live goal-set overlay follows it. The
+   * swap itself is synchronous (the event loop's own atomicity — every
+   * port call either sees the whole old projection or the whole new one).
+   */
+  function commitProjection(projection: ServingProjection): void {
+    current = projection;
+    // The live overlay IS the projection's own map (the pre-FW-33-A aliasing,
+    // preserved: createProject's write-through extends the committed map in
+    // place — the read type is readonly, the write side keeps its handle).
+    liveGoalSets = projection.goalSets as Map<string, GoalSetRecord>;
+    report = projection.report;
     failure = null;
-    return { ok: true };
   }
 
   /** Run one projection attempt, applying the phase transitions (never throws). */
@@ -781,6 +904,67 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     phase = 'projecting';
     inFlight = attempt();
     await inFlight;
+  }
+
+  /**
+   * THE STALENESS PROBE'S COMPARISON BASE (FW-33-A): the serving
+   * projection's membership — the registry ids it has SEEN (reconstructed
+   * or skipped: a row it already skipped can never reconstruct better, so
+   * it never asks for a refresh) and the outcome/post-mortem/knowledge ids
+   * it serves. Null while degraded/pending/dirty (the heal skips — never a
+   * stale probe).
+   */
+  function projectionMembership(): ProjectionMembership | null {
+    if (phase !== 'ready' || current === null || dirty) return null;
+    const registryProjectIds = new Set<string>(current.goalSets.keys());
+    for (const skip of current.report.skipped) registryProjectIds.add(skip.project); // the SEEN set — a skipped row is not a refresh trigger
+    const outcomeIds = new Set<string>();
+    for (const record of current.outcomes) {
+      if (isRecord(record) && isNonEmptyString(record.outcomeId)) outcomeIds.add(record.outcomeId);
+    }
+    const postMortemIds = new Set<string>();
+    for (const record of current.postMortems) {
+      if (isRecord(record) && isNonEmptyString(record.postMortemId)) postMortemIds.add(record.postMortemId);
+    }
+    const knowledgeIds = new Set<string>();
+    for (const envelope of current.knowledge) {
+      const record = (envelope as { readonly record?: unknown }).record;
+      if (isRecord(record) && isNonEmptyString(record.knowledgeId)) knowledgeIds.add(record.knowledgeId);
+    }
+    return { registryProjectIds, outcomeIds, postMortemIds, knowledgeIds };
+  }
+
+  /**
+   * THE QUIET RE-PROJECTION (FW-33-A — the staleness heal's refresh): build
+   * a fresh projection (the SAME seven batched tenant-wide reads) while the
+   * CURRENT projection keeps serving — the boot lane's phase transitions
+   * ('projecting' -> the ports degrade) are NOT ridden here; the swap lands
+   * only if the seam stayed clean through the reads. The guards, in order:
+   *   - a seam that is not ready/idle (a failed write's dirty flag, an
+   *     in-flight attempt or drain, a queued pending lane) never starts
+   *     (those lanes own the seam's transitions) — and a seam that BECAME
+   *     unclean while the reads ran DISCARDS the build (W-26C: a projection
+   *     whose reads predate a failed write must never serve; a build that
+   *     raced a pending drain may lack its writes);
+   *   - a failed read keeps the current projection serving (the W-25D
+   *     mid-instance law — never a crash, never a degraded read).
+   */
+  let quietRefreshInFlight = false;
+  async function reprojectQuietly(): Promise<boolean> {
+    if (quietRefreshInFlight) return false; // one quiet refresh at a time (the heal's own serial cadence)
+    if (dirty || phase !== 'ready' || inFlight !== null || draining || pending.length > 0) return false;
+    quietRefreshInFlight = true;
+    try {
+      const built = await buildProjection();
+      if (!built.ok) return false; // the current projection keeps serving (the mid-instance law)
+      if (dirty || phase !== 'ready' || inFlight !== null || draining || pending.length > 0) return false; // the seam moved under the reads — discard, the next interval retries
+      commitProjection(built.value);
+      return true;
+    } catch {
+      return false; // unreachable by construction (the build is typed, never throws) — R46 regardless
+    } finally {
+      quietRefreshInFlight = false;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -933,7 +1117,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     },
   };
 
-  const outcomeLearningPort: OutcomeLearningPort = {
+  const outcomeLearningPort: OutcomeLearningPortWithDurableLane = {
     queryOutcomes(query, options): PortResult<readonly OutcomeRecordMirror[]> {
       const guard = requireReady();
       if (guard !== null || current === null) return guard ?? { ok: false, error: degraded() };
@@ -955,6 +1139,16 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
       });
       return { ok: true, value: Object.freeze([...served]) as never };
     },
+    // FW-33-A (Round B blocker 1): the port carries the OUTCOME WRITE LANE
+    // as its documented extra surface (the ports-with-extra-surfaces
+    // precedent — demoExecutionGateway's `recorded`): the composition's
+    // derived-rows wrapper chain propagates it (demo.ts's
+    // outcomeLearningWithProjectEvidence), so the promoted-decisions wrapper
+    // composed above it (job-promote.ts) can write the host route's minted
+    // records through the same putOutcome lane the boot-world fixtures
+    // ride — a promoted decision becomes durable TRUTH, never per-instance
+    // state. The handle-level twin is `recordOutcome` below.
+    [OUTCOME_DURABLE_LANE_FIELD]: { recordOutcome } satisfies OutcomeDurableWriteLane,
   };
 
   /** The latestPerOutcome fold — the durable store's own lane fold, mirrored (the newest version per outcome id). */
@@ -1082,6 +1276,55 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     }
   }
 
+  // -------------------------------------------------------------------------
+  // THE OUTCOME WRITE-THROUGH LANE (FW-33-A, Round B blocker 1 — the same
+  // discipline the job lane (W-27) brought to tradrl_jobs, brought to
+  // tradrl_outcomes: a promoted decision minted by the host promote route
+  // rides the drain the moment it mints (and again the moment it serves,
+  // as the wrapper's backstop), so the record becomes durable TRUTH — a
+  // fresh instance's boot projection reads it, a warm instance's staleness
+  // heal re-reads it. The lane never fabricates: it only ever queues
+  // records the composition's own registry minted (L12 + idempotent).
+  // -------------------------------------------------------------------------
+
+  /** The outcome payloads already queued onto the drain (the idempotent no-op's second skip). */
+  const pendingOutcomePayloads = new Set<string>();
+
+  /** The projection's durable payload of one outcome id (canonical JSON — the recordOutcome skip's comparison key). */
+  function projectedOutcomePayload(outcomeId: string): string | null {
+    for (const record of current?.outcomes ?? []) {
+      if (isRecord(record) && record.outcomeId === outcomeId) return canonicalJson(record as never);
+    }
+    return null;
+  }
+
+  function recordOutcome(record: OutcomeRecordMirror): void {
+    // L12 by construction: only the credential tenant's outcome records
+    // ever queue (the promote route's authorized tenant IS the seam's
+    // tenant; a foreign row is refused before the drain entirely).
+    if (record.tenant !== deps.tenant) return;
+    const payload = canonicalJson(record as never);
+    // The idempotent no-op, first skip: the projection already holds this
+    // exact payload (the write-through landed + a later projection read it
+    // back) — never re-write what did not change.
+    if (projectedOutcomePayload(record.outcomeId) === payload) return;
+    // The idempotent no-op, second skip: an identical write is already
+    // queued (the mint-time queue + the serve-time backstop racing one
+    // drain) — the pending set clears as the write runs, so a FAILED write
+    // stays retryable on a later mint or serve.
+    if (pendingOutcomePayloads.has(payload)) return;
+    pendingOutcomePayloads.add(payload);
+    const outcome = record;
+    pending.push({
+      label: 'outcome.put',
+      run: async () => {
+        const written = await outcomeStore.putOutcome(deps.tenant, outcome);
+        pendingOutcomePayloads.delete(payload); // failed or confirmed — either way the write left the lane
+        return written;
+      },
+    });
+  }
+
   function jobsOf(projectId: string): { readonly ok: true; readonly value: readonly JobRecord[] } | { readonly ok: false; readonly error: StoreFailure } {
     if (phase !== 'ready' || current === null || dirty) {
       const degradedFailure: StoreFailure = failure !== null
@@ -1098,36 +1341,41 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
 
   async function drain(): Promise<DrainResult> {
     const writes = pending.splice(0, pending.length);
-    for (const write of writes) {
-      const result = await write.run();
-      if (!result.ok) {
-        // THE FAILED-DURABLE-WRITE LAW: the projection is stale — freeze it
-        // (no port call serves the unconfirmed mutation) and rebuild it
-        // from the durable truth. The host serves the typed 503 for THIS
-        // request; the re-projection is not awaited (the 503 answers now).
-        //
-        // W-26C (the boot-world race hardening): the re-projection is
-        // TRACKED in `inFlight` (never again an untracked `void` twin) so
-        // the next settled()/reproject() JOINS this rebuild instead of
-        // racing a second concurrent projection — and the DIRTY flag keeps
-        // every surface degraded (never a pre-failure snapshot) until a
-        // projection that started AFTER the failure lands the durable
-        // truth. The boot world's retry then reads it FRESH (the concurrent
-        // cold-boot collision self-heals on the first retry).
-        failure = result.error; // the degraded surfaces report the durable failure's own code
-        phase = 'projecting';
-        dirty = true;
-        if (inFlight === null) {
-          inFlight = attempt();
+    draining = true; // FW-33-A: the quiet refresh's swap guard (a build that raced this drain is discarded)
+    try {
+      for (const write of writes) {
+        const result = await write.run();
+        if (!result.ok) {
+          // THE FAILED-DURABLE-WRITE LAW: the projection is stale — freeze it
+          // (no port call serves the unconfirmed mutation) and rebuild it
+          // from the durable truth. The host serves the typed 503 for THIS
+          // request; the re-projection is not awaited (the 503 answers now).
+          //
+          // W-26C (the boot-world race hardening): the re-projection is
+          // TRACKED in `inFlight` (never again an untracked `void` twin) so
+          // the next settled()/reproject() JOINS this rebuild instead of
+          // racing a second concurrent projection — and the DIRTY flag keeps
+          // every surface degraded (never a pre-failure snapshot) until a
+          // projection that started AFTER the failure lands the durable
+          // truth. The boot world's retry then reads it FRESH (the concurrent
+          // cold-boot collision self-heals on the first retry).
+          failure = result.error; // the degraded surfaces report the durable failure's own code
+          phase = 'projecting';
+          dirty = true;
+          if (inFlight === null) {
+            inFlight = attempt();
+          }
+          // (an already-tracked attempt keeps its slot: it started BEFORE
+          // this failure, so the dirty flag above forces settled() to land a
+          // fresh post-failure projection after it completes — never join
+          // the stale one as sufficient)
+          return { ok: false, error: result.error };
         }
-        // (an already-tracked attempt keeps its slot: it started BEFORE
-        // this failure, so the dirty flag above forces settled() to land a
-        // fresh post-failure projection after it completes — never join
-        // the stale one as sufficient)
-        return { ok: false, error: result.error };
       }
+      return { ok: true };
+    } finally {
+      draining = false;
     }
-    return { ok: true };
   }
 
   function goalOf(projectId: string): { readonly ok: true; readonly value: GoalSetRecord | null } | { readonly ok: false; readonly error: StoreFailure } {
@@ -1286,6 +1534,9 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     stampSessionOwner,
     sessionProjectRows,
     freshJobRecordsOfTenant,
+    recordOutcome,
+    projectionMembership,
+    reprojectQuietly,
     lastProjection: () => report,
     lastFailure: () => failure,
     runbook,
