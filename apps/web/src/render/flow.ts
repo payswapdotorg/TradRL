@@ -36,6 +36,7 @@
 
 import { NOTICE_TITLES, type NoticeKind } from '../core/notices';
 import { formatInstantUtc } from '../core/format';
+import { TIME_MACHINE_STEP_MS } from '../core/timemachine';
 import { v, type VNode } from './vtree';
 import { iconOf, statusPill, type ComponentIcon } from './components';
 
@@ -80,9 +81,24 @@ export interface StreamCardProps {
   readonly openRef?: string | null;
 }
 
-/** The evidence badge label of a consulted ref (mono, content-address style). */
+/**
+ * FW-32-B (b5): one ref's DISPLAY label — the kind prefix joins only
+ * when the ref does not already carry it. The ref values are the
+ * records' own ids and several id families are themselves prefixed
+ * (`job:e596cb45`, `xgs:…`), so the naive `${kind}:${ref}` join
+ * double-prefixed them (M1/M3's finding: the job capsule rendered
+ * "refs: job:job:e596cb45"). Normalized HERE, at the render seam —
+ * the matching grammar (data-capsule attributes, open keys) keeps
+ * the exact `${kind}:${ref}` form it always had; only what the human
+ * reads changes.
+ */
+export function refLabelOf(kind: string, ref: string): string {
+  return ref.startsWith(`${kind}:`) ? ref : `${kind}:${ref}`;
+}
+
+/** The evidence badge label of a consulted ref (mono, content-address style; never double-prefixed). */
 export function evidenceBadgeLabel(kind: string, ref: string): string {
-  return `${kind}:${ref}`;
+  return refLabelOf(kind, ref);
 }
 
 /** One watch-mode stream card (§4.7). The header = agent + role chip + capability; the body = evidence badges, proposal, challenge, risk-check pills, decision. */
@@ -139,12 +155,13 @@ export function capsuleBadgeLabel(capsuleId: string): string {
   return capsuleId.length <= 12 ? capsuleId : `${capsuleId.slice(0, 8)}…${capsuleId.slice(-3)}`;
 }
 
-/** One inline capsule badge (§4.9): rounded-lg, hairline, mono content address; opens the payload + provenance. D-18 (W-29 wave 2): the badge's label is abbreviated by design (the content-address style) — the FULL ref rides the hover tooltip (title) so a truncated label never hides the value (M5's finding: "evidence ref labels are hard-truncated — full ref only in aria-label"). */
+/** One inline capsule badge (§4.9): rounded-lg, hairline, mono content address; opens the payload + provenance. D-18 (W-29 wave 2): the badge's label is abbreviated by design (the content-address style) — the FULL ref rides the hover tooltip (title) so a truncated label never hides the value (M5's finding: "evidence ref labels are hard-truncated — full ref only in aria-label"). FW-32-B (b5): the label + tooltip render the NORMALIZED ref (refLabelOf — a ref already carrying its kind prefix is never double-prefixed); the data-capsule / data-capsule-open attributes keep the exact `${kind}:${ref}` matching grammar the open key compares against. */
 export function capsuleBadge(kind: string, ref: string, open = false): VNode {
   const fullRef = `${kind}:${ref}`;
-  return v('button', { class: `capsule-badge${open ? ' open' : ''}`, 'data-capsule': fullRef, 'data-action': 'capsule-open', 'data-capsule-open': fullRef, type: 'button', 'aria-label': `Open evidence capsule ${fullRef}`, 'aria-expanded': open ? 'true' : 'false', title: fullRef }, [
+  const label = refLabelOf(kind, ref);
+  return v('button', { class: `capsule-badge${open ? ' open' : ''}`, 'data-capsule': fullRef, 'data-action': 'capsule-open', 'data-capsule-open': fullRef, type: 'button', 'aria-label': `Open evidence capsule ${label}`, 'aria-expanded': open ? 'true' : 'false', title: label }, [
     iconOf('box', 'ci ci-14'),
-    v('span', { class: 'capsule-address' }, [capsuleBadgeLabel(fullRef)]),
+    v('span', { class: 'capsule-address' }, [capsuleBadgeLabel(label)]),
   ]);
 }
 
@@ -243,23 +260,60 @@ export function projectionNoticeOf(mode: string, paused = false): string {
   return 'Playing history forward — each step renders only what was knowable then.';
 }
 
-/** The scrubber's range bounds for a state (min = the opened instant, max = the anchor). */
-export function scrubberBoundsOf(openedAt: number, anchorAt: number): { readonly min: number; readonly max: number } {
-  return { min: Math.min(openedAt, anchorAt), max: Math.max(openedAt, anchorAt) };
+/**
+ * FW-32-B (Round A blocker 4) — the scrubber range's own shape: the
+ * floor (min), the live anchor (max) and HOW the floor was derived.
+ * `derived: 'records'` — anchored to the project's own event history
+ * (the earliest record instant on hand; the honest-derivation law —
+ * never a fabricated instant). `derived: 'session'` — no records on
+ * hand; the session open instant stands, and the bar carries the
+ * teaching note that says exactly that.
+ */
+export interface ScrubberRange {
+  readonly floorAt: number;
+  readonly anchorAt: number;
+  readonly derived: 'records' | 'session';
 }
 
-/** The Time Machine control bar (§4.8): mode select + scrubber + playback controls + the mono instant readout + the projection notice. */
+/** The scrubber's range bounds for a range anchor (min = the floor, max = the anchor; ordered). */
+export function scrubberBoundsOf(range: ScrubberRange): { readonly min: number; readonly max: number } {
+  return { min: Math.min(range.floorAt, range.anchorAt), max: Math.max(range.floorAt, range.anchorAt) };
+}
+
+/**
+ * FW-32-B: the range's own teaching line — the honest-derivation
+ * disclosure rendered with the scrubber. 'records' names the earliest
+ * record instant (the derivation stated, the instant shown); 'session'
+ * states the fallback plainly (no history on record yet — the range
+ * spans this session). Never a claim the data does not support.
+ */
+export function scrubberRangeNoteOf(range: ScrubberRange): string {
+  if (range.derived === 'session') {
+    return `No project history is on record yet — the range spans this session (from ${formatInstantUtc(range.floorAt)}).`;
+  }
+  return `The range spans this project's own event history — earliest record ${formatInstantUtc(range.floorAt)} (derived from the records on hand; never a fabricated instant).`;
+}
+
+/**
+ * The Time Machine control bar (§4.8): mode select + scrubber +
+ * playback controls + the mono instant readout + the projection
+ * notice. FW-32-B (Round A blocker 4): the scrubber range anchors to
+ * the PROJECT'S OWN EVENT HISTORY (options.range — the floor derived
+ * from the records on hand, disclosed by the range note), never the
+ * session start; the Step controls' titles disclose the exact
+ * granularity they move the selected instant by.
+ */
 export function timeMachineControls(options: {
   readonly mode: string;
   readonly viewAt: number;
-  readonly openedAt: number;
-  readonly anchorAt: number;
+  readonly range: ScrubberRange;
   readonly playing: boolean;
   readonly progress: number | null;
 }): VNode {
-  const bounds = scrubberBoundsOf(options.openedAt, options.anchorAt);
+  const bounds = scrubberBoundsOf(options.range);
   const value = Math.min(Math.max(options.viewAt, bounds.min), bounds.max);
-  return v('div', { class: 'tm-controls-bar', 'data-tm-mode': options.mode }, [
+  const stepWord = `${TIME_MACHINE_STEP_MS}ms`;
+  return v('div', { class: 'tm-controls-bar', 'data-tm-mode': options.mode, 'data-tm-range': options.range.derived }, [
     v('div', { class: 'tm-modes', role: 'group', 'aria-label': 'Time Machine mode' }, TIME_MACHINE_MODES.map((entry) => v('button', {
       class: `tm-mode-btn${options.mode === entry.key ? ' active' : ''}`,
       'data-action': `tm-mode-${entry.key}`,
@@ -282,15 +336,22 @@ export function timeMachineControls(options: {
     }, []),
     v('div', { class: 'tm-playback', role: 'group', 'aria-label': 'Playback controls' }, [
       v('button', { class: 'tm-button', 'data-action': 'playback-start', type: 'button', 'aria-label': options.playing ? 'Pause playback' : 'Play playback' }, [options.playing ? 'Pause' : 'Play']),
-      // MI-D9: the manual steps carry their meaning BEFORE the click (the
-      // D-18 law) — Step back steps the view BACK one controlled step (in
-      // T-x it grows the offset), Step steps it forward one.
-      v('button', { class: 'tm-button', 'data-action': 'playback-step-back', type: 'button', 'aria-label': 'Step back', title: 'Step the view instant back one controlled step (in T-x: grow the offset)' }, ['Step back']),
-      v('button', { class: 'tm-button', 'data-action': 'playback-step', type: 'button', 'aria-label': 'Step forward', title: 'Step the view instant forward one controlled step' }, ['Step']),
+      // MI-D9 + FW-32-B: the manual steps carry their meaning BEFORE the
+      // click (the D-18 law) and DISCLOSE the granularity — Step back
+      // moves the SELECTED instant back exactly one ${step} step (never
+      // the t-minus offset nudge that re-anchored toward now), Step
+      // moves it forward one, both clamped to the range.
+      v('button', { class: 'tm-button', 'data-action': 'playback-step-back', type: 'button', 'aria-label': 'Step back', title: `Step the selected view instant back ${stepWord} (clamped at the range floor)` }, ['Step back']),
+      v('button', { class: 'tm-button', 'data-action': 'playback-step', type: 'button', 'aria-label': 'Step forward', title: `Step the selected view instant forward ${stepWord} (clamped at the live anchor)` }, ['Step']),
     ]),
     v('output', { class: 'tm-readout', 'aria-label': 'Selected view instant' }, [formatInstantUtc(options.viewAt)]),
     v('span', { class: 'tm-notice' }, [projectionNoticeOf(options.mode, options.mode === 'playback' && !options.playing)]),
     ...(options.progress === null ? [] : [v('span', { class: 'tm-progress' }, [`${Math.round(options.progress * 100)}%`])]),
+    // FW-32-B: the range's honest-derivation note — the derivation
+    // stated with the instant it derived (or the session fallback
+    // taught plainly). aria-hidden: the scrubber's own min/max
+    // attributes carry the same facts to assistive tech.
+    v('span', { class: 'tm-range-note', 'data-tm-range-derived': options.range.derived }, [scrubberRangeNoteOf(options.range)]),
   ]);
 }
 
@@ -336,10 +397,21 @@ export function notificationBell(unread: number, target = 'inbox'): VNode {
   ]);
 }
 
-/** The toast record (§4.10): top-right, role=status, ~5s auto-dismiss (the app layer owns the timer) + the manual dismiss (the W-14b close button — the app layer's toast-close handler finally has an element). */
-export function toastRecord(kind: NoticeKind, title: string, sentence: string): VNode {
+/**
+ * FW-32-B (b3): the toast's icon — the eight notice kinds' own glyph;
+ * the export-download confirmation toast's 'box' glyph; a closed
+ * fallback for anything else (never a broken glyph lookup).
+ */
+export function toastIconOf(kind: string): ComponentIcon {
+  if (kind === 'export-download') return 'box';
+  const icon = NOTICE_ICONS[kind as NoticeKind];
+  return icon === undefined ? 'inbox' : icon;
+}
+
+/** The toast record (§4.10): top-right, role=status, ~5s auto-dismiss (the app layer owns the timer) + the manual dismiss (the W-14b close button — the app layer's toast-close handler finally has an element). FW-32-B (b3): the kind is a string — the eight notice kinds AND the export-download confirmation (W-15b-r's lifecycle, the app layer's own token-checked timer). */
+export function toastRecord(kind: string, title: string, sentence: string): VNode {
   return v('div', { class: `toast toast-${kind}`, role: 'status', 'data-toast': kind }, [
-    iconOf(NOTICE_ICONS[kind], 'ci ci-16'),
+    iconOf(toastIconOf(kind), 'ci ci-16'),
     v('div', { class: 'toast-text' }, [
       v('div', { class: 'toast-title' }, [title]),
       v('div', { class: 'toast-sentence' }, [sentence]),

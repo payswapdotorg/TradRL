@@ -35,7 +35,8 @@ import { systemNowMs } from '../core/clock';
 import type { SectionId } from '../core/sections';
 import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
-import { openWorkspace, reduceWorkspace, serializeWorkspaceExport, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
+import { historyFloorOf, openWorkspace, reduceWorkspace, serializeWorkspaceExport, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
+import { TIME_MACHINE_STEP_MS, viewAtOf as viewAtOfTimeMachine } from '../core/timemachine';
 import type { WorkspaceScope } from '../core/tenant';
 import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
@@ -789,6 +790,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       openCapsule: null,
       projectFilter: '',
       exportVerify: null,
+      scrubBounds: null,
     };
     let paletteResults: readonly PaletteEntry[] = [];
     // §4.10's once-per-notice toast guard: the id of the notice the
@@ -920,13 +922,29 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      * The user selected a downloaded export; the browser serves it as a
      * File-like (name + text()). Null when the target is not the input
      * or the selection is empty/not a readable file.
+     *
+     * FW-32-B (b1 — Round A blocker 5): the selection is read through
+     * the FileList's OWN surface (a numeric length + index access) —
+     * the pre-fix `Array.isArray(files)` guard passed ONLY the test
+     * harness's plain arrays, because a REAL browser serves a FileList
+     * (array-like, never an Array): every real upload fell through to
+     * null, the verifier never ran, and the input's label reset to
+     * "No file chosen" at the next beat re-projection (the L3/L4/M5
+     * finding — the upload attaches but no verdict ever renders).
+     * Array-likes and Arrays both read the same way here; the beat-race
+     * class (a change dispatched on a replaced element) is already
+     * covered by the J3 discipline — the change reads the buffered
+     * state or the live element, whichever survived.
      */
     const verifyFileTargetOf = (target: unknown): { readonly element: FieldEventTarget; readonly file: SelectedExportFile } | null => {
       const element = target as FieldEventTarget | null;
       if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
       if (element.getAttribute('data-action') !== 'export-verify-file') return null;
-      const files = (element as FieldEventTarget & { readonly files?: readonly unknown[] }).files;
-      const selected = Array.isArray(files) ? files[0] : null;
+      const files = (element as FieldEventTarget & { readonly files?: unknown }).files;
+      if (files === null || files === undefined) return null;
+      const list = files as { readonly length?: unknown; readonly [index: number]: unknown };
+      if (typeof list.length !== 'number' || list.length < 1) return null;
+      const selected = list[0];
       if (selected === null || selected === undefined) return null;
       const candidate = selected as Partial<{ readonly name: unknown; readonly text: unknown }>;
       if (typeof candidate.name !== 'string') return null;
@@ -938,11 +956,28 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // range input mid-drag and the browser silently drops the drag.
     // The `change` event (the release / the keyboard commit) is the
     // one commit point.
+    //
+    // FW-32-B (Round A blocker 4) — THE DRAG PIN: the first buffered
+    // input of a drag also pins the bounds the drag started under
+    // (view.scrubBounds — rendered by timeMachineBar so the beat
+    // re-projection keeps the SAME min/max; the anchor advances every
+    // beat, and without the pin the range re-anchors continuously
+    // mid-drag). The render() below also re-writes the fresh
+    // scrubber's value to the buffered position, so the re-projected
+    // thumb stays where the user dragged it. The pin clears at the
+    // change-commit (the drag's one commit point).
     let scrubAt: number | null = null;
     /** Parse the scrubber's live value (NaN-safe: a garbage value commits nothing). */
     const scrubValueOf = (element: FieldEventTarget): number | null => {
       const parsed = Number.parseInt(typeof element.value === 'string' ? element.value : '', 10);
       return Number.isFinite(parsed) ? parsed : null;
+    };
+    /** The scrubber's rendered bounds (its min/max attributes), null when unparseable. */
+    const scrubBoundsOfElement = (element: FieldEventTarget): { readonly min: number; readonly max: number } | null => {
+      const min = Number.parseInt(element.getAttribute('min') ?? '', 10);
+      const max = Number.parseInt(element.getAttribute('max') ?? '', 10);
+      if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) return null;
+      return { min, max };
     };
     /** Re-focus the re-projected node matching a focus key (the tree was rebuilt under a pending focus move — best effort). */
     const restoreFocusByKey = (key: { readonly attr: string; readonly value: string } | null): void => {
@@ -1094,6 +1129,25 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // keyboard journey (Tab into the nav, Enter to activate) survives
       // every poll beat.
       if (focusedInteractiveKey !== null) restoreInteractiveFocusByKey(focusedInteractiveKey);
+      // FW-32-B (Round A blocker 4) — THE IN-FLIGHT DRAG POSITION
+      // SURVIVES THE BEAT: a scrub drag buffers its position (scrubAt)
+      // and never re-renders, but the BEAT's re-projection replaces the
+      // scrubber anyway — the fresh element's value resets to the
+      // model's view instant, so the thumb jumps away from under the
+      // pointer mid-drag. Re-write the fresh scrubber's value to the
+      // buffered position (a native-setter write at the app seam, the
+      // same class as the focus restorations above; the pinned bounds
+      // in view.scrubBounds keep min/max identical, so the value lands
+      // where the user dragged it).
+      if (scrubAt !== null && document.querySelectorAll !== undefined) {
+        for (const candidate of document.querySelectorAll('[data-action="tm-scrub"]')) {
+          const scrubberElement = candidate as { value?: string };
+          if (scrubberElement.value !== undefined) {
+            scrubberElement.value = String(scrubAt);
+            break;
+          }
+        }
+      }
     };
 
     /** The evidence capsules for the palette (the Evidence section's own fold — mirrors render/model.ts's capsule list, unprojected). */
@@ -1291,10 +1345,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // live position — never a dispatch, never a render (a re-projection
       // under the pointer replaces the range input and the browser
       // silently drops the drag; the J3 pointer discipline, same class).
+      // FW-32-B: the drag's FIRST input also pins the bounds (the
+      // mid-drag re-anchor fix — see the scrub buffer's own note).
       const scrubber = scrubTargetOf(event.target);
       if (scrubber !== null) {
         const parsed = scrubValueOf(scrubber);
         if (parsed !== null) scrubAt = parsed;
+        if (view.scrubBounds === null) {
+          const bounds = scrubBoundsOfElement(scrubber);
+          if (bounds !== null) view = { ...view, scrubBounds: bounds }; // NO render — the pin rides the view; the next beat's re-projection renders it
+        }
         return;
       }
       const entry = launchFieldOf(event.target);
@@ -1377,13 +1437,24 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // timestamp mode), clamped to the anchor (the view may never
       // point after it — the machine's typed law, guarded here so the
       // delegated listener can never throw at the user).
+      //
+      // FW-32-B (Round A blocker 4): the clamp's floor is the
+      // PROJECT'S OWN EVENT HISTORY (historyFloorOf — the earliest
+      // record instant on hand, the honest-derivation law), never the
+      // session start: the pre-session history (the auditor's incident
+      // review) stays reachable across every load/reload. When no
+      // records are on hand the fold returns the session open instant
+      // (derived: 'session') — the pre-fix behavior stands, taught by
+      // the range note. The drag pin clears here: the commit is the
+      // drag's one end point.
       const scrubber = scrubTargetOf(event.target);
       if (scrubber !== null) {
         const raw = scrubAt ?? scrubValueOf(scrubber);
         scrubAt = null;
+        if (view.scrubBounds !== null) view = { ...view, scrubBounds: null };
         if (raw !== null) {
           const anchor = state.timeMachine.anchorAt;
-          const floor = Math.min(state.openedAt, anchor);
+          const floor = Math.min(historyFloorOf(state).floorAt, anchor);
           const clamped = Math.min(Math.max(raw, floor), anchor);
           dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: clamped }); // renders via onState
         }
@@ -1586,7 +1657,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           } else if (timeMachine.mode === 'playback' && timeMachine.playback !== null && timeMachine.playback.paused) {
             dispatch({ kind: 'playback-resumed', at: instants.nowMs() }); // renders via onState
           } else {
-            dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt: state.openedAt, stepMs: 500 });
+            dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt: state.openedAt, stepMs: TIME_MACHINE_STEP_MS });
           }
         }
         // §4.8: the Time Machine mode select + playback stepping (pure dispatches —
@@ -1604,11 +1675,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // the view BACK one controlled step and STAYS paused (a new pure
         // transition, its own append-only event), and Step while paused
         // is the user's own forward step (staying paused — the freeze
-        // stops the beat's auto ticks, never the Step control). Outside
-        // playback, Step back keeps its documented T-x meaning (the
-        // offset grows by one step) and Step is a safe no-op (the control
-        // belongs to playback — pre-fix it threw the typed "not armed"
-        // error at the user).
+        // stops the beat's auto ticks, never the Step control).
+        //
+        // FW-32-B (Round A blocker 4) — OUTSIDE playback, the Steps step
+        // the SELECTED INSTANT (never the t-minus offset): the pre-fix
+        // Step back dispatched view-tminus(tMinusMs+500), and because the
+        // live anchor advances EVERY beat (~1s > the 500ms step), the
+        // re-anchored view moved FORWARD on every click — M5's finding
+        // (04:25:04 -> 04:28:58 -> 04:29:05: the selected incident
+        // instant lost). Now both controls dispatch an EXPLICIT timestamp
+        // (viewAt ± TIME_MACHINE_STEP_MS), clamped to [the history floor,
+        // the anchor] — the same clamp the scrubber's commit rides — so
+        // the view only ever moves exactly one disclosed step, in the
+        // clicked direction, from wherever the user selected (the t-minus
+        // banner becomes the explicit-instant banner; the projection
+        // notice names it).
         if (kind === 'playback-step') {
           const timeMachine = state.timeMachine;
           if (timeMachine.mode === 'playback' && timeMachine.playback !== null && timeMachine.playback.paused) {
@@ -1617,15 +1698,36 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             if (nextViewAt <= timeMachine.anchorAt) dispatch({ kind: 'playback-step-forward', at: instants.nowMs() });
           } else if (timeMachine.mode === 'playback' && timeMachine.playback !== null) {
             dispatch({ kind: 'playback-tick', at: instants.nowMs() }); // playing: the manual nudge stays a tick
+          } else {
+            // FW-32-B: step the SELECTED instant forward one disclosed step, clamped at the anchor (at the anchor — live — it stays live)
+            const selected = viewAtOfTimeMachine(timeMachine);
+            if (selected + TIME_MACHINE_STEP_MS <= timeMachine.anchorAt) {
+              dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: selected + TIME_MACHINE_STEP_MS }); // renders via onState
+            }
           }
-          // outside playback: no-op — the control belongs to playback
         }
         if (kind === 'playback-step-back') {
           const timeMachine = state.timeMachine;
           if (timeMachine.mode === 'playback' && timeMachine.playback !== null) {
             dispatch({ kind: 'playback-step-back', at: instants.nowMs() }); // one controlled step back, staying paused, never a mode flip
           } else {
-            dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: timeMachine.tMinusMs + 500 }); // T-x: the offset grows (the tooltip's own words)
+            // FW-32-B: step the SELECTED instant back one disclosed step.
+            // The clamp at the project's own history floor applies only
+            // when the floor is RECORD-DERIVED (the range's own law — the
+            // stepped instant stays inside the span the scrubber renders)
+            // and only while the view sits above it — a view already
+            // deeper than the floor steps freely (a step BACK never moves
+            // the view forward, the exact defect class this control is
+            // shedding). With NO records on hand (the session fallback)
+            // the step is unbounded, exactly the pre-fix T-x depth: the
+            // fallback floor is taught, never enforced.
+            const selected = viewAtOfTimeMachine(timeMachine);
+            const history = historyFloorOf(state);
+            const clamped = history.derived === 'records' && selected >= history.floorAt;
+            const stepped = clamped
+              ? Math.max(selected - TIME_MACHINE_STEP_MS, history.floorAt)
+              : selected - TIME_MACHINE_STEP_MS;
+            dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: stepped }); // renders via onState
           }
         }
         if (kind === 'refresh') void refreshWithShell();
@@ -1683,6 +1785,27 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           anchor.setAttribute('href', blob);
           anchor.setAttribute('download', `tradrl-workspace-${state.scope.projectId}.json`);
           if (typeof anchor.click === 'function') anchor.click();
+          // FW-32-B (b3 — Round A blocker 5, M1/M5/S5's finding: "no
+          // download toast — had to check the Downloads folder"): the
+          // download CONFIRMATION toast, on the W-15b-r lifecycle — the
+          // same surface + token-checked ~5s auto-dismiss the notice
+          // toast rides (never a new chrome pattern), with the manual
+          // close the toast record already carries.
+          const fileName = `tradrl-workspace-${state.scope.projectId}.json`;
+          const shown = { kind: 'export-download', title: 'Export downloaded', sentence: `${fileName} — verify it any time in Settings: "Verify an export file".` };
+          view = { ...view, toast: shown };
+          render();
+          if (scheduler !== undefined) {
+            scheduler.schedule(5000, () => {
+              // Token-checked, exactly like the notice toast: a manual
+              // close (or a newer toast replacing this one) already
+              // cleared it — the late tick dismisses nothing else.
+              if (view.toast === shown) {
+                view = { ...view, toast: null };
+                render();
+              }
+            });
+          }
         }
         // §4.10 the toast dismissal (manual close; the ~5s timer is scheduled on toast show)
         if (kind === 'toast-close') {

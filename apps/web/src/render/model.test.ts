@@ -1028,3 +1028,42 @@ describe('render model: D-18 — the copy polish (jargon explained, lessons in w
     expect(opened).toContain('refs: fill:fil-1'); // and the line itself renders in the mono block
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-32-B (b2 — Round A blocker 5) — THE ONE EVIDENCE FOLD: Home's
+// EVIDENCE CAPSULES stat counts the SAME list the Evidence section renders
+// (the D-9 jobs lane included). M1/M3/S2's finding — "Home says 6 while
+// Evidence lists 9" — is structurally impossible now: one fold, one count.
+// ---------------------------------------------------------------------------
+
+describe('render model: FW-32-B — Home\'s capsule stat is the Evidence section\'s own fold', () => {
+  /** The D-9 fixture shape: the read families' capsules PLUS one completed research job with its release-candidate result. */
+  function workspaceWithJobsLane(): WorkspaceState {
+    const job: JobRecord = { jobId: 'job:57d1815d', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: T0 + 40, completedAt: T0 + 48, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' } };
+    return reduceAll(populatedWorkspace(), [
+      { kind: 'job-updated', at: T0 + 40, job },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  it('the Home tile counts every capsule the Evidence section lists — the jobs lane included (one source of truth)', () => {
+    // The fixture: the read families' capsules PLUS one capsule per
+    // completed job with a result (the lane Home's count used to miss).
+    const state = workspaceWithJobsLane();
+    const homeBytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'home' }));
+    // count the Evidence section's capsule cards (the section's own fold)
+    const evidenceState = reduceAll(state, [{ kind: 'section-selected', at: T0 + 50, section: 'evidence' }]);
+    const evidenceBytes = serializeVNode(renderConsoleModel(evidenceState, T0 + 50, { ...defaultShellView(evidenceState), accountView: 'section' }));
+    const evidenceCards = (evidenceBytes.match(/data-capsule-row="/g) ?? []).length;
+    expect(evidenceCards).toBeGreaterThanOrEqual(2); // the fixture carries the outcome capsule AND the job capsule
+    // the Home tile renders exactly that count — never the read families' count alone
+    const tile = /data-stat="EVIDENCE CAPSULES"[^]*?<div class="stat-value">(\d+)<\/div>/.exec(homeBytes);
+    if (tile === null) throw new Error('the EVIDENCE CAPSULES tile did not render');
+    expect(Number(tile[1])).toBe(evidenceCards);
+    // the specific pre-fix defect is dead: the fixture's completed job mints a
+    // capsule the Evidence section lists, and Home's count INCLUDES it
+    const jobCapsule = capsuleFromJob(SCOPE, { jobId: 'job:57d1815d', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: T0 + 40, completedAt: T0 + 48, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' } });
+    expect(evidenceBytes).toContain(`data-capsule-row="${jobCapsule.capsuleId}"`);
+    expect(Number(tile[1])).toBeGreaterThanOrEqual(2);
+  });
+});

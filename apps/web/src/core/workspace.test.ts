@@ -19,6 +19,8 @@ import {
   CHAIN_FORMAT_VERSION,
   CHAIN_GENESIS,
   composeWorkspaceExport,
+  earliestRecordInstantOf,
+  historyFloorOf,
   openWorkspace,
   reduceAll,
   reduceWorkspace,
@@ -1184,5 +1186,66 @@ describe('workspace: MI-D9 — the manual stepping events (Step back / Step whil
     state = reduceWorkspace(state, { kind: 'playback-step-forward', at: T0 + 2_000 });
     expect(state.timeMachine.playback?.paused).toBe(true);  // still paused — a manual step is not a resume
     expect(viewAtOf(state)).toBe(T0 + 1_000);                // one step forward from the frozen T0+500
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-32-B (Round A blocker 4) — THE SCRUBBER'S HISTORY ANCHOR: the floor
+// derives HONESTLY from the records the state holds (the honest-derivation
+// law), never the session start when history exists, and never a fabricated
+// instant. The pre-session event history (the auditor's incident review)
+// stays reachable across every load/reload.
+// ---------------------------------------------------------------------------
+
+describe('workspace: FW-32-B — the scrubber history floor (the honest-derivation law)', () => {
+  it('a state with NO records derives the SESSION fallback (the open instant), disclosed as such — never presented as record-derived', () => {
+    const state = openWorkspace(SCOPE, T0);
+    expect(earliestRecordInstantOf(state)).toBeNull(); // nothing on hand — the fold yields nothing
+    expect(historyFloorOf(state)).toEqual({ floorAt: T0, derived: 'session' });
+  });
+
+  it('the fold derives the earliest record instant across every kind the state holds — the project\'s own creation wins when it is earliest', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceAll(state, [
+      { kind: 'project-loaded', at: T0 + 1, project: projectRecord() },                 // createdAt T0
+      { kind: 'job-updated', at: T0 + 2, job: jobRecord('complete') },                  // submittedAt T0+20
+      { kind: 'outcome-recorded', at: T0 + 3, outcome: outcomeRecord() },               // asOf T0+30
+      { kind: 'org-snapshot', at: T0 + 4, snapshot: orgSnapshot() },                    // at T0+10
+    ]);
+    expect(earliestRecordInstantOf(state)).toBe(T0); // the project's own createdAt — the project's beginning
+    expect(historyFloorOf(state)).toEqual({ floorAt: T0, derived: 'records' });
+  });
+
+  it('PRE-SESSION history anchors the floor below the session start — the auditor\'s incident review (a deep-past refusal) is reachable after every reload', () => {
+    const incidentAt = T0 - 86_400_000; // a full day before the session opened
+    const refusal: GatewaySubmissionRecord = {
+      submissionId: 'sub-1', decisionId: 'dec-1', auditId: 'xga:1', tenant: 'tenant-a', project: 'proj-a',
+      kind: 'refused', refusal: { stage: 'risk_limits', bound: '2', observed: '2.4', constraintId: 'k-position' },
+      refusedAt: incidentAt,
+    } as unknown as GatewaySubmissionRecord;
+    const preSessionJob: JobRecord = { jobId: 'job-old', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: incidentAt + 100, completedAt: incidentAt + 900 };
+    let state = openWorkspace(SCOPE, T0); // the session opens a DAY after the incident
+    state = reduceAll(state, [
+      { kind: 'project-loaded', at: T0 + 1, project: projectRecord({ createdAt: T0 - 3_600_000 }) },
+      { kind: 'job-updated', at: T0 + 2, job: preSessionJob },
+      { kind: 'submission-recorded', at: T0 + 3, submission: refusal },
+    ]);
+    // the fold reaches the REFUSAL's own instant — the exact record the incident review is here for
+    expect(earliestRecordInstantOf(state)).toBe(incidentAt);
+    expect(historyFloorOf(state)).toEqual({ floorAt: incidentAt, derived: 'records' });
+    expect(historyFloorOf(state).floorAt).toBeLessThan(state.openedAt); // BELOW the session start — the pre-fix floor (openedAt) hid it
+  });
+
+  it('the fold is pure and deterministic — the same state derives the same floor, and a completed job\'s SUBMISSION instant counts (its record began there)', () => {
+    const submittedDeep = T0 - 7_200_000;
+    const job: JobRecord = { jobId: 'job-deep', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: submittedDeep, completedAt: T0 + 5 };
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceAll(state, [
+      { kind: 'project-loaded', at: T0 + 1, project: projectRecord() },
+      { kind: 'job-updated', at: T0 + 2, job },
+    ]);
+    const first = historyFloorOf(state);
+    expect(first).toEqual({ floorAt: submittedDeep, derived: 'records' }); // submittedAt — not completedAt (the record began at submission)
+    expect(historyFloorOf(state)).toEqual(first);                          // deterministic: the same state, the same floor
   });
 });

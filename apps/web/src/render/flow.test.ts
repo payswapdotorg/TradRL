@@ -38,13 +38,16 @@ import {
   NOTICE_SENTENCES,
   notificationBell,
   projectionNoticeOf,
+  refLabelOf,
   reviewStep,
   riskCheckToneOf,
   scrubberBoundsOf,
+  scrubberRangeNoteOf,
   streamCard,
   timeMachineControls,
   TIME_MACHINE_MODE_DESCRIPTIONS,
   TIME_MACHINE_MODES,
+  toastIconOf,
   toastRecord,
   twoStepConfirm,
 } from './flow';
@@ -150,6 +153,22 @@ describe('flow §4.9: the evidence capsule badge', () => {
     expect(bytes).toContain('aria-label="Open evidence capsule shadow_outcome:shadow_outcome_0001"');
   });
 
+  it('FW-32-B (b5): a ref that already carries its kind prefix is NEVER double-prefixed — the label, the tooltip and the aria-label all render the normalized ref (M1/M3: the job capsule rendered "refs: job:job:e596cb45")', () => {
+    expect(refLabelOf('job', 'job:e596cb45')).toBe('job:e596cb45'); // the prefixed id joins once, not twice
+    expect(refLabelOf('job', 'job-r1')).toBe('job:job-r1');          // an unprefixed id gains the kind exactly as before
+    expect(refLabelOf('outcome', 'out:demo0001')).toBe('outcome:out:demo0001'); // a DIFFERENT kind's prefix still joins
+    // the badge's display surfaces ride the normalized label...
+    const bytes = render(capsuleBadge('job', 'job:e596cb45'));
+    expect(bytes).toContain('title="job:e596cb45"');
+    expect(bytes).toContain('aria-label="Open evidence capsule job:e596cb45"');
+    expect(bytes).toContain('job:e596'); // the abbreviated content-address label (single prefix)
+    // ...while the MATCHING grammar keeps the exact kind:ref form it always had
+    expect(bytes).toContain('data-capsule="job:job:e596cb45"');
+    expect(bytes).toContain('data-capsule-open="job:job:e596cb45"');
+    // and the evidenceBadgeLabel helper rides the same normalization
+    expect(evidenceBadgeLabel('job', 'job:e596cb45')).toBe('job:e596cb45');
+  });
+
   it('D-18 (W-29 wave 2): the opened payload carries the FULL refs line as the mono block\'s hover title (the refs line wraps in CSS — the title keeps the complete refs hoverable)', () => {
     const refsLine = 'refs: job:558af789, outcome:out:demo0001';
     const bytes = render(capsulePayload('evc:9f2ac41bde07', ['deliverable: release-candidate', refsLine], 'read from /v1/jobs/:jobId', refsLine));
@@ -164,7 +183,7 @@ describe('flow §4.9: the evidence capsule badge', () => {
 });
 
 describe('flow §4.8: the Time Machine control bar', () => {
-  const bar = timeMachineControls({ mode: 't-minus', viewAt: T - 60_000, openedAt: T, anchorAt: T + 50, playing: false, progress: null });
+  const bar = timeMachineControls({ mode: 't-minus', viewAt: T - 60_000, range: { floorAt: T, anchorAt: T + 50, derived: 'session' }, playing: false, progress: null });
 
   it('the four charter modes render as a pressed group (LIVE / T-x / TIMESTAMP / PLAYBACK)', () => {
     const bytes = render(bar);
@@ -176,12 +195,12 @@ describe('flow §4.8: the Time Machine control bar', () => {
     expect(bytes.match(/aria-pressed="true"/g)?.length).toBe(1);
   });
 
-  it('the scrubber is a styled range input bounded by the workspace lifetime', () => {
+  it('the scrubber is a styled range input bounded by the range anchor (the floor -> the live anchor)', () => {
     const bytes = render(bar);
     expect(bytes).toContain('class="tm-scrubber"');
     expect(bytes).toContain('type="range"');
-    expect(scrubberBoundsOf(T, T + 50)).toEqual({ min: T, max: T + 50 });
-    expect(scrubberBoundsOf(T + 50, T)).toEqual({ min: T, max: T + 50 }); // order-independent
+    expect(scrubberBoundsOf({ floorAt: T, anchorAt: T + 50, derived: 'session' })).toEqual({ min: T, max: T + 50 });
+    expect(scrubberBoundsOf({ floorAt: T + 50, anchorAt: T, derived: 'session' })).toEqual({ min: T, max: T + 50 }); // order-independent
     expect(bytes).toContain(`value="${T - 60_000}"`.replace(String(T - 60_000), String(Math.min(Math.max(T - 60_000, T), T + 50))));
   });
 
@@ -211,11 +230,11 @@ describe('flow §4.8: the Time Machine control bar', () => {
     expect(projectionNoticeOf('playback', false)).toContain('Playing history forward'); // the playing caption stays
     expect(projectionNoticeOf('playback')).toContain('Playing history forward');        // the default (back-compat) stays
     // the bar renders the paused caption when playback is paused (playing = false in playback mode)
-    const pausedBar = render(timeMachineControls({ mode: 'playback', viewAt: T - 5_000, openedAt: T, anchorAt: T, playing: false, progress: 0.5 }));
+    const pausedBar = render(timeMachineControls({ mode: 'playback', viewAt: T - 5_000, range: { floorAt: T, anchorAt: T, derived: 'session' }, playing: false, progress: 0.5 }));
     expect(pausedBar).toContain(projectionNoticeOf('playback', true));
     expect(pausedBar).not.toContain('Playing history forward');
     // and the playing bar keeps its caption
-    const playingBar = render(timeMachineControls({ mode: 'playback', viewAt: T - 5_000, openedAt: T, anchorAt: T, playing: true, progress: 0.5 }));
+    const playingBar = render(timeMachineControls({ mode: 'playback', viewAt: T - 5_000, range: { floorAt: T, anchorAt: T, derived: 'session' }, playing: true, progress: 0.5 }));
     expect(playingBar).toContain('Playing history forward');
   });
 
@@ -233,10 +252,38 @@ describe('flow §4.8: the Time Machine control bar', () => {
   });
 
   it('the playing state swaps the play/pause label + renders the progress', () => {
-    const playing = render(timeMachineControls({ mode: 'playback', viewAt: T, openedAt: T, anchorAt: T, playing: true, progress: 0.5 }));
+    const playing = render(timeMachineControls({ mode: 'playback', viewAt: T, range: { floorAt: T, anchorAt: T, derived: 'session' }, playing: true, progress: 0.5 }));
     expect(playing).toContain('Pause');
     expect(playing).toContain('aria-label="Pause playback"');
     expect(playing).toContain('<span class="tm-progress">50%</span>');
+  });
+
+  it('FW-32-B (Round A blocker 4): the scrubber range anchors to the PROJECT\u2019S OWN EVENT HISTORY when records exist \u2014 the min is the record-derived floor, the range note states the honest derivation with the instant it derived (never the session start)', () => {
+    const floor = T - 86_400_000; // a day of pre-session history on record
+    const historyBar = render(timeMachineControls({ mode: 'timestamp', viewAt: T, range: { floorAt: floor, anchorAt: T + 50, derived: 'records' }, playing: false, progress: null }));
+    expect(historyBar).toContain(`min="${floor}"`);   // the floor is the earliest record instant...
+    expect(historyBar).toContain(`max="${T + 50}"`); // ...and the ceiling is the live anchor
+    expect(historyBar).toContain('data-tm-range="records"');
+    expect(historyBar).toContain(scrubberRangeNoteOf({ floorAt: floor, anchorAt: T + 50, derived: 'records' }));
+    expect(historyBar).toContain("project's own event history");
+    expect(historyBar).toContain(formatInstantUtc(floor)); // the derivation names the instant it derived
+    expect(historyBar).toContain('never a fabricated instant');
+  });
+
+  it('FW-32-B: with NO history on record the session floor stands WITH the teaching note \u2014 the current behavior, stated (never presented as record-derived)', () => {
+    const bytes = render(bar); // the suite's own bar: derived 'session', floor = T
+    expect(bytes).toContain(`min="${T}"`);
+    expect(bytes).toContain('data-tm-range="session"');
+    expect(bytes).toContain('No project history is on record yet');
+    expect(bytes).toContain('the range spans this session');
+    expect(bytes).toContain(formatInstantUtc(T));
+    expect(bytes).not.toContain("project's own event history");
+  });
+
+  it('FW-32-B: the Step controls DISCLOSE the exact granularity they move the selected instant by (the pre-fix offset nudge never named a step)', () => {
+    const bytes = render(bar);
+    expect(bytes).toContain('title="Step the selected view instant back 500ms (clamped at the range floor)"');
+    expect(bytes).toContain('title="Step the selected view instant forward 500ms (clamped at the live anchor)"');
   });
 });
 
@@ -279,6 +326,19 @@ describe('flow §4.10: notifications (bell + toast + the eight event types)', ()
     expect(NOTICE_ICONS.failed_evaluation).toBe('flask');
     expect(NOTICE_ICONS.safety_intervention).toBe('shield');
     expect(NOTICE_SENTENCES.safety_intervention).toBe('A safety gate intervened and stopped a decision.');
+  });
+
+  it('FW-32-B (b3): the export-download confirmation toast renders on the SAME surface + lifecycle (a closed icon vocabulary, never a broken glyph lookup)', () => {
+    expect(toastIconOf('export-download')).toBe('box');                 // the download confirmation's own glyph
+    expect(toastIconOf('failed_evaluation')).toBe('flask');             // the eight notice kinds keep theirs
+    expect(toastIconOf('anything-else')).toBe('inbox');                 // a closed fallback, never undefined
+    const bytes = render(toastRecord('export-download', 'Export downloaded', 'tradrl-workspace-prj-a.json — verify it any time in Settings: "Verify an export file".'));
+    expect(bytes).toContain('role="status"');
+    expect(bytes).toContain('data-toast="export-download"');
+    expect(bytes).toContain('toast-title');
+    expect(bytes).toContain('Export downloaded');
+    expect(bytes).toContain('data-action="toast-close"');               // the manual dismiss rides the same record
+    expect(bytes).toContain('class="ci ci-16"');                        // an icon renders (never a broken glyph)
   });
 });
 

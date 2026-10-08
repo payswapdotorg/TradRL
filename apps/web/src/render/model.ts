@@ -49,7 +49,7 @@ import {
 import type { SectionId } from '../core/sections';
 import { scopedInbox, unreadCount, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
-import { viewAtOf, watchEventsOf, type WorkspaceState } from '../core/workspace';
+import { viewAtOf, watchEventsOf, historyFloorOf, type WorkspaceState } from '../core/workspace';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
 import type { WatchEvent } from '../core/watch';
 import { timelineBucketsOf, formatTimeUtc, type TimelineEntry } from '../core/timeline';
@@ -83,6 +83,7 @@ import {
   noticeCopyOf,
   notificationBell,
   NOTICE_SENTENCES,
+  refLabelOf,
   reviewStep,
   riskCheckToneOf,
   streamCard,
@@ -352,7 +353,7 @@ function decisionCard(scope: WorkspaceScope, outcome: OutcomeRecord, viewAt: num
         ? [v('span', { class: 'stream-none' }, ['none'])]
         : evidenceRefs.map((entry) => capsuleBadge(entry.kind, entry.ref, openCapsule === `${entry.kind}:${entry.ref}`))),
       ...(openedRef === null ? [] : [capsulePayload(`${openedRef.kind}:${openedRef.ref}`, [
-        `ref ${openedRef.kind}:${openedRef.ref}`,
+        `ref ${refLabelOf(openedRef.kind, openedRef.ref)}`,
         decisionEvidenceLineOf(outcome, openedRef.kind, openedRef.ref),
       ], `cited by the deciding record ${outcome.decision.decisionRef} of ${outcome.outcomeId} — resolved from the outcome record (L20)`)]),
       // the outcome's OWN working capsule chip (§4.9): opens the full payload + provenance inline
@@ -532,7 +533,7 @@ function outcomeCard(scope: WorkspaceScope, outcome: OutcomeRecord, viewAt: numb
       { eyebrow: 'IDENTITY', pairs: [
         ['outcome id', outcome.outcomeId],
         ['outcome class', outcome.outcomeClass],
-        ['evidence', outcome.evidence.map((entry) => `${entry.kind}:${entry.ref}`).join(', ') || 'none'],
+        ['evidence', outcome.evidence.map((entry) => refLabelOf(entry.kind, entry.ref)).join(', ') || 'none'],
       ] },
       { eyebrow: 'ADVANCED', pairs: [
         ['decision ref', outcome.decision.decisionRef],
@@ -617,10 +618,38 @@ function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt
   ]);
 }
 
+/**
+ * FW-32-B (b2) — THE ONE EVIDENCE FOLD: the capsule list the Evidence
+ * section renders, derived ONCE here (every read family's projection
+ * + the D-9 jobs lane, in the section's own order) and consumed by
+ * BOTH the Evidence section AND Home's EVIDENCE CAPSULES stat — one
+ * source of truth, so the glance-level stat can never disagree with
+ * the section again (M1/M3/S2's finding: "Home says 6 while Evidence
+ * lists 9" — the jobs lane was missing from Home's count).
+ */
+function evidenceCapsulesOf(state: WorkspaceState, viewAt: number): readonly EvidenceCapsule[] {
+  const scope = state.scope;
+  return [
+    ...projectToView(state.outcomes, viewAt, availabilityOfOutcome).map((outcome) => capsuleFromOutcome(scope, outcome)),
+    ...projectToView(state.postMortems, viewAt, availabilityOfPostMortem).map((postMortem) => capsuleFromPostMortem(scope, postMortem)),
+    ...projectToView(state.knowledge, viewAt, availabilityOfKnowledge).map((knowledge) => capsuleFromKnowledge(scope, knowledge)),
+    ...projectToView(state.submissions, viewAt, availabilityOfSubmission).map((submission) => capsuleFromSubmission(scope, submission)),
+    // D-9 (W-28): the jobs lane — one capsule per COMPLETED job WITH a
+    // result (the fold's own law), so the Evidence section lists the
+    // job-derived capsules ALONGSIDE the read families: the research
+    // result is no longer a lineage LEAF (no capsule referenced its
+    // job; a fresh release-candidate result minted zero capsules — L2's
+    // P10 finding). The jobs read (GET /v1/jobs) serves BOTH backings'
+    // records (the durable lane hydrates through the same route), so
+    // this fold covers the demo and the durable backing by construction.
+    ...capsulesFromJobs(scope, projectToView(state.jobs, viewAt, availabilityOfJob)),
+  ];
+}
+
 /** Render one evidence capsule as the §4.9 inline surface: the monospace content-address badge (the open button) + the source kind; when open, the payload (mono) + the provenance line render inline (refs — never recomputed, L20). D-18 (W-29 wave 2): the refs line rides the payload's hover title (M5's truncated-refs finding) — the FULL refs are never hidden by wrapping or abbreviation. */
 function capsuleCard(capsule: EvidenceCapsule, viewAt: number, openCapsule: string | null): VNode {
   assertVisible({ datumRef: capsule.capsuleId, availableAt: capsule.availableAt }, viewAt);
-  const refsLine = capsule.refs.length === 0 ? 'refs: none' : `refs: ${capsule.refs.map((entry) => `${entry.kind}:${entry.ref}`).join(', ')}`;
+  const refsLine = capsule.refs.length === 0 ? 'refs: none' : `refs: ${capsule.refs.map((entry) => refLabelOf(entry.kind, entry.ref)).join(', ')}`;
   return capsuleSurface({
     capsuleId: capsule.capsuleId,
     sourceKind: capsule.sourceKind,
@@ -699,15 +728,30 @@ function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
   ]);
 }
 
-/** The Time Machine bar (§4.8): the mode select, the scrubber, the playback controls, the mono readout, the projection notice. */
-function timeMachineBar(state: WorkspaceState, viewAt: number): VNode {
+/**
+ * The Time Machine bar (§4.8): the mode select, the scrubber, the
+ * playback controls, the mono readout, the projection notice.
+ * FW-32-B (Round A blocker 4): the scrubber range anchors to the
+ * PROJECT'S OWN EVENT HISTORY — historyFloorOf derives the floor from
+ * the records the state holds (the honest-derivation law; never a
+ * fabricated instant, never the session start when history exists).
+ * While a drag is in flight (the app layer's pinned bounds — the
+ * J3/J5 beat-race discipline), the PINNED bounds render so the range
+ * never re-anchors mid-drag; the pinned floor rides the SAME
+ * derivation the pin captured, disclosed the same way.
+ */
+function timeMachineBar(state: WorkspaceState, viewAt: number, view: ShellView): VNode {
   const progress = playbackProgressOf(state.timeMachine);
+  const anchorAt = state.timeMachine.anchorAt;
+  const history = historyFloorOf(state);
+  const range = view.scrubBounds === null
+    ? { floorAt: Math.min(history.floorAt, anchorAt), anchorAt, derived: history.derived }
+    : { floorAt: Math.min(view.scrubBounds.min, view.scrubBounds.max), anchorAt: Math.max(view.scrubBounds.min, view.scrubBounds.max), derived: history.derived };
   return v('div', { class: 'timemachine', 'data-mode': state.timeMachine.mode }, [
     timeMachineControls({
       mode: state.timeMachine.mode,
       viewAt,
-      openedAt: state.openedAt,
-      anchorAt: state.timeMachine.anchorAt,
+      range,
       // R10 (W-25C): the control renders "Pause" only while playback
       // is actually ADVANCING — a PAUSED playback renders "Play" (the
       // control's resume face; the view instant is frozen at the last
@@ -820,11 +864,11 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
   }
   const jobs = projectToView(state.jobs, viewAt, availabilityOfJob);
   const outcomes = projectToView(state.outcomes, viewAt, availabilityOfOutcome);
-  const postMortems = projectToView(state.postMortems, viewAt, availabilityOfPostMortem);
-  const knowledge = projectToView(state.knowledge, viewAt, availabilityOfKnowledge);
-  const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
   const snapshots = projectToView(state.orgSnapshots, viewAt, availabilityOfOrgSnapshot);
-  const capsuleCount = outcomes.length + postMortems.length + knowledge.length + submissions.length;
+  // FW-32-B (b2): Home's EVIDENCE CAPSULES tile counts the ONE evidence
+  // fold — the same list the Evidence section renders (jobs lane
+  // included), so the stat and the section can never disagree.
+  const capsuleCount = evidenceCapsulesOf(state, viewAt).length;
   // D-13 (W-29): the unread tile + the activity timeline render the
   // PROJECT-SCOPED inbox — another desk's notices never count here.
   const scopedNotices = scopedInbox(state.inbox, state.scope);
@@ -1304,21 +1348,9 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       ]));
       return v('section', { class: 'panel', 'data-section': 'risk' }, rows);
   } else if (selector === 'evidence') {
-      const capsules: EvidenceCapsule[] = [
-        ...projectToView(state.outcomes, viewAt, availabilityOfOutcome).map((outcome) => capsuleFromOutcome(scope, outcome)),
-        ...projectToView(state.postMortems, viewAt, availabilityOfPostMortem).map((postMortem) => capsuleFromPostMortem(scope, postMortem)),
-        ...projectToView(state.knowledge, viewAt, availabilityOfKnowledge).map((knowledge) => capsuleFromKnowledge(scope, knowledge)),
-        ...projectToView(state.submissions, viewAt, availabilityOfSubmission).map((submission) => capsuleFromSubmission(scope, submission)),
-        // D-9 (W-28): the jobs lane — one capsule per COMPLETED job WITH a
-        // result (the fold's own law), so the Evidence section lists the
-        // job-derived capsules ALONGSIDE the read families: the research
-        // result is no longer a lineage LEAF (no capsule referenced its
-        // job; a fresh release-candidate result minted zero capsules — L2's
-        // P10 finding). The jobs read (GET /v1/jobs) serves BOTH backings'
-        // records (the durable lane hydrates through the same route), so
-        // this fold covers the demo and the durable backing by construction.
-        ...capsulesFromJobs(scope, projectToView(state.jobs, viewAt, availabilityOfJob)),
-      ];
+      // FW-32-B (b2): the section renders THE ONE fold (evidenceCapsulesOf
+      // — the same list Home's stat counts; one source of truth).
+      const capsules: readonly EvidenceCapsule[] = evidenceCapsulesOf(state, viewAt);
       return v('section', { class: 'panel', 'data-section': 'evidence' }, [
         ...capsules.map((capsule) => capsuleCard(capsule, viewAt, view.openCapsule)),
         ...(capsules.length === 0 ? [sectionEmpty('evidence')] : []),
@@ -1379,6 +1411,23 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
 function nextStepOf(step: LaunchStep): LaunchStep {
   const index = LAUNCH_STEPS.indexOf(step);
   return LAUNCH_STEPS[Math.min(index + 1, LAUNCH_STEPS.length - 1)] as LaunchStep;
+}
+
+/**
+ * FW-32-B (b4) — THE HORIZON REVIEW LINE: the launch review renders
+ * the horizon HUMAN-READABLE (the console's own formatInstantUtc +
+ * formatDurationMs discipline), never raw epoch ms (L1/M1/L3/M5's
+ * finding: "horizon rendered as raw epoch ms at review"). An
+ * unparseable pair renders verbatim — the review gate's problems card
+ * owns the validation; this line never invents an instant.
+ */
+function horizonReviewLine(startsAt: string, endsAt: string): string {
+  const start = Number.parseInt(startsAt, 10);
+  const end = Number.parseInt(endsAt, 10);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < 0 || end < start) {
+    return `${startsAt} -> ${endsAt}`;
+  }
+  return `${formatInstantUtc(start)} -> ${formatInstantUtc(end)} (${formatDurationMs(end - start)})`;
 }
 
 /** The launch panel (the primary flow: the wizard's full field set + the review step + the two-step confirm + progress). */
@@ -1449,7 +1498,7 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
             ['Markets', form.markets],
             ['Venues', form.venues],
             ['Data sources', form.dataSources],
-            ['Horizon', `${form.horizonStartsAt} -> ${form.horizonEndsAt}`],
+            ['Horizon', horizonReviewLine(form.horizonStartsAt, form.horizonEndsAt)],
             ['Execution mode', form.executionMode],
             ['Preferences', form.preferences.length === 0 ? 'none' : form.preferences],
             ['Constraints', form.constraints.length === 0 ? 'none' : form.constraints],
@@ -1558,7 +1607,7 @@ export function renderConsoleModel(state: WorkspaceState, at: number, view: Shel
           : sectionPanel(state, viewAt, view);
     const launch = activeTarget === 'inbox' || activeTarget === 'settings' ? null : launchPanel(state, view);
     return renderAppShell(state, at, view, activeTarget, {
-      timeMachine: timeMachineBar(state, viewAt),
+      timeMachine: timeMachineBar(state, viewAt, view),
       main,
       launch,
       sheet: sheetContentOf(state, viewAt, view),
