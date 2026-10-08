@@ -22,7 +22,7 @@ import type { ProjectRecord } from '../api/contracts';
 import { scopedInbox, unreadCount } from '../core/notices';
 import type { ThemeName } from '../core/theme';
 import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellTarget } from '../core/nav';
-import { DEMO_PROJECT_ID, isLaunchpadScope } from '../core/tenant';
+import { DEMO_PROJECT_ID, isLaunchpadScope, sessionOwnDesksOf as sessionOwnDesksOfDirectory, otherSessionsDesksOf as otherSessionsDesksOfDirectory } from '../core/tenant';
 import { formatInstantUtc } from '../core/format';
 import type { PlaybackSpeedKey } from '../core/timemachine';
 import { notificationBell, toastRecord } from './flow';
@@ -411,31 +411,42 @@ export function switcherOptions(state: WorkspaceState, view: ShellView): readonl
 
 /**
  * FW-34-B (§3.8): true when a directory row belongs to THIS session's own
- * desks — the host's additive 'session-owned' marker, with the UNMARKED
- * fallback (a backing that predates the marker serves none: every row
- * reads as the session's own — the listing's honest fallback).
+ * desks — core/tenant.ts's own law (the 'session-owned' marker + the
+ * UNMARKED fallback), re-exported for the render path's importers.
  */
-export function isSessionOwnDesk(project: ProjectRecord): boolean {
-  return project.consoleSessionScope !== 'tenant-available';
-}
+export { isSessionOwnDesk } from '../core/tenant';
 
 /**
- * FW-34-B (§3.8): the session's own desks (the default listing's own
- * fold — the session-owned + the unmarked rows; the shared demo project
- * carries the marker's 'tenant-available' but IS every session's teaching
- * desk, so it is ALWAYS in — one workspace, one teaching desk).
+ * FW-34-B (§3.8): the session's own desks of the workspace's directory
+ * (core/tenant.ts's directory fold over the state's own listing — the
+ * session-owned + the unmarked rows + the shared demo project, every
+ * session's teaching desk).
  */
 export function sessionOwnDesksOf(state: WorkspaceState, demoProjectId: string): readonly ProjectRecord[] {
-  return state.projectDirectory.filter((project) => project.id === demoProjectId || isSessionOwnDesk(project));
+  return sessionOwnDesksOfDirectory(state.projectDirectory, demoProjectId);
 }
 
 /**
  * FW-34-B (§3.8): the desks the DEFAULT listing hides — OTHER console
- * sessions' desks in this shared workspace (the explicit disclosure's
- * own count).
+ * sessions' desks in this shared workspace (core/tenant.ts's own fold —
+ * the explicit disclosure's own count).
  */
 export function otherSessionsDesksOf(state: WorkspaceState, demoProjectId: string): readonly ProjectRecord[] {
-  return state.projectDirectory.filter((project) => project.id !== demoProjectId && !isSessionOwnDesk(project));
+  return otherSessionsDesksOfDirectory(state.projectDirectory, demoProjectId);
+}
+
+/**
+ * FW-34-B (§3.8): other sessions' desks matching the LIVE palette query
+ * (the palette empty state's own disclosure count — 0 when the listing is
+ * already expanded or the query is empty, where the full list shows).
+ */
+function hiddenDeskMatchesOf(state: WorkspaceState, view: ShellView): number {
+  if (view.showAllDesks || view.palette === null) return 0;
+  const query = view.palette.query.trim().toLowerCase();
+  if (query.length === 0) return 0;
+  return otherSessionsDesksOf(state, DEMO_PROJECT_ID)
+    .filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), query) >= 0)
+    .length;
 }
 
 /**
@@ -565,6 +576,23 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
       ...(switcherCountLine(state, view) === null
         ? []
         : [v('p', { class: 'card-note', 'data-project-filter-count': 'true' }, [switcherCountLine(state, view) as string])]),
+      // FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): THE
+      // EXPLICIT "ALL DESKS" DISCLOSURE. The default listing is THIS
+      // session's own desks; other sessions' desks in this shared
+      // workspace stay ONE EXPLICIT EXPANDER AWAY (never a silent wall,
+      // never lost — the FW-31-B durable registry stays whole in the
+      // workspace state). The expander states its own counts both ways:
+      // collapsed names the hidden count; expanded states what is
+      // showing and offers the way back.
+      ...(otherSessionsDesksOf(state, DEMO_PROJECT_ID).length === 0 ? [] : [v('button', {
+        class: 'empty-action switcher-all-desks',
+        'data-action': 'switcher-all-desks',
+        'data-all-desks': view.showAllDesks ? 'expanded' : 'collapsed',
+        type: 'button',
+        'aria-expanded': view.showAllDesks ? 'true' : 'false',
+      }, [view.showAllDesks
+        ? `Showing all ${state.projectDirectory.length} desks in this workspace (yours and other sessions\u2019) — back to my desks`
+        : `${otherSessionsDesksOf(state, DEMO_PROJECT_ID).length} other desks in this workspace belong to other sessions — show all desks`])]),
     ]),
     // THE PRICING DISCLOSURE (W-19, the S5 CFO finding — "zero pricing
     // information" was a stated adoption blocker; QuantConnect's only
@@ -596,6 +624,14 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
           'aria-label': 'Select a downloaded TradRL export file to verify its chain',
         }, []),
       ]),
+      // FW-34-B (Round C register §3.9 — L1+M3's "the label resets to No
+      // file chosen"): the browser's own file-input face resets on every
+      // beat re-projection (a fresh element can carry no selection — a
+      // browser law), so the COMMITTED FILE is named here instead, in a
+      // plain line that survives every projection (the same name the
+      // verdict card carries — one source of truth, never a dropped
+      // claim). Null until a first commit lands.
+      ...(view.exportVerify === null ? [] : [v('p', { class: 'card-note', 'data-verify-chosen': view.exportVerify.fileName }, [`File checked: ${view.exportVerify.fileName} — choose another file to verify again.`])]),
       ...(view.exportVerify === null ? [] : [exportVerifyCard(view.exportVerify)]),
     ]),
     // §4.13 the "?" affordance — re-opens the guided intro
@@ -716,7 +752,7 @@ export function renderAppShell(
       ]),
     ]),
     // §4.14 the palette overlay (the app layer owns keys + Enter)
-    ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: scopedUnreadCount(state) })]),
+    ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: scopedUnreadCount(state), hiddenDeskMatches: hiddenDeskMatchesOf(state, view), allDesks: view.showAllDesks })]),
     // §4.13 the onboarding wizard — THE ONE COPY: the fixed-position
     // modal overlay directly under the shell root (render/model.ts
     // renders the main content normally behind it; it never renders

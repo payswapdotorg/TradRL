@@ -23,6 +23,7 @@
 
 import type { ApiTransport, FetchLike } from '../api/transport';
 import { createFetchTransport } from '../api/transport';
+import type { ProjectRecord } from '../api/contracts';
 import { createConsoleClient, type ConsoleClient } from '../api/client';
 import type { ApiConsoleError } from '../api/errors';
 import type { LaunchDraft, LaunchIds, StandaloneResearchInput } from '../core/launch';
@@ -42,7 +43,7 @@ import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
 import { persistTheme } from '../core/theme';
 import { isShellTarget } from '../core/nav';
-import { capsuleRefOf, paletteIndex, paletteOverlay, projectRefOf, rankPalette, type PaletteEntry } from '../core/palette';
+import { capsuleRefOf, paletteIndex, paletteOverlay, projectRefOf, rankPalette, sessionDesksForPalette, type DesksOf, type PaletteEntry } from '../core/palette';
 import {
   NOTICE_READ_STORAGE_KEY,
   noticeReadKey,
@@ -1324,10 +1325,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     /** The evidence capsules for the palette (the Evidence section's own fold). */
     const capsulesForPalette = capsuleFromOutcomeList;
 
-    /** The palette's live results for the current query (§4.14; D4's 100% coverage). */
+    /** FW-34-B (§3.8 — the shared-tenant wall): the whole-workspace desk listing (the all-desks disclosure's expanded state — every desk in the directory, other sessions' included). */
+    const allDesksForPalette: DesksOf = (workspace: WorkspaceState): readonly ProjectRecord[] => workspace.projectDirectory;
+
+    /** The palette's live results for the current query (§4.14; D4's 100% coverage). FW-34-B (§3.8): the desks the index rides are the SESSION'S OWN by default (core/palette.ts's own law) — the WHOLE directory only while the all-desks disclosure is expanded (view.showAllDesks, the one expander governing the switcher and the palette both). */
     const refreshPalette = (): void => {
       if (view.palette === null) { paletteResults = []; return; }
-      paletteResults = rankPalette(paletteIndex(state, capsulesForPalette), view.palette.query);
+      paletteResults = rankPalette(paletteIndex(state, capsulesForPalette, view.showAllDesks ? allDesksForPalette : sessionDesksForPalette), view.palette.query);
     };
 
     onState((next: WorkspaceState) => {
@@ -2126,6 +2130,40 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           if (view.projectFilter.length > 0) {
             view = { ...view, projectFilter: '' };
             render();
+          }
+        }
+        // FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): THE
+        // SWITCHER'S EXPLICIT ALL-DESKS EXPANDER. The default listing is
+        // the session's own desks; the expander — rendered only when other
+        // sessions' desks exist in this shared workspace — discloses them
+        // BY COUNT and swaps the listing to the WHOLE registry (the
+        // FW-31-B durable win: every desk stays reachable, one explicit
+        // disclosure away, never a silent wall). The toggle is
+        // chrome-only state (never a dispatch); the focus lands back on
+        // the fresh expander so a keyboard journey can toggle it again.
+        if (kind === 'switcher-all-desks') {
+          view = { ...view, showAllDesks: !view.showAllDesks };
+          refreshPalette(); // the same expander governs the palette's desk listing
+          render();
+          if (document.querySelectorAll !== undefined) {
+            for (const candidate of document.querySelectorAll('[data-action="switcher-all-desks"]')) {
+              (candidate as { focus(): void }).focus();
+              break;
+            }
+          }
+        }
+        // FW-34-B (§3.8): the palette empty state's OWN all-desks action —
+        // a query that matched nothing of the session's own but DID match
+        // other sessions' desks discloses them inline; the explicit
+        // include-all expansion re-ranks the SAME query over the whole
+        // registry (never a silent wall), and the focus returns to the
+        // palette input (the keyboard journey continues where it was).
+        if (kind === 'palette-all-desks') {
+          if (!view.showAllDesks) {
+            view = { ...view, showAllDesks: true };
+            refreshPalette();
+            render();
+            focusPaletteInput();
           }
         }
         // FW-34-B (Round C register §3.1) — THE WIZARD'S BACKDROP = THE
