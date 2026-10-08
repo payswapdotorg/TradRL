@@ -21,8 +21,11 @@ import {
   isPlaybackSpeedKey,
   liveTimeMachine,
   pausePlayback,
+  parsePlaybackCustomSpeed,
   playbackProgressOf,
   playbackStepMsOf,
+  PLAYBACK_CUSTOM_SPEED_MAX,
+  PLAYBACK_CUSTOM_SPEED_MIN,
   PLAYBACK_SPEED_KEYS,
   resumePlayback,
   retunePlayback,
@@ -412,5 +415,53 @@ describe('FW-33-B: the disclosed playback speeds', () => {
     expect(() => tickPlayback(resumed)).toThrow(/never the future/);
     // a disarmed machine is the siblings' own typed error, never a silent no-op
     expect(() => stopPlaybackAtAnchor(liveTimeMachine(ANCHOR))).toThrow(/playback not armed/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-34-B (Round C register §3.2 — the closed-set residual): THE FREE SPEED
+// INPUT's own grammar. The disclosed set (1x/10x/100x) stays; the free input
+// accepts any POSITIVE multiple of the 1x step between the honest bounds
+// (0.5x … 10000x) and REFUSES everything else with the reason named — never
+// a silent clamp.
+// ---------------------------------------------------------------------------
+
+describe('FW-34-B: the free speed input grammar (parsePlaybackCustomSpeed)', () => {
+  it('valid multiples map to exact integer step milliseconds (the multiplier x the 1x step)', () => {
+    expect(parsePlaybackCustomSpeed('2')).toEqual({ ok: true, multiplier: 2, stepMs: 2 * TIME_MACHINE_STEP_MS });
+    expect(parsePlaybackCustomSpeed('10')).toEqual({ ok: true, multiplier: 10, stepMs: 10 * TIME_MACHINE_STEP_MS });
+    expect(parsePlaybackCustomSpeed(' 0.5 ')).toEqual({ ok: true, multiplier: 0.5, stepMs: Math.round(0.5 * TIME_MACHINE_STEP_MS) });
+    expect(parsePlaybackCustomSpeed('12.5')).toEqual({ ok: true, multiplier: 12.5, stepMs: Math.round(12.5 * TIME_MACHINE_STEP_MS) });
+    expect(parsePlaybackCustomSpeed('1')).toEqual({ ok: true, multiplier: 1, stepMs: TIME_MACHINE_STEP_MS }); // the 1x step itself
+  });
+
+  it('the honest bounds are inclusive: 0.5x is the floor, 10000x is the ceiling', () => {
+    expect(parsePlaybackCustomSpeed('0.5')).toEqual({ ok: true, multiplier: 0.5, stepMs: Math.round(0.5 * TIME_MACHINE_STEP_MS) });
+    expect(parsePlaybackCustomSpeed(String(PLAYBACK_CUSTOM_SPEED_MIN))).toEqual({ ok: true, multiplier: PLAYBACK_CUSTOM_SPEED_MIN, stepMs: Math.round(PLAYBACK_CUSTOM_SPEED_MIN * TIME_MACHINE_STEP_MS) });
+    expect(parsePlaybackCustomSpeed(String(PLAYBACK_CUSTOM_SPEED_MAX))).toEqual({ ok: true, multiplier: PLAYBACK_CUSTOM_SPEED_MAX, stepMs: PLAYBACK_CUSTOM_SPEED_MAX * TIME_MACHINE_STEP_MS });
+  });
+
+  it('refusals NAME their reason — never a silent clamp (empty, non-numbers, zero/negative, out of bounds)', () => {
+    const empty = parsePlaybackCustomSpeed('');
+    expect(empty.ok).toBe(false);
+    if (empty.ok === false) expect(empty.reason).toContain('multiple of the 1x step');
+    const notANumber = parsePlaybackCustomSpeed('fast');
+    expect(notANumber.ok).toBe(false);
+    if (notANumber.ok === false) expect(notANumber.reason).toContain('is not a number');
+    const nan = parsePlaybackCustomSpeed('NaN');
+    expect(nan.ok).toBe(false);
+    const zero = parsePlaybackCustomSpeed('0');
+    expect(zero.ok).toBe(false);
+    if (zero.ok === false) expect(zero.reason).toContain('positive');
+    const negative = parsePlaybackCustomSpeed('-2');
+    expect(negative.ok).toBe(false);
+    const tooSlow = parsePlaybackCustomSpeed('0.25');
+    expect(tooSlow.ok).toBe(false);
+    if (tooSlow.ok === false) expect(tooSlow.reason).toContain(`slowest free speed is ${PLAYBACK_CUSTOM_SPEED_MIN}x`);
+    const tooFast = parsePlaybackCustomSpeed('20000');
+    expect(tooFast.ok).toBe(false);
+    if (tooFast.ok === false) expect(tooFast.reason).toContain(`fastest free speed is ${PLAYBACK_CUSTOM_SPEED_MAX}x`);
+    const infinity = parsePlaybackCustomSpeed('Infinity');
+    expect(infinity.ok).toBe(false);
   });
 });
