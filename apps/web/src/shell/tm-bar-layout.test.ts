@@ -158,4 +158,17 @@ describe('the sticky TM bar never permanently covers interactive targets (D-6e)'
       expect(overlay ?? 0).toBeGreaterThan(bar ?? 0); // every overlay wins
     }
   });
+
+  it('FW-35-B (Round D register §3.7 — L3/S1/S2: the band covered inbox buttons + capsule click points): the bar\'s own box is CLICK-THROUGH and its interactive children keep full hit areas — a covered target under the band\'s empty regions stays clickable THROUGH it', () => {
+    const bar = topLevelRuleFor('.timemachine');
+    expect(bar).toBeDefined();
+    expect(bar?.body).toContain('pointer-events: none'); // the band never eats a covered click
+    // every interactive control inside the band re-enables its own hit area (one rule, the full selector list)
+    const reenabled = TOP_LEVEL_RULES.find((rule) => rule.body.includes('pointer-events: auto') && rule.selector.split(',').map((part) => part.trim()).includes('.timemachine button'));
+    expect(reenabled).toBeDefined();
+    const selectorList = reenabled?.selector.split(',').map((part) => part.trim()) ?? [];
+    for (const one of ['.timemachine button', '.timemachine select', '.timemachine input', '.timemachine a', '.timemachine summary']) {
+      expect(selectorList, one).toContain(one);
+    }
+  });
 });

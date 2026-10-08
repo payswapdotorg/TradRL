@@ -595,8 +595,8 @@ function snapshotDetailSheet(state: WorkspaceState, snapshot: OrgStatusSnapshot,
   });
 }
 
-/** Render one outcome as an accordion row (§4.5b) — decimals verbatim in the definition grid. */
-function outcomeCard(scope: WorkspaceScope, outcome: OutcomeRecord, viewAt: number): VNode {
+/** Render one outcome as an accordion row (§4.5b) — decimals verbatim in the definition grid. FW-35-B (Round D register §3.5 — S2's cross-surface linkage finding): the METRICS grid CITES the execution blotter row ids that produced the fill (the submissions whose decisionId resolves this outcome's decisionRef) — the reconciliation is by CLICK, never by recognizing shared ids across sections. */
+function outcomeCard(scope: WorkspaceScope, outcome: OutcomeRecord, viewAt: number, blotterRowIds: readonly string[]): VNode {
   assertProjectScope(scope, outcome);
   visibleAt(outcome, availabilityOfOutcome(outcome), viewAt, outcome.outcomeId);
   return accordionRow({
@@ -618,6 +618,11 @@ function outcomeCard(scope: WorkspaceScope, outcome: OutcomeRecord, viewAt: numb
         ['realized outcome', renderDecimal(outcome.realization.realizedOutcome)],
         ['fee total', renderDecimal(outcome.realization.feeTotal)],
         ['notional total', renderDecimal(outcome.realization.notionalTotal)],
+        // FW-35-B: the metrics' own cross-surface citation — the exact
+        // blotter rows (Execution section) this outcome's fills resolve
+        // to; 'none' when no served row carries the deciding id (never a
+        // fabricated citation).
+        ['cites blotter rows', blotterRowIds.length > 0 ? blotterRowIds.join(', ') : 'none'],
       ] },
       { eyebrow: 'IDENTITY', pairs: [
         ['outcome id', outcome.outcomeId],
@@ -631,6 +636,21 @@ function outcomeCard(scope: WorkspaceScope, outcome: OutcomeRecord, viewAt: numb
       ] },
     ],
   });
+}
+
+/**
+ * FW-35-B (Round D register §3.5 — S2: "outcome metrics don't cite
+ * blotter row ids; reconciliation by inference"): the execution
+ * blotter rows one outcome's fills resolve to — the served submissions
+ * whose decisionId equals the outcome's decisionRef (the record's own
+ * linkage, never a guess; the L4 gate keeps rows the view instant has
+ * not yet seen OUT of the citation — a past view never cites a row the
+ * blotter could not show at that instant).
+ */
+function blotterRowIdsOf(submissions: readonly GatewaySubmissionRecord[], outcome: OutcomeRecord, viewAt: number): readonly string[] {
+  return projectToView(submissions, viewAt, availabilityOfSubmission)
+    .filter((submission) => submission.decisionId === outcome.decision.decisionRef)
+    .map((submission) => submission.submissionId);
 }
 
 /** Render one post-mortem. */
@@ -684,13 +704,15 @@ function outcomePostMortemCard(scope: WorkspaceScope, postMortem: PostMortemReco
   ]);
 }
 
-/** Render one knowledge entry. D-18 (W-29 wave 2): the card leads with ONE human sentence — the claim in words + the confidence (L2's finding: the lessons rendered as raw field tuples; the Inbox's plain-English copy is the shape to follow) — with the full typed record beneath it. */
+/** Render one knowledge entry. D-18 (W-29 wave 2): the card leads with ONE human sentence — the claim in words + the confidence (L2's finding: the lessons rendered as raw field tuples; the Inbox's plain-English copy is the shape to follow) — with the full typed record beneath it. FW-35-B (Round D register §3.5 — S2: "Lessons omits the originating outcome id; must recognize the pmr id across sections"): the card CITES its originating outcome ids (and the post-mortem ids it distilled) — the provenance the record itself carries, rendered where the lesson lives. */
 function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt: number): VNode {
   assertProjectScope(scope, knowledge.record);
   visibleAt(knowledge, availabilityOfKnowledge(knowledge), viewAt, knowledge.record.knowledgeId);
   const claim = knowledge.record.claim;
   const dimension = claim.dimension === null || claim.dimension.length === 0 ? '' : ` (${claim.dimension})`;
   const summary = `A ${claim.kind} lesson the firm treats as ${claim.polarity}${dimension} — confidence ${knowledge.record.confidence}, from ${knowledge.record.evidenceCount} piece${knowledge.record.evidenceCount === 1 ? '' : 's'} of evidence.`;
+  const outcomeRefs = knowledge.record.provenance.outcomeRefs;
+  const postMortemRefs = knowledge.record.provenance.postMortemRefs;
   return v('div', { class: 'card lesson-card', 'data-lesson': knowledge.record.knowledgeId }, [
     v('div', { class: 'card-title' }, [knowledge.record.knowledgeId]),
     v('span', { class: `badge badge-knowledge-${knowledge.status}` }, [knowledge.status]),
@@ -701,6 +723,12 @@ function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt
       ['dimension', claim.dimension ?? 'none'],
       ['confidence', knowledge.record.confidence],
       ['evidence count', String(knowledge.record.evidenceCount)],
+      // FW-35-B: the cross-surface citation — the originating outcome
+      // ids (the Outcomes section rows this lesson learned from) and
+      // the post-mortem ids it distilled; the record's own provenance,
+      // never a guess, 'none' when the record carries none.
+      ['from outcomes', outcomeRefs.length > 0 ? outcomeRefs.join(', ') : 'none'],
+      ['from post-mortems', postMortemRefs.length > 0 ? postMortemRefs.join(', ') : 'none'],
       ['valid from', formatInstantUtc(knowledge.record.validity.from)],
       ['valid to', formatInstantUtc(knowledge.record.validity.to)],
     ]),
@@ -847,6 +875,11 @@ function timeMachineBar(state: WorkspaceState, viewAt: number, view: ShellView):
       // tick's instant until then).
       playing: state.timeMachine.mode === 'playback' && state.timeMachine.playback !== null && !state.timeMachine.playback.paused,
       progress,
+      // FW-35-B: the ARMED machine's own step — the Step controls'
+      // disclosed granularity in playback mode (one machine step, the
+      // MI-D9 law; the 1x step is the beat cadence now, not the 500ms
+      // manual granularity the pre-FW-35-B law conflated it with).
+      ...(state.timeMachine.mode === 'playback' && state.timeMachine.playback !== null ? { playbackStepMs: state.timeMachine.playback.stepMs } : {}),
       // FW-33-B (Round B blocker 5): the disclosed speed select — the
       // chrome's chosen key rides the control (the closed set's own
       // step, the honest caption beneath). FW-34-B: the FREE speed's
@@ -1554,7 +1587,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       // exactly like the sibling sections (Lessons/Evidence) project them.
       const postMortemProjected = projectToView(state.postMortems, viewAt, availabilityOfPostMortem);
       const cards = projected.map((outcome) => v('div', { class: 'decision-block' }, [
-        outcomeCard(scope, outcome, viewAt),
+        outcomeCard(scope, outcome, viewAt, blotterRowIdsOf(state.submissions, outcome, viewAt)),
         // J7: the outcome's own evidence capsule renders INLINE (its
         // content-address badge opens the payload + provenance here).
         capsuleInline(capsuleFromOutcome(scope, outcome), viewAt, view.openCapsule),

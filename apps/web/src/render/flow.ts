@@ -36,7 +36,7 @@
 
 import { NOTICE_TITLES, type NoticeKind } from '../core/notices';
 import { formatInstantUtc } from '../core/format';
-import { parsePlaybackCustomSpeed, PLAYBACK_CUSTOM_SPEED_MAX, PLAYBACK_CUSTOM_SPEED_MIN, PLAYBACK_SPEED_KEYS, playbackStepMsOf, TIME_MACHINE_STEP_MS, type PlaybackSpeedKey } from '../core/timemachine';
+import { parsePlaybackCustomSpeed, PLAYBACK_CUSTOM_SPEED_MAX, PLAYBACK_CUSTOM_SPEED_MIN, PLAYBACK_SPEED_KEYS, playbackMultiplierOf, TIME_MACHINE_STEP_MS, type PlaybackSpeedKey } from '../core/timemachine';
 import { v, type VNode } from './vtree';
 import { iconOf, statusPill, type ComponentIcon } from './components';
 
@@ -295,14 +295,20 @@ export function scrubberRangeNoteOf(range: ScrubberRange): string {
 }
 
 /**
- * FW-33-B (Round B blocker 5) — THE HONEST SPEED CAPTION: what playback
- * does at one step, stated with the number (the D-18 law — the meaning
- * before the click). The caption names the per-beat advance AND the two
- * laws that never change with speed: L4 (only what was knowable then
- * renders) and the anchor ceiling (never past now).
+ * FW-33-B (Round B blocker 5) + FW-35-B (Round D register §3.3, label
+ * == machine) — THE HONEST SPEED CAPTION: what playback does at one
+ * speed, stated with the number (the D-18 law — the meaning before the
+ * click). The label is a REAL-TIME MULTIPLE and the caption names
+ * exactly that rate (the machine steps the multiplier x the app's beat
+ * cadence — Nx plays Nx seconds of history per wall-clock second; the
+ * pre-FW-35-B caption named a fixed per-beat ms while every preset ran
+ * at half its label — S1/S5/M5's measurements) AND the two laws that
+ * never change with speed: L4 (only what was knowable then renders)
+ * and the anchor ceiling (never past now).
  */
-export function playbackSpeedCaptionOf(stepMs: number): string {
-  return `Playback advances the view instant ${stepMs}ms per scheduler beat (~1s), rendering only what was knowable then — never past now.`;
+export function playbackSpeedCaptionOf(multiplier: number): string {
+  const rate = `${multiplier} second${multiplier === 1 ? '' : 's'} of history per wall-clock second`;
+  return `Playback advances the view instant at ${multiplier}x real time — ${rate} — rendering only what was knowable then; never past now.`;
 }
 
 /**
@@ -339,10 +345,23 @@ export function timeMachineControls(options: {
   readonly customSpeed?: string;
   /** FW-34-B: the free-speed named refusal (null when the committed text is valid or empty) — rendered inline, never a silent clamp. */
   readonly customSpeedError?: string | null;
+  /**
+   * FW-35-B (Round D register §3.3 — the disclosure follows the machine):
+   * the ARMED playback own stepMs when the bar renders a playback
+   * mode (the Step controls move the view by exactly ONE machine step
+   * there — the MI-D9 law); outside playback the Step controls move the
+   * selected instant by the disclosed TIME_MACHINE_STEP_MS granularity.
+   * The title discloses whichever step the click will actually take
+   * (the pre-FW-35-B law conflated the two: the 1x machine step WAS
+   * the 500ms manual granularity, so one constant served both).
+   * (The apostrophe law: comments inside a TYPE region carry no
+   * unpaired single quote — the strip lexer reads it as a string.)
+   */
+  readonly playbackStepMs?: number;
 }): VNode {
   const bounds = scrubberBoundsOf(options.range);
   const value = Math.min(Math.max(options.viewAt, bounds.min), bounds.max);
-  const stepWord = `${TIME_MACHINE_STEP_MS}ms`;
+  const stepWord = options.mode === 'playback' && options.playbackStepMs !== undefined ? `${options.playbackStepMs}ms` : `${TIME_MACHINE_STEP_MS}ms`;
   const speed = options.speed ?? '1x';
   const customText = options.customSpeed ?? '';
   const customError = options.customSpeedError ?? null;
@@ -357,10 +376,12 @@ export function timeMachineControls(options: {
   // and a reload restores exactly what the analyst left (the key, the
   // free text), never a face the unarmed machine cannot honor.
   const customActive = options.mode === 'playback' && custom !== null && custom.ok;
-  // The EFFECTIVE step: the free speed's when one is committed and
-  // valid, else the select's disclosed key — the caption never claims
-  // a step that is not the armed one.
-  const speedStepMs = customActive && custom.ok ? custom.stepMs : playbackStepMsOf(speed);
+  // FW-35-B (Round D register §3.3 — label == machine): the caption
+  // names the REAL-TIME MULTIPLE — the free speed's when one is armed,
+  // else the select's disclosed key — and the machine honors it exactly
+  // (the app layer steps the multiplier x its beat cadence; never a
+  // per-beat ms claim the label contradicts).
+  const speedMultiplier = customActive && custom.ok ? custom.multiplier : playbackMultiplierOf(speed);
   return v('div', { class: 'tm-controls-bar', 'data-tm-mode': options.mode, 'data-tm-range': options.range.derived }, [
     v('div', { class: 'tm-modes', role: 'group', 'aria-label': 'Time Machine mode' }, TIME_MACHINE_MODES.map((entry) => v('button', {
       class: `tm-mode-btn${options.mode === entry.key ? ' active' : ''}`,
@@ -403,16 +424,20 @@ export function timeMachineControls(options: {
           class: 'tm-speed-select',
           'data-action': 'playback-speed',
           'aria-label': 'Playback speed',
-          title: playbackSpeedCaptionOf(speedStepMs),
+          title: playbackSpeedCaptionOf(speedMultiplier),
         }, [
           ...PLAYBACK_SPEED_KEYS.map((key) => v('option', { value: key, ...(key === speed && !customActive ? { selected: 'selected' } : {}) }, [key])),
-          ...(customActive ? [v('option', { value: 'custom', selected: 'selected', disabled: 'disabled' }, [`custom (${customText}x)`])] : []),
+          ...(customActive && custom.ok ? [v('option', { value: 'custom', selected: 'selected', disabled: 'disabled' }, [`custom (${custom.multiplier}x)`])] : []),
         ]),
       ]),
-      // FW-34-B: THE FREE SPEED INPUT — any validated multiple of the 1x
-      // step. Its committed text is chrome state (buffered on input like
-      // the project filter; validated + applied on the change commit);
-      // a refused value names its reason beside the control.
+      // FW-34-B: THE FREE SPEED INPUT — any validated real-time multiple
+      // (0.5x … 10000x, core/timemachine.ts's own grammar; the optional
+      // trailing "x" the placeholder teaches is accepted — FW-35-B: the
+      // placeholder's own example must commit). Its text is chrome state
+      // (buffered on input like the project filter); a VALID value
+      // applies the moment it parses (the app layer's live commit —
+      // FW-35-B: never a display-only face), and a refused value names
+      // its reason beside the control.
       v('label', { class: 'tm-speed tm-speed-free' }, [
         v('span', { class: 'tm-speed-label' }, ['Free']),
         v('input', {
@@ -421,9 +446,9 @@ export function timeMachineControls(options: {
           inputmode: 'decimal',
           value: customText,
           placeholder: 'e.g. 2.5x',
-          'aria-label': 'Free playback speed, as a multiple of the 1x step',
+          'aria-label': 'Free playback speed, as a real-time multiple',
           'data-action': 'playback-speed-custom',
-          title: `Any multiple of the 1x step between ${PLAYBACK_CUSTOM_SPEED_MIN}x and ${PLAYBACK_CUSTOM_SPEED_MAX}x — the armed playback retunes to it the moment you commit.`,
+          title: `Any real-time multiple between ${PLAYBACK_CUSTOM_SPEED_MIN}x and ${PLAYBACK_CUSTOM_SPEED_MAX}x — playback retunes to it the moment it parses.`,
           autocomplete: 'off',
         }, []),
       ]),
@@ -439,10 +464,11 @@ export function timeMachineControls(options: {
     // taught plainly). aria-hidden: the scrubber's own min/max
     // attributes carry the same facts to assistive tech.
     v('span', { class: 'tm-range-note', 'data-tm-range-derived': options.range.derived }, [scrubberRangeNoteOf(options.range)]),
-    // FW-33-B + FW-34-B: the speed's own honest caption — what playback
-    // does at the EFFECTIVE step (the free speed's when one is armed),
-    // one sentence, never a claim the machine does not support.
-    v('span', { class: 'tm-speed-note', 'data-tm-speed': customActive ? `custom:${customText}` : speed }, [playbackSpeedCaptionOf(speedStepMs)]),
+    // FW-33-B + FW-34-B + FW-35-B: the speed's own honest caption — what
+    // playback does at the EFFECTIVE real-time multiple (the free
+    // speed's when one is armed), one sentence, never a claim the
+    // machine does not honor.
+    v('span', { class: 'tm-speed-note', 'data-tm-speed': customActive ? `custom:${customText}` : speed }, [playbackSpeedCaptionOf(speedMultiplier)]),
   ]);
 }
 
