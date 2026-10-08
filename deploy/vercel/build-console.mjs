@@ -205,7 +205,17 @@ export const FUNCTION_ROUTES = [
 export const FUNCTION_VC_CONFIG = {
   runtime: 'nodejs24.x',
   memory: 1024,
-  maxDuration: 10,
+  // W-30 (PROD-504) — THE 60s BELT: the pre-fix value (10) was part of the
+  // production API-plane outage: the durable boot projection's ~6-per-project
+  // SQL-over-HTTP round trips (≈151 sequential fetches at 25 durable projects,
+  // iad1 -> the us-west-2 pooler) exceeded the cap before authn on every cold
+  // start -> FUNCTION_INVOCATION_TIMEOUT on every request. The ROOT fix is the
+  // W-30 batch (tenant-wide reads — the projection is ~7 round trips and a
+  // healthy boot is ~1-3s); this 60s ceiling is the BELT: a SLOW (not dead)
+  // Neon degrades to the typed 503-retry path (R46, per-query 8s aborts bound
+  // each read) instead of the platform's opaque 504. The Hobby plan's max is
+  // 60s — pinned at the ceiling.
+  maxDuration: 60,
   handler: 'index.js',
   launcherType: 'Nodejs',
 };

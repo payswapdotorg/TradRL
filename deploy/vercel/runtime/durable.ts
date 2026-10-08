@@ -21,10 +21,23 @@
 //   3. the KNOWLEDGE of every reconstructed project (NeonFirmMemoryStore,
 //      point-in-time max — everything the store holds);
 //   4. the OUTCOMES + POST-MORTEMS of every reconstructed project
-//      (NeonOutcomeLearningStore).
+//      (NeonOutcomeLearningStore);
+//   5. the JOBS of every reconstructed project (NeonJobStore, W-27 D-7).
 // Any failed durable read fails the WHOLE projection (a partial projection
 // would be a silent divergence); a record that cannot reconstruct under
 // the current domain law is SKIPPED and reported (never a crash).
+//
+// THE W-30 ROUND-TRIP LAW (PROD-504): the reads are TENANT-WIDE and BATCHED
+// — SEVEN SQL-over-HTTP round trips in TOTAL (the registry + the existing
+// projects+goals JOIN + one tenant-wide read each for events, knowledge,
+// outcomes, post-mortems and jobs), CONSTANT w.r.t. project count, then an
+// in-memory group-by-project fold. The pre-fix seam read PER PROJECT
+// (goal set + events + knowledge + outcomes + post-mortems + jobs ≈ 6
+// queries per project): at 25 durable projects that was ≈151 sequential
+// fetches before authn on every cold start — past the platform's function
+// duration cap, the production 504 (FUNCTION_INVOCATION_TIMEOUT). The law
+// is pinned by test: the projection's fetch count is identical at 3 and at
+// 30 projects (durable.test.ts — the regression can never ship again).
 //
 // THE WRITE-THROUGH ORDERING LAW (one sentence, pinned by durable.test.ts):
 // every mutation applies to the in-memory port to build the request's own
@@ -435,6 +448,24 @@ export function neonStoreDepsOf(deps: DurableSeamDeps): NeonStoreDeps | null {
 }
 
 /**
+ * Group tenant-wide rows by their owning project, preserving row order
+ * within each group (the W-30 fold): the tenant-wide statements order
+ * (project, ordinal) — so each group's rows are exactly the per-project
+ * read's own order, and the group KEYS are the row's project COLUMN (the
+ * authoritative scope — the same column the per-project statements filtered
+ * on).
+ */
+function groupByProject<T extends { readonly project: string }>(rows: readonly T[]): Map<string, readonly T[]> {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const group = groups.get(row.project);
+    if (group === undefined) groups.set(row.project, [row]);
+    else group.push(row);
+  }
+  return groups;
+}
+
+/**
  * Build the durable backing: the Neon stores + the sync in-memory ports
  * over the REAL T007 control plane, with the boot-time projection and the
  * write-through law. Returns `null` when the Neon adapter is NOT enabled
@@ -489,7 +520,10 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   const pending: PendingDurableWrite[] = [];
 
   // -------------------------------------------------------------------------
-  // THE BOOT-TIME PROJECTION (registry -> events -> knowledge -> outcomes)
+  // THE BOOT-TIME PROJECTION (W-30: seven batched tenant-wide reads ->
+  // in-memory group-by fold -> atomic swap; registry -> goal sets via the
+  // projects+goals JOIN -> events -> knowledge -> outcomes -> post-mortems
+  // -> jobs)
   // -------------------------------------------------------------------------
 
   async function project(): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: StoreFailure }> {
@@ -503,9 +537,71 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     let events = 0;
     let jobCount = 0;
 
-    // 1. THE REGISTRY (creation order — the D-5 core).
+    // THE W-30 BATCHED READS (PROD-504): SEVEN round trips in TOTAL —
+    // CONSTANT w.r.t. project count (the pre-fix seam issued ≈6 queries PER
+    // PROJECT: at 25 durable projects ≈151 sequential SQL-over-HTTP fetches
+    // before authn on every cold start, past the platform's function
+    // duration cap — the production 504). Any failed read fails the WHOLE
+    // projection (the atomic-swap law — a partial projection would be a
+    // silent divergence); the group-by folds below reproduce the per-project
+    // reads' order EXACTLY (each statement orders (project, ordinal)).
+
+    // 1. THE REGISTRY (creation order — the D-5 core; the statement is
+    //    unchanged from the per-project era).
     const registry = await projectStore.projectRecordsOf(deps.tenant);
     if (!registry.ok) return { ok: false, error: registry.error };
+
+    // 2. THE GOAL SETS — tenant-wide over the EXISTING projects+goals JOIN
+    //    (FW-MI-A's session-listing read: ONE round trip carries every
+    //    project's goal-set payload beside its project row; the fold keys
+    //    the goal sets by project id). A project with NO goal row folds to
+    //    a lookup miss — the same skip the per-project `goalSetOf` null
+    //    produced; a goal payload that is not a `{goal, constraintSet}`
+    //    record is skipped AND REPORTED (the seam's own law — a record that
+    //    cannot reconstruct is skipped, never a crash).
+    const sessionRows = await projectStore.projectSessionRowsOf(deps.tenant);
+    if (!sessionRows.ok) return { ok: false, error: sessionRows.error };
+    const goalSetByProject = new Map<string, GoalSetRecord>();
+    for (const row of sessionRows.value) {
+      const record = row.project;
+      if (!isRecord(record) || !isNonEmptyString(record.id)) continue; // a malformed project payload never keys a goal set (the registry read reports its own skip)
+      if (row.goalSet !== null) goalSetByProject.set(record.id, row.goalSet);
+    }
+
+    // 3. THE EVENT LOGS — tenant-wide, (project_id, ordinal) order: the
+    //    fold groups the rows by project and each group's ordinal order is
+    //    the per-project replay order, preserved exactly.
+    const eventRows = await projectStore.projectEventsOfTenant(deps.tenant);
+    if (!eventRows.ok) return { ok: false, error: eventRows.error };
+    const eventsByProject = groupByProject(eventRows.value);
+
+    // 4. THE KNOWLEDGE — the tenant-wide BOOT read (the store refuses any
+    //    non-boot options shape loudly, so the filter semantics can never
+    //    silently diverge from the per-project boot read it replaces).
+    const knowledgeRows = await firmMemoryStore.queryKnowledgeOfTenant({ tenant: deps.tenant }, { at: HYDRATION_AT, retention: null });
+    if (!knowledgeRows.ok) return { ok: false, error: knowledgeRows.error };
+    const knowledgeByProject = groupByProject(knowledgeRows.value);
+
+    // 5. THE OUTCOMES + POST-MORTEMS — tenant-wide, (project, ordinal)
+    //    order (one round trip each).
+    const outcomeRows = await outcomeStore.queryOutcomesOfTenant(deps.tenant);
+    if (!outcomeRows.ok) return { ok: false, error: outcomeRows.error };
+    const outcomesByProject = groupByProject(outcomeRows.value);
+    const postMortemRows = await outcomeStore.queryPostMortemsOfTenant(deps.tenant);
+    if (!postMortemRows.ok) return { ok: false, error: postMortemRows.error };
+    const postMortemsByProject = groupByProject(postMortemRows.value);
+
+    // 6. THE DURABLE JOBS — tenant-wide, (project, submission) order
+    //    (W-27, D-7): the tradrl_jobs rows the write-through lane persisted,
+    //    read into the projection for the hydration driver (the boot world
+    //    replays them through the REAL public job routes) and for the
+    //    host-side jobs read.
+    const jobRows = await jobStore.jobRecordsOfTenant(deps.tenant);
+    if (!jobRows.ok) return { ok: false, error: jobRows.error };
+    const jobsByProject = groupByProject(jobRows.value);
+
+    // THE IN-MEMORY FOLD — registry creation order, per-project replay
+    // order, exactly the pre-fix semantics (zero further round trips).
     const reconstructed: { readonly id: string }[] = [];
     for (const row of registry.value) {
       if (!isRecord(row)) {
@@ -524,11 +620,16 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
         skipped.push({ project: id, reason: 'the stored project row belongs to another tenant (L12 — never served)' });
         continue;
       }
-      // 2. THE GOAL SET (the create-project input's goal + constraint set — the seam persists them at createProject time).
-      const goalSet = await projectStore.goalSetOf(deps.tenant, id);
-      if (!goalSet.ok) return { ok: false, error: goalSet.error };
-      if (goalSet.value === null) {
+      // THE GOAL SET (the create-project input's goal + constraint set — the
+      // seam persists them at createProject time; the tenant-wide JOIN fold
+      // carries them, one round trip for the whole registry).
+      const goalSet = goalSetByProject.get(id) ?? null;
+      if (goalSet === null) {
         skipped.push({ project: id, reason: 'no durable goal set (the record cannot reconstruct through the real control plane)' });
+        continue;
+      }
+      if (!isRecord(goalSet) || !('goal' in goalSet) || !('constraintSet' in goalSet)) {
+        skipped.push({ project: id, reason: 'the stored goal set lacks goal/constraintSet (the record cannot reconstruct through the real control plane)' });
         continue;
       }
       try {
@@ -537,22 +638,22 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
           tenantId: deps.tenant as never,
           name,
           executionMode: executionMode as never,
-          goal: goalSet.value.goal as GoalStatement,
-          constraintSet: goalSet.value.constraintSet as ConstraintSetStatement,
+          goal: goalSet.goal as GoalStatement,
+          constraintSet: goalSet.constraintSet as ConstraintSetStatement,
           at: createdAt as never,
         });
       } catch (cause) {
         skipped.push({ project: id, reason: cause instanceof ControlDomainError ? cause.code : 'the record failed reconstruction under the current domain law' });
         continue;
       }
-      goalSets.set(id, goalSet.value);
+      goalSets.set(id, goalSet);
       reconstructed.push({ id });
 
-      // 3. THE EVENT LOG (ordinal order): lifecycle events replay through
-      //    the real reducer; organization bindings through the real binder.
-      const log = await projectStore.projectEventsOf(deps.tenant, id);
-      if (!log.ok) return { ok: false, error: log.error };
-      for (const entry of log.value) {
+      // THE EVENT LOG replay (ordinal order — the tenant-wide read's own
+      // (project, ordinal) ordering, folded per project): lifecycle events
+      // replay through the real reducer; organization bindings through the
+      // real binder.
+      for (const entry of eventsByProject.get(id) ?? []) {
         try {
           if (entry.event === ORGANIZATION_BOUND_EVENT) {
             const detail = entry.detail;
@@ -571,34 +672,23 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
       }
     }
 
-    // 4. THE KNOWLEDGE + 5. THE OUTCOMES/POST-MORTEMS of every
-    //    reconstructed project (a failed read fails the WHOLE projection —
-    //    a partial projection would be a silent divergence).
+    // THE KNOWLEDGE + THE OUTCOMES/POST-MORTEMS of every reconstructed
+    // project (reconstruction order — the arrays concatenate exactly as the
+    // per-project loops did; the tenant-wide rows' group orders are the
+    // per-project reads' own).
     for (const { id } of reconstructed) {
-      const served = await firmMemoryStore.queryKnowledge({ tenant: deps.tenant, project: id }, { at: HYDRATION_AT, retention: null });
-      if (!served.ok) return { ok: false, error: served.error };
-      knowledge.push(...served.value);
+      for (const row of knowledgeByProject.get(id) ?? []) knowledge.push(row.envelope);
     }
     for (const { id } of reconstructed) {
-      const outcomeRows = await outcomeStore.queryOutcomes({ tenant: deps.tenant, project: id }, { at: HYDRATION_AT, retention: null });
-      if (!outcomeRows.ok) return { ok: false, error: outcomeRows.error };
-      outcomes.push(...outcomeRows.value);
-      const postMortemRows = await outcomeStore.queryPostMortems({ tenant: deps.tenant, project: id }, { at: HYDRATION_AT, retention: null });
-      if (!postMortemRows.ok) return { ok: false, error: postMortemRows.error };
-      postMortems.push(...postMortemRows.value);
+      for (const row of outcomesByProject.get(id) ?? []) outcomes.push(row.record);
+      for (const row of postMortemsByProject.get(id) ?? []) postMortems.push(row.record);
     }
 
-    // 6. THE DURABLE JOBS of every reconstructed project (W-27, D-7): the
-    //    tradrl_jobs rows the write-through lane persisted — read into the
-    //    projection for the hydration driver (the boot world replays them
-    //    through the REAL public job routes so the frozen pipeline's own
-    //    store carries them) and for the host-side jobs read. A malformed
-    //    payload row is skipped fail-closed (the store's own decode law);
-    //    a failed read fails the WHOLE projection (never a partial one).
+    // THE DURABLE JOBS of every reconstructed project (W-27, D-7): a
+    // malformed payload row is skipped fail-closed (the store's own decode
+    // law + the isJobRecord filter — the pre-fix law, unchanged).
     for (const { id } of reconstructed) {
-      const jobRows = await jobStore.jobRecordsOf(deps.tenant, id);
-      if (!jobRows.ok) return { ok: false, error: jobRows.error };
-      const records = jobRows.value.filter((row): row is JobRecord => isJobRecord(row));
+      const records = (jobsByProject.get(id) ?? []).map((row) => row.record).filter((record): record is JobRecord => isJobRecord(record));
       jobs.set(id, Object.freeze([...records]));
       jobCount += records.length;
     }

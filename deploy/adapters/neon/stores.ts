@@ -214,6 +214,65 @@ export function projectEventsStatement(tenant: string, projectId: string): Built
 }
 
 // ---------------------------------------------------------------------------
+// The W-30 tenant-wide batched reads (PROD-504 — the boot projection's
+// round-trip law). ONE statement per table, scoped `tenant = $1` (L12),
+// TWO-cell rows — the owning project column + the opaque payload — ordered
+// `(project, ordinal)` so an in-memory group-by-project fold reproduces the
+// per-project reads' order EXACTLY. These builders + the store methods below
+// are ADDITIVE: the per-project statements above are unchanged (their
+// callers depend on them); the boot projection (deploy/vercel/runtime/
+// durable.ts) is the tenant-wide variants' caller. The law this exists for:
+// the boot projection's SQL round trips are CONSTANT w.r.t. project count
+// (pinned by test — the pre-fix seam issued ~6 per project and crossed the
+// platform's function-duration cap at 25 durable projects).
+// ---------------------------------------------------------------------------
+
+/** The tenant-wide event log (ORDER BY project_id, ordinal — the per-project replay order, preserved by the fold). */
+export function projectEventsOfTenantStatement(tenant: string): BuiltStatement {
+  return { sql: 'SELECT project_id, payload FROM tradrl_project_events WHERE tenant = $1 ORDER BY project_id, ordinal', params: [tenant] };
+}
+
+/**
+ * The tenant-wide knowledge boot read (point-in-time at the hydration
+ * ceiling — the EXACT boot filter; `queryKnowledgeOfTenant` refuses every
+ * other options shape loudly, so the semantics can never silently diverge
+ * from the per-project boot read).
+ */
+export function knowledgeOfTenantStatement(tenant: string, at: number): BuiltStatement {
+  return { sql: 'SELECT project, payload FROM tradrl_knowledge WHERE tenant = $1 AND as_of <= $2 ORDER BY project, ordinal', params: [tenant, String(at)] };
+}
+
+/** The tenant-wide outcome/post-mortem read (ORDER BY project, ordinal). */
+export function outcomeRowsOfTenantStatement(table: 'tradrl_outcomes' | 'tradrl_post_mortems', tenant: string): BuiltStatement {
+  return { sql: `SELECT project, payload FROM ${table} WHERE tenant = $1 ORDER BY project, ordinal`, params: [tenant] };
+}
+
+/** The tenant-wide jobs read (submission order within each project). */
+export function jobsOfTenantStatement(tenant: string): BuiltStatement {
+  return { sql: 'SELECT project, payload FROM tradrl_jobs WHERE tenant = $1 ORDER BY project, submitted_at', params: [tenant] };
+}
+
+/** One tenant-wide event row: the owning project (the row's project_id column) + the decoded event entry. */
+export interface TenantProjectEventRow {
+  readonly project: string;
+  readonly event: string;
+  readonly at: number;
+  readonly detail: unknown;
+}
+
+/** One tenant-wide knowledge row: the owning project (the row's project column) + the decoded envelope. */
+export interface TenantKnowledgeRow {
+  readonly project: string;
+  readonly envelope: ServedKnowledgeMirror;
+}
+
+/** One tenant-wide opaque-record row (outcomes / post-mortems / jobs): the owning project + the decoded payload. */
+export interface TenantScopedRecordRow {
+  readonly project: string;
+  readonly record: unknown;
+}
+
+// ---------------------------------------------------------------------------
 // The goal-set surface (W-25D, D-5 — the W-3e seam's create-project records)
 // ---------------------------------------------------------------------------
 
@@ -432,6 +491,60 @@ export class NeonFirmMemoryStore implements FirmMemoryStoreMirror {
     if (!executed.ok) return degraded(executed.error.code, executed.error.message);
     return { ok: true, value: decodeKnowledgeEnvelopes(executed.value) };
   }
+
+  /**
+   * THE TENANT-WIDE KNOWLEDGE BOOT READ (W-30, PROD-504): every knowledge
+   * envelope of the tenant in ONE round trip, each row tagged with its
+   * owning project (the row's project column), in (project, ordinal) order
+   * — the boot projection's group-by fold reproduces the per-project boot
+   * read exactly (the decode law is `queryKnowledge`'s own).
+   *
+   * THE BOOT-ONLY CONTRACT (the semantics can never silently diverge): this
+   * variant reproduces the EXACT boot filter semantics — the point-in-time
+   * MAX ceiling (`at` = Number.MAX_SAFE_INTEGER — the HYDRATION_AT constant
+   * deploy/vercel/runtime/durable.ts exports; pinned equal by test) with
+   * `retention = null` and NO active-only filter — and FAILS LOUDLY (the
+   * typed refusal below) when invoked with any other options shape: a
+   * caller wanting a filtered read (an active-only view, a knowledge-id
+   * lookup, a different instant) must use the per-project `queryKnowledge`,
+   * never this batched twin.
+   */
+  async queryKnowledgeOfTenant(query: { readonly tenant: string }, options: KnowledgeQueryOptionsMirror): Promise<StoreResult<readonly TenantKnowledgeRow[]>> {
+    if (!isNonEmptyString(query.tenant)) return malformed('the tenant-wide knowledge read lacks a tenant');
+    if (options.at !== Number.MAX_SAFE_INTEGER || options.retention !== null || options.activeOnly === true) {
+      return {
+        ok: false,
+        error: {
+          code: 'tenant_wide_read_options_refused',
+          message: 'the tenant-wide knowledge read is the BOOT hydration read (at = the point-in-time ceiling, retention = null, no active-only filter); any other options shape is refused loudly — use the per-project queryKnowledge for filtered reads (the boot semantics can never silently diverge)',
+        },
+      };
+    }
+    if ((query as { readonly knowledgeId?: unknown }).knowledgeId !== undefined) {
+      return {
+        ok: false,
+        error: {
+          code: 'tenant_wide_read_options_refused',
+          message: 'the tenant-wide knowledge read carries no knowledge-id filter (the boot read serves everything the store holds); use the per-project queryKnowledge for id lookups',
+        },
+      };
+    }
+    const built = knowledgeOfTenantStatement(query.tenant, options.at);
+    const executed = await executeNeonStatement(this.deps.config, built.sql, built.params, this.fetchLike);
+    this.recordProvenance('queryKnowledgeOfTenant', query.tenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    return {
+      ok: true,
+      value: decodeTenantScopedRows(executed.value, (project, payload) => {
+        const value = JSON.parse(payload) as unknown;
+        if (!isRecord(value)) return null;
+        // The per-project read's own envelope law — malformed rows are skipped fail-closed, never a throw.
+        if (value.status !== 'active' && value.status !== 'superseded' && value.status !== 'decayed') return null;
+        const envelope: ServedKnowledgeMirror = { record: value.record, status: value.status, supersededBy: typeof value.supersededBy === 'string' ? value.supersededBy : null };
+        return { project, envelope };
+      }),
+    };
+  }
   private recordProvenance(operation: string, tenant: string, ok: boolean): void {
     this.provenance = { adapter: 'neon', store: 'firm-memory', operation, tenant, at: this.deps.instants.next(), outcome: ok ? 'ok' : 'degraded' };
   }
@@ -492,6 +605,39 @@ export class NeonOutcomeLearningStore implements OutcomeLearningStoreMirror {
   /** The post-mortem query (tenant = param 1). */
   async queryPostMortems(query: PostMortemQueryMirror, options: OutcomeQueryOptionsMirror): Promise<StoreResult<readonly unknown[]>> {
     return this.query('tradrl_post_mortems', 'queryPostMortems', outcomeSelectStatement('tradrl_post_mortems', query), query, options);
+  }
+
+  /**
+   * THE TENANT-WIDE OUTCOME READ (W-30, PROD-504): every outcome record of
+   * the tenant in ONE round trip, each row tagged with its owning project,
+   * in (project, ordinal) order — the boot projection's group-by fold
+   * reproduces the per-project `queryOutcomes` boot read exactly (the boot
+   * options carry no filter and no latestPerOutcome fold; the payload is
+   * opaque, decoded like `decodeEnvelopes` — malformed rows skipped
+   * fail-closed). A degraded read is the typed failure (R46).
+   */
+  async queryOutcomesOfTenant(tenant: string): Promise<StoreResult<readonly TenantScopedRecordRow[]>> {
+    return this.recordRowsOfTenant('tradrl_outcomes', 'queryOutcomesOfTenant', tenant);
+  }
+
+  /** THE TENANT-WIDE POST-MORTEM READ (W-30, PROD-504): same law, the post-mortem table. */
+  async queryPostMortemsOfTenant(tenant: string): Promise<StoreResult<readonly TenantScopedRecordRow[]>> {
+    return this.recordRowsOfTenant('tradrl_post_mortems', 'queryPostMortemsOfTenant', tenant);
+  }
+
+  /** The shared tenant-wide opaque-record fold (outcomes + post-mortems). */
+  private async recordRowsOfTenant(table: 'tradrl_outcomes' | 'tradrl_post_mortems', operation: string, tenant: string): Promise<StoreResult<readonly TenantScopedRecordRow[]>> {
+    const built = outcomeRowsOfTenantStatement(table, tenant);
+    const executed = await executeNeonStatement(this.deps.config, built.sql, built.params, this.fetchLike);
+    this.provenance = { adapter: 'neon', store: 'outcome-learning', operation, tenant, at: this.deps.instants.next(), outcome: executed.ok ? 'ok' : 'degraded' };
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    return {
+      ok: true,
+      value: decodeTenantScopedRows(executed.value, (project, payload) => {
+        const record: unknown = JSON.parse(payload);
+        return { project, record };
+      }),
+    };
   }
 
   private async query(table: string, operation: string, built: BuiltStatement, query: OutcomeQueryMirror | PostMortemQueryMirror, options: OutcomeQueryOptionsMirror): Promise<StoreResult<readonly unknown[]>> {
@@ -602,6 +748,31 @@ export class NeonProjectStore implements ProjectStoreMirror {
   }
 
   /**
+   * THE TENANT-WIDE EVENT LOG READ (W-30, PROD-504): every lifecycle event
+   * of the tenant in ONE round trip, each row tagged with its owning
+   * project (the row's project_id column), in (project_id, ordinal) order —
+   * the boot projection's group-by fold reproduces the per-project
+   * `projectEventsOf` read order exactly (the decode law is its own: a
+   * malformed payload row is skipped fail-closed — the store never
+   * throws). A degraded read is the typed failure (R46).
+   */
+  async projectEventsOfTenant(tenant: string): Promise<StoreResult<readonly TenantProjectEventRow[]>> {
+    const built = projectEventsOfTenantStatement(tenant);
+    const executed = await executeNeonStatement(this.deps.config, built.sql, built.params, this.fetchLike);
+    this.note('projectEventsOfTenant', tenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    return {
+      ok: true,
+      value: decodeTenantScopedRows(executed.value, (project, payload) => {
+        const entry = JSON.parse(payload) as unknown;
+        if (!isRecord(entry) || !isNonEmptyString(entry.event)) return null;
+        const row: TenantProjectEventRow = { project, event: entry.event, at: typeof entry.at === 'number' ? entry.at : 0, detail: entry.detail ?? null };
+        return row;
+      }),
+    };
+  }
+
+  /**
    * Persist one project's goal set (the create-project input's goal +
    * constraint set — the W-25D seam's create-time records; the REAL control
    * plane reconstructs the project from them at every cold start).
@@ -701,6 +872,29 @@ export class NeonJobStore {
     return { ok: true, value: decodeEnvelopes(executed.value) };
   }
 
+  /**
+   * THE TENANT-WIDE JOBS READ (W-30, PROD-504): every job record of the
+   * tenant in ONE round trip, each row tagged with its owning project, in
+   * (project, submission) order — the boot projection's group-by fold
+   * reproduces the per-project `jobRecordsOf` boot read exactly (the
+   * payload is opaque — the caller applies the `isJobRecord` law, exactly
+   * as the per-project callers do). A degraded read is the typed failure
+   * (R46).
+   */
+  async jobRecordsOfTenant(tenant: string): Promise<StoreResult<readonly TenantScopedRecordRow[]>> {
+    const built = jobsOfTenantStatement(tenant);
+    const executed = await executeNeonStatement(this.deps.config, built.sql, built.params, this.fetchLike);
+    this.note('jobRecordsOfTenant', tenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    return {
+      ok: true,
+      value: decodeTenantScopedRows(executed.value, (project, payload) => {
+        const record: unknown = JSON.parse(payload);
+        return { project, record };
+      }),
+    };
+  }
+
   private note(operation: string, tenant: string, ok: boolean): void {
     this.provenance = { adapter: 'neon', store: 'job-store', operation, tenant, at: this.deps.instants.next(), outcome: ok ? 'ok' : 'degraded' };
   }
@@ -744,6 +938,29 @@ function decodeEnvelopes(outcome: NeonQueryOutcome): readonly unknown[] {
     }
   }
   return values;
+}
+
+/**
+ * Decode the two-column tenant-wide rows ([project, payload] — W-30): the
+ * project cell must be a non-empty string, the payload cell text; the
+ * per-lane `decode` lambda parses + validates the payload and returns the
+ * decoded row or `null` (skipped fail-closed — a malformed row never
+ * throws, exactly like every other decode law here).
+ */
+function decodeTenantScopedRows<T>(outcome: NeonQueryOutcome, decode: (project: string, payload: string) => T | null): readonly T[] {
+  const rows: T[] = [];
+  for (const row of selectRows(outcome)) {
+    const project = row[0];
+    const payload = row[1];
+    if (!isNonEmptyString(project) || typeof payload !== 'string') continue; // fail-closed skip (the store never throws)
+    try {
+      const decoded = decode(project, payload);
+      if (decoded !== null) rows.push(decoded);
+    } catch {
+      continue; // an unparseable payload row is skipped fail-closed — never a throw
+    }
+  }
+  return rows;
 }
 
 /** Decode served-knowledge envelopes (validated: record + a served status — malformed rows are skipped fail-closed). */

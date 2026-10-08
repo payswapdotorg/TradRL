@@ -70,7 +70,7 @@ discover, W-3k). The emitted tree:
     ├── index.js           the seal: module.exports = require(
     │                      './deploy/vercel/api/router').default
     ├── .vc-config.json    {"runtime":"nodejs24.x","memory":1024,
-    │                      "maxDuration":10,"handler":"index.js",
+    │                      "maxDuration":60,"handler":"index.js",
     │                      "launcherType":"Nodejs"}
     ├── package.json       {"name":"tradrl-function","private":true}
     │                      — NO "type" field (the sealed tree is CommonJS)
@@ -288,6 +288,36 @@ Deliberately ABSENT keys (the prebuilt law, test-pinned): `functions`,
 EMITTED `.vercel/output/config.json` + tree. `@vercel/node` is never
 invoked (no repo-root `api/` directory exists).
 
+### The function duration + the per-query abort budget (W-30, PROD-504 — disclosed)
+
+The emitted `.func`'s `.vc-config.json` carries **`maxDuration: 60`** (the
+Hobby ceiling). Before W-30 it was `10`, and that value was half of a
+production API-plane outage: the durable boot projection
+(`deploy/vercel/runtime/durable.ts`) read the durable stores **per
+project** (goal set + events + knowledge + outcomes + post-mortems + jobs
+≈ 6 SQL-over-HTTP round trips per project), so a cold start at 25 durable
+projects issued ≈151 sequential `fetch`es (iad1 → the Neon us-west-2
+pooler) BEFORE authn — past the 10s cap, the platform answered
+`504 FUNCTION_INVOCATION_TIMEOUT` on every request. The W-30 wave fixes
+the ROOT (tenant-wide batched reads: **7 round trips TOTAL, constant
+w.r.t. project count** — pinned by test in `deploy/vercel/durable.test.ts`)
+and keeps the 60s ceiling as the BELT: a SLOW (not dead) Neon now hits the
+typed 503-retry degradation path (R46) instead of the platform's opaque
+504. Cost honesty: 60s at the Hobby plan's 100 GB-h/mo execution budget is
+only ever reached in a degraded-provider scenario (a healthy batched boot
+is single-digit seconds; every query is separately bounded — see below).
+
+**The per-query abort budget (the defense in depth):** every Neon
+SQL-over-HTTP call is wrapped in `AbortSignal.timeout(8000ms)`
+(`NEON_QUERY_TIMEOUT_MS` in `deploy/adapters/neon/client.ts` — platform
+API only, zero dependencies, test-pinned). A black-holed connection (a TCP
+session the proxy accepts but never answers) becomes the typed
+`neon_unreachable` within the query's own 8s budget — the existing R46
+typed-503 + per-request-retry-heal path — instead of eating the function's
+whole duration. Worst case per cold start: 7 reads × 8s = 56s < the 60s
+ceiling, so the typed degradation always wins the race against the
+platform timeout.
+
 ---
 
 ## 2. Provider account setup (free tiers — D-033 set)
@@ -301,7 +331,7 @@ beyond-free-tier features.
 
 | Provider | Role | Free tier (covers) | Signup |
 | --- | --- | --- | --- |
-| **Vercel** | hosting: static console + serverless API functions | Hobby plan (personal, non-commercial): 100 GB-h serverless execution/mo, 100 GB bandwidth/mo, 1024 MB/function, ≤60 s (we use 10 s), 1 region | vercel.com → Sign up (GitHub SSO) |
+| **Vercel** | hosting: static console + serverless API functions | Hobby plan (personal, non-commercial): 100 GB-h serverless execution/mo, 100 GB bandwidth/mo, 1024 MB/function, ≤60 s (we use the 60 s max — the W-30 belt, see §function-duration below), 1 region | vercel.com → Sign up (GitHub SSO) |
 | **Neon** (W-3b) | durable Postgres: the control-plane / firm-memory / outcome-learning stores (table-per-port, tenant-scoped rows) | Free plan: 0.5 GB storage, one project, autosuspend (cold starts are fine — R46 degradation covers them) | neon.tech → Sign up → create project (region `aws-us-east-1` to co-locate with `iad1`) |
 | **Upstash** (W-3b) | Redis: rate-limit cache + idempotency-key store (REST API) | Free plan: 500k commands/mo, 1 database, max 256 MB | upstash.com → Sign up → create a Redis (Regional, free) database |
 | **Cloudflare R2** (W-3c) | evidence/blob store (S3-compatible API, SigV4) | Free tier: 10 GB storage, 1M Class-A + 10M Class-B ops/mo, ZERO egress fee | dash.cloudflare.com → sign up → R2 (needs a payment card on file for verification; the free tier is not charged at demo usage) |

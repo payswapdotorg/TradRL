@@ -13,7 +13,7 @@
 //   5. the DDL records exist for every table the stores touch.
 
 import { describe, expect, it } from 'vitest';
-import { buildNeonRequest, executeNeonStatement, neonConnectionString, type NeonConfig } from './client';
+import { buildNeonRequest, executeNeonStatement, NEON_QUERY_TIMEOUT_MS, neonConnectionString, type NeonConfig } from './client';
 import { NEON_DDL_RECORDS } from './schema';
 import {
   NeonFirmMemoryStore,
@@ -24,11 +24,15 @@ import {
   goalSetPutStatement,
   jobListStatement,
   jobPutStatement,
+  jobsOfTenantStatement,
+  knowledgeOfTenantStatement,
   knowledgePutStatement,
   knowledgeSelectStatement,
   outcomePutStatement,
+  outcomeRowsOfTenantStatement,
   outcomeSelectStatement,
   projectEventAppendStatement,
+  projectEventsOfTenantStatement,
   projectEventsStatement,
   projectGetStatement,
   projectListStatement,
@@ -147,6 +151,24 @@ function fakeNeon(seed: readonly FakeRow[] = []): { fetchLike: FetchLike; calls:
       selected = [...selected].sort((a, b) => Number(a.params[spec.order]) - Number(b.params[spec.order]));
       return responder(JSON.stringify({ fields: [{ name: 'payload', typeOID: 25 }], rows: selected.map((row) => [row.params[spec.payload]]) }));
     }
+    // W-30 (PROD-504): the tenant-wide batched reads — `SELECT
+    // project_id|project, payload FROM <table> WHERE tenant = $1
+    // [AND as_of <= $2] ORDER BY project, ordinal|submitted_at`. TWO-cell
+    // rows (the owning project + the payload), (project, order) sorted —
+    // the live wire's answer to the two-column select, modeled over the
+    // same in-memory rows (mirrors the wire smoketest's own branch).
+    const tenantWideMatch = /^SELECT (?:project_id|project), payload FROM (tradrl_\w+)/.exec(query);
+    if (tenantWideMatch !== null) {
+      const table = tenantWideMatch[1] as string;
+      const spec = TABLE_SPEC[table];
+      if (spec === undefined) return responder(JSON.stringify({ message: `fake Neon: unknown table ${table}` }), 500);
+      let scoped = rows.filter((row) => row.table === table && row.params[0] === params[0]);
+      if (query.includes('AND as_of <= $2')) {
+        scoped = scoped.filter((row) => Number(row.params[5]) <= Number(params[1])); // the knowledge INSERT's as_of column (param 5)
+      }
+      const sorted = [...scoped].sort((a, b) => (a.params[1] === b.params[1] ? Number(a.params[spec.order]) - Number(b.params[spec.order]) : a.params[1] < b.params[1] ? -1 : 1));
+      return responder(JSON.stringify({ fields: [{ name: 'project', typeOID: 25 }, { name: 'payload', typeOID: 25 }], rows: sorted.map((row) => [row.params[1], row.params[spec.payload]]) }));
+    }
     if (query.startsWith('SELECT COALESCE(MAX(ordinal)')) {
       const table = 'tradrl_project_events';
       const matching = rows.filter((row) => row.table === table && row.params[0] === params[0] && row.params[1] === params[1]);
@@ -252,10 +274,15 @@ describe('deploy/adapters/neon — L12 tenant scoping', () => {
       { label: 'event.scan', statement: projectNextOrdinalStatement('tenant-a', 'prj_a') },
       { label: 'event.append', statement: projectEventAppendStatement({ tenant: 'tenant-a', projectId: 'prj_a', event: 'activate', at: 1 }, 1) },
       { label: 'events.read', statement: projectEventsStatement('tenant-a', 'prj_a') },
+      { label: 'events.read.tenant-wide', statement: projectEventsOfTenantStatement('tenant-a') },
+      { label: 'knowledge.read.tenant-wide', statement: knowledgeOfTenantStatement('tenant-a', Number.MAX_SAFE_INTEGER) },
+      { label: 'outcome.read.tenant-wide', statement: outcomeRowsOfTenantStatement('tradrl_outcomes', 'tenant-a') },
+      { label: 'post-mortem.read.tenant-wide', statement: outcomeRowsOfTenantStatement('tradrl_post_mortems', 'tenant-a') },
+      { label: 'jobs.read.tenant-wide', statement: jobsOfTenantStatement('tenant-a') },
       { label: 'goalset.put', statement: requireOk(goalSetPutStatement('tenant-a', 'prj_a', { goal: { id: 'goal-1' }, constraintSet: { id: 'cs-1' } })) },
       { label: 'goalset.get', statement: goalSetGetStatement('tenant-a', 'prj_a') },
     ];
-    expect(statements.length).toBe(13);
+    expect(statements.length).toBe(18);
     for (const { label, statement } of statements) {
       // The L12 law: the tenant is bind parameter 1 in EVERY statement —
       // `tenant = $1` in reads/scans, `VALUES ($1, ...)` in writes.
@@ -682,5 +709,192 @@ describe('deploy/adapters/neon — FW-MI-A: the session-listing JOIN (the fresh 
     if (rows.ok) return;
     expect(rows.error.code).toBeTruthy();
     expect(rows.error.message.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W-30 (PROD-504): the tenant-wide batched reads + the per-query abort budget
+// ---------------------------------------------------------------------------
+
+describe('deploy/adapters/neon — W-30: the tenant-wide batched reads (PROD-504)', () => {
+  it('the statements are pinned verbatim: two-cell rows, (project, ordinal) ordering, tenant = $1 (L12), no per-project predicate', () => {
+    expect(projectEventsOfTenantStatement('tenant-a')).toEqual({
+      sql: 'SELECT project_id, payload FROM tradrl_project_events WHERE tenant = $1 ORDER BY project_id, ordinal',
+      params: ['tenant-a'],
+    });
+    expect(knowledgeOfTenantStatement('tenant-a', Number.MAX_SAFE_INTEGER)).toEqual({
+      sql: 'SELECT project, payload FROM tradrl_knowledge WHERE tenant = $1 AND as_of <= $2 ORDER BY project, ordinal',
+      params: ['tenant-a', String(Number.MAX_SAFE_INTEGER)],
+    });
+    expect(outcomeRowsOfTenantStatement('tradrl_outcomes', 'tenant-a')).toEqual({
+      sql: 'SELECT project, payload FROM tradrl_outcomes WHERE tenant = $1 ORDER BY project, ordinal',
+      params: ['tenant-a'],
+    });
+    expect(outcomeRowsOfTenantStatement('tradrl_post_mortems', 'tenant-a')).toEqual({
+      sql: 'SELECT project, payload FROM tradrl_post_mortems WHERE tenant = $1 ORDER BY project, ordinal',
+      params: ['tenant-a'],
+    });
+    expect(jobsOfTenantStatement('tenant-a')).toEqual({
+      sql: 'SELECT project, payload FROM tradrl_jobs WHERE tenant = $1 ORDER BY project, submitted_at',
+      params: ['tenant-a'],
+    });
+  });
+
+  it('the events read: ONE round trip returns every project\'s log tagged + grouped in (project, ordinal) order; foreign tenants find NOTHING; malformed rows skip fail-closed', async () => {
+    const fake = fakeNeon([
+      // Insertion order deliberately interleaved — the read answers (project, ordinal).
+      { table: 'tradrl_project_events', params: ['tenant-a', 'prj_b', '2', 'activate', '12', JSON.stringify({ event: 'activate', at: 12, detail: null })] },
+      { table: 'tradrl_project_events', params: ['tenant-a', 'prj_a', '2', 'activate', '11', JSON.stringify({ event: 'activate', at: 11, detail: null })] },
+      { table: 'tradrl_project_events', params: ['tenant-a', 'prj_a', '1', 'organization-bound', '10', JSON.stringify({ event: 'organization-bound', at: 10, detail: { organizationRef: 'org:a' } })] },
+      { table: 'tradrl_project_events', params: ['tenant-b', 'prj_x', '1', 'activate', '99', JSON.stringify({ event: 'activate', at: 99, detail: null })] }, // foreign tenant — never read
+      { table: 'tradrl_project_events', params: ['tenant-a', 'prj_a', '3', 'pause', '13', 'not json {'] }, // malformed payload — skipped fail-closed
+    ]);
+    const store = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const read = await store.projectEventsOfTenant('tenant-a');
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.value).toEqual([
+      { project: 'prj_a', event: 'organization-bound', at: 10, detail: { organizationRef: 'org:a' } },
+      { project: 'prj_a', event: 'activate', at: 11, detail: null },
+      { project: 'prj_b', event: 'activate', at: 12, detail: null },
+    ]);
+    expect(fake.calls.length).toBe(1); // ONE round trip for the WHOLE tenant — the W-30 law
+    expect(fake.calls[0]!.query).toBe('SELECT project_id, payload FROM tradrl_project_events WHERE tenant = $1 ORDER BY project_id, ordinal');
+  });
+
+  it('the knowledge boot read: boot options pass, the envelopes return tagged per project; a NON-BOOT options shape FAILS LOUDLY (the typed refusal — semantics can never silently diverge)', async () => {
+    const fake = fakeNeon([
+      knowledgeRow('tenant-a', 'fkr:a1', 1), // prj_a, asOf 1 (the fake's knowledgeRow seeds project 'prj_a')
+      knowledgeRow('tenant-a', 'fkr:b1', 1), // the fixture rows carry project prj_a — verify by the seeded shape below instead
+    ]);
+    const store = new NeonFirmMemoryStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    // The EXACT boot shape (at = the hydration ceiling, retention = null) passes.
+    const boot = await store.queryKnowledgeOfTenant({ tenant: 'tenant-a' }, { at: Number.MAX_SAFE_INTEGER, retention: null });
+    expect(boot.ok).toBe(true);
+    // Any other options shape refuses LOUDLY — never a silently divergent read.
+    for (const options of [
+      { at: 5_000, retention: null }, // a non-ceiling instant
+      { at: Number.MAX_SAFE_INTEGER, retention: { historyWindowMs: 1 } }, // a retention object
+      { at: Number.MAX_SAFE_INTEGER, retention: null, activeOnly: true }, // an active-only filter
+    ] as const) {
+      const refused = await store.queryKnowledgeOfTenant({ tenant: 'tenant-a' }, options);
+      expect(refused.ok).toBe(false);
+      if (refused.ok) return;
+      expect(refused.error.code).toBe('tenant_wide_read_options_refused');
+    }
+    // A knowledge-id filter (inexpressible in the type — a JS caller) refuses loudly too.
+    const idRefused = await store.queryKnowledgeOfTenant({ tenant: 'tenant-a', knowledgeId: 'fkr:a1' } as never, { at: Number.MAX_SAFE_INTEGER, retention: null });
+    expect(idRefused.ok).toBe(false);
+    if (idRefused.ok) return;
+    expect(idRefused.error.code).toBe('tenant_wide_read_options_refused');
+  });
+
+  it('the knowledge boot read round-trips envelopes tagged per project (the per-project decode law: malformed rows skip fail-closed)', async () => {
+    const envelopeA = knowledgeEnvelope('tenant-a', 'fkr:a1', 1, 'prj_a');
+    const envelopeB = knowledgeEnvelope('tenant-a', 'fkr:b1', 2, 'prj_b');
+    const fake = fakeNeon([
+      { table: 'tradrl_knowledge', params: ['tenant-a', 'prj_b', 'fkr:b1', '2', 'active', '1', JSON.stringify(envelopeB)] },
+      { table: 'tradrl_knowledge', params: ['tenant-a', 'prj_a', 'fkr:a1', '1', 'active', '1', JSON.stringify(envelopeA)] },
+      { table: 'tradrl_knowledge', params: ['tenant-a', 'prj_a', 'fkr:bad', '3', 'weird-status', '1', JSON.stringify({ record: {}, status: 'weird-status' })] }, // not a served status — skipped
+      { table: 'tradrl_knowledge', params: ['tenant-b', 'fkr:x1', '1', 'active', '1', JSON.stringify(knowledgeEnvelope('tenant-b', 'fkr:x1', 1, 'prj_x'))] }, // foreign tenant — never read
+    ]);
+    const store = new NeonFirmMemoryStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const read = await store.queryKnowledgeOfTenant({ tenant: 'tenant-a' }, { at: Number.MAX_SAFE_INTEGER, retention: null });
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.value.length).toBe(2); // the malformed + the foreign rows never cross
+    expect(read.value[0]).toEqual({ project: 'prj_a', envelope: envelopeA }); // (project, ordinal) order
+    expect(read.value[1]).toEqual({ project: 'prj_b', envelope: envelopeB });
+  });
+
+  it('the outcomes + post-mortems + jobs reads: ONE round trip each, rows tagged per project in order, foreign tenants find NOTHING', async () => {
+    const outcomeB = { ...outcomeRecord('tenant-a', 'ocm:b1', 2), project: 'prj_b' };
+    const outcomeA = { ...outcomeRecord('tenant-a', 'ocm:a1', 1), project: 'prj_a' };
+    const postMortemB = { ...postMortemRecord('tenant-a', 'pmr:b1'), project: 'prj_b' };
+    const postMortemA = { ...postMortemRecord('tenant-a', 'pmr:a1'), project: 'prj_a' };
+    const jobB = { jobId: 'job:aaaa0002', kind: 'research', tenant: 'tenant-a', project: 'prj_b', status: 'complete', submittedAt: 2 };
+    const jobA = { jobId: 'job:aaaa0001', kind: 'research', tenant: 'tenant-a', project: 'prj_a', status: 'submitted', submittedAt: 1 };
+    const fake = fakeNeon([
+      { table: 'tradrl_outcomes', params: ['tenant-a', 'prj_b', 'ocm:b1', '2', 'profit', 'dec:1', '1', JSON.stringify(outcomeB)] },
+      { table: 'tradrl_outcomes', params: ['tenant-a', 'prj_a', 'ocm:a1', '1', 'profit', 'dec:1', '1', JSON.stringify(outcomeA)] },
+      { table: 'tradrl_outcomes', params: ['tenant-b', 'prj_x', 'ocm:x1', '1', 'profit', 'dec:1', '1', JSON.stringify({ ...outcomeRecord('tenant-b', 'ocm:x1', 1), project: 'prj_x' })] },
+      { table: 'tradrl_post_mortems', params: ['tenant-a', 'prj_b', 'pmr:b1', '1', 'unknown', 'dec:1', '1', JSON.stringify(postMortemB)] },
+      { table: 'tradrl_post_mortems', params: ['tenant-a', 'prj_a', 'pmr:a1', '1', 'unknown', 'dec:1', '1', JSON.stringify(postMortemA)] },
+      { table: 'tradrl_jobs', params: ['tenant-a', 'prj_b', 'job:aaaa0002', '2', 'complete', JSON.stringify(jobB)] },
+      { table: 'tradrl_jobs', params: ['tenant-a', 'prj_a', 'job:aaaa0001', '1', 'submitted', JSON.stringify(jobA)] },
+      { table: 'tradrl_jobs', params: ['tenant-b', 'prj_x', 'job:bbbb0001', '1', 'submitted', JSON.stringify({ ...jobA, tenant: 'tenant-b', project: 'prj_x', jobId: 'job:bbbb0001' })] },
+    ]);
+    const outcomeStore = new NeonOutcomeLearningStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const jobStore = new NeonJobStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const outcomes = await outcomeStore.queryOutcomesOfTenant('tenant-a');
+    expect(outcomes.ok).toBe(true);
+    if (!outcomes.ok) return;
+    expect(outcomes.value).toEqual([{ project: 'prj_a', record: outcomeA }, { project: 'prj_b', record: outcomeB }]);
+    const postMortems = await outcomeStore.queryPostMortemsOfTenant('tenant-a');
+    expect(postMortems.ok).toBe(true);
+    if (!postMortems.ok) return;
+    expect(postMortems.value).toEqual([{ project: 'prj_a', record: postMortemA }, { project: 'prj_b', record: postMortemB }]);
+    const jobs = await jobStore.jobRecordsOfTenant('tenant-a');
+    expect(jobs.ok).toBe(true);
+    if (!jobs.ok) return;
+    expect(jobs.value).toEqual([{ project: 'prj_a', record: jobA }, { project: 'prj_b', record: jobB }]);
+  });
+
+  it('R46: a degraded Neon read is the typed failure on every tenant-wide lane — never a throw, never a partial read', async () => {
+    const projectStore = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: failingFetch, instants });
+    const firmMemory = new NeonFirmMemoryStore({ config: FAKE_CONFIG, fetchLike: failingFetch, instants });
+    const outcomeStore = new NeonOutcomeLearningStore({ config: FAKE_CONFIG, fetchLike: failingFetch, instants });
+    const jobStore = new NeonJobStore({ config: FAKE_CONFIG, fetchLike: failingFetch, instants });
+    for (const read of [
+      await projectStore.projectEventsOfTenant('tenant-a'),
+      await firmMemory.queryKnowledgeOfTenant({ tenant: 'tenant-a' }, { at: Number.MAX_SAFE_INTEGER, retention: null }),
+      await outcomeStore.queryOutcomesOfTenant('tenant-a'),
+      await outcomeStore.queryPostMortemsOfTenant('tenant-a'),
+      await jobStore.jobRecordsOfTenant('tenant-a'),
+    ]) {
+      expect(read.ok).toBe(false);
+      if (read.ok) return;
+      expect(read.error.code).toBeTruthy();
+      expect(read.error.message.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('deploy/adapters/neon — W-30: the per-query abort budget (PROD-504)', () => {
+  it('the budget is 8s, DISCLOSED and PINNED (deploy/README.md §function-duration + deploy/wire/production.md carry the same number)', () => {
+    expect(NEON_QUERY_TIMEOUT_MS).toBe(8_000);
+  });
+
+  it('every executed statement carries an AbortSignal on the fetch init (the platform fetch honors it; the test fakes ignore it)', async () => {
+    let observed: unknown = null;
+    const probing: FetchLike = async (url, init) => {
+      observed = (init as { signal?: unknown } | undefined)?.signal;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ command: 'SELECT 0', rowCount: 0 }) };
+    };
+    const result = await executeNeonStatement(FAKE_CONFIG, 'SELECT 1', [], probing, 60_000);
+    expect(result.ok).toBe(true);
+    expect(observed).not.toBeNull();
+    expect(typeof (observed as { aborted: boolean }).aborted).toBe('boolean');
+  });
+
+  it('a black-holed connection (never answered) degrades to the typed neon_unreachable WITHIN the query\'s own budget — never a hang past it (R46)', async () => {
+    // A signal-abiding hanging fetch: never resolves on its own; rejects the
+    // moment the abort signal fires (exactly what the platform fetch does).
+    const hanging: FetchLike = (url, init) => new Promise((_resolve, reject) => {
+      const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
+      if (signal === undefined) throw new Error('the per-query abort signal is missing from the fetch init');
+      if (signal.aborted) {
+        reject(new Error('The operation was aborted'));
+        return;
+      }
+      signal.addEventListener('abort', () => reject(new Error('The operation was aborted')));
+    });
+    const startedAt = Date.now();
+    const result = await executeNeonStatement(FAKE_CONFIG, 'SELECT payload FROM tradrl_knowledge WHERE tenant = $1', ['tenant-a'], hanging, 25);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('neon_unreachable');
+    expect(result.error.message).toContain('25ms per-query abort budget');
+    expect(Date.now() - startedAt).toBeLessThan(5_000); // degraded within the query's own budget, never the function's
   });
 });

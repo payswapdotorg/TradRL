@@ -25,12 +25,20 @@ assertions). What the deployment does instead:
   T041 composition root (`createApiService`) is injected with SYNC
   in-memory ports whose state is a PROJECTION of the durable stores:
   at instance boot (the first request after a cold start) the seam
-  reads the Neon stores — the project REGISTRY (creation order), each
+  reads the Neon stores — the project REGISTRY (creation order), every
   project's GOAL SET (the create-project input's goal + constraint
   set, persisted at createProject time) + EVENT LOG, the KNOWLEDGE and
-  the OUTCOMES/POST-MORTEMS — and reconstructs every project through
+  the OUTCOMES/POST-MORTEMS/JOBS — and reconstructs every project through
   the REAL T007 control plane's own domain law (the seam orchestrates,
-  never re-implements). Every mutation applies to the in-memory port
+  never re-implements). Since W-30 (PROD-504) the reads are TENANT-WIDE
+  and BATCHED: SEVEN SQL-over-HTTP round trips in TOTAL (the registry +
+  the existing projects+goals JOIN + one tenant-wide read each for
+  events, knowledge, outcomes, post-mortems and jobs), CONSTANT w.r.t.
+  project count — the pre-fix per-project reads (~6 per project, ≈151
+  sequential fetches at 25 durable projects) crossed the platform's 10s
+  function cap before authn on every cold start and 504'd the whole API
+  plane; the round-trip law is pinned by test (deploy/vercel/
+  durable.test.ts). Every mutation applies to the in-memory port
   AND write-throughs to the durable store in dependency order, and the
   HOST drains the durable writes BEFORE the response is served: a
   failed durable write is the typed 503 (`unavailable`, the durable
@@ -77,7 +85,7 @@ fixtures — zero new simulation logic; disclosed in the row notes).
 | What is absent/down | What the boundary does | What still works |
 | --- | --- | --- |
 | Neon (absent keys) | the control-plane (projects), firm-memory + outcome routes answer the typed `deploy_adapter_absent` 503; the execution gateway keeps the `deploy_adapter_pending` stub and jobs follow the matrix for Apify (the W-26B activation — the gateway/seed/tick — NEVER runs in this state; zero provider traffic) | everything else — authn/authz, rate limits, metering, audit, meta |
-| Neon (down/unreachable) | the same routes answer the typed `neon_unreachable` 503 (per-request — no circuit state; the W-25D seam retries the projection on every request while it is failed, so a Neon that recovers mid-instance heals the surfaces without a cold start). The W-26B boot world rides the same law: a failed seed/fixture write degrades the triggering request typed (the seeded world is unconfirmed) and retries on the next request | as above |
+| Neon (down/unreachable) | the same routes answer the typed `neon_unreachable` 503 (per-request — no circuit state; the W-25D seam retries the projection on every request while it is failed, so a Neon that recovers mid-instance heals the surfaces without a cold start). The W-26B boot world rides the same law: a failed seed/fixture write degrades the triggering request typed (the seeded world is unconfirmed) and retries on the next request. W-30 (PROD-504): every SQL-over-HTTP query carries its own `AbortSignal.timeout(8000ms)` budget (`NEON_QUERY_TIMEOUT_MS` in `deploy/adapters/neon/client.ts` — platform API, test-pinned), so a BLACK-HOLED connection (accepted but never answered) degrades to the same typed `neon_unreachable` within 8s instead of eating the function's duration; the function's `maxDuration` is now 60 (the W-30 belt — disclosed in deploy/README.md §function-duration) | as above |
 | Upstash absent | the host uses T041's in-memory idempotency (per instance — warm-start scoped) | everything (idempotency semantics identical, durability reduced) |
 | Upstash down | the idempotency check reports the typed `degraded` verdict; the host's fail-closed posture refuses the consequential call | non-consequential routes unaffected |
 | R2 absent/down | evidence uploads answer the typed failure; reads answer the typed not-found/unreachable | everything else |
@@ -91,7 +99,7 @@ fixtures — zero new simulation logic; disclosed in the row notes).
 2. Compose the adapters (`composeDeploymentAdapters`) with the platform fetch + a monotonic instant source; absent adapters yield their typed degraded ports (no throw at boot — a half-configured deployment still serves its configured surface).
 3. Compose the REAL control plane (T007) over the Neon persistence substrate and the REAL gateway (T040) — both carried verbatim.
 4. Inject the five ports + credentials + instants into T041's `createApiService` at the `deploy/vercel/runtime/compose.ts` seam (fail-closed: a malformed injection is the typed not-configured 503, never a crash). Under the DURABLE backing the Neon-backed ports are the W-25D seam's sync in-memory ports (`runtime/durable.ts`), and since W-26B the seam-live composition also binds the activation — the machinery tick + the boot world (`runtime/durable-world.ts`) — over the composed service.
-5. Memoize per instance; warm invocations reuse the composition. The first request after a cold start awaits the seam's BOOT PROJECTION (the router's `settled()`), runs the W-26B boot world (`ensureBootWorld()` — the demo world seed + the fixture substance + the org-status snapshots, every durable write drained before the first serve), then the machinery tick; every request drains its pending durable writes before the response is served (`drain()` — the write-through ordering law).
+5. Memoize per instance; warm invocations reuse the composition. The first request after a cold start awaits the seam's BOOT PROJECTION (the router's `settled()`), runs the W-26B boot world (`ensureBootWorld()` — the demo world seed + the fixture substance + the org-status snapshots, every durable write drained before the first serve), then the machinery tick; every request drains its pending durable writes before the response is served (`drain()` — the write-through ordering law). Since W-30 the boot projection is SEVEN batched tenant-wide reads (constant w.r.t. project count — the PROD-504 root fix; the pre-fix per-project reads crossed the platform's function-duration cap at 25 durable projects), each query separately bounded by the 8s per-query abort budget, under the 60s `maxDuration` belt.
 
 ## The CI smoketest
 
