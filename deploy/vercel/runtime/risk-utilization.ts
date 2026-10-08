@@ -677,7 +677,7 @@ function activeBreachesOf(submissions: readonly GatewaySubmissionRecord[]): read
 function backingClause(backing: 'demo' | 'durable'): string {
   return backing === 'demo'
     ? 'served from the DEMO backing\'s per-instance records (the W-25B goal-set capture, the demoSubmissionsOf blotter fold, and the backing\'s own outcome-learning port — a serverless cold start resets the captures, honest under the SIMULATED badge)'
-    : 'served from the DURABLE seam\'s hydrated surfaces (the W-25D hydrated goal set, the demoSubmissionsOf blotter fold over the composition\'s own stores, and the seam\'s hydrated outcome port — the derived launched-desk outcome streams ride the composed service\'s wrapped port and are NOT persisted into the seam, so a launched desk\'s risk-budget consumption reads its hydrated rows only)';
+    : 'served from the DURABLE seam\'s hydrated surfaces (the W-25D hydrated goal set, the demoSubmissionsOf blotter fold over the composition\'s own stores, and the SAME wrapped outcome-learning chain POST /v1/outcomes/query serves — the seam\'s hydrated rows plus every launched desk\'s derived evidence stream and the promoted-decision registry — so the risk-budget fold\'s outcome count is exactly the outcome read\'s own, never a divergent zero)';
 }
 
 /** Build the standing risk-utilization read (pure, deterministic, never throws). */

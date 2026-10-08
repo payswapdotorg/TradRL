@@ -228,6 +228,29 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
   //     `deployment.promotions === null` (port overrides — the injection
   //     seam owns its own world) leaves the route absent: the request
   //     falls through to the boundary's typed not-found (the pre-law).
+  //
+  //     FW-35-A (Round D register §3.1 — the export-integrity wave, S5's
+  //     capsule-set mutation masked by a flat manifest count): THE
+  //     WRITE-THROUGH DRAIN ON THE PROMOTE PATH — the same ordering law
+  //     every sibling host route (3c session, 4 substance, 5b boundary)
+  //     already runs. Pre-FW-35-A this path returned the mint's response
+  //     IMMEDIATELY and left the minted decision's putOutcome write queued
+  //     on the seam's fire-and-forget `pending` drain, to be confirmed by
+  //     "the next request" — but under the serverless balancer the next
+  //     request may land on a DIFFERENT instance, and an instance that
+  //     receives no follow-up request is frozen with the write still in
+  //     its in-memory queue: the promoted decision then exists ONLY in
+  //     the minting instance's per-instance registry. Every other
+  //     instance's /v1/outcomes/query lacks it (the serve-time backstop
+  //     re-queues only on instances whose registry holds the record), so
+  //     the console's wholesale outcomes re-read DROPS the record and the
+  //     export's capsule fold loses its capsule — the append-only breach
+  //     (S5: evc:3e4ceb75 dropped out of a consecutive same-scope export
+  //     as a new capsule entered, the manifest count staying flat). With
+  //     the drain, the mint's write CONFIRMS before the promote response
+  //     serves (a failed write replaces it with the typed 503 — the
+  //     caller learns, never a silent divergence; the idempotent
+  //     re-promotion mints the SAME content-addressed id and heals).
   if (deployment.promotions !== null) {
     const promoteRoute = serveJobPromoteRoute(
       {
@@ -239,6 +262,20 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
       demoSubstanceSerial++,
     );
     if (promoteRoute !== null) {
+      // THE WRITE-THROUGH DRAIN ON THE HOST-ROUTE PATH (FW-35-A — the
+      // ordering law, the 3c/4/5b pattern): the mint queues its
+      // putOutcome onto the seam's pending drain AT MINT TIME; this path
+      // awaits it BEFORE the response, so the decision is durable TRUTH
+      // the moment the promoter hears "200" — every instance's boot
+      // projection and staleness heal serves it, and the export's capsule
+      // set stays strictly append-only across instances and restarts.
+      if (deployment.durable !== null) {
+        const drained = await deployment.durable.drain();
+        if (!drained.ok) {
+          writeApiResponse(response, drainedFailureResponse(promoteRoute, drained.error));
+          return;
+        }
+      }
       writeApiResponse(response, promoteRoute);
       return;
     }

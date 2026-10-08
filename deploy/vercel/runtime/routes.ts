@@ -563,9 +563,18 @@ export function serveDurableSubstanceRoute(input: DurableSubstanceRouteInput, re
     // and the typed not-found are the read's own), the observations from
     // the SAME demoSubstancesOf blotter fold the execution route serves
     // (this composition's own stores), and the risk-budget source from
-    // the SEAM's hydrated outcome port (a disclosed limitation: the
-    // derived launched-desk outcomes ride the composed service's wrapped
-    // port and are NOT persisted into the seam). Under port overrides
+    // the SAME WRAPPED OUTCOME-LEARNING CHAIN POST /v1/outcomes/query
+    // serves (demoSubstance.outcomeLearning — the seam's hydrated port +
+    // the per-project evidence fold + the promoted-decisions registry,
+    // the composition's own one port object). FW-35-A (Round D register
+    // §3.8, L1's third-round finding): the fold PREVIOUSLY read the
+    // seam's BARE hydrated port, so a launched desk's risk-budget row
+    // read "0 outcome record(s) readable by this fold" while the
+    // Outcomes surface rendered the derived + promoted records the
+    // wrapped chain serves — the fold/seam divergence, now closed by
+    // construction: both reads fold THE SAME PORT OBJECT, so the count
+    // the risk fold names is exactly the count the console's own outcome
+    // read (and the export's capsule fold) carries. Under port overrides
     // (demoSubstance === null — the injection seam owns its own world)
     // the route falls through to the boundary exactly like the jobs +
     // submissions routes (the pre-W-8 law).
@@ -590,7 +599,7 @@ export function serveDurableSubstanceRoute(input: DurableSubstanceRouteInput, re
           return { ok: true, value: { goal: goal as GoalStatement, constraintSet: constraintSet as ConstraintSetStatement } };
         },
         submissionsOf: (tenant, project) => demoSubmissionsOf(demoSubstance.ports, tenant, project),
-        outcomesOf: (tenant, project) => outcomeRecordsOf(input.durable.ports.outcomeLearning, tenant, project),
+        outcomesOf: (tenant, project) => outcomeRecordsOf(demoSubstance.outcomeLearning, tenant, project),
         backing: 'durable',
       },
       request,

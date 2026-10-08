@@ -895,3 +895,251 @@ describe('deploy/vercel — FW-34-A: the org-snapshot identity is instance-stabl
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// (f) FW-35-A — THE EXPORT-INTEGRITY WAVE (Round D register §3.1 + §3.8:
+//     S5's capsule-set mutation masked by a flat manifest count, the
+//     event-count collapse's durable-records half, L1's risk-budget fold
+//     divergence — the third round).
+//
+// WHAT IS PINNED (through the FULL function handler, the same harness law):
+//
+//   (a) THE AUDITOR-DIFF LAW: two consecutive same-scope export folds
+//       around new activity are APPEND-ONLY-DIFFABLE — every record the
+//       first fold carried survives into the second (S5: evc:3e4ceb75,
+//       the outcome capsule for out:cd4c6454, dropped out of a
+//       consecutive same-scope export as a new outcome entered, the
+//       manifest count staying FLAT 7 — a masked loss an auditor diffing
+//       the two files catches and the count hides); the capsule count
+//       grows HONESTLY; and a fresh serverless instance serves the
+//       second fold byte-identically (the set never mutates across the
+//       recreation either).
+//
+//   (b) THE PROMOTE-PATH DRAIN: the mint's durable write CONFIRMS on the
+//       promote request's own path — the promote response is never served
+//       ahead of its own write-through (the pre-fix fire-and-forget: the
+//       write queued at mint time onto the seam's pending drain and
+//       confirmed only on "the next request", which under the serverless
+//       balancer may land on a DIFFERENT instance — or never: an instance
+//       that receives no follow-up request is frozen with the write still
+//       in its in-memory queue, and the promoted decision then existed
+//       ONLY in the minting instance's per-instance registry, so every
+//       other instance's outcome read — and the console's wholesale
+//       outcomes re-read, and the export's capsule fold — DROPPED it).
+//
+//   (c) THE FOLD-AGREEMENT LAW (the risk-budget half, L1's third-round
+//       finding: "the risk-budget fold reads '0 outcome records' while
+//       outcomes render live"): the durable arm's risk-utilization read
+//       folds over the SAME WRAPPED outcome-learning chain the frozen
+//       POST /v1/outcomes/query read serves (the seam's hydrated rows +
+//       every launched desk's derived evidence stream + the
+//       promoted-decisions registry) — never the seam's bare hydrated
+//       port, which undercounts the records the live surfaces (and the
+//       export's capsule fold) render.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-35-A: the export never mutates a record set (the auditor-diff law)', () => {
+  it('two consecutive same-scope export folds around a SECOND promotion are append-only-diffable — every fold-#1 record survives into fold #2 (the masked drop, closed), the capsule count grows honestly, and a fresh instance serves fold #2 identically', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+
+      // THE SEED: the launched desk + the FIRST promotion (the mint's
+      // write confirms on the promote request's own drain — FW-35-A).
+      const first = await seedLaunchedDesk(instanceA, 'prj-fw35a-audit', 'fw35a-audit');
+      const promotedOne = await drive(instanceA, streamingRequest({ method: 'POST', url: `/v1/jobs/${first.jobId}/promote`, headers: BEARER }));
+      expect(promotedOne.status).toBe(200);
+      const decisionOne = (promotedOne.body as { data: { decision: { outcomeId: string } } }).data.decision.outcomeId;
+
+      // EXPORT FOLD #1 (what composeWorkspaceExport serializes first): the
+      // derived outcome + the first promoted decision, 7 capsules.
+      const foldOne = await exportFoldOf(instanceA, 'prj-fw35a-audit');
+      expect(foldOne.outcomes).toHaveLength(2);
+      expect(foldOne.outcomes).toContain(decisionOne);
+      expect(foldOne.capsules).toBe(7); // 2 outcomes + 1 post-mortem + 3 submissions + 1 completed job
+
+      // NEW ACTIVITY: a SECOND research job completes, then the SECOND
+      // promotion — the new outcome that "enters" (S5's evc:7b147a1d).
+      const secondSubmit = await drive(instanceA, streamingRequest({
+        method: 'POST',
+        url: '/v1/jobs/research',
+        headers: { ...BEARER, 'idempotency-key': 'idem:fw35a-audit:second' },
+        body: { kind: 'research', projectId: 'prj-fw35a-audit', spec: { objective: 'the auditor-diff case: a second completed research job' } },
+      }));
+      expect(secondSubmit.status).toBe(202);
+      const secondJobId = (secondSubmit.body as { data: { jobId: string } }).data.jobId;
+      vi.setSystemTime(T0 + 20_000); // the second job's completion age (the seed's own tick ran at +10s)
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER })); // the tick completes it
+      const promotedTwo = await drive(instanceA, streamingRequest({ method: 'POST', url: `/v1/jobs/${secondJobId}/promote`, headers: BEARER }));
+      expect(promotedTwo.status).toBe(200);
+      const decisionTwo = (promotedTwo.body as { data: { decision: { outcomeId: string } } }).data.decision.outcomeId;
+
+      // EXPORT FOLD #2 (the consecutive same-scope export, five minutes
+      // later in S5's session): THE AUDITOR'S DIFF — ADDITIONS ONLY.
+      const foldTwo = await exportFoldOf(instanceA, 'prj-fw35a-audit');
+      // (i) EVERY fold-#1 record survives — the append-only law (the
+      //     pre-fix masked drop would fail exactly here while the flat
+      //     count hid it).
+      for (const outcomeId of foldOne.outcomes) expect(foldTwo.outcomes).toContain(outcomeId);
+      for (const postMortemId of foldOne.postMortems) expect(foldTwo.postMortems).toContain(postMortemId);
+      for (const knowledgeId of foldOne.knowledge) expect(foldTwo.knowledge).toContain(knowledgeId);
+      for (const submissionId of foldOne.submissions) expect(foldTwo.submissions).toContain(submissionId);
+      for (const job of foldOne.jobs) expect(foldTwo.jobs).toContainEqual(job);
+      // (ii) the new records entered — honest growth, never churn.
+      expect(foldTwo.outcomes).toContain(decisionTwo);
+      expect(foldTwo.outcomes).toHaveLength(foldOne.outcomes.length + 1);
+      expect(foldTwo.jobs.map((job) => job.jobId)).toContain(secondJobId);
+      // (iii) the capsule count GREW by exactly the new outcome + the new
+      //       completed job (7 -> 9) — the manifest never masks a loss
+      //       behind a flat or shrinking count.
+      expect(foldTwo.capsules).toBe(foldOne.capsules + 2);
+
+      // THE INSTANCE-RECREATION STABILITY (the records half of the
+      // event-count collapse class): a fresh serverless instance serves
+      // fold #2 IDENTICALLY — the set never mutates across the recreation.
+      const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceB.ok).toBe(true);
+      if (!instanceB.ok) return;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const foldThree = await exportFoldOf(instanceB, 'prj-fw35a-audit');
+      expect(foldThree).toEqual(foldTwo);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('deploy/vercel — FW-35-A: the promote request confirms its own write (the drain on the promote path)', () => {
+  it('promote on A with NO further request on A -> the decision is ALREADY durable truth: the store holds the row and a fresh instance (registry empty) serves it — the pre-fix fire-and-forget pinned', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const finished = await seedLaunchedDesk(instanceA, 'prj-fw35a-drain', 'fw35a-drain');
+
+      // THE PROMOTION IS THE LAST REQUEST INSTANCE A EVER RECEIVES (the
+      // serverless freeze: no follow-up request ever drains A's queue).
+      const promoted = await drive(instanceA, streamingRequest({ method: 'POST', url: `/v1/jobs/${finished.jobId}/promote`, headers: BEARER }));
+      expect(promoted.status).toBe(200);
+      const decision = (promoted.body as { data: { decision: { outcomeId: string } } }).data.decision.outcomeId;
+
+      // THE STORE-LEVEL PIN: the row is in tradrl_outcomes ALREADY — the
+      // promote request's own drain confirmed the write before the 200
+      // served (pre-fix: the write sat in A's in-memory pending queue and
+      // this assertion fails — the record existed only in A's registry).
+      const direct = storesOver(providers.fetchLike);
+      const storedOutcomes = await direct.outcomeLearning.queryOutcomes({ tenant: TENANT, project: 'prj-fw35a-drain' }, { at: HYDRATION_AT, retention: null });
+      expect(storedOutcomes.ok).toBe(true);
+      if (!storedOutcomes.ok) return;
+      expect((storedOutcomes.value as readonly { outcomeId: string }[]).some((row) => row.outcomeId === decision)).toBe(true);
+
+      // THE FRESH-INSTANCE PIN: B boots from the durable truth alone (its
+      // promotion registry is EMPTY — the record can only serve from the
+      // store) and serves the decision — the append-only law holds across
+      // the recreation with no help from the minting instance.
+      const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceB.ok).toBe(true);
+      if (!instanceB.ok) return;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const servedOnB = await outcomeIdsOf(instanceB, 'prj-fw35a-drain');
+      expect(servedOnB.filter((id) => id === decision)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('deploy/vercel — FW-35-A: the risk-budget fold reads the SAME outcome chain the outcome read serves (the fold-agreement law)', () => {
+  it('a launched desk with derived + promoted outcomes: the risk-utilization read\'s risk-budget row names EXACTLY the outcome read\'s own record count — never the pre-fix divergent "0 outcome records" while outcomes render live (L1, third round)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      // THE SEED, with the risk-budget constraint the fold-agreement case
+      // needs (the harness's own goal + a constraint set carrying the
+      // risk.budget bound the risk fold consumes).
+      const created = await drive(instanceA, streamingRequest({
+        method: 'POST',
+        url: '/v1/projects',
+        headers: { ...BEARER, 'content-type': 'application/json' },
+        body: {
+          id: 'prj-fw35a-foldagree',
+          name: 'the fold-agreement desk',
+          executionMode: 'simulation',
+          goal: validGoal(TENANT),
+          constraintSet: {
+            id: 'cs-fw35a-foldagree', version: 1, tenantId: TENANT,
+            constraints: [
+              { id: 'k-position', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 2 }, severity: 'blocking' },
+              { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: '40000.00' }, severity: 'blocking' },
+            ],
+            createdAt: T0,
+          },
+          at: T0,
+        },
+      }));
+      expect(created.status).toBe(201);
+      const kickoff = await drive(instanceA, streamingRequest({
+        method: 'POST',
+        url: '/v1/jobs/research',
+        headers: { ...BEARER, 'idempotency-key': 'idem:fw35a-foldagree:kickoff' },
+        body: { kind: 'research', projectId: 'prj-fw35a-foldagree', spec: consoleLaunchSpec() },
+      }));
+      expect(kickoff.status).toBe(202);
+      const kickoffJobId = (kickoff.body as { data: { jobId: string } }).data.jobId;
+      vi.setSystemTime(T0 + 10_000);
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const finishedJob = await drive(instanceA, streamingRequest({ method: 'GET', url: `/v1/jobs/${kickoffJobId}`, headers: BEARER }));
+      expect(finishedJob.status).toBe(200);
+      expect((finishedJob.body as { data: { status: string } }).data.status).toBe('complete');
+      const promoted = await drive(instanceA, streamingRequest({ method: 'POST', url: `/v1/jobs/${kickoffJobId}/promote`, headers: BEARER }));
+      expect(promoted.status).toBe(200);
+
+      // A FRESH INSTANCE (the console's reload/restart equivalent): the
+      // outcome read serves the derived outcome + the promoted decision.
+      const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceB.ok).toBe(true);
+      if (!instanceB.ok) return;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const servedOutcomes = await outcomeIdsOf(instanceB, 'prj-fw35a-foldagree');
+      expect(servedOutcomes).toHaveLength(2); // the derived stream + the promoted decision
+
+      // THE RISK-UTILIZATION READ over the SAME wrapped chain: the
+      // risk-budget row's source names the SAME count the outcome read
+      // just served (pre-fix: the bare hydrated port — "0 outcome
+      // record(s) readable by this fold" while both records render live).
+      const risk = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/risk/utilization?project=${encodeURIComponent('prj-fw35a-foldagree')}`, headers: BEARER }));
+      expect(risk.status).toBe(200);
+      const bounds = (risk.body as { data: { bounds: readonly { readonly constraintId: string; readonly metric: string; readonly current: number | null; readonly source: string }[] } }).data.bounds;
+      const riskBudget = bounds.find((bound) => bound.metric === 'risk.budget');
+      expect(riskBudget).toBeDefined();
+      if (riskBudget === undefined) return;
+      expect(riskBudget.source).toContain(`${servedOutcomes.length} outcome record(s)`);
+      expect(riskBudget.source).not.toContain('0 outcome record');
+      // The derived stream's realized loss is COUNTED now (the demo arm's
+      // own law, restored under durable): the consumption is a number,
+      // never the divergent 0.
+      expect(riskBudget.current).not.toBe(0);
+      expect(riskBudget.current).not.toBe(null);
+      // The disclosure names the wrapped chain (the same outcome read the
+      // console + the export's capsule fold drive).
+      const disclosure = (risk.body as { data: { disclosure: string } }).data.disclosure;
+      expect(disclosure).toContain('wrapped outcome-learning chain');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
