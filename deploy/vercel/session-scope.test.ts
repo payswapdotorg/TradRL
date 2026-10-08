@@ -251,4 +251,30 @@ describe('deploy/vercel — FW-MI-A: the session-scope routes over the DEMO back
       expect(demoGoal.status).toBe(200); // the seeded goal serves every session
     }
   });
+
+  // FW-31-B (Round A blocker 3): the ADDITIVE session-scope marker on every
+  // listed project — 'session-owned' for the session's own launches,
+  // 'tenant-available' for the shared demo scope. The DEMO arm's visibility
+  // law is UNCHANGED (MI-D1 verbatim); the marker is the durable wave's
+  // listing vocabulary, surfaced on this arm too so the render surface
+  // (FW-32) consumes ONE shape across both backings.
+  it('FW-31-B: every listed item carries the ADDITIVE consoleSessionScope marker (owned = session-owned, the demo project = tenant-available) and NEVER the ownerSession identity', async () => {
+    const composed = composeDeployment(apiEnv());
+    expect(composed.ok).toBe(true);
+    if (!composed.ok) return;
+    await drive(composed, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: validCreateProjectRequest(TENANT, 'prj-session-a-1', 'G7 Rates Relative Value'),
+    }));
+
+    const items = ((await drive(composed, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_A) }))).body.data as { items: readonly { id: string; consoleSessionScope?: string; ownerSession?: unknown }[] }).items;
+    expect(items.find((project) => project.id === 'prj-session-a-1')?.consoleSessionScope).toBe('session-owned');
+    expect(items.find((project) => project.id === DEMO_PROJECT_ID)?.consoleSessionScope).toBe('tenant-available');
+    expect(items.every((project) => project.ownerSession === undefined)).toBe(true); // the identity NEVER crosses the wire
+
+    // B sees the same demo-project marker (the session law itself is unchanged: B still does NOT see A's desk here).
+    const bItems = ((await drive(composed, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_B) }))).body.data as { items: readonly { id: string; consoleSessionScope?: string }[] }).items;
+    expect(bItems.map((project) => project.id)).toEqual([DEMO_PROJECT_ID]);
+    expect(bItems.find((project) => project.id === DEMO_PROJECT_ID)?.consoleSessionScope).toBe('tenant-available');
+  });
 });

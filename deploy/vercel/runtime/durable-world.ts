@@ -116,6 +116,7 @@ import { fixtureKnowledge } from '../../../services/api/src/fixtures';
 import {
   DEMO_PROJECT_ID,
   demoMachineryTick,
+  demoOrgSnapshotInstantOf,
   demoOrgStatusSnapshot,
   demoOutcomeRecord,
   demoPostMortemRecord,
@@ -180,6 +181,23 @@ export interface DurableActivation {
 }
 
 // ---------------------------------------------------------------------------
+// THE PER-INSTANCE STALENESS HEAL (FW-31-B — the P02 stall root cause's fix)
+// ---------------------------------------------------------------------------
+
+/**
+ * The staleness heal's interval: at most ONE heal attempt per instance per
+ * interval (two fresh SQL-over-HTTP reads — the tenant-wide jobs read + the
+ * session-listing JOIN — a CONSTANT cost, never per-request; the W-30
+ * round-trip law's boot projection is untouched). 10s bounds the P02
+ * stall's worst case to the interval + the machinery's own 3s/8s schedule
+ * (the observed stalls were 3-4 MINUTES: the balancer kept routing the
+ * console's polls to a warm instance that booted before the launch, and
+ * NOTHING ever re-read the durable truth there — the boot-time hydration
+ * was the only cross-instance bridge).
+ */
+const STALENESS_HEAL_INTERVAL_MS = 10_000;
+
+// ---------------------------------------------------------------------------
 // The boot world
 // ---------------------------------------------------------------------------
 
@@ -241,18 +259,21 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
    * lacks one, through the REAL private route (the watch store's only
    * writer). Unbound projects are the machinery tick's compile pass's own
    * law. Idempotent per instance (the store check); a refusal is skipped
-   * (R46 — never a crash).
+   * (R46 — never a crash). Since FW-31-B the pass takes the project list
+   * STRUCTURALLY (id + organizationRef): the boot world passes the HYDRATED
+   * projection's listing; the staleness heal passes the FRESH session-JOIN
+   * rows (a warm instance's projection predates the launch — the R7-at-boot
+   * law alone left the compiled org's snapshot unobservable there, the
+   * "org never compiles" half of the P02 stall).
    */
-  function reportMissingOrgStatusSnapshots(at: number): void {
+  function reportMissingOrgStatusSnapshots(projects: readonly { readonly id: string; readonly organizationRef: string | null }[], at: number): void {
     if (seed.internalToken === null) return; // the private plane stays closed — the watch store stays honestly empty
-    const listed = durable.ports.controlPlane.projectsOf(tenantId);
-    if (!listed.ok) return; // R46: a degraded projection skips the pass — never a crash
     const known = new Set(service.orgStatusSnapshots().map((snapshot) => `${snapshot.organizationRef as string}/${snapshot.project as string}`));
-    for (const project of listed.value) {
-      const organizationRef = project.lifecycle.organizationRef;
+    for (const project of projects) {
+      const organizationRef = project.organizationRef;
       if (organizationRef === null) continue; // unbound — the tick's compile pass owns those
-      if (known.has(`${organizationRef as string}/${project.id as string}`)) continue; // already reported on this instance
-      const snapshot = demoOrgStatusSnapshot(seed.tenant, project.id as string, organizationRef as string, at);
+      if (known.has(`${organizationRef}/${project.id}`)) continue; // already reported on this instance
+      const snapshot = demoOrgStatusSnapshot(seed.tenant, project.id, organizationRef, demoOrgSnapshotInstantOf(project.id, at));
       if (snapshot === null) continue; // unreachable (the fixture builder is the canonical shape) — skip, never a crash
       service.handle({
         method: 'POST',
@@ -261,6 +282,27 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
         body: { snapshot },
       });
     }
+  }
+
+  /** The hydrated projection's project listing as the snapshot pass's structural input (R46: a degraded projection answers nothing — the pass skips, never a crash). */
+  function hydratedProjectsForSnapshots(): readonly { readonly id: string; readonly organizationRef: string | null }[] {
+    const listed = durable.ports.controlPlane.projectsOf(tenantId);
+    if (!listed.ok) return [];
+    return listed.value.map((project) => ({ id: project.id as string, organizationRef: typeof project.lifecycle.organizationRef === 'string' ? project.lifecycle.organizationRef : null }));
+  }
+
+  /** The fresh session-JOIN rows' project payloads as the snapshot pass's structural input (malformed rows skip fail-closed — never a crash). */
+  function freshProjectsForSnapshots(rows: readonly { readonly project: unknown }[]): readonly { readonly id: string; readonly organizationRef: string | null }[] {
+    const projects: { readonly id: string; readonly organizationRef: string | null }[] = [];
+    for (const row of rows) {
+      if (!isRecord(row.project)) continue;
+      const id = row.project.id;
+      const lifecycle = row.project.lifecycle;
+      if (typeof id !== 'string' || id.length === 0 || !isRecord(lifecycle)) continue;
+      const organizationRef = lifecycle.organizationRef;
+      projects.push({ id, organizationRef: typeof organizationRef === 'string' && organizationRef.length > 0 ? organizationRef : null });
+    }
+    return projects;
   }
 
   /**
@@ -285,8 +327,23 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
         missing.push(record);
       }
     }
+    replayDurableJobs(missing);
+  }
+
+  /**
+   * THE REPLAY DRIVER (the boot hydration + the staleness heal's shared
+   * law, factored by FW-31-B): store the given durable job records into
+   * THIS instance's API-owned job store through the REAL public job routes
+   * — the port's hydration bracket serves each record VERBATIM (the exact
+   * jobId, status, result and timestamps) while the driver runs
+   * SYNCHRONOUSLY inside the bracket, so nothing else can consume a
+   * preloaded record. Throws the typed failure when a replay is refused
+   * (the frozen job-submission contract drifted — loud at boot; the heal
+   * catches and skips, R46).
+   */
+  function replayDurableJobs(missing: readonly JobRecord[]): void {
     if (missing.length === 0) return;
-    durable.beginJobHydration(missing); // the port serves exactly these records, in order
+    durable.beginJobHydration([...missing]); // the port serves exactly these records, in order
     try {
       for (const record of missing) {
         const replayed = service.handle({
@@ -302,6 +359,58 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
       }
     } finally {
       durable.endJobHydration(); // the port mints fresh records again (an unconsumed preload is dropped)
+    }
+  }
+
+  /**
+   * THE PER-INSTANCE STALENESS HEAL (FW-31-B — the P02 stall's fix): a
+   * bounded, best-effort re-read of the durable truth for the two surfaces
+   * the P02 stall stranded on a WARM instance (an instance whose boot
+   * projection + API-owned job store predate a launch that landed on
+   * ANOTHER instance):
+   *
+   *   1. THE JOBS HALF: a fresh tenant-wide durable-jobs read; every record
+   *      this instance's job store LACKS (the launch's kickoff job, its
+   *      transitions) replays back through the REAL public job routes (the
+   *      same replay driver the boot hydration rides) — the frozen per-id
+   *      GET /v1/jobs/:jobId and the host-owned jobs list then serve them
+   *      on THIS instance too (the pre-fix stall: the console's poll
+   *      answered the typed 404 forever, the launch phase never advanced,
+   *      CONNECTION degraded — Round A's L1/M1, intermittent because it
+   *      needed the balancer to keep routing the polls to the pre-launch
+   *      warm instance).
+   *
+   *   2. THE ORG HALF: the org-status snapshot pass over the FRESH
+   *      session-JOIN rows (never this instance's stale projection) — every
+   *      BOUND project whose watch-store snapshot this instance lacks gets
+   *      its report through the REAL private route (the R7-at-boot law,
+   *      brought to the bounded interval), so the compiled org's snapshot
+   *      is observable on THIS instance (the "org never compiles" half —
+   *      the org WAS compiled in the durable truth; the stale instance
+   *      could never observe it).
+   *
+   * Best-effort by construction (the W-25D mid-instance law — the serving
+   * projection is NEVER degraded by a heal): a failed read or a refused
+   * replay is SKIPPED (R46 — never a crash, never a rejected promise); the
+   * next interval retries. The W-30 round-trip law is untouched (the boot
+   * projection's reads stay exactly seven; the heal adds at most TWO fresh
+   * reads per interval per instance).
+   */
+  async function healStaleDurableState(at: number): Promise<void> {
+    try {
+      // 1. THE JOBS HALF — the fresh tenant-wide durable-jobs read.
+      const jobs = await durable.freshJobRecordsOfTenant();
+      if (jobs.ok) {
+        const known = new Set(service.jobs().map((job) => job.jobId as string));
+        const missing = jobs.value.filter((record) => !known.has(record.jobId));
+        replayDurableJobs(missing);
+      }
+      // 2. THE ORG HALF — the snapshot pass over the fresh JOIN rows.
+      const rows = await durable.sessionProjectRows();
+      if (rows.ok) reportMissingOrgStatusSnapshots(freshProjectsForSnapshots(rows.value), at);
+    } catch {
+      // R46: the heal is best-effort — a transient failure never takes the
+      // request (or the instance) down; the next interval retries.
     }
   }
 
@@ -373,7 +482,7 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
     }
     // 6. THE ORG-STATUS SNAPSHOT PASS (R7) — last, against the CURRENT
     //    projection (the freshly seeded world included).
-    reportMissingOrgStatusSnapshots(bootAt);
+    reportMissingOrgStatusSnapshots(hydratedProjectsForSnapshots(), bootAt);
   }
 
   // The per-instance latch: a successful run latches; a failed run clears
@@ -389,11 +498,30 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
     return latched;
   }
 
-  // The machinery tick (R2): the SAME law over the seam's hydrated control plane.
+  // The machinery tick (R2): the SAME law over the seam's hydrated control
+  // plane — and, since FW-31-B, the bounded STALENESS HEAL rides the tick's
+  // cadence: at most one heal attempt per STALENESS_HEAL_INTERVAL_MS per
+  // instance, fire-and-forget (the heal never blocks the request — it only
+  // reads the durable truth + replays into the per-instance stores; the
+  // serving projection is untouched, per the W-25D mid-instance law).
   const internalToken = seed.internalToken;
+  let lastStalenessHealAt: number | null = null;
   const tick = internalToken === null
     ? null
     : (at: number) => {
+        // FW-31-B (the P02 stall): the bounded staleness heal, BEFORE the
+        // compile pass — a healed job store lets THIS tick's advancement
+        // see the launch's kickoff job the same request (a healed watch
+        // store lets the org-status read observe the compiled org). The
+        // instance's FIRST tick only ARMS the interval (the boot world
+        // just read the durable truth — a heal at boot adds nothing); a
+        // later tick pays at most one heal per interval.
+        if (lastStalenessHealAt === null) {
+          lastStalenessHealAt = at;
+        } else if (at - lastStalenessHealAt >= STALENESS_HEAL_INTERVAL_MS) {
+          lastStalenessHealAt = at;
+          void healStaleDurableState(at); // best-effort by construction — never a rejection
+        }
         // The context's control plane is the seam's HYDRATED port — the
         // compile pass's projectsOf read works unchanged (R2's law).
         demoMachineryTick(service, { ports: { controlPlane: durable.ports.controlPlane }, tenant: seed.tenant, developerToken: seed.developerToken, internalToken }, at);

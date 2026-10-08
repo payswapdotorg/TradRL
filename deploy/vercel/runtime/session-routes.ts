@@ -32,33 +32,66 @@
 // direct SDK creates without the header) are visible to NO session — the
 // wave-1 cross-session leak closes for old rows too.
 //
+// FW-31-B (Round A blocker 3 — "SESSION-SCOPED SCOPE PERSISTENCE", 4/9
+// personas): under the DEMO backing the law above is VERBATIM (the
+// per-instance world — a cold start resets ownership WITH the world,
+// honestly under SIMULATED). Under the DURABLE backing the visibility
+// scope widens to THE TENANT'S OWN DURABLE REGISTRY: the session id is a
+// localStorage correlation device, not a credential (apps/web's own
+// disclosure), and gating the durable registry on it ORPHANED every desk
+// whose session id died (persona S1's compiled org prj-6a8f1d79 —
+// active, 2 jobs, 1 outcome server-side — vanished from the switcher
+// after a browser restart, "unrecoverable via the UI"; L4: "a desk crash
+// mid-day MUST resume state"). The durable registry is already L12's own
+// scope (the fresh JOIN reads the credential tenant's rows and nothing
+// else — exactly what the frozen knowledge/outcomes query routes already
+// serve tenant-wide, FW-MI-A's own disclosed limitation), so under
+// durable EVERY registry row lists and serves, each carrying the ADDITIVE
+// `consoleSessionScope` marker ('session-owned' = this session created
+// it; 'tenant-available' = the tenant's registry carries it — the demo
+// project included). What stays intact: L12 (never cross tenants), the
+// demo arm's strict per-session law, the ownerSession identity NEVER
+// crossing the wire (only the derived marker serves), SDK parity
+// (headerless callers keep the boundary's byte-identical behavior), the
+// typed 401/404/503 laws, and unknown-vs-foreign indistinguishability
+// for ids OUTSIDE the tenant's registry.
+//
 // THE ROUTES (additive, BEFORE the boundary wrap — the W-8 host-route
 // precedent; the frozen route table is untouched, and a request WITHOUT
 // the session header never reaches this module: the boundary serves it
 // byte-identically, so SDK parity is preserved):
 //
-//   GET /v1/projects                    the session listing — the demo
-//                                       project + the session's own
-//                                       projects, one full page (a
-//                                       session's view is bounded by
-//                                       construction; no cursor is ever
-//                                       served on this path — MI-D8's
-//                                       "no silent cap" law: the served
-//                                       page IS the whole session view)
-//   GET /v1/projects/:projectId        the session detail — the demo
-//                                       project, the session's own
-//                                       project, or the typed not-found
+//   GET /v1/projects                    the session listing — under DEMO:
+//                                       the demo project + the session's
+//                                       own projects; under DURABLE
+//                                       (FW-31-B): the tenant's WHOLE
+//                                       durable registry, every item
+//                                       carrying the ADDITIVE
+//                                       consoleSessionScope marker —
+//                                       one full page either way (no
+//                                       cursor is ever served on this
+//                                       path — MI-D8's "no silent cap"
+//                                       law: the served page IS the
+//                                       whole session view)
+//   GET /v1/projects/:projectId        the session detail — under DEMO:
+//                                       the demo project, the session's
+//                                       own project, or the typed
+//                                       not-found; under DURABLE: any
+//                                       registry row (marked) or the
+//                                       typed not-found
 //   GET /v1/projects/:projectId/goal   the session goal read — gated the
 //                                       same way; under DURABLE served
 //                                       FRESH from the goal-set row (the
 //                                       session-listing JOIN), never the
 //                                       per-instance projection
-//   GET /v1/jobs?project=<id>           the session gate — blocked (the
-//   GET /v1/execution/submissions       typed not-found) for a foreign
-//                                       project, DELEGATED to the
+//   GET /v1/jobs?project=<id>           the session gate — under DEMO:
+//   GET /v1/execution/submissions       blocked (the typed not-found) for
+//                                       a foreign project; under DURABLE
+//                                       (FW-31-B): blocked only OUTSIDE
+//                                       the tenant's registry. A passing
+//                                       gate is DELEGATED to the
 //                                       existing demo-substance routes
-//                                       when the gate passes (null —
-//                                       the caller falls through)
+//                                       (null — the caller falls through)
 //
 // THE FRESHNESS LAW (MI-D8's data-loss half): under DURABLE the session
 // listing/detail/goal read the DURABLE TABLES through the session-listing
@@ -179,10 +212,58 @@ export type ConsoleSessionScope =
  * THE VISIBILITY LAW (MI-D1): one project is visible to one session iff
  * it is the shared DEMO project (clause (b)) or this session owns it
  * (clause (a)). Unowned projects (a null owner) are visible to NO
- * session.
+ * session. THE DEMO ARM'S LAW, verbatim since FW-MI-A.
+ *
+ * FW-31-B (Round A blocker 3): under DURABLE the listing/detail/gate
+ * surfaces widen to THE TENANT'S OWN DURABLE REGISTRY (durableSessionSeesProject
+ * below) — the wave-1 session law, applied to the durable registry,
+ * ORPHANED every desk whose owning session id died (a browser restart
+ * with cleared site data, a fresh profile, another device: persona S1's
+ * compiled org prj-6a8f1d79 vanished from the switcher entirely,
+ * "unrecoverable via the UI"; L4: "a desk crash mid-day MUST resume
+ * state"). The durable registry IS the tenant's own data — the fresh JOIN
+ * reads the credential tenant's rows and nothing else (L12), exactly the
+ * scope the frozen query routes (knowledge/outcomes) already serve
+ * tenant-wide (FW-MI-A's own disclosed limitation) — so the durable arm
+ * lists and serves EVERY registry row, with the ADDITIVE
+ * `consoleSessionScope` marker carrying the session's own grouping
+ * ('session-owned' = this session created it; 'tenant-available' = the
+ * tenant's registry carries it). The isolation law stays intact where it
+ * is real: L12 (never cross tenants), the DEMO arm's strict per-session
+ * law above, the ownerSession identity NEVER crossing the wire (only the
+ * derived marker serves), SDK parity (a headerless caller keeps the
+ * boundary's byte-identical behavior), and the unknown-project typed
+ * 404 (a project NOT in the tenant's durable registry is indistinguishable
+ * from unknown).
  */
 export function sessionSeesProject(projectId: string, session: string, ownerOf: (projectId: string) => string | null): boolean {
   return projectId === DEMO_PROJECT_ID || ownerOf(projectId) === session;
+}
+
+/** The session-scope marker served on every listed project (FW-31-B): 'session-owned' — this console session created the project; 'tenant-available' — the tenant's registry carries it, this session did not create it (the shared demo project included). */
+export type ConsoleSessionScopeMarker = 'session-owned' | 'tenant-available';
+
+/** The CONSOLE_SESSION_SCOPE field name (the additive marker — FW-31-B; the render surface (FW-32) owns its display). */
+export const CONSOLE_SESSION_SCOPE_FIELD = 'consoleSessionScope';
+
+/** Serve one project record with its ADDITIVE session-scope marker (the record's own fields verbatim + one derived field; the ownerSession identity itself NEVER crosses the wire). */
+function withSessionScopeMarker(record: unknown, marker: ConsoleSessionScopeMarker): unknown {
+  if (!isProjectRecord(record)) return record; // unreachable at the callers (guarded) — pass through, never a crash
+  return deepFreeze({ ...(record as unknown as Record<string, unknown>), [CONSOLE_SESSION_SCOPE_FIELD]: marker });
+}
+
+/**
+ * THE DURABLE ARM'S VISIBILITY LAW (FW-31-B): one project is visible to a
+ * session iff the credential tenant's DURABLE REGISTRY carries it (the
+ * fresh JOIN rows — the registry IS the tenant's own scope; a session
+ * header never widens it beyond L12). Ownership is NOT a visibility gate
+ * under durable — it is the MARKER ('session-owned' vs 'tenant-available')
+ * — because a session id is a localStorage correlation device, not a
+ * credential (apps/web session.ts's own disclosure), and gating the
+ * registry on it orphaned durable desks the moment the id died.
+ */
+export function durableSessionSeesProject(projectId: string, registryIds: ReadonlySet<string>): boolean {
+  return registryIds.has(projectId);
 }
 
 /** The owning session of one project under one resolved scope (null = unowned/unknown). */
@@ -281,18 +362,35 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
   }
   if (scope === null) return null;
 
-  // GET /v1/projects — the session listing: the demo project + the
-  // session's own projects, ONE FULL PAGE (no cursor is ever served here —
-  // MI-D8's "no silent cap": the served page IS the whole session view).
+  // GET /v1/projects — the session listing: the DEMO arm serves the demo
+  // project + the session's own projects (MI-D1's law); the DURABLE arm
+  // serves the tenant's WHOLE durable registry (FW-31-B — every durable
+  // project reachable in the switcher, so scope selection survives a
+  // browser restart that minted a fresh session id), each item carrying
+  // the ADDITIVE consoleSessionScope marker. ONE FULL PAGE either way (no
+  // cursor is ever served here — MI-D8's "no silent cap": the served page
+  // IS the whole session view).
   if (isListing) {
     if (scope.kind === 'degraded') return sessionDegraded(requestId, scope.error);
-    const ownerOf = (candidate: string): string | null => ownerOfScope(scope, candidate);
-    const source: readonly unknown[] = scope.kind === 'demo' ? scope.records : scope.rows.map((row) => row.project);
+    if (scope.kind === 'demo') {
+      const ownerOf = (candidate: string): string | null => ownerOfScope(scope, candidate);
+      const items: unknown[] = [];
+      for (const record of scope.records) {
+        if (!isProjectRecord(record)) continue; // malformed rows are skipped fail-closed (the projection's own law)
+        if (!sessionSeesProject(record.id, session, ownerOf)) continue;
+        items.push(withSessionScopeMarker(record, ownerOf(record.id) === session ? 'session-owned' : 'tenant-available'));
+      }
+      return demoRouteSuccess(requestId, deepFreeze({ items: Object.freeze(items) }));
+    }
+    // DURABLE (FW-31-B): the tenant's own registry, in registry order —
+    // owned rows marked 'session-owned', every other row (the shared demo
+    // project included) 'tenant-available'. The ownerSession identity
+    // itself NEVER crosses the wire.
     const items: unknown[] = [];
-    for (const record of source) {
-      if (!isProjectRecord(record)) continue; // malformed rows are skipped fail-closed (the projection's own law)
-      if (!sessionSeesProject(record.id, session, ownerOf)) continue;
-      items.push(record);
+    for (const row of scope.rows) {
+      if (!isProjectRecord(row.project)) continue; // malformed rows are skipped fail-closed (the projection's own law)
+      const owned = row.ownerSession === session;
+      items.push(withSessionScopeMarker(row.project, owned ? 'session-owned' : 'tenant-available'));
     }
     return demoRouteSuccess(requestId, deepFreeze({ items: Object.freeze(items) }));
   }
@@ -300,18 +398,20 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
   // GET /v1/projects/:projectId/goal — the session goal read.
   if (goalProject !== null) {
     if (scope.kind === 'degraded') return sessionDegraded(requestId, scope.error);
-    const ownerOf = (candidate: string): string | null => ownerOfScope(scope, candidate);
-    if (!sessionSeesProject(goalProject, session, ownerOf)) return sessionNotFound(requestId, goalProject);
     if (scope.kind === 'demo') {
+      const ownerOf = (candidate: string): string | null => ownerOfScope(scope, candidate);
+      if (!sessionSeesProject(goalProject, session, ownerOf)) return sessionNotFound(requestId, goalProject);
       // The demo arm's goal data is per-instance (the port capture) — the
       // gate passed, so fall through to the existing demo goal route (it
       // re-auths and serves, unchanged).
       return null;
     }
-    // DURABLE: serve FRESH from the JOIN row — never the instance's
-    // projection (a session's own goal cards survive a reload onto a stale
-    // warm instance). The ownerSession field NEVER crosses the wire (only
-    // goal + constraintSet + the structurally-validated world).
+    // DURABLE (FW-31-B): the registry row IS the visibility gate — serve
+    // FRESH from the JOIN row, never the instance's projection (a
+    // session's own goal cards survive a reload onto a stale warm
+    // instance; every TENANT registry row serves, the marker law's
+    // listing/detail coherence). The ownerSession field NEVER crosses the
+    // wire (only goal + constraintSet + the structurally-validated world).
     const row = scope.rows.find((candidate) => projectOfRow(candidate) === goalProject);
     if (row === undefined || row.goalSet === null) {
       return demoRouteError(requestId, apiError('not_found', `no goal statement exists for ${JSON.stringify(goalProject)} in the durable projection of this tenant (the goal read serves the create-project input's persisted goal set)`));
@@ -327,28 +427,44 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
   // GET /v1/projects/:projectId — the session detail.
   if (project !== null) {
     if (scope.kind === 'degraded') return sessionDegraded(requestId, scope.error);
-    const ownerOf = (candidate: string): string | null => ownerOfScope(scope, candidate);
-    if (!sessionSeesProject(project, session, ownerOf)) return sessionNotFound(requestId, project);
     if (scope.kind === 'demo') {
+      const ownerOf = (candidate: string): string | null => ownerOfScope(scope, candidate);
+      if (!sessionSeesProject(project, session, ownerOf)) return sessionNotFound(requestId, project);
       const record = scope.records.find((candidate) => isProjectRecord(candidate) && candidate.id === project);
       if (record === undefined) return sessionNotFound(requestId, project);
       return demoRouteSuccess(requestId, record);
     }
+    // DURABLE (FW-31-B): the registry row IS the gate — the FRESH JOIN
+    // record serves (with its session-scope marker, the listing's twin).
     const row = scope.rows.find((candidate) => projectOfRow(candidate) === project);
     if (row === undefined || !isProjectRecord(row.project)) return sessionNotFound(requestId, project);
-    return demoRouteSuccess(requestId, row.project);
+    return demoRouteSuccess(requestId, withSessionScopeMarker(row.project, row.ownerSession === session ? 'session-owned' : 'tenant-available'));
   }
 
   // THE SESSION GATE on the host-owned project-scoped reads (the jobs list
-  // + the execution blotter): a foreign project answers the typed
-  // not-found (L3's "switched into a colleague's desk and read its full
-  // envelope" — closed); the demo project and the session's own projects
-  // fall through to the existing routes, which serve them unchanged.
+  // + the execution blotter): the DEMO arm blocks a foreign project with
+  // the typed not-found (L3's "switched into a colleague's desk and read
+  // its full envelope" — closed); the DURABLE arm (FW-31-B) gates on the
+  // TENANT'S OWN REGISTRY (every durable row passes — the marker law's
+  // listing/detail coherence; an id OUTSIDE the registry answers the typed
+  // not-found, unknown and foreign indistinguishable). The demo project and
+  // a passing row fall through to the existing routes, which serve them
+  // unchanged.
   const projectQuery = request.query?.project;
   if (projectQuery === undefined || !isProjectId(projectQuery)) return null; // the existing routes' own validation answers
   if (scope.kind === 'degraded') return sessionDegraded(requestId, scope.error);
-  const ownerOf = (candidate: string): string | null => ownerOfScope(scope, candidate);
-  if (!sessionSeesProject(projectQuery, session, ownerOf)) {
+  if (scope.kind === 'demo') {
+    const ownerOf = (candidate: string): string | null => ownerOfScope(scope, candidate);
+    if (!sessionSeesProject(projectQuery, session, ownerOf)) {
+      return sessionNotFound(requestId, projectQuery);
+    }
+    return null; // the gate passed — the existing demo-substance routes serve the read
+  }
+  // DURABLE: the registry row is the gate (the demo project is a registry
+  // row under durable by construction — the boot world seeded it through
+  // the real routes).
+  const registryIds = new Set(scope.rows.map((row) => projectOfRow(row)).filter((id) => id.length > 0));
+  if (!durableSessionSeesProject(projectQuery, registryIds)) {
     return sessionNotFound(requestId, projectQuery);
   }
   return null; // the gate passed — the existing demo-substance routes serve the read

@@ -156,6 +156,30 @@ export const DEMO_JOB_RUNNING_AFTER_MS = 3_000;
 /** The demo machinery's schedule: a job renders COMPLETE this long after submission. */
 export const DEMO_JOB_COMPLETE_AFTER_MS = 8_000;
 
+/**
+ * THE DETERMINISTIC DEMO-JOB IDENTITY (FW-31-B, Round A blocker 3's re-seed
+ * half + D-053's disclosed limitation, narrowed): the seeded demo jobs'
+ * `submittedAt` — the demo world's OWN fixed instant base, the same anchor
+ * every other seeded demo record already carries (the outcome, the
+ * post-mortem, the blotter rows, the goal horizon — all DEMO_T0-dated,
+ * "the demo data is honestly dated 2024"). Before FW-31-B the re-seed
+ * minted its job ids + submittedAt from the instance's boot instant
+ * (`fnv1a([kind, tenant, project, spec, at, n])` — `at` differs per
+ * serverless instance), so the demo scope's job list ROTATED across
+ * reloads (Round A: job ids + "observed" timestamps jumping
+ * 04:33→04:24→04:33, mid-flight submitted jobs vanishing, the unread count
+ * drifting — personas S5/S2's C10 evidence). With the identity fixed to
+ * the demo epoch the per-instance re-seed is idempotent IN IDENTITY, not
+ * just effect: every instance stores the byte-identical pair.
+ */
+export const DEMO_SEED_JOB_SUBMITTED_AT: TimestampMs = DEMO_T0;
+
+/** The seeded demo jobs' deterministic completion instant (the machinery's own schedule, applied to the fixed submission instant — byte-stable across instances). */
+export const DEMO_SEED_JOB_COMPLETED_AT: TimestampMs = (DEMO_T0 + DEMO_JOB_COMPLETE_AFTER_MS) as TimestampMs;
+
+/** The demo organization's deterministic observation instant (the watch snapshot's `at` for the DEMO project — after the seeded blotter activity, so the demo world tells one coherent 2024 story). */
+export const DEMO_ORG_SNAPSHOT_AT: TimestampMs = (DEMO_T0 + 180_000) as TimestampMs;
+
 /** The demo capital budget (the seeded constraint set's numeric `equals` bound — the R5 story). */
 export const DEMO_CAPITAL_BUDGET = 250_000;
 
@@ -264,6 +288,80 @@ export function demoSeedResearchJobSpec(): Record<string, unknown> {
  */
 export function demoSeedLearningJobSpec(): Record<string, unknown> {
   return deepFreeze({ kind: 'demo-seed', note: 'the demo project\'s seeded training job (W-25A, D-3)', epochs: 3 });
+}
+
+/**
+ * THE SEEDED DEMO JOBS' DETERMINISTIC RECORDS (FW-31-B): the fixed-shape
+ * `JobRecord` each instance's re-seed stores — a content-addressed id
+ * (the boundary's own `job:` + 8-hex grammar, derived from the tenant +
+ * the demo scope + the kind, NEVER the boot instant) and the demo-epoch
+ * `submittedAt`. These are the records the port-level priming latch
+ * (demoSeedJobPrimingOf below) serves for the seed's own submissions, so
+ * `seedDemoJobs` — which drives through the REAL public routes, exactly
+ * as before — lands the byte-identical pair on every serverless instance
+ * (D-053's "per-instance by design" now rotates NOTHING).
+ */
+export function demoSeedJobRecord(tenant: string, kind: 'research' | 'learning'): JobRecord {
+  return deepFreeze({
+    jobId: `job:${fnv1a32Hex(canonicalJson(['demo-seed-job', tenant, DEMO_PROJECT_ID, kind] as never))}` as JobRecord['jobId'],
+    kind,
+    tenant: tenant as JobRecord['tenant'],
+    project: DEMO_PROJECT_ID as JobRecord['project'],
+    status: 'submitted',
+    submittedAt: DEMO_SEED_JOB_SUBMITTED_AT,
+  });
+}
+
+/** One captured job-submission port input (the seam's structural shape — the validated, tenant-injected submission the port sees). */
+interface DemoSeedJobInput {
+  readonly kind: unknown;
+  readonly tenant: unknown;
+  readonly project: unknown;
+  readonly spec: unknown;
+}
+
+/** Guard: one input IS the demo seed's own submission (the exact spec + the demo scope + the credential-side kind — a user submission of a lookalike spec to another project never matches). */
+function isDemoSeedSubmission(input: DemoSeedJobInput): boolean {
+  if (input.project !== DEMO_PROJECT_ID) return false;
+  if (input.kind === 'research') return canonicalJson(input.spec as never) === canonicalJson(demoSeedResearchJobSpec() as never);
+  if (input.kind === 'learning') return canonicalJson(input.spec as never) === canonicalJson(demoSeedLearningJobSpec() as never);
+  return false;
+}
+
+/**
+ * THE DEMO-SEED PRIMING LATCH (FW-31-B): a per-port-instance once-latch that
+ * serves the deterministic seeded record for the seed's OWN submission (the
+ * exact demo-seed spec + the demo project + the fixed idempotency keys the
+ * boundary's own per-instance idempotency cache already dedupes — so the
+ * seed hits the port at most once per kind per instance). The FIRST
+ * matching submission returns `demoSeedJobRecord` verbatim; any LATER
+ * lookalike (a user replaying the demo seed's spec shape) falls through to
+ * the fixture engine's normal mint — the latch is the seed's own identity
+ * law, never a general interception. Shared by BOTH backings' job ports:
+ * the demo arm's `demoJobSubmission` wrapper and the durable seam's
+ * hydration-aware port (durable.ts) — one law, two port seams.
+ */
+export function demoSeedJobPrimingLatch(): {
+  /** The deterministic record when THIS submission is the seed's own first submission of its kind on this port instance; null = not the seed's (fall through). */
+  prime(input: DemoSeedJobInput): JobRecord | null;
+} {
+  const primed = new Set<string>();
+  return {
+    prime(input: DemoSeedJobInput): JobRecord | null {
+      if (!isDemoSeedSubmission(input)) return null;
+      const kind = input.kind as 'research' | 'learning';
+      const tenant = input.tenant as string;
+      const key = `${tenant}/${kind}`;
+      if (primed.has(key)) return null; // once per kind per port instance — a lookalike later rides the normal mint
+      primed.add(key);
+      return demoSeedJobRecord(tenant, kind);
+    },
+  };
+}
+
+/** The demo project's watch-snapshot instant: the deterministic demo epoch for the DEMO project, the caller's own instant for every launched desk (a live desk's observation is genuinely fresh). */
+export function demoOrgSnapshotInstantOf(projectId: string, at: number): number {
+  return projectId === DEMO_PROJECT_ID ? DEMO_ORG_SNAPSHOT_AT : at;
 }
 
 // ---------------------------------------------------------------------------
@@ -900,17 +998,26 @@ export function demoControlPlane(): ReturnType<typeof fakeControlPlane> & { read
  * records, verbatim (W-3f behavior unchanged). Only RESEARCH-submission
  * console-launch specs exist in practice (the console's kickoff job); the
  * wrapper is kind-agnostic and validates structurally, so a foreign or
- * malformed spec captures nothing (R46 — never a crash).
+ * malformed spec captures nothing (R46 — never a crash). Since FW-31-B the
+ * wrapper ALSO carries the DEMO-SEED PRIMING LATCH (demoSeedJobPrimingLatch)
+ * BEFORE the world capture: the seed's own first submission per kind on
+ * this port instance returns the DETERMINISTIC seeded record (stable id +
+ * demo-epoch submittedAt — the re-seed never rotates the job list again);
+ * everything else falls through to the fixture engine, byte-identical.
  */
 export function demoJobSubmission(): ReturnType<typeof fakeJobSubmission> & { readonly worlds: ReadonlyMap<string, LaunchWorldRecord> } {
   const worlds = new Map<string, LaunchWorldRecord>();
   const inner = fakeJobSubmission();
+  const prime = demoSeedJobPrimingLatch();
   return {
     ...inner, // the fake's own surface verbatim (the submissions log included)
     get worlds(): ReadonlyMap<string, LaunchWorldRecord> {
       return worlds;
     },
     submitJob(input) {
+      // FW-31-B: the deterministic demo-seed identity (before the capture — the seed's spec is never a console-launch spec, so the two never collide).
+      const seeded = prime.prime(input);
+      if (seeded !== null) return { ok: true, value: seeded };
       const world = launchWorldOfSpec(input.spec);
       if (world !== null) {
         worlds.set(`${input.tenant as string}/${input.project as string}`, world);
@@ -1163,7 +1270,7 @@ export function seedDemoWorld(service: ApiService, seed: DemoWorldSeed, at: numb
   // 3. The org-status snapshot report (the private plane — the watch
   //    surface's only writer; the full pipeline runs: internal authn,
   //    the snapshot guard, the audit + metering tail).
-  const snapshot = demoOrgStatusSnapshot(seed.tenant, DEMO_PROJECT_ID, DEMO_ORGANIZATION_REF, at);
+  const snapshot = demoOrgStatusSnapshot(seed.tenant, DEMO_PROJECT_ID, DEMO_ORGANIZATION_REF, demoOrgSnapshotInstantOf(DEMO_PROJECT_ID, at));
   if (snapshot === null) {
     // Unreachable (the fixture builder is the canonical shape) — the
     // boundary is fail-closed; the demo seed is too.
@@ -1293,7 +1400,7 @@ function compileOrganizations(service: ApiService, context: DemoMachineryContext
       body: { organizationRef, at },
     });
     if (bound.status !== 200) continue; // the real route refused — honest, never a crash
-    const snapshot = demoOrgStatusSnapshot(context.tenant, project.id, organizationRef, at);
+    const snapshot = demoOrgStatusSnapshot(context.tenant, project.id, organizationRef, demoOrgSnapshotInstantOf(project.id, at));
     if (snapshot === null) continue; // unreachable (the fixture builder is the canonical shape) — skip, never a crash
     service.handle({
       method: 'POST',
@@ -1324,6 +1431,16 @@ export function demoMachineryTick(service: ApiService, context: DemoMachineryCon
     if (age >= DEMO_JOB_COMPLETE_AFTER_MS) status = 'complete';
     else if (age >= DEMO_JOB_RUNNING_AFTER_MS) status = 'running';
     if (status === null) continue;
+    // FW-31-B: the DEMO project's seeded jobs complete at their OWN
+    // deterministic instant (the fixed submission instant + the schedule),
+    // so the completed record — completedAt included — is byte-identical on
+    // every instance (the pre-fix tick stamped the request instant, so the
+    // same seeded job carried a different completedAt per serverless
+    // instance). Every LAUNCHED desk's job keeps the live tick instant — a
+    // live desk's progress is genuinely observed now.
+    const transitionAt = job.project === DEMO_PROJECT_ID
+      ? (job.submittedAt + (status === 'complete' ? DEMO_JOB_COMPLETE_AFTER_MS : DEMO_JOB_RUNNING_AFTER_MS))
+      : at;
     service.handle({
       method: 'POST',
       path: '/internal/jobs/transitions',
@@ -1332,12 +1449,12 @@ export function demoMachineryTick(service: ApiService, context: DemoMachineryCon
         ? {
             jobId: job.jobId,
             status: 'complete',
-            at,
+            at: transitionAt,
             result: job.kind === 'research'
               ? { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: job.project }
               : { kind: 'training-summary', epochs: 3, project: job.project },
           }
-        : { jobId: job.jobId, status: 'running', at },
+        : { jobId: job.jobId, status: 'running', at: transitionAt },
     });
   }
 }

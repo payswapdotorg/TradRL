@@ -126,7 +126,7 @@ import type {
 } from '../../../services/api/src/index';
 import { canonicalJson, isJobRecord } from '../../../services/api/src/index';
 import { fakeJobSubmission } from '../../../services/api/src/fixtures';
-import { DEMO_PROJECT_ID, launchWorldOfSpec } from './demo';
+import { DEMO_PROJECT_ID, demoSeedJobPrimingLatch, launchWorldOfSpec } from './demo';
 import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, ownerSessionOf, type GoalSetRecord, type NeonStoreDeps, type SessionProjectRow } from '../../adapters/neon/stores';
 import { executeNeonStatement, type NeonConfig } from '../../adapters/neon/client';
 import { NEON_DDL_RECORDS } from '../../adapters/neon/schema';
@@ -407,6 +407,23 @@ export interface DurableBackingHandle {
    * never a stale or partial one).
    */
   sessionProjectRows(): Promise<StoreResult<readonly SessionProjectRow[]>>;
+  /**
+   * THE FRESH TENANT-WIDE JOBS READ (FW-31-B, the P02 stall heal): a FRESH
+   * read of tradrl_jobs for the credential tenant — the durable tables,
+   * NEVER this instance's boot projection — returning every well-formed
+   * job record of the tenant (L12 by construction: the store statement
+   * scopes to the seam's tenant). The per-instance staleness heal
+   * (runtime/durable-world.ts) reads this at a bounded interval: the
+   * records this instance's API-owned job store LACKS (a launch's kickoff
+   * job submitted on ANOTHER warm instance) replay back through the REAL
+   * public job routes, so the frozen per-id GET /v1/jobs/:jobId and the
+   * host-owned jobs list serve them on EVERY instance — the P02 root
+   * cause (the boot-time hydration was the only cross-instance bridge; a
+   * warm instance that booted before the launch answered the poll's 404s
+   * forever). A degraded read is the typed failure (the heal skips —
+   * never a crash, retried on a later interval).
+   */
+  freshJobRecordsOfTenant(): Promise<StoreResult<readonly JobRecord[]>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -968,6 +985,18 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
 
   const innerJobSubmission = fakeJobSubmission();
 
+  // FW-31-B: the DEMO-SEED PRIMING LATCH — the same per-instance identity law
+  // the demo arm's own job port carries (demoSeedJobPrimingLatch, runtime/
+  // demo.ts): the boot world's per-instance demo-job re-seed (D-053's
+  // disclosed limitation) serves the DETERMINISTIC seeded records (stable
+  // id + demo-epoch submittedAt), so the re-seed is idempotent IN IDENTITY —
+  // the demo scope's job list never rotates across serverless instances
+  // again (Round A blocker 3's re-seed half: C10's "job list rotated
+  // 1dee5b04/18a43c88@04:33 ↔ 48db6d85/91eeb12f@04:24"). A lookalike spec
+  // after the seed's own first submission falls through to the fixture
+  // engine — the latch is the seed's identity law, never an interception.
+  const demoSeedPriming = demoSeedJobPrimingLatch();
+
   const jobSubmissionPort: JobSubmissionPort = {
     submitJob(input): PortResult<JobRecord> {
       if (hydrationQueue.length > 0) {
@@ -981,6 +1010,12 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
         // path (the world persisted at the ORIGINAL submission).
         return { ok: true, value: hydrationQueue.shift() as JobRecord };
       }
+      // FW-31-B: the deterministic demo-seed identity FIRST (the seed's
+      // spec is never a console-launch spec, so the priming and the world
+      // capture below never collide; the demo project's goal set stays
+      // world-less by design either way).
+      const seeded = demoSeedPriming.prime(input);
+      if (seeded !== null) return { ok: true, value: seeded };
       // THE LAUNCH WORLD CAPTURE (D-8, W-28): a console-launch kickoff
       // spec carries the launch's world specification — the only
       // console->host carrier the frozen contracts leave room for (the
@@ -1231,6 +1266,13 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     return projectStore.projectSessionRowsOf(deps.tenant);
   }
 
+  /** THE FRESH TENANT-WIDE JOBS READ (FW-31-B): the durable tables, never the projection — the staleness heal's data source. */
+  async function freshJobRecordsOfTenant(): Promise<StoreResult<readonly JobRecord[]>> {
+    const rows = await jobStore.jobRecordsOfTenant(deps.tenant);
+    if (!rows.ok) return rows;
+    return { ok: true, value: Object.freeze(rows.value.map((row) => row.record).filter((record): record is JobRecord => isJobRecord(record))) };
+  }
+
   return {
     ports: { controlPlane: controlPlanePort, firmMemory: firmMemoryPort, outcomeLearning: outcomeLearningPort, jobSubmission: jobSubmissionPort },
     settled,
@@ -1243,6 +1285,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     endJobHydration,
     stampSessionOwner,
     sessionProjectRows,
+    freshJobRecordsOfTenant,
     lastProjection: () => report,
     lastFailure: () => failure,
     runbook,
