@@ -216,7 +216,7 @@ describe('flow §4.8: the Time Machine control bar', () => {
     expect(bytes).toContain('data-tm-mode="t-minus"');
   });
 
-  it('FW-33-B (Round B blocker 5): the disclosed playback SPEED select renders — 1x / 10x / 100x, the chosen key selected, the HONEST caption beside it (what playback does at that step)', () => {
+  it('FW-33-B (Round B blocker 5) + FW-35-B (Round D register §3.3): the disclosed playback SPEED select renders — 1x / 10x / 100x, the chosen key selected, the HONEST caption beside it (the REAL-TIME multiple the machine honors — label == machine)', () => {
     const bytes = render(bar); // no speed passed -> the 1x default (back-compat)
     expect(bytes).toContain('data-action="playback-speed"');
     expect(bytes).toContain('aria-label="Playback speed"');
@@ -224,16 +224,19 @@ describe('flow §4.8: the Time Machine control bar', () => {
     expect(bytes).toContain('<option value="10x">10x</option>');
     expect(bytes).toContain('<option value="100x">100x</option>');
     expect(bytes.match(/<option value=/g)?.length).toBe(3);
-    // the honest caption: the step per beat + the two laws that never change with speed (L4 + the anchor ceiling)
-    expect(bytes).toContain(playbackSpeedCaptionOf(500));
+    // FW-35-B: the honest caption names the REAL-TIME MULTIPLE + the two
+    // laws that never change with speed (L4 + the anchor ceiling) — never
+    // a per-beat ms claim the label contradicts (the old caption said
+    // "500ms per scheduler beat" while 10x measured 5 s/s)
+    expect(bytes).toContain(playbackSpeedCaptionOf(1));
     expect(bytes).toContain('data-tm-speed="1x"');
-    expect(playbackSpeedCaptionOf(500)).toContain('500ms per scheduler beat');
-    expect(playbackSpeedCaptionOf(500)).toContain('only what was knowable then');
-    expect(playbackSpeedCaptionOf(500)).toContain('never past now');
-    // the chosen key's OWN step rides the caption + the selected option
+    expect(playbackSpeedCaptionOf(1)).toContain('1x real time');
+    expect(playbackSpeedCaptionOf(1)).toContain('only what was knowable then');
+    expect(playbackSpeedCaptionOf(1)).toContain('never past now');
+    // the chosen key's OWN rate rides the caption + the selected option
     const fast = render(timeMachineControls({ mode: 'playback', viewAt: T - 5_000, range: { floorAt: T, anchorAt: T, derived: 'session' }, playing: true, progress: 0.5, speed: '100x' }));
     expect(fast).toContain('<option value="100x" selected="selected">100x</option>');
-    expect(fast).toContain(playbackSpeedCaptionOf(50_000));
+    expect(fast).toContain(playbackSpeedCaptionOf(100));
     expect(fast).toContain('data-tm-speed="100x"');
   });
 

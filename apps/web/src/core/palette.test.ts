@@ -278,9 +278,14 @@ describe('onboarding: the panel chrome (§4.13)', () => {
     // FW-34-B (Round C register §3.1 — L3's a11y-invisible-blocker finding):
     // the wizard is a REAL, LABELLED DIALOG now — the title carries the
     // aria-labelledby target id, and the overlay declares dialog semantics.
+    // FW-35-B (Round D register §3.2 — the wizard never blocks nav on ANY
+    // path): the dialog is deliberately NON-MODAL — aria-modal would hide
+    // the rest of the document from the accessibility tree (M1's honest
+    // fail: the restart-summoned wizard was a nav-blocking wall for the
+    // screen-reader journey). The pin is the ABSENCE: no aria-modal, ever.
     expect(bytes).toContain('<h1 class="onboarding-title" id="onboarding-title">Welcome to TradRL</h1>');
     expect(bytes).toContain('role="dialog"');
-    expect(bytes).toContain('aria-modal="true"');
+    expect(bytes).not.toContain('aria-modal');
     expect(bytes).toContain('aria-labelledby="onboarding-title"');
     expect(bytes).toContain('audit every decision');
     expect(bytes).toContain('data-action="onboarding-next"');

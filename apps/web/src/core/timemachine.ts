@@ -56,30 +56,54 @@ export interface PlaybackState {
 
 /**
  * FW-33-B (Round B blocker 5, ~5 personas) — THE DISCLOSED PLAYBACK
- * SPEEDS: the one controlled step a playback tick advances the view
- * instant by, per scheduler beat (~1s). 1x is the pre-FW-33-B step
- * (TIME_MACHINE_STEP_MS — 500ms/beat, the knowable-then granularity
- * the Step controls disclose); 10x and 100x step 5s and 50s per beat
- * so a multi-year history is traversable in a session. The speed NEVER
- * changes what playback IS: each tick still renders only what was
- * knowable then (L4) and never passes the anchor (the machine's own
- * typed law) — the caption in the render says exactly that.
+ * SPEEDS. FW-35-B (Round D register §3.3 — label == machine): the label
+ * is a REAL-TIME MULTIPLE — 10x means ten seconds of history per
+ * wall-clock second — and the step a playback tick advances the view
+ * instant by is `multiplier x beatMs`, the app layer's OWN beat cadence
+ * (the scheduler boundary that drives the ticks; default ~1s). The
+ * pre-FW-35-B law stepped a fixed 500ms/beat for 1x and 5s/50s for
+ * 10x/100x, so EVERY preset ran at HALF its label (S1/S5 measured 10x
+ * = 4.98 s/s; M5 1x = 0.50 s/s) — a label the machine never honored.
+ * The Step/Step-back controls keep their OWN disclosed granularity
+ * (TIME_MACHINE_STEP_MS — never conflated with the speed again). The
+ * speed NEVER changes what playback IS: each tick still renders only
+ * what was knowable then (L4) and never passes the anchor (the
+ * machine's own typed law) — the caption in the render says exactly
+ * that.
  */
 export type PlaybackSpeedKey = '1x' | '10x' | '100x';
 
-/** The speed key -> step-per-tick mapping (one closed set, disclosed in the control). */
-export const PLAYBACK_SPEED_STEPS: Readonly<Record<PlaybackSpeedKey, number>> = Object.freeze({
-  '1x': TIME_MACHINE_STEP_MS,
-  '10x': 5_000,
-  '100x': 50_000,
+/**
+ * The speed key -> real-time multiplier mapping (one closed set,
+ * disclosed in the control; the step per beat is the multiplier x the
+ * caller's beat cadence — playbackStepMsOf).
+ */
+export const PLAYBACK_SPEED_MULTIPLIERS: Readonly<Record<PlaybackSpeedKey, number>> = Object.freeze({
+  '1x': 1,
+  '10x': 10,
+  '100x': 100,
 });
 
 /** The speed keys in render order (the select's own order). */
 export const PLAYBACK_SPEED_KEYS: readonly PlaybackSpeedKey[] = ['1x', '10x', '100x'];
 
-/** The step of one speed key (the closed set's own lookup — never a fabricated step). */
-export function playbackStepMsOf(speed: PlaybackSpeedKey): number {
-  return PLAYBACK_SPEED_STEPS[speed];
+/** The real-time multiplier of one speed key (the closed set's own lookup — never a fabricated rate). */
+export function playbackMultiplierOf(speed: PlaybackSpeedKey): number {
+  return PLAYBACK_SPEED_MULTIPLIERS[speed];
+}
+
+/**
+ * The step of one speed key at a given beat cadence: the multiplier x
+ * beatMs — the label honored exactly (10x at a 1000ms beat steps
+ * 10_000ms per tick = 10 s/s real; FW-35-B, Round D register §3.3).
+ * A non-positive or non-integer beat is refused (the machine's own
+ * step grammar — an integer of milliseconds).
+ */
+export function playbackStepMsOf(speed: PlaybackSpeedKey, beatMs: number): number {
+  if (!Number.isFinite(beatMs) || beatMs <= 0 || !Number.isInteger(beatMs)) {
+    throw new Error(`time machine: the beat cadence must be a positive integer of milliseconds (got ${JSON.stringify(beatMs)})`);
+  }
+  return playbackMultiplierOf(speed) * beatMs;
 }
 
 /** True when a string is one of the disclosed speed keys (the change-handler's guard). */
@@ -91,43 +115,62 @@ export function isPlaybackSpeedKey(value: unknown): value is PlaybackSpeedKey {
  * FW-34-B (Round C register §3.2 — the closed-set residual, L3/L1/M5/S5):
  * THE FREE SPEED INPUT's own validated grammar. The disclosed set stays
  * (1x/10x/100x — one select, the honest caption beside it); the FREE input
- * accepts any POSITIVE multiple of the 1x step (0.5x … 10000x), so an
- * analyst can traverse an incident at exactly the rate their review needs
- * (L3: "the speed set is CLOSED (no 0.5x/2x/custom)"). The multiplier maps
- * to the same per-beat advance every speed key maps to —
- * `multiplier × TIME_MACHINE_STEP_MS` ms per scheduler beat — and the
- * bounds are the input's own honest law: a multiple below 0.5x or above
- * 10000x (or a non-number, an empty string, an infinity, a NaN) is
- * REFUSED with the reason named (never clamped silently — a speed the
- * user did not type is a speed the caption must not claim).
+ * accepts any POSITIVE real-time multiple (0.5x … 10000x), so an analyst
+ * can traverse an incident at exactly the rate their review needs (L3:
+ * "the speed set is CLOSED (no 0.5x/2x/custom)"). FW-35-B (Round D
+ * register §3.3): the multiplier is REAL TIME — the step per beat is
+ * `multiplier x beatMs` (playbackCustomStepMsOf) — and an OPTIONAL
+ * trailing "x" (the input's own placeholder teaches "2.5x") is
+ * ACCEPTED, so the placeholder's own example commits instead of
+ * silently no-opping (S1/S5: the placeholder example was refused as a
+ * non-number). The bounds are the input's own honest law: a multiple
+ * below 0.5x or above 10000x (or a non-number, an empty string, an
+ * infinity, a NaN) is REFUSED with the reason named (never clamped
+ * silently — a speed the user did not type is a speed the caption
+ * must not claim).
  */
 export const PLAYBACK_CUSTOM_SPEED_MIN = 0.5;
 
-/** The free speed's upper bound (10000x = 5,000,000ms per beat — an honest ceiling, refused beyond). */
+/** The free speed's upper bound (10000x — an honest ceiling, refused beyond). */
 export const PLAYBACK_CUSTOM_SPEED_MAX = 10_000;
 
-/** The parsed outcome of one free-speed input: either the validated step or the named refusal. */
-export type PlaybackCustomSpeed = { readonly ok: true; readonly multiplier: number; readonly stepMs: number } | { readonly ok: false; readonly reason: string };
+/** The parsed outcome of one free-speed input: either the validated multiplier or the named refusal. */
+export type PlaybackCustomSpeed = { readonly ok: true; readonly multiplier: number } | { readonly ok: false; readonly reason: string };
 
 /**
- * Parse the free speed input's committed text (the change/Enter commit).
- * The grammar: a positive decimal multiple of the 1x step, e.g. "2" or
- * "0.5" or "12.5". The step is ALWAYS an integer of milliseconds (the
- * machine's own law — startPlayback/retunePlayback refuse a fractional
- * step), so a multiplier whose step rounds to 0 is refused (0.5x = 250ms
- * is the floor by construction).
+ * Parse the free speed input's committed text (the live input + the
+ * change/Enter commit). The grammar: a positive decimal real-time
+ * multiple, e.g. "2", "0.5", "12.5" or "2.5x" — the optional trailing
+ * "x" (upper or lower) is stripped before the numeric parse (FW-35-B:
+ * the placeholder's own "e.g. 2.5x" example must commit).
  */
 export function parsePlaybackCustomSpeed(text: string): PlaybackCustomSpeed {
   const trimmed = text.trim();
-  if (trimmed.length === 0) return { ok: false, reason: 'enter a speed as a multiple of the 1x step, e.g. 2 or 0.5' };
-  const multiplier = Number(trimmed);
-  if (!Number.isFinite(multiplier)) return { ok: false, reason: `"${trimmed}" is not a number — enter a speed as a multiple of the 1x step, e.g. 2 or 0.5` };
-  if (multiplier <= 0) return { ok: false, reason: 'the speed must be a positive multiple of the 1x step' };
-  if (multiplier < PLAYBACK_CUSTOM_SPEED_MIN) return { ok: false, reason: `the slowest free speed is ${PLAYBACK_CUSTOM_SPEED_MIN}x (${PLAYBACK_CUSTOM_SPEED_MIN * TIME_MACHINE_STEP_MS}ms per beat)` };
-  if (multiplier > PLAYBACK_CUSTOM_SPEED_MAX) return { ok: false, reason: `the fastest free speed is ${PLAYBACK_CUSTOM_SPEED_MAX}x (${PLAYBACK_CUSTOM_SPEED_MAX * TIME_MACHINE_STEP_MS}ms per beat)` };
-  const stepMs = Math.round(multiplier * TIME_MACHINE_STEP_MS);
-  if (stepMs < 1) return { ok: false, reason: `the slowest free speed is ${PLAYBACK_CUSTOM_SPEED_MIN}x (${PLAYBACK_CUSTOM_SPEED_MIN * TIME_MACHINE_STEP_MS}ms per beat)` };
-  return { ok: true, multiplier, stepMs };
+  if (trimmed.length === 0) return { ok: false, reason: 'enter a real-time multiple, e.g. 2 or 0.5' };
+  const bare = trimmed.endsWith('x') || trimmed.endsWith('X') ? trimmed.slice(0, -1).trim() : trimmed;
+  if (bare.length === 0) return { ok: false, reason: `"${trimmed}" is not a number — enter a real-time multiple, e.g. 2 or 0.5` };
+  const multiplier = Number(bare);
+  if (!Number.isFinite(multiplier)) return { ok: false, reason: `"${trimmed}" is not a number — enter a real-time multiple, e.g. 2 or 0.5` };
+  if (multiplier <= 0) return { ok: false, reason: 'the speed must be a positive real-time multiple' };
+  if (multiplier < PLAYBACK_CUSTOM_SPEED_MIN) return { ok: false, reason: `the slowest free speed is ${PLAYBACK_CUSTOM_SPEED_MIN}x` };
+  if (multiplier > PLAYBACK_CUSTOM_SPEED_MAX) return { ok: false, reason: `the fastest free speed is ${PLAYBACK_CUSTOM_SPEED_MAX}x` };
+  return { ok: true, multiplier };
+}
+
+/**
+ * The free speed's step at a given beat cadence: the multiplier x
+ * beatMs — the label honored exactly (FW-35-B, Round D register §3.3:
+ * label == machine). A non-positive or non-integer beat is refused
+ * (the machine's own step grammar).
+ */
+export function playbackCustomStepMsOf(multiplier: number, beatMs: number): number {
+  if (!Number.isFinite(multiplier) || multiplier <= 0) {
+    throw new Error(`time machine: the free-speed multiplier must be a positive number (got ${JSON.stringify(multiplier)})`);
+  }
+  if (!Number.isFinite(beatMs) || beatMs <= 0 || !Number.isInteger(beatMs)) {
+    throw new Error(`time machine: the beat cadence must be a positive integer of milliseconds (got ${JSON.stringify(beatMs)})`);
+  }
+  return Math.round(multiplier * beatMs);
 }
 
 /** The Time Machine state (pure — transitions below). */

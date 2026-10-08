@@ -3328,13 +3328,15 @@ describe('executed boot: MI-D9 — Step back / Step while paused', () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler, instants });
     nowMs = T0 + 60_000; // the scripted clock jumps forward — the playback span is real
     rig.handle.dispatch({ kind: 'view-live', at: instants.nowMs() });
-    clickAction(rig, 'tm-mode-playback'); // arm playback from the opened instant, step 500ms
+    clickAction(rig, 'tm-mode-playback'); // arm playback from the opened instant — the 1x machine step is the beat cadence (FW-35-B: label == machine)
     for (let beat = 0; beat < 3; beat += 1) {
       expect(scheduler.fireNext(), `beat ${beat + 1} was scheduled`).toBe(true);
       await settle();
     }
     let playback = rig.handle.state().timeMachine.playback;
     if (playback === null) throw new Error('playback not armed');
+    const machineStep = playback.stepMs; // the armed machine's OWN step (the FW-35-B rate law: multiplier x beat)
+    expect(machineStep).toBeGreaterThan(0);
     const frozenAt = playback.fromAt + playback.ticks * playback.stepMs; // 3 ticks
     clickAction(rig, 'playback-start'); // pause (the control's pause face)
     expect(rig.handle.state().timeMachine.playback?.paused).toBe(true);
@@ -3348,11 +3350,11 @@ describe('executed boot: MI-D9 — Step back / Step while paused', () => {
     expect(timeMachine.mode).toBe('playback');                    // NO mode flip
     expect(timeMachine.playback?.paused).toBe(true);              // stays PAUSED
     expect(timeMachine.playback?.ticks).toBe(2);                  // one controlled step back
-    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - 500);    // BACK one step — not the anchor-500ms end-jump
+    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - machineStep); // BACK one MACHINE step — not the anchor-end jump
     expect(viewAtOf(rig.handle.state())).toBeLessThan(anchor - 500); // (the pre-fix landing instant, for the record)
     const readout = elementsOf(rig.root).find((element) => element.hasClass('tm-readout'));
     if (readout === undefined) throw new Error('the mono readout is missing');
-    expect(textOf(readout)).toBe(formatInstantUtc(frozenAt - 500)); // the readout follows the stepped-back instant
+    expect(textOf(readout)).toBe(formatInstantUtc(frozenAt - machineStep)); // the readout follows the stepped-back instant
     const notice = elementsOf(rig.root).find((element) => element.hasClass('tm-notice'));
     if (notice === undefined) throw new Error('the projection notice is missing');
     expect(textOf(notice)).toContain('paused');                   // the PAUSED caption (was "Viewing a past instant")
@@ -3363,7 +3365,7 @@ describe('executed boot: MI-D9 — Step back / Step while paused', () => {
 
     // a second Step back steps back again (manual stepping works while paused, repeatedly)
     clickAction(rig, 'playback-step-back');
-    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - 1_000);
+    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - 2 * machineStep);
     expect(rig.handle.state().timeMachine.playback?.paused).toBe(true);
 
     // Step FORWARD while paused is the user's own step: one forward, STAYING paused
@@ -3371,7 +3373,7 @@ describe('executed boot: MI-D9 — Step back / Step while paused', () => {
     playback = rig.handle.state().timeMachine.playback;
     if (playback === null) throw new Error('the step disarmed playback');
     expect(playback.paused).toBe(true);                            // still paused — a manual step is not a resume
-    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - 500);     // back forward one step
+    expect(viewAtOf(rig.handle.state())).toBe(frozenAt - machineStep); // back forward one machine step
   });
 
   it('FW-32-B (Round A blocker 4): OUTSIDE playback, Step back steps the SELECTED INSTANT one disclosed step as an EXPLICIT timestamp — never the t-minus offset nudge that re-anchored toward now (M5: the incident instant moved FORWARD on every click); with no records on hand the step is unbounded (the session fallback is taught, never enforced)', async () => {
@@ -4427,7 +4429,7 @@ describe('executed boot: FW-34-B §3.2 — the playback live-edge anchor + the f
     const playback = rig.handle.state().timeMachine.playback;
     if (playback === null) throw new Error('playback did not arm');
     expect(playback.fromAt).toBe(incidentAt); // THE LAW: the arm IS the scrubbed instant — the incident review plays forward FROM the incident
-    expect(playback.stepMs).toBe(500); // the select 1x key is the default step
+    expect(playback.stepMs).toBe(1_000); // the select 1x key at the rig's 1s beat — REAL TIME, the label honored (FW-35-B: the old 500ms step ran 1x at half its label)
     expect(playback.fromAt).not.toBe(rig.handle.state().openedAt); // the pre-fix arm (the session-open instant) is gone
   });
 
@@ -4461,25 +4463,32 @@ describe('executed boot: FW-34-B §3.2 — the playback live-edge anchor + the f
     expect(playback.paused).toBe(true); // paused by the anchor clamp
   });
 
-  it('the FREE SPEED input: a valid commit retunes an ARMED playback NOW; the select reads its custom face; a REFUSED value names its reason inline and never retunes; a select key clears the free speed', async () => {
+  it('the FREE SPEED input: FW-35-B — a VALID value APPLIES LIVE on the input itself (the change commit dies on the detached element); the placeholder\'s OWN "2.5x" example commits; the select reads its custom face; a REFUSED value names its reason inline and never retunes; a select key clears the free speed and retunes the machine', async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
     const anchor = rig.handle.state().timeMachine.anchorAt;
-    scrubTo(rig, anchor - 4000);
+    scrubTo(rig, anchor - 40_000);
     clickAction(rig, 'playback-start');
-    // COMMIT the free speed 2x — the armed playback retunes to the free step immediately
+    // TYPE the free speed 2.5x — the placeholder's OWN example, trailing "x" included
     const freeInput = findByData(rig.root, 'data-action', 'playback-speed-custom');
     if (freeInput === null) throw new Error('the free speed input is missing');
-    freeInput.value = '2';
-    rig.doc.fire('input', { target: freeInput }); // buffer only
-    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(500); // nothing retunes mid-typing
-    rig.doc.fire('change', { target: freeInput }); // the commit
-    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(1000); // retuned NOW: 2 x the 1x step
+    freeInput.value = '2.5x';
+    // THE LIVE COMMIT (FW-35-B): the input handler's own synchronous render
+    // detaches this element before a change dispatched on it could bubble
+    // to the document (the eval's set-value + input + change sequence — the
+    // M5/S5 "display-only face" root cause); the valid value must reach the
+    // machine through the INPUT event, on the still-attached element.
+    rig.doc.fire('input', { target: freeInput });
+    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(2_500); // retuned NOW, LIVE: 2.5 x the 1s beat — label == machine
+    // the change that lands on the DETACHED element is inert by construction;
+    // the committed state is already the machine's (the posture carries it too)
+    rig.doc.fire('change', { target: freeInput });
+    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(2_500); // stable — one commit, never two
     // the select face reads custom (the closed set never shows a step that is not armed)
     const speedSelect = findByData(rig.root, 'data-action', 'playback-speed');
     if (speedSelect === null) throw new Error('the speed select is missing');
     const selectedOption = speedSelect.children.find((option) => option.tagName === 'OPTION' && option.getAttribute('selected') === 'selected');
     expect(selectedOption?.getAttribute('value')).toBe('custom');
-    expect(textOf(selectedOption as FakeElement)).toContain('custom (2x)');
+    expect(textOf(selectedOption as FakeElement)).toContain('custom (2.5x)');
     // a REFUSED commit names its reason inline — never a silent clamp, never a retune
     const again = findByData(rig.root, 'data-action', 'playback-speed-custom');
     if (again === null) throw new Error('the free speed input vanished');
@@ -4487,16 +4496,30 @@ describe('executed boot: FW-34-B §3.2 — the playback live-edge anchor + the f
     rig.doc.fire('input', { target: again });
     rig.doc.fire('change', { target: again });
     expect(findByData(rig.root, 'data-tm-speed-error', 'true')).not.toBeNull(); // the inline verdict line
-    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(1000); // the last VALID free speed still arms — never the refused value
-    // a committed select key is the EXPLICIT closed-set choice — it clears the free speed and retunes to the key
+    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(2_500); // the last VALID free speed still arms — never the refused value
+    // a committed select key is the EXPLICIT closed-set choice — it clears the free speed and retunes to the key AT ITS LABEL (10x = 10 s/s)
     const selectAgain = findByData(rig.root, 'data-action', 'playback-speed');
     if (selectAgain === null) throw new Error('the speed select vanished');
     selectAgain.value = '10x';
     rig.doc.fire('change', { target: selectAgain });
-    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(5000); // 10x
+    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(10_000); // 10x at the 1s beat — its LABEL, not half of it
     const cleared = findByData(rig.root, 'data-action', 'playback-speed-custom');
     expect(cleared?.getAttribute('value')).toBe(''); // the free speed is cleared
     expect(findByData(rig.root, 'data-tm-speed-error', 'true')).toBeNull(); // the refusal line is gone too
+    // THE EMPTY COMMIT (FW-35-B): clearing the free speed retunes an ARMED
+    // machine back to the select's key — never a stale custom step the
+    // caption stops claiming
+    const clearedInput = findByData(rig.root, 'data-action', 'playback-speed-custom');
+    if (clearedInput === null) throw new Error('the free speed input vanished again');
+    clearedInput.value = '4';
+    rig.doc.fire('input', { target: clearedInput });
+    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(4_000); // live: 4x
+    const emptyInput = findByData(rig.root, 'data-action', 'playback-speed-custom');
+    if (emptyInput === null) throw new Error('the free speed input vanished again');
+    emptyInput.value = '';
+    rig.doc.fire('input', { target: emptyInput });
+    rig.doc.fire('change', { target: emptyInput });
+    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(10_000); // back to the select's 10x — the escape hatch retunes too
   });
 });
 

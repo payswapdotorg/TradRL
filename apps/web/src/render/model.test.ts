@@ -76,6 +76,19 @@ function knowledge(): ServedKnowledge {
   } as unknown as ServedKnowledge;
 }
 
+/**
+ * FW-35-B (Round D register §3.5 — S2's cross-surface linkage finding):
+ * the fixture BLOTTER ROW — a routed submission whose decisionId
+ * resolves the fixture outcome's decisionRef (dec-1), the record's own
+ * linkage the outcome metrics' citation rides.
+ */
+function blotterRow(): GatewaySubmissionRecord {
+  return {
+    kind: 'routed', submissionId: 'sub-1', decisionId: 'dec-1', auditId: 'aud-1',
+    requestRef: 'req-1', venue: 'binance', adapterRef: 'ada-1', channelRef: 'chn-1', routedAt: T0 + 25,
+  } as unknown as GatewaySubmissionRecord;
+}
+
 /** The fixture post-mortem: attached to the fixture outcome (out-1), the demo seed's own shape (pmr:demo0001 -> out:demo0001). */
 function postMortem(): PostMortemRecord {
   return {
@@ -164,6 +177,50 @@ describe('render model: the twelve section panels', () => {
     const serialized = serializeConsoleModel(state, T0 + 15);
     expect(serialized).toContain('No outcomes at this view instant');
     expect(serialized).not.toContain('out-1');
+  });
+
+  it('FW-35-B (Round D register §3.5 — S2): the OUTCOME METRICS cite the execution blotter row ids that produced the fill (the submissions whose decisionId resolves the decision ref) — reconciliation by CLICK, never by recognizing shared ids across sections', () => {
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'submission-recorded', at: T0 + 26, submission: blotterRow() },
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'outcomes' },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('cites blotter rows');
+    expect(bytes).toContain('sub-1'); // the exact blotter row id, in the metrics grid itself
+    // THE L4 LAW rides the citation: a row the blotter could not show at the view instant (routed later than the view) never cites
+    const lateRow = { ...blotterRow(), submissionId: 'sub-late', routedAt: T0 + 45 } as unknown as GatewaySubmissionRecord;
+    const pastView = reduceAll(populatedWorkspace(), [
+      { kind: 'submission-recorded', at: T0 + 46, submission: lateRow },
+      { kind: 'view-timestamp', at: T0 + 40, timestamp: T0 + 40 }, // the outcome (asOf T0+30) is visible; the late row is not
+      { kind: 'section-selected', at: T0 + 40, section: 'outcomes' },
+    ]);
+    const pastBytes = serializeConsoleModel(pastView, T0 + 40);
+    expect(pastBytes).toContain('out-1');                 // the outcome renders at this instant
+    expect(pastBytes).toContain('cites blotter rows');    // the citation line renders honestly
+    expect(pastBytes).not.toContain('sub-late');          // never a citation the blotter could not show
+    expect(pastBytes).toContain('none');                  // the honest none, never a fabricated citation
+  });
+
+  it('FW-35-B (Round D register §3.5 — S2): the LESSONS card cites its ORIGINATING OUTCOME ids + the post-mortem ids it distilled (the record own provenance, rendered where the lesson lives — never a pmr id the reader must recognize across sections)', () => {
+    const provenance = knowledge();
+    const withProvenance: ServedKnowledge = {
+      ...provenance,
+      record: {
+        ...provenance.record,
+        provenance: { ...provenance.record.provenance, outcomeRefs: ['out-1'], postMortemRefs: ['pmr-1'] },
+      },
+    };
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'knowledge-loaded', at: T0 + 31, records: [withProvenance] },
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 50, section: 'lessons' },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('from outcomes');
+    expect(bytes).toContain('out-1');           // the originating outcome id, on the lesson card
+    expect(bytes).toContain('from post-mortems');
+    expect(bytes).toContain('pmr-1');           // the distilled post-mortem id
   });
 
   it('an empty workspace renders the empty states, never a blank console', () => {

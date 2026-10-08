@@ -136,8 +136,19 @@ export function onboardingPanel(state: OnboardingState): VNode {
     // onboarding-backdrop branch skips the wizard when the press lands
     // OUTSIDE the card; a dismissed wizard renders NOTHING at all, so it
     // can never block the page).
+    //
+    // FW-35-B (Round D register §3.2 — the wizard overlay never blocks
+    // nav on ANY path, M1/L3/L4/S2/S5/M5): the dialog is deliberately
+    // NON-MODAL — no aria-modal. An aria-modal dialog hides the rest of
+    // the document from the accessibility tree, so a screen-reader
+    // operator who restarts into the re-summoned wizard had the whole
+    // nav tree vanish behind it (M1's honest fail: the wizard
+    // re-summon was a nav-blocking wall). A non-modal dialog keeps the
+    // sidebar, the palette and every section reachable in the tree and
+    // by keyboard while the wizard shows — the dismissal (Skip, the
+    // CTA, the backdrop, Esc, or simply ACTING past it) is one gesture,
+    // never a prerequisite.
     role: 'dialog',
-    'aria-modal': 'true',
     'aria-labelledby': 'onboarding-title',
     'data-action': 'onboarding-backdrop',
   }, [

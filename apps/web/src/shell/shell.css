@@ -507,6 +507,22 @@
   display: grid;
   gap: 6px;
   font-size: 0.8125rem;
+  /* FW-35-B (Round D register §3.7 — L3/S1/S2: the sticky band covered
+     inbox buttons + capsule click points; covered-element rejections on
+     the Outcomes/Inbox disclosures): the band's own box is
+     CLICK-THROUGH — pointer-events none here, auto on every interactive
+     child below — so a covered target underneath the band's empty
+     regions (the padding, the gaps between control clusters, the note
+     lines) stays clickable THROUGH the band instead of eating the
+     press. The controls themselves keep full hit areas. */
+  pointer-events: none;
+}
+.timemachine button,
+.timemachine select,
+.timemachine input,
+.timemachine a,
+.timemachine summary {
+  pointer-events: auto;
 }
 /* D-6e (W-25C) — THE STICKY TM BAR NEVER PERMANENTLY COVERS INTERACTIVE
    TARGETS. The bar itself stays sticky (§4.8's charter shape); the

@@ -37,6 +37,9 @@ import {
   stepForwardPlayback,
   tickPlayback,
   viewAtOf,
+  playbackCustomStepMsOf,
+  playbackMultiplierOf,
+  PLAYBACK_SPEED_MULTIPLIERS,
   TIME_MACHINE_STEP_MS,
 } from './timemachine';
 
@@ -325,11 +328,21 @@ describe('timemachine: THE L4 INTERACTION (the demanded pin)', () => {
 // ---------------------------------------------------------------------------
 
 describe('FW-33-B: the disclosed playback speeds', () => {
-  it('the closed set: 1x is the pre-FW-33-B knowable-then step; 10x/100x step 5s/50s per beat', () => {
+  it("FW-35-B (Round D register §3.3 — label == machine): the closed set maps to REAL-TIME multipliers — the step is the multiplier x the beat cadence, so 10x at a 1s beat steps 10_000ms (10 s/s, its LABEL; the pre-FW-35-B law stepped 5_000 — every preset at HALF its label, S1/S5/M5's measurements)", () => {
     expect(PLAYBACK_SPEED_KEYS).toEqual(['1x', '10x', '100x']);
-    expect(playbackStepMsOf('1x')).toBe(TIME_MACHINE_STEP_MS);
-    expect(playbackStepMsOf('10x')).toBe(5_000);
-    expect(playbackStepMsOf('100x')).toBe(50_000);
+    expect(PLAYBACK_SPEED_MULTIPLIERS).toEqual({ '1x': 1, '10x': 10, '100x': 100 });
+    expect(playbackMultiplierOf('1x')).toBe(1);
+    expect(playbackMultiplierOf('10x')).toBe(10);
+    expect(playbackMultiplierOf('100x')).toBe(100);
+    // the step at the production beat (~1s): 1x = real time, 10x = its label
+    expect(playbackStepMsOf('1x', 1_000)).toBe(1_000);
+    expect(playbackStepMsOf('10x', 1_000)).toBe(10_000);
+    expect(playbackStepMsOf('100x', 1_000)).toBe(100_000);
+    // the beat cadence scales the step — a 500ms beat halves every step (the multiplier is the contract, the beat is the clock)
+    expect(playbackStepMsOf('10x', 500)).toBe(5_000);
+    // a non-positive / fractional beat is the machine's own typed refusal, never a fabricated step
+    expect(() => playbackStepMsOf('10x', 0)).toThrow(/beat cadence/);
+    expect(() => playbackStepMsOf('10x', 1.5)).toThrow(/beat cadence/);
     expect(isPlaybackSpeedKey('10x')).toBe(true);
     expect(isPlaybackSpeedKey('1000x')).toBe(false); // a speed outside the disclosed set is never accepted
     expect(isPlaybackSpeedKey(10)).toBe(false);
@@ -427,24 +440,45 @@ describe('FW-33-B: the disclosed playback speeds', () => {
 // ---------------------------------------------------------------------------
 
 describe('FW-34-B: the free speed input grammar (parsePlaybackCustomSpeed)', () => {
-  it('valid multiples map to exact integer step milliseconds (the multiplier x the 1x step)', () => {
-    expect(parsePlaybackCustomSpeed('2')).toEqual({ ok: true, multiplier: 2, stepMs: 2 * TIME_MACHINE_STEP_MS });
-    expect(parsePlaybackCustomSpeed('10')).toEqual({ ok: true, multiplier: 10, stepMs: 10 * TIME_MACHINE_STEP_MS });
-    expect(parsePlaybackCustomSpeed(' 0.5 ')).toEqual({ ok: true, multiplier: 0.5, stepMs: Math.round(0.5 * TIME_MACHINE_STEP_MS) });
-    expect(parsePlaybackCustomSpeed('12.5')).toEqual({ ok: true, multiplier: 12.5, stepMs: Math.round(12.5 * TIME_MACHINE_STEP_MS) });
-    expect(parsePlaybackCustomSpeed('1')).toEqual({ ok: true, multiplier: 1, stepMs: TIME_MACHINE_STEP_MS }); // the 1x step itself
+  it('valid multiples parse to the multiplier (the step is the multiplier x the CALLER\'s beat — playbackCustomStepMsOf)', () => {
+    expect(parsePlaybackCustomSpeed('2')).toEqual({ ok: true, multiplier: 2 });
+    expect(parsePlaybackCustomSpeed('10')).toEqual({ ok: true, multiplier: 10 });
+    expect(parsePlaybackCustomSpeed(' 0.5 ')).toEqual({ ok: true, multiplier: 0.5 });
+    expect(parsePlaybackCustomSpeed('12.5')).toEqual({ ok: true, multiplier: 12.5 });
+    expect(parsePlaybackCustomSpeed('1')).toEqual({ ok: true, multiplier: 1 }); // real time itself
+  });
+
+  it("FW-35-B (Round D register §3.3): the placeholder's OWN example commits — an optional trailing 'x' (upper or lower) is accepted (S1/S5: '2.5x' silently no-committed while the placeholder taught it)", () => {
+    expect(parsePlaybackCustomSpeed('2.5x')).toEqual({ ok: true, multiplier: 2.5 });
+    expect(parsePlaybackCustomSpeed('2.5X')).toEqual({ ok: true, multiplier: 2.5 });
+    expect(parsePlaybackCustomSpeed(' 10x ')).toEqual({ ok: true, multiplier: 10 });
+    // a bare 'x' is still a refusal, never a zero-multiplier
+    const bare = parsePlaybackCustomSpeed('x');
+    expect(bare.ok).toBe(false);
+  });
+
+  it('FW-35-B: the multiplier maps to the step at the caller\'s beat — the label honored exactly (label == machine)', () => {
+    expect(playbackCustomStepMsOf(2.5, 1_000)).toBe(2_500);
+    expect(playbackCustomStepMsOf(10, 1_000)).toBe(10_000);
+    expect(playbackCustomStepMsOf(0.5, 1_000)).toBe(500);
+    // rounding: a fractional step at a coarse beat rounds to the integer the machine requires
+    expect(playbackCustomStepMsOf(2.5, 3)).toBe(8); // 7.5 -> 8
+    // the guards are the machine's own typed law, never a fabricated step
+    expect(() => playbackCustomStepMsOf(0, 1_000)).toThrow(/multiplier/);
+    expect(() => playbackCustomStepMsOf(2, 0)).toThrow(/beat cadence/);
+    expect(() => playbackCustomStepMsOf(2, 2.5)).toThrow(/beat cadence/);
   });
 
   it('the honest bounds are inclusive: 0.5x is the floor, 10000x is the ceiling', () => {
-    expect(parsePlaybackCustomSpeed('0.5')).toEqual({ ok: true, multiplier: 0.5, stepMs: Math.round(0.5 * TIME_MACHINE_STEP_MS) });
-    expect(parsePlaybackCustomSpeed(String(PLAYBACK_CUSTOM_SPEED_MIN))).toEqual({ ok: true, multiplier: PLAYBACK_CUSTOM_SPEED_MIN, stepMs: Math.round(PLAYBACK_CUSTOM_SPEED_MIN * TIME_MACHINE_STEP_MS) });
-    expect(parsePlaybackCustomSpeed(String(PLAYBACK_CUSTOM_SPEED_MAX))).toEqual({ ok: true, multiplier: PLAYBACK_CUSTOM_SPEED_MAX, stepMs: PLAYBACK_CUSTOM_SPEED_MAX * TIME_MACHINE_STEP_MS });
+    expect(parsePlaybackCustomSpeed('0.5')).toEqual({ ok: true, multiplier: 0.5 });
+    expect(parsePlaybackCustomSpeed(String(PLAYBACK_CUSTOM_SPEED_MIN))).toEqual({ ok: true, multiplier: PLAYBACK_CUSTOM_SPEED_MIN });
+    expect(parsePlaybackCustomSpeed(String(PLAYBACK_CUSTOM_SPEED_MAX))).toEqual({ ok: true, multiplier: PLAYBACK_CUSTOM_SPEED_MAX });
   });
 
   it('refusals NAME their reason — never a silent clamp (empty, non-numbers, zero/negative, out of bounds)', () => {
     const empty = parsePlaybackCustomSpeed('');
     expect(empty.ok).toBe(false);
-    if (empty.ok === false) expect(empty.reason).toContain('multiple of the 1x step');
+    if (empty.ok === false) expect(empty.reason).toContain('real-time multiple');
     const notANumber = parsePlaybackCustomSpeed('fast');
     expect(notANumber.ok).toBe(false);
     if (notANumber.ok === false) expect(notANumber.reason).toContain('is not a number');
