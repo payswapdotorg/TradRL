@@ -211,7 +211,7 @@ class FakeDocument {
   }
 
   /** Dispatch one event to every listener of its type (the browser's capture order is irrelevant: one console). */
-  fire(type: string, event: { target: FakeElement | null; relatedTarget?: FakeElement | null; key?: string; ctrlKey?: boolean; metaKey?: boolean }): void {
+  fire(type: string, event: { target: FakeElement | null; relatedTarget?: FakeElement | null; key?: string; ctrlKey?: boolean; metaKey?: boolean; preventDefault?: () => void }): void {
     for (const listener of [...(this.listeners.get(type) ?? [])]) listener(event as unknown as Record<string, unknown>);
   }
 
@@ -4323,5 +4323,341 @@ describe('executed boot: D-16 (W-29 wave 2) — the palette depth (the cross-pro
     const evidence = findByData(rig.root, 'data-palette-ref', 'nav:evidence');
     if (evidence === null) throw new Error('the typo query did not reach the Evidence section');
     expect(findByData(rig.root, 'data-palette-empty', 'evdance')).toBeNull(); // no teaching empty state — a real result
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-34-B (Round C register) — THE TRANSITION-NOISE WAVE, executed:
+//   §3.2 the playback live-edge anchor + the free speed input;
+//   §3.1 the restart posture (wizard + scope + TM survive a restart);
+//   §3.6 the keyboard/focus law (no focus-to-BODY, the skip link, the
+//        beat-proof activation);
+//   §3.9 the export-verify commit (the input-time buffer) + the label;
+//   §3.8 the switcher/palette session desks + the all-desks disclosure.
+// ---------------------------------------------------------------------------
+
+/** The shared-origin transport for the §3.1/§3.8 rigs: a directory with session-scope markers (the session own desks + the demo project + OTHER sessions desks). */
+function sharedDesksTransport(): ApiTransport {
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-fw34', data } });
+  const projectOf = (id: string, name: string, marker?: 'session-owned' | 'tenant-available'): Record<string, unknown> => ({
+    id, tenantId: 'tenant-a', name, executionMode: 'simulation', consoleSessionScope: marker,
+    lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+    lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  });
+  const transport: ApiTransport = async (request) => {
+    const key = `${request.method} ${request.path.split('?')[0]}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects') return ok({ items: [
+      projectOf('prj-a', 'Console Test Project', 'session-owned'),
+      projectOf('prj-b', 'The Second Own Desk', 'session-owned'),
+      projectOf('prj-demo-console', 'the TradRL demo project', 'tenant-available'), // the teaching desk: marked tenant-available but ALWAYS in
+      projectOf('prj-s1-desk', 'S1 desk', 'tenant-available'), // ANOTHER session
+    ] });
+    if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Console Test Project', 'session-owned'));
+    if (key === 'GET /v1/projects/prj-b') return ok(projectOf('prj-b', 'The Second Own Desk', 'session-owned'));
+    if (key === 'GET /v1/projects/prj-a/goal' || key === 'GET /v1/projects/prj-b/goal') return { status: 404, headers: {}, body: { requestId: 'req-fw34', error: { code: 'not_found', message: 'no seeded goal', status: 404 } } };
+    if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: [] });
+    if (key === 'GET /v1/jobs') return ok({ items: [] });
+    return { status: 404, headers: {}, body: { requestId: 'req-fw34', error: { code: 'not_found', message: 'no route', status: 404 } } };
+  };
+  return transport;
+}
+
+/** The scrub-commit helper: drag to an instant (input) + release (change). */
+function scrubTo(rig: Rig, instant: number): void {
+  const scrubber = findByData(rig.root, 'data-action', 'tm-scrub');
+  if (scrubber === null) throw new Error('the Time Machine renders no scrubber');
+  scrubber.value = String(instant);
+  rig.doc.fire('input', { target: scrubber });
+  rig.doc.fire('change', { target: scrubber });
+}
+
+describe('executed boot: FW-34-B §3.2 — the playback live-edge anchor + the free speed input', () => {
+  it('arming PLAYBACK from a SCRUBBED instant plays forward FROM THERE (never the session-open instant, never the live edge)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    const anchor = rig.handle.state().timeMachine.anchorAt;
+    const incidentAt = anchor - 500; // an incident 500ms before the live edge
+    scrubTo(rig, incidentAt);
+    expect(rig.handle.state().timeMachine.mode).toBe('timestamp'); // the scrub committed a selected instant
+    clickAction(rig, 'playback-start'); // arm playback
+    const playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('playback did not arm');
+    expect(playback.fromAt).toBe(incidentAt); // THE LAW: the arm IS the scrubbed instant — the incident review plays forward FROM the incident
+    expect(playback.stepMs).toBe(500); // the select 1x key is the default step
+    expect(playback.fromAt).not.toBe(rig.handle.state().openedAt); // the pre-fix arm (the session-open instant) is gone
+  });
+
+  it('arming from the RELAXED live mode starts at the RANGE FLOOR (the launch-to-now arc replays from the start)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    expect(rig.handle.state().timeMachine.mode).toBe('live'); // the relaxed state — no instant selected
+    const anchor = rig.handle.state().timeMachine.anchorAt;
+    const floor = Math.min(historyFloorOf(rig.handle.state()).floorAt, anchor); // the same floor the scrubber renders
+    expect(floor).toBeLessThan(anchor); // the rig guarantees a non-degenerate arc (records at T0, the anchor at T0+1000)
+    clickAction(rig, 'tm-mode-playback'); // arm from the live mode
+    const playback = rig.handle.state().timeMachine.playback;
+    if (playback === null) throw new Error('playback did not arm');
+    expect(playback.fromAt).toBe(floor); // THE LAW: the relaxed arm starts at the range floor — the whole arc is traversable
+  });
+
+  it('the anchor-landing law holds from a scrubbed arm: beats land AT now PAUSED — never past, never a throw (the FW-33-B clamp rides the new arm)', async () => {
+    const scheduler = new ScriptedScheduler();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport(), 'prj-a', { scheduler });
+    const anchor = rig.handle.state().timeMachine.anchorAt;
+    scrubTo(rig, anchor - 200); // a 200ms span — two beats cross the anchor
+    clickAction(rig, 'playback-start');
+    let fired = 0;
+    for (let index = 0; index < 6; index += 1) {
+      if (scheduler.fireNext()) fired += 1;
+    }
+    expect(fired).toBeGreaterThanOrEqual(1); // the beats really fired (the anchor landing pauses the loop — the rescheduling stops with the pause)
+    const machine = rig.handle.state().timeMachine;
+    const playback = machine.playback;
+    if (playback === null) throw new Error('the beats disarmed playback');
+    expect(viewAtOf(rig.handle.state())).toBe(anchor); // landed AT now
+    expect(playback.paused).toBe(true); // paused by the anchor clamp
+  });
+
+  it('the FREE SPEED input: a valid commit retunes an ARMED playback NOW; the select reads its custom face; a REFUSED value names its reason inline and never retunes; a select key clears the free speed', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    const anchor = rig.handle.state().timeMachine.anchorAt;
+    scrubTo(rig, anchor - 4000);
+    clickAction(rig, 'playback-start');
+    // COMMIT the free speed 2x — the armed playback retunes to the free step immediately
+    const freeInput = findByData(rig.root, 'data-action', 'playback-speed-custom');
+    if (freeInput === null) throw new Error('the free speed input is missing');
+    freeInput.value = '2';
+    rig.doc.fire('input', { target: freeInput }); // buffer only
+    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(500); // nothing retunes mid-typing
+    rig.doc.fire('change', { target: freeInput }); // the commit
+    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(1000); // retuned NOW: 2 x the 1x step
+    // the select face reads custom (the closed set never shows a step that is not armed)
+    const speedSelect = findByData(rig.root, 'data-action', 'playback-speed');
+    if (speedSelect === null) throw new Error('the speed select is missing');
+    const selectedOption = speedSelect.children.find((option) => option.tagName === 'OPTION' && option.getAttribute('selected') === 'selected');
+    expect(selectedOption?.getAttribute('value')).toBe('custom');
+    expect(textOf(selectedOption as FakeElement)).toContain('custom (2x)');
+    // a REFUSED commit names its reason inline — never a silent clamp, never a retune
+    const again = findByData(rig.root, 'data-action', 'playback-speed-custom');
+    if (again === null) throw new Error('the free speed input vanished');
+    again.value = '99999';
+    rig.doc.fire('input', { target: again });
+    rig.doc.fire('change', { target: again });
+    expect(findByData(rig.root, 'data-tm-speed-error', 'true')).not.toBeNull(); // the inline verdict line
+    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(1000); // the last VALID free speed still arms — never the refused value
+    // a committed select key is the EXPLICIT closed-set choice — it clears the free speed and retunes to the key
+    const selectAgain = findByData(rig.root, 'data-action', 'playback-speed');
+    if (selectAgain === null) throw new Error('the speed select vanished');
+    selectAgain.value = '10x';
+    rig.doc.fire('change', { target: selectAgain });
+    expect(rig.handle.state().timeMachine.playback?.stepMs).toBe(5000); // 10x
+    const cleared = findByData(rig.root, 'data-action', 'playback-speed-custom');
+    expect(cleared?.getAttribute('value')).toBe(''); // the free speed is cleared
+    expect(findByData(rig.root, 'data-tm-speed-error', 'true')).toBeNull(); // the refusal line is gone too
+  });
+});
+
+describe('executed boot: FW-34-B §3.1 — the restart posture (wizard + scope + TM survive a browser restart)', () => {
+  it('the FULL RESTART: the wizard dismissal + the scope pointer + the TM mode/view instant + both speed controls restore from ONE posture record — and the wizard NEVER re-summons', async () => {
+    const shared = new MapStorage();
+    // SESSION ONE: first run — the wizard shows, is skipped, the scope moves, the TM is scrubbed, the speeds are chosen
+    const rig1 = await bootRig({}, sharedDesksTransport(), 'prj-a', { scopeStorage: shared });
+    expect(countByClass(rig1.root, 'onboarding')).toBe(1); // the first-run wizard
+    click(rig1, skipOf(rig1)); // skip — the dismissal persists
+    expect(countByClass(rig1.root, 'onboarding')).toBe(0);
+    // the scope moves to the second own desk through the switcher (the Settings row)
+    clickNav(rig1, 'settings');
+    const switcher = findByData(rig1.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the switcher is missing');
+    switcher.value = 'prj-b';
+    rig1.doc.fire('change', { target: switcher });
+    await settle();
+    expect(rig1.handle.state().scope.projectId).toBe('prj-b');
+    // the TM posture: scrub to an incident + choose the 10x key + the 2.5 free speed
+    const anchor = rig1.handle.state().timeMachine.anchorAt;
+    const incidentAt = anchor - 600;
+    scrubTo(rig1, incidentAt);
+    const speedSelect = findByData(rig1.root, 'data-action', 'playback-speed');
+    if (speedSelect === null) throw new Error('the speed select is missing');
+    speedSelect.value = '10x';
+    rig1.doc.fire('change', { target: speedSelect });
+    const freeInput = findByData(rig1.root, 'data-action', 'playback-speed-custom');
+    if (freeInput === null) throw new Error('the free speed input is missing');
+    freeInput.value = '2.5';
+    rig1.doc.fire('input', { target: freeInput });
+    rig1.doc.fire('change', { target: freeInput });
+    await settle();
+    // SESSION TWO — THE BROWSER RESTART: a fresh console, the SAME storage
+    const rig2 = await bootRig({}, sharedDesksTransport(), 'prj-a', { scopeStorage: shared });
+    expect(countByClass(rig2.root, 'onboarding')).toBe(0); // the wizard never re-summons (L3 restart finding)
+    expect(elementsOf(rig2.root).some((element) => element.getAttribute('data-onboarding') !== null)).toBe(false); // NOTHING wizard-shaped in the tree — never an invisible blocker
+    expect(rig2.handle.state().scope.projectId).toBe('prj-b'); // the scope pointer restored (M1 restart finding)
+    expect(rig2.handle.state().timeMachine.mode).toBe('timestamp'); // the TM view restored — not live, not reset
+    expect(viewAtOf(rig2.handle.state())).toBe(incidentAt); // VIEWING the incident the analyst stood at (L3 restart finding)
+    const speedSelect2 = findByData(rig2.root, 'data-action', 'playback-speed');
+    if (speedSelect2 === null) throw new Error('the restored speed select is missing');
+    const selected2 = speedSelect2.children.find((option) => option.tagName === 'OPTION' && option.getAttribute('selected') === 'selected');
+    expect(selected2?.getAttribute('value')).toBe('10x'); // the speed posture restored
+    const freeInput2 = findByData(rig2.root, 'data-action', 'playback-speed-custom');
+    expect(freeInput2?.getAttribute('value')).toBe('2.5'); // the free speed posture restored
+    // the restored TM is a VIEWING posture — never a surprise auto-play (no playback armed on a restart)
+    expect(rig2.handle.state().timeMachine.playback).toBeNull();
+  });
+
+  it('the wizard dismisses by MOUSE (the backdrop) and by ESC — each dismissal persists, and the dismissed overlay renders NOTHING (never an invisible mouse-blocker)', async () => {
+    const shared = new MapStorage();
+    const rig = await bootRig({}, sharedDesksTransport(), 'prj-a', { scopeStorage: shared });
+    // THE BACKDROP = the mouse dismissal (L3: the pre-fix overlay blocked native clicks)
+    const overlay = findByData(rig.root, 'data-action', 'onboarding-backdrop');
+    if (overlay === null) throw new Error('the wizard overlay carries no backdrop action');
+    click(rig, overlay); // a press on the dimmed page OUTSIDE the card
+    expect(countByClass(rig.root, 'onboarding')).toBe(0);
+    expect(shared.map.get('tradrl_onboarded')).toBe('true'); // persisted
+    // a press INSIDE the card never dismisses through the backdrop branch (the CTA owns it)
+    const rig2 = await bootRig({}, sharedDesksTransport(), 'prj-a', { scopeStorage: shared });
+    expect(countByClass(rig2.root, 'onboarding')).toBe(0); // the persisted dismissal held
+    // the re-opened wizard dismisses by ESC too — the keyboard path
+    clickNav(rig2, 'settings');
+    clickAction(rig2, 'onboarding-reopen');
+    expect(countByClass(rig2.root, 'onboarding')).toBe(1);
+    rig2.doc.fire('keydown', { target: null, key: 'Escape' });
+    expect(countByClass(rig2.root, 'onboarding')).toBe(0);
+    expect(shared.map.get('tradrl_onboarded')).toBe('true');
+  });
+});
+
+describe('executed boot: FW-34-B §3.6 — the keyboard/focus law (no focus-to-BODY, the skip link, the beat-proof activation)', () => {
+  it('the SKIP LINK renders first in the shell and lands the focus on the main content landmark (never on BODY)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    const skip = findByData(rig.root, 'data-action', 'skip-to-main');
+    if (skip === null) throw new Error('the skip link is missing');
+    expect(skip.tagName).toBe('A');
+    expect(skip.getAttribute('href')).toBe('#tradrl-main');
+    const main = findByData(rig.root, 'data-main-content', 'true');
+    if (main === null) throw new Error('the main content landmark carries no landing target');
+    expect(main.getAttribute('tabindex')).toBe('-1');
+    click(rig, skip);
+    // the re-projection replaces the tree — the FRESH landmark is the element the focus landed on
+    const landed = findByData(rig.root, 'data-main-content', 'true');
+    if (landed === null) throw new Error('the re-projected landmark is missing');
+    expect(landed.focusCount).toBe(1); // the focus LANDS on the content, never on BODY
+  });
+
+  it('a palette action lands the focus on the CONTENT it navigated to — never on BODY (L4: focus reset to BODY after EVERY palette action)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    clickAction(rig, 'palette-open');
+    const goalEntry = findByData(rig.root, 'data-palette-ref', 'nav:goal');
+    if (goalEntry === null) throw new Error('the palette carries no Goal entry');
+    click(rig, goalEntry);
+    expect(findByData(rig.root, 'data-section', 'goal')).not.toBeNull(); // the navigation landed
+    // the re-projection replaces the tree — the FRESH landmark is the element the focus landed on
+    const landed = findByData(rig.root, 'data-main-content', 'true');
+    if (landed === null) throw new Error('the re-projected landmark is missing');
+    expect(landed.focusCount).toBe(1); // the focus landed on the CONTENT, never on BODY
+  });
+
+  it('a sheet close lands the focus on the content too — and the beat never eats a keyboard activation: Enter on the focused Mark-read fires EXACTLY once (L4 incident)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB }); // folds one unread notice
+    clickNav(rig, 'inbox');
+    // THE KEYBOARD ACTIVATION: the focused Mark-read button + Enter — the action fires on the SETTLED element, once
+    const readButton = findByData(rig.root, 'data-action', 'notice-read');
+    if (readButton === null) throw new Error('the inbox renders no Mark-read affordance');
+    rig.doc.activeElement = readButton;
+    let prevented = false;
+    rig.doc.fire('keydown', { target: null, key: 'Enter', preventDefault: (): void => { prevented = true; } });
+    expect(prevented).toBe(true); // the browser own click synthesis is cancelled — one activation, never two
+    expect(countByData(rig.root, 'data-unread', '1')).toBe(0); // the read marked: the badge is gone (the beat did NOT eat the activation)
+    expect(findByData(rig.root, 'data-action', 'notice-read')).toBeNull(); // the read row renders no toggle
+    // THE SHEET CLOSE: open the org snapshot sheet (dispatched directly — the state own surface), close it, the focus lands on the content
+    rig.handle.dispatch({ kind: 'org-snapshot', at: T0 + 30, snapshot: { organizationRef: 'org:alpha', tenant: 'tenant-a', project: 'prj-a', status: 'active', at: T0 + 10, instanceRefs: ['ai:director-1'] } });
+    clickNav(rig, 'organization');
+    const row = findByData(rig.root, 'data-row', 'snapshot:org:alpha');
+    if (row === null) throw new Error('the organization section renders no snapshot row');
+    click(rig, row);
+    expect(findByData(rig.root, 'data-sheet', 'snapshot:org:alpha')).not.toBeNull();
+    clickAction(rig, 'sheet-close');
+    expect(findByData(rig.root, 'data-sheet', 'snapshot:org:alpha')).toBeNull();
+    // the re-projection replaces the tree — the FRESH landmark is the element the focus landed on
+    const landed = findByData(rig.root, 'data-main-content', 'true');
+    if (landed === null) throw new Error('the re-projected landmark is missing');
+    expect(landed.focusCount).toBe(1); // the sheet closed — the focus landed on the content, never on BODY
+  });
+});
+
+describe('executed boot: FW-34-B §3.9 — the export-verify commit survives the beat + the persisted label', () => {
+  it('the input-time selection BUFFERS; a change whose live FileList is EMPTY (the beat replaced the element — the Round C files=0 regression) still commits and verifies, and the committed file is NAMED beside the control', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'settings');
+    const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
+    if (exportButton === null) throw new Error('no export-workspace action');
+    click(rig, exportButton);
+    const anchor = downloadAnchorsOf(rig).slice(-1)[0];
+    if (anchor === undefined) throw new Error('the download anchor is missing');
+    const bytes = decodeURIComponent((anchor.getAttribute('href') ?? '').slice('data:application/json;charset=utf-8,'.length));
+    // THE SPLIT COMMIT: the input event fires with the selection on hand...
+    const verifyInput = findByData(rig.root, 'data-action', 'export-verify-file');
+    if (verifyInput === null) throw new Error('no export-verify-file affordance in Settings');
+    (verifyInput as FakeElement & { files?: unknown[] }).files = [{ name: 'my-export.json', text: async () => bytes }];
+    rig.doc.fire('input', { target: verifyInput });
+    expect(findByData(rig.root, 'data-export-verify', 'verified')).toBeNull(); // nothing verifies on the input event (the commit belongs to the change)
+    // ...then the beat re-projection replaces the element, and the change lands on the FRESH one whose FileList is EMPTY
+    rig.handle.dispatch({ kind: 'view-live', at: T0 + 2000 }); // a state change -> the full re-projection (the beat own move)
+    const fresh = findByData(rig.root, 'data-action', 'export-verify-file');
+    if (fresh === null) throw new Error('the re-projected verify input is missing');
+    rig.doc.fire('change', { target: fresh }); // files=0 on the live element — the Round C regression class
+    await settle();
+    const card = findByData(rig.root, 'data-export-verify', 'verified');
+    if (card === null) throw new Error('the verified card did not render — the buffered selection was dropped');
+    // THE LABEL: the committed file is NAMED beside the control (the browser own face resets on every projection — this line does not)
+    const label = findByData(rig.root, 'data-verify-chosen', 'my-export.json');
+    if (label === null) throw new Error('the committed-file label is missing');
+    expect(textOf(label)).toContain('my-export.json');
+  });
+});
+
+describe('executed boot: FW-34-B §3.8 — the switcher/palette session desks + the explicit all-desks disclosure', () => {
+  it('the switcher DEFAULTS to the session own desks (the demo project always in); the counted expander discloses the others and swaps the listing BOTH ways', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    clickNav(rig, 'settings');
+    const optionsOf = (): string[] => {
+      const select = findByData(rig.root, 'data-action', 'project-switch');
+      if (select === null) throw new Error('the switcher is missing');
+      return select.children.filter((option) => option.tagName === 'OPTION').map((option) => option.getAttribute('value') ?? '');
+    };
+    expect(optionsOf()).toEqual(['prj-a', 'prj-b', 'prj-demo-console']); // the session own desks + the teaching desk — the other session desk is NOT here
+    const expander = findByData(rig.root, 'data-action', 'switcher-all-desks');
+    if (expander === null) throw new Error('the all-desks expander is missing (other sessions desks exist in this workspace)');
+    expect(textOf(expander)).toContain('1 other desk'); // the counted disclosure
+    expect(expander.getAttribute('aria-expanded')).toBe('false');
+    click(rig, expander); // EXPAND — one explicit disclosure
+    expect(optionsOf()).toEqual(['prj-a', 'prj-b', 'prj-demo-console', 'prj-s1-desk']); // the WHOLE registry (never lost — the FW-31-B win)
+    const expanded = findByData(rig.root, 'data-action', 'switcher-all-desks');
+    expect(expanded?.getAttribute('aria-expanded')).toBe('true');
+    expect(textOf(expanded as FakeElement)).toContain('Showing all 4 desks');
+    click(rig, expanded as FakeElement); // COLLAPSE back — the hygienic default is one click away
+    expect(optionsOf()).toEqual(['prj-a', 'prj-b', 'prj-demo-console']);
+  });
+
+  it('the PALETTE defaults to the session own desks; a query matching ONLY another session desk discloses the count inline, and the include-all action re-ranks the SAME query over the whole registry', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    clickAction(rig, 'palette-open');
+    const typeQuery = (value: string): void => {
+      const input = findByData(rig.root, 'data-palette-input', 'true');
+      if (input === null) throw new Error('the palette input is missing');
+      input.value = value;
+      rig.doc.fire('input', { target: input });
+    };
+    typeQuery('S1 desk'); // another session desk name — NOT in the session own listing
+    expect(findByData(rig.root, 'data-palette-empty', 'S1 desk')).not.toBeNull(); // no matches of the session own
+    const disclosure = findByData(rig.root, 'data-palette-hidden-desks', 'true');
+    if (disclosure === null) throw new Error('the hidden-desks disclosure is missing');
+    expect(textOf(disclosure)).toContain('1 other desk'); // the count, named inline
+    clickAction(rig, 'palette-all-desks'); // the explicit include-all
+    expect(findByData(rig.root, 'data-palette-ref', 'project:prj-s1-desk')).not.toBeNull(); // the same query now reaches the other session desk
+    // the session own desks were never lost — they are still searchable in the expanded state
+    typeQuery('Second Own');
+    expect(findByData(rig.root, 'data-palette-ref', 'project:prj-b')).not.toBeNull();
   });
 });

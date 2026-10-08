@@ -292,6 +292,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   let sessionPosture: ConsoleSessionPosture = options.scopeStorage === undefined
     ? initialConsolePosture()
     : (readStoredPosture(options.scopeStorage) ?? initialConsolePosture());
+  // FW-34-B: the stored TM posture captured ONCE at boot — the restore
+  // own source, immune to the write-through fold that lands during the
+  // boot listing (a scope adoption RESETS the machine to live before the
+  // restore re-lands the analyst instant — without the capture, the
+  // fold would clobber the stored posture to live a dispatch before the
+  // restore reads it; bootStoredScope own law, the TM own form).
+  const bootStoredTimeMachine: ConsoleSessionPosture['timeMachine'] = sessionPosture.timeMachine;
   const writeSessionPosture = (): void => {
     if (options.scopeStorage === undefined) return;
     persistPosture(options.scopeStorage, sessionPosture);
@@ -461,28 +468,40 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // exists is stale — cleared and ignored, falling back to the env
         // pin EXACTLY as the pre-W-22 boot behaved.
         // FW-34-B (Round C register §3.1) — THE TIME-MACHINE POSTURE
-        // RESTORE, in the SAME listing pass (BEFORE the scope branch's
-        // early returns — a browser may carry a TM posture with no scope
-        // posture at all: the demo-scope analyst who scrubbed an
-        // incident and reloaded): when the stored posture left the
-        // machine at a selected instant (a scrubbed timestamp, a T-x
-        // lens, a paused playback — all fold to an explicit instant) and
-        // the machine STILL sits at its boot 'live' mode, the console
-        // REOPENS VIEWING THAT INSTANT (L3's finding: an incident
-        // review that reloads the page lost the view it was reviewing —
-        // mode+speed reset to LIVE/1x on every reload). A user who
-        // touched the Time Machine before the listing landed left
-        // 'live' already — their choice stands, never overwritten (the
-        // D-15 discipline, the TM's own form). The restore clamps to
-        // [the history floor, the anchor] exactly like the scrubber's
-        // own commit — never a throw, never a fabricated instant. A
-        // 'live' stored posture restores nothing (the anchor follows
-        // the observed now — that IS the live mode).
-        if (state.timeMachine.mode === 'live' && sessionPosture.timeMachine.mode !== 'live' && sessionPosture.timeMachine.viewAt !== null) {
+        // RESTORE, in the SAME listing pass but AFTER the scope branch
+        // (the scope adoption is a reset+switch transition that RE-OPENS
+        // the machine at live — the TM posture then re-lands the
+        // analyst view instant on the adopted scope own machine; a
+        // browser may carry a TM posture with no scope posture at all:
+        // the demo-scope analyst who scrubbed an incident and reloaded):
+        // when the stored posture left the machine at a selected instant
+        // (a scrubbed timestamp, a T-x lens, a paused playback — all fold
+        // to an explicit instant) and the machine STILL sits at its boot
+        // 'live' mode, the console REOPENS VIEWING THAT INSTANT (L3's
+        // finding: an incident review that reloads the page lost the
+        // view it was reviewing — mode+speed reset to LIVE/1x on every
+        // reload). A user who touched the Time Machine before the
+        // listing landed left 'live' already — their choice stands,
+        // never overwritten (the D-15 discipline, the TM's own form).
+        // The restore clamps to [the history floor, the anchor] exactly
+        // like the scrubber's own commit — never a throw, never a
+        // fabricated instant. A 'live' stored posture restores nothing
+        // (the anchor follows the observed now — that IS the live mode).
+        const stored = sessionPosture.scopeProjectId ?? bootStoredScope;
+        if (stored !== null && scopeGeneration === 0 && stored !== state.scope.projectId) { // the early-return-free form of the W-22/D-15 guards (the TM restore below must run on EVERY path, never skipped by a scope-branch return)
+          if (records.some((record) => record.id === stored)) {
+            dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
+          } else if (options.scopeStorage !== undefined) {
+            persistScopeProject(options.scopeStorage, ''); // stale (deleted upstream) — clear it and keep the env pin
+            sessionPosture = { ...sessionPosture, scopeProjectId: null };
+            writeSessionPosture(); // the posture record clears with the legacy key (FW-34-B)
+          }
+        }
+        if (state.timeMachine.mode === 'live' && bootStoredTimeMachine.mode !== 'live' && bootStoredTimeMachine.viewAt !== null) {
           const anchor = state.timeMachine.anchorAt;
           const floor = Math.min(historyFloorOf(state).floorAt, anchor);
-          const clamped = Math.min(Math.max(sessionPosture.timeMachine.viewAt, floor), anchor);
-          if (sessionPosture.timeMachine.mode === 't-minus') {
+          const clamped = Math.min(Math.max(bootStoredTimeMachine.viewAt, floor), anchor);
+          if (bootStoredTimeMachine.mode === 't-minus') {
             // The relative lens restores at the same offset from the
             // CURRENT anchor (t-minus follows now by definition — the
             // offset, not a wall instant, is the posture).
@@ -491,17 +510,6 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           } else {
             dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: clamped });
           }
-        }
-        const stored = sessionPosture.scopeProjectId ?? bootStoredScope;
-        if (stored === null) return;
-        if (scopeGeneration !== 0) return; // a scope move already happened — the user (or the restore itself) is driving
-        if (stored === state.scope.projectId) return;
-        if (records.some((record) => record.id === stored)) {
-          dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
-        } else if (options.scopeStorage !== undefined) {
-          persistScopeProject(options.scopeStorage, ''); // stale (deleted upstream) — clear it and keep the env pin
-          sessionPosture = { ...sessionPosture, scopeProjectId: null };
-          writeSessionPosture(); // the posture record clears with the legacy key (FW-34-B)
         }
       });
       const projectId = bundleScope;
@@ -1423,7 +1431,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      */
     const focusMainContent = (): void => {
       if (document.querySelectorAll === undefined) return;
-      for (const focusable of document.querySelectorAll('.tradrl-shell [data-main-content]')) {
+      for (const focusable of document.querySelectorAll('[data-main-content="true"]')) {
         (focusable as { focus(): void }).focus();
         return;
       }

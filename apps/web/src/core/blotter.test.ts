@@ -24,7 +24,7 @@ function filled(notional: string, fee: string, submissionId = 'sub-1'): GatewayS
   return {
     kind: 'routed', submissionId, decisionId: `dec-${submissionId}`, auditId: `aud-${submissionId}`, requestRef: `req-${submissionId}`,
     venue: 'venue-x', adapterRef: 'ad-1', channelRef: 'ch-1', routedAt: T0,
-    order: { clientOrderId: `clordid-${submissionId}`, instrument: 'binance:BTC-USDT', side: 'buy', quantity: '1', price: '1' },
+    order: { clientOrderId: `clordid-${submissionId}`, instrumentId: 'binance:BTC-USDT', venueId: 'venue-x', side: 'buy', kind: 'limit', quantity: '1', price: '1', timeInForce: 'gtc', createdAt: new Date(T0).toISOString() },
     fill: { state: 'filled', quantity: '1', price: '1', notional, fee, filledAt: T0 },
   };
 }
@@ -34,7 +34,7 @@ function routedUnfilled(submissionId = 'sub-r'): GatewaySubmissionRecord {
   return {
     kind: 'routed', submissionId, decisionId: `dec-${submissionId}`, auditId: `aud-${submissionId}`, requestRef: `req-${submissionId}`,
     venue: 'venue-x', adapterRef: 'ad-1', channelRef: 'ch-1', routedAt: T0,
-    order: { clientOrderId: `clordid-${submissionId}`, instrument: 'binance:BTC-USDT', side: 'buy', quantity: '1', price: '1' },
+    order: { clientOrderId: `clordid-${submissionId}`, instrumentId: 'binance:BTC-USDT', venueId: 'venue-x', side: 'buy', kind: 'limit', quantity: '1', price: '1', timeInForce: 'gtc', createdAt: new Date(T0).toISOString() },
   };
 }
 

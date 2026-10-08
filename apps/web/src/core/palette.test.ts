@@ -498,7 +498,7 @@ describe('FW-34-B: the palette defaults to the session own desks (§3.8)', () =>
     expect(rankPalette(index, 'S1 desk').some((entry) => entry.ref === 'project:prj-s1-desk')).toBe(true);
   });
 
-  it('the overlay's empty state DISCLOSES the hidden desk matches with its own include-all action (never a silent wall)', () => {
+  it("the overlay's empty state DISCLOSES the hidden desk matches with its own include-all action (never a silent wall)", () => {
     const bytes = render(paletteOverlay({ query: 'S1 desk', results: [], selected: 0, unread: 0, hiddenDeskMatches: 1, allDesks: false }));
     expect(bytes).toContain('No matches');
     expect(bytes).toContain('1 other desk in this workspace'); // the count, named
