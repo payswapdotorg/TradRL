@@ -458,6 +458,11 @@ function clickNav(rig: Rig, target: string): void {
   click(rig, item);
 }
 
+/** FW-34-B: the DOWNLOAD anchors the export flow creates (href-prefixed data: URIs). The shell's skip link is a legitimate <a> in every projection, so anchor-COUNT heuristics must scope to the download signature — the intent these tests pin (exactly one download anchor, the right bytes) is sharpened, never loosened. */
+function downloadAnchorsOf(rig: Rig): FakeElement[] {
+  return rig.doc.created.filter((element) => element.tagName === 'A' && (element.getAttribute('href') ?? '').startsWith('data:application/json;charset=utf-8,'));
+}
+
 /** Type into a launch field (the browser's semantics: the focus MOVES into the field first — a focusout fires on the previously focused launch field with relatedTarget = this field — then the input event; the live value rides the DOM property). */
 function typeField(rig: Rig, field: string, value: string): void {
   const input = findByData(rig.root, 'data-launch-field', field);
@@ -517,7 +522,11 @@ describe('executed boot: J1 — the onboarding wizard', () => {
 
     click(rig, ctaOf(rig)); // step 3 -> completed
     expect(countByClass(rig.root, 'onboarding')).toBe(0); // the overlay is gone
-    expect(findByData(rig.root, 'data-onboarding', 'completed')).not.toBeNull();
+    // FW-34-B (Round C register §3.1 — L3's invisible-blocker finding): the
+    // STRONGER completion law — a completed wizard renders NOTHING AT ALL
+    // (the pre-fix marker div.onboarding-hidden was replaced by a null
+    // overlay; nothing in the tree can ever block the page, even invisibly).
+    expect(elementsOf(rig.root).some((element) => element.getAttribute('data-onboarding') !== null)).toBe(false);
     expect(findByData(rig.root, 'data-section', 'home')).not.toBeNull(); // lands on Home
     expect(rig.storage.map.get('tradrl_onboarded')).toBe('true'); // persists
   });
@@ -624,10 +633,10 @@ describe('executed boot: the delegated action layer', () => {
     clickNav(rig, 'settings');
     const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
     if (exportButton === null) throw new Error('no export-workspace action');
-    const anchorsBefore = rig.doc.created.filter((element) => element.tagName === 'A').length;
+    const anchorsBefore = downloadAnchorsOf(rig).length;
     click(rig, exportButton);
-    const anchors = rig.doc.created.filter((element) => element.tagName === 'A');
-    expect(anchors.length).toBe(anchorsBefore + 1); // one anchor was created
+    const anchors = downloadAnchorsOf(rig);
+    expect(anchors.length).toBe(anchorsBefore + 1); // one DOWNLOAD anchor was created (FW-34-B: the shell's skip link is an <a> too — the count scopes to the data: URI signature)
     const anchor = anchors[anchors.length - 1] as FakeElement;
     const href = anchor.getAttribute('href') ?? '';
     expect(href).toMatch(/^data:application\/json;charset=utf-8,/);
@@ -3457,7 +3466,7 @@ describe('executed boot: MI-D7 — the in-UI export verification affordance', ()
     const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
     if (exportButton === null) throw new Error('no export-workspace action');
     click(rig, exportButton);
-    const anchor = rig.doc.created.filter((element) => element.tagName === 'A').slice(-1)[0];
+    const anchor = downloadAnchorsOf(rig).slice(-1)[0];
     if (anchor === undefined) throw new Error('the download anchor is missing');
     const href = anchor.getAttribute('href') ?? '';
     const bytes = decodeURIComponent(href.slice('data:application/json;charset=utf-8,'.length));
@@ -3484,7 +3493,7 @@ describe('executed boot: MI-D7 — the in-UI export verification affordance', ()
     const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
     if (exportButton === null) throw new Error('no export-workspace action');
     click(rig, exportButton);
-    const anchor = rig.doc.created.filter((element) => element.tagName === 'A').slice(-1)[0];
+    const anchor = downloadAnchorsOf(rig).slice(-1)[0];
     if (anchor === undefined) throw new Error('the download anchor is missing');
     const href = anchor.getAttribute('href') ?? '';
     const bytes = decodeURIComponent(href.slice('data:application/json;charset=utf-8,'.length));

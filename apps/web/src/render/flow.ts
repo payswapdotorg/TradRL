@@ -335,9 +335,9 @@ export function timeMachineControls(options: {
   readonly playing: boolean;
   readonly progress: number | null;
   readonly speed?: PlaybackSpeedKey;
-  /** FW-34-B: the free speed input's committed text ('' = the select's key is the active step). */
+  /** FW-34-B: the free-speed input committed text ('' = the select key is the active step). */
   readonly customSpeed?: string;
-  /** FW-34-B: the free speed's named refusal (null when the committed text is valid or empty) — rendered inline, never a silent clamp. */
+  /** FW-34-B: the free-speed named refusal (null when the committed text is valid or empty) — rendered inline, never a silent clamp. */
   readonly customSpeedError?: string | null;
 }): VNode {
   const bounds = scrubberBoundsOf(options.range);

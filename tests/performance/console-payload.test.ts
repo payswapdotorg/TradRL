@@ -77,9 +77,21 @@ describe('the console boot payload budgets (the no-build console\'s boot transfe
   //   NB: src/app/console.ts now measures 125.5 of the 128 KiB single-file
   //   budget — the next growth there crosses that one too.
   // The budgets carry deliberate headroom: growing past one is a CONSCIOUS decision.
+  // Re-recorded (FW-34-B, 2026-10-08): 42 files, 868,381 bytes total (848.0 of the
+  //   896 KiB budget — 94.6%). The single-file budget was CONSCIOUSLY raised
+  //   128 -> 160 KiB per this file's own protocol: FW-34-B (the Round C
+  //   transition-noise wave — the playback live-edge anchor + free speed, the
+  //   session-posture seam, the keyboard/focus law, the export-verify commit
+  //   buffer, the all-desks disclosure) added ~23 KiB of app-layer wiring to
+  //   src/app/console.ts (125.5 -> 148.8 KiB — the crossing FW-33-B's own note
+  //   predicted: "the next growth there crosses that one too"). The wave also
+  //   added two NEW modules (src/core/posture.ts 9.6 KiB, src/core/blotter.ts
+  //   3.4 KiB) — the extraction pattern the budget exists to encourage; the
+  //   remainder is interaction-layer wiring (the one delegated resolver) that
+  //   has no pure home. The byte total stays under its own budget untouched.
   const FILE_COUNT_BUDGET = 64; // each source is one boot fetch — the fetch count stays bounded
   const TOTAL_BYTES_BUDGET = 896 * 1024; // 896 KiB — the whole boot transfer (raised from 768 KiB at FW-33-B — see the note above)
-  const LARGEST_FILE_BUDGET = 128 * 1024; // 128 KiB — one fetch + one strip pass
+  const LARGEST_FILE_BUDGET = 160 * 1024; // 160 KiB — one fetch + one strip pass (raised from 128 KiB at FW-34-B — see the note above)
 
   it('the payload is the copy spec\'s set on the real tree: index.html + non-test sources, NO test sources, the loader\'s critical path present', () => {
     const { files, bytes } = consolePayload();

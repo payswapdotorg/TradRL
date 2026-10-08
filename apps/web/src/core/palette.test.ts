@@ -275,7 +275,13 @@ describe('onboarding: the panel chrome (§4.13)', () => {
     expect(bytes).toContain('data-onboarding="step-1"');
     expect(bytes).toContain('onboarding-circle');
     expect(bytes).toContain('<div class="onboarding-eyebrow">Welcome</div>');
-    expect(bytes).toContain('<h1 class="onboarding-title">Welcome to TradRL</h1>');
+    // FW-34-B (Round C register §3.1 — L3's a11y-invisible-blocker finding):
+    // the wizard is a REAL, LABELLED DIALOG now — the title carries the
+    // aria-labelledby target id, and the overlay declares dialog semantics.
+    expect(bytes).toContain('<h1 class="onboarding-title" id="onboarding-title">Welcome to TradRL</h1>');
+    expect(bytes).toContain('role="dialog"');
+    expect(bytes).toContain('aria-modal="true"');
+    expect(bytes).toContain('aria-labelledby="onboarding-title"');
     expect(bytes).toContain('audit every decision');
     expect(bytes).toContain('data-action="onboarding-next"');
     expect(bytes).toContain('Continue');
