@@ -124,7 +124,7 @@ import {
   seedDemoWorld,
 } from './demo';
 import { HYDRATION_AT, type DurableBackingHandle } from './durable';
-import { NeonFirmMemoryStore, NeonOutcomeLearningStore, type NeonStoreDeps } from '../../adapters/neon/stores';
+import { NeonFirmMemoryStore, NeonOutcomeLearningStore, type NeonStoreDeps, type TenantKnowledgeRow, type TenantScopedRecordRow } from '../../adapters/neon/stores';
 
 // ---------------------------------------------------------------------------
 // The activation's inputs + observable surfaces
@@ -305,6 +305,45 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
     return projects;
   }
 
+  /** The project id of one session-JOIN row ('' when the payload carries none — malformed rows never trigger a refresh). */
+  function projectOfSessionRow(row: { readonly project: unknown }): string {
+    if (!isRecord(row.project)) return '';
+    const id = row.project.id;
+    return typeof id === 'string' ? id : '';
+  }
+
+  /**
+   * FW-33-A (the derived-truth half's probe): does one tenant-wide opaque
+   * record fold (outcomes or post-mortems) carry a row of a project the
+   * projection SERVES whose id it lacks? Rows of projects the projection
+   * has not seen (a fresh launch) ride the REGISTRY probe instead (their
+   * rows arrive with the quiet refresh the registry triggers); rows of
+   * projects it SKIPPED are not a trigger (they can never reconstruct
+   * better). Structural throughout — a malformed payload row never
+   * triggers a refresh (fail-closed, never a crash).
+   */
+  function tenantRowHasNewId(rows: readonly TenantScopedRecordRow[], servedProjects: ReadonlySet<string>, servedIds: ReadonlySet<string>, idField: 'outcomeId' | 'postMortemId'): boolean {
+    for (const row of rows) {
+      if (!servedProjects.has(row.project)) continue;
+      if (!isRecord(row.record)) continue;
+      const id = row.record[idField];
+      if (typeof id === 'string' && id.length > 0 && !servedIds.has(id)) return true;
+    }
+    return false;
+  }
+
+  /** The knowledge fold's twin of the opaque-record probe (the id lives in the envelope's own record). */
+  function knowledgeRowHasNewId(rows: readonly TenantKnowledgeRow[], servedProjects: ReadonlySet<string>, servedIds: ReadonlySet<string>): boolean {
+    for (const row of rows) {
+      if (!servedProjects.has(row.project)) continue;
+      const record = (row.envelope as { readonly record?: unknown }).record;
+      if (!isRecord(record)) continue;
+      const id = record.knowledgeId;
+      if (typeof id === 'string' && id.length > 0 && !servedIds.has(id)) return true;
+    }
+    return false;
+  }
+
   /**
    * R8 (W-27, D-7): the durable jobs hydration — replay every durable job
    * record of the credential tenant's RECONSTRUCTED projects back into this
@@ -369,44 +408,99 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
    * projection + API-owned job store predate a launch that landed on
    * ANOTHER instance):
    *
-   *   1. THE JOBS HALF: a fresh tenant-wide durable-jobs read; every record
-   *      this instance's job store LACKS (the launch's kickoff job, its
-   *      transitions) replays back through the REAL public job routes (the
-   *      same replay driver the boot hydration rides) — the frozen per-id
-   *      GET /v1/jobs/:jobId and the host-owned jobs list then serve them
-   *      on THIS instance too (the pre-fix stall: the console's poll
-   *      answered the typed 404 forever, the launch phase never advanced,
-   *      CONNECTION degraded — Round A's L1/M1, intermittent because it
-   *      needed the balancer to keep routing the polls to the pre-launch
-   *      warm instance).
+   *   1. THE DERIVED-TRUTH HALF (FW-33-A — Round B blocker 1, the
+   *      launched-desk record durability defect's warm-instance half):
+   *      the heal re-reads the OUTCOME + POST-MORTEM + KNOWLEDGE surfaces
+   *      (one tenant-wide read each — CONSTANT cost per interval, the W-30
+   *      round-trip law; the boot projection's reads stay exactly seven)
+   *      and compares the fresh rows against the serving projection's
+   *      MEMBERSHIP (durable.projectionMembership): any registry project
+   *      the projection has not SEEN (a launch that landed on ANOTHER
+   *      instance — this warm instance's goal sets + org binds predate it,
+   *      so the FW-MI-B derived streams fold to honest emptiness), or any
+   *      outcome/post-mortem/knowledge row of a project the projection
+   *      DOES serve whose id it lacks (a PROMOTED DECISION minted on
+   *      ANOTHER instance — the record is durable truth now, FW-33-A's
+   *      outcome lane), triggers the QUIET RE-PROJECTION
+   *      (durable.reprojectQuietly): the whole serving projection rebuilds
+   *      from the fresh durable truth with NO serving degradation at any
+   *      point, and the derived streams re-fold from it automatically
+   *      (they read goalOf + the control-plane listing + the outcome
+   *      rows). Rows of projects the projection SKIPPED are not a trigger
+   *      (a skipped row can never reconstruct better — the membership's
+   *      SEEN set carries them). This half runs FIRST: the quiet
+   *      re-projection's commit guard discards a build that raced
+   *      undrained writes, and the jobs half's replay queues exactly such
+   *      writes — the probe + refresh need the pending lane clean.
    *
-   *   2. THE ORG HALF: the org-status snapshot pass over the FRESH
-   *      session-JOIN rows (never this instance's stale projection) — every
-   *      BOUND project whose watch-store snapshot this instance lacks gets
-   *      its report through the REAL private route (the R7-at-boot law,
-   *      brought to the bounded interval), so the compiled org's snapshot
-   *      is observable on THIS instance (the "org never compiles" half —
-   *      the org WAS compiled in the durable truth; the stale instance
-   *      could never observe it).
+   *   2. THE JOBS HALF (FW-31-B): a fresh tenant-wide durable-jobs read;
+   *      every record this instance's job store LACKS (the launch's
+   *      kickoff job, its transitions) replays back through the REAL
+   *      public job routes (the same replay driver the boot hydration
+   *      rides) — the frozen per-id GET /v1/jobs/:jobId and the
+   *      host-owned jobs list then serve them on THIS instance too (the
+   *      pre-fix stall: the console's poll answered the typed 404 forever,
+   *      the launch phase never advanced, CONNECTION degraded — Round A's
+   *      L1/M1, intermittent because it needed the balancer to keep
+   *      routing the polls to the pre-launch warm instance).
+   *
+   *   3. THE ORG HALF (FW-31-B): the org-status snapshot pass over the
+   *      FRESH session-JOIN rows (never this instance's stale projection)
+   *      — every BOUND project whose watch-store snapshot this instance
+   *      lacks gets its report through the REAL private route (the
+   *      R7-at-boot law, brought to the bounded interval), so the compiled
+   *      org's snapshot is observable on THIS instance (the "org never
+   *      compiles" half — the org WAS compiled in the durable truth; the
+   *      stale instance could never observe it).
    *
    * Best-effort by construction (the W-25D mid-instance law — the serving
-   * projection is NEVER degraded by a heal): a failed read or a refused
-   * replay is SKIPPED (R46 — never a crash, never a rejected promise); the
-   * next interval retries. The W-30 round-trip law is untouched (the boot
-   * projection's reads stay exactly seven; the heal adds at most TWO fresh
-   * reads per interval per instance).
+   * projection is NEVER degraded by a heal): a failed read, a refused
+   * replay or a discarded refresh is SKIPPED (R46 — never a crash, never a
+   * rejected promise); the next interval retries. The W-30 round-trip law
+   * is untouched (the boot projection's reads stay exactly seven; the heal
+   * adds at most FIVE fresh reads per interval per instance — the jobs
+   * read, the session-listing JOIN the org half already rides, and the
+   * three derived-truth reads).
    */
   async function healStaleDurableState(at: number): Promise<void> {
     try {
-      // 1. THE JOBS HALF — the fresh tenant-wide durable-jobs read.
+      // 1. THE DERIVED-TRUTH HALF (FW-33-A) — FIRST, while the pending
+      //    lane is clean: the quiet re-projection's commit guard discards
+      //    a build that raced undrained writes, and the jobs half below
+      //    queues exactly such writes (the replay's write-through lane) —
+      //    the derived-truth probe + refresh must run before it. The fresh
+      //    reads vs the serving projection's membership; a divergence is
+      //    the quiet re-projection's trigger.
+      const rows = await durable.sessionProjectRows();
+      const membership = durable.projectionMembership();
+      if (rows.ok && membership !== null) {
+        const freshProjectIds = new Set(rows.value.map((row) => projectOfSessionRow(row)));
+        const unseenProject = [...freshProjectIds].some((id) => id.length > 0 && !membership.registryProjectIds.has(id));
+        const freshOutcomes = await outcomeStore.queryOutcomesOfTenant(seed.tenant);
+        const freshPostMortems = freshOutcomes.ok ? await outcomeStore.queryPostMortemsOfTenant(seed.tenant) : null;
+        const freshKnowledge = freshPostMortems !== null && freshPostMortems.ok
+          ? await firmMemoryStore.queryKnowledgeOfTenant({ tenant: seed.tenant }, { at: HYDRATION_AT, retention: null })
+          : null;
+        const unseenOutcome = freshOutcomes.ok && tenantRowHasNewId(freshOutcomes.value, membership.registryProjectIds, membership.outcomeIds, 'outcomeId');
+        const unseenPostMortem = freshPostMortems !== null && freshPostMortems.ok
+          && tenantRowHasNewId(freshPostMortems.value, membership.registryProjectIds, membership.postMortemIds, 'postMortemId');
+        const unseenKnowledge = freshKnowledge !== null && freshKnowledge.ok
+          && knowledgeRowHasNewId(freshKnowledge.value, membership.registryProjectIds, membership.knowledgeIds);
+        if (unseenProject || unseenOutcome || unseenPostMortem || unseenKnowledge) {
+          await durable.reprojectQuietly();
+        }
+      }
+      // 2. THE JOBS HALF — the fresh tenant-wide durable-jobs read (the
+      //    replay's write-through lane queues here; a later request's drain
+      //    confirms it — the W-27 law).
       const jobs = await durable.freshJobRecordsOfTenant();
       if (jobs.ok) {
         const known = new Set(service.jobs().map((job) => job.jobId as string));
         const missing = jobs.value.filter((record) => !known.has(record.jobId));
         replayDurableJobs(missing);
       }
-      // 2. THE ORG HALF — the snapshot pass over the fresh JOIN rows.
-      const rows = await durable.sessionProjectRows();
+      // 3. THE ORG HALF — the snapshot pass over the fresh JOIN rows (the
+      //    read from step 1 rides again — the same rows, the same interval).
       if (rows.ok) reportMissingOrgStatusSnapshots(freshProjectsForSnapshots(rows.value), at);
     } catch {
       // R46: the heal is best-effort — a transient failure never takes the

@@ -755,6 +755,60 @@ export function durableProjectEvidenceOf(source: DurableEvidenceSource, tenant: 
   return deriveProjectEvidence({ tenant, project, goal: goalSet.goal, constraintSet: goalSet.constraintSet, world: goalSet.world, organizationRef });
 }
 
+// ---------------------------------------------------------------------------
+// THE OUTCOME DURABLE WRITE LANE (FW-33-A — the launched-desk record
+// durability wave, Round B blocker 1): the typed surface a durable-backed
+// outcome port carries so PER-INSTANCE derived records — a promoted
+// decision the host promote route minted (runtime/job-promote.ts) — can
+// WRITE-THROUGH into the durable outcome store, the same store lane the
+// boot-world fixtures ride (NeonOutcomeLearningStore's putOutcome, queued
+// onto the seam's pending drain per the W-25D ordering law). Under the
+// DEMO backing no port carries a lane: the demo world's records stay
+// per-instance, honestly under SIMULATED (the pre-law, unchanged).
+// ---------------------------------------------------------------------------
+
+/**
+ * The outcome durable write lane (FW-33-A): queue one outcome record's
+ * durable write-through onto the seam's pending drain. IDEMPOTENT by
+ * construction — a record whose exact payload the serving projection (or
+ * an already-queued write) already carries queues nothing; a foreign
+ * tenant's record is refused (L12 — never queued). The drain's failure
+ * law is the seam's own (the ordering law: a failed write is the typed
+ * 503 on the request that drains it + the re-projection).
+ */
+export interface OutcomeDurableWriteLane {
+  /** Queue the durable putOutcome write for one outcome record (idempotent; rides the drain). */
+  readonly recordOutcome: (record: OutcomeRecordMirror) => void;
+}
+
+/**
+ * The field a durable-backed outcome port carries the lane under (the
+ * ports-with-extra-surfaces precedent — demoExecutionGateway's `recorded`,
+ * demoJobSubmission's `worlds` capture). The derived-rows wrappers
+ * PROPAGATE the field so the composition's wrapper chain (the seam port
+ * -> outcomeLearningWithProjectEvidence ->
+ * outcomeLearningWithPromotedDecisions) carries the lane end-to-end with
+ * no composition change — the wrapper chain is the one composition-time
+ * channel the seam's lane and the promotion registry share.
+ */
+export const OUTCOME_DURABLE_LANE_FIELD = 'outcomeDurableWriteLane';
+
+/** An outcome-learning port that MAY carry the durable write lane (optional — the demo arm's fixture port never does). */
+export type OutcomeLearningPortWithDurableLane = OutcomeLearningPort & {
+  readonly [OUTCOME_DURABLE_LANE_FIELD]?: OutcomeDurableWriteLane;
+};
+
+/**
+ * The structural lane probe (never a throw — R46): the durable write lane
+ * a port carries, or null when it carries none (the demo arm's fixture
+ * port, a hand-rolled test port, a foreign shape).
+ */
+export function outcomeDurableLaneOf(port: OutcomeLearningPort): OutcomeDurableWriteLane | null {
+  const lane = (port as OutcomeLearningPortWithDurableLane)[OUTCOME_DURABLE_LANE_FIELD];
+  if (typeof lane !== 'object' || lane === null) return null;
+  return typeof lane.recordOutcome === 'function' ? lane : null;
+}
+
 /**
  * THE OUTCOME-LEARNING WRAPPER (FW-MI-B): the base port (the fixture
  * fake under demo, the seam's hydrated port under durable) wrapped so
@@ -766,11 +820,19 @@ export function durableProjectEvidenceOf(source: DurableEvidenceSource, tenant: 
  * id (a re-hydration of the same record, a future durable persistence)
  * is never duplicated. The base port's typed failures pass through
  * untouched (the degraded states stay the seam's own — R46).
+ *
+ * FW-33-A: the wrapper PROPAGATES the base port's durable write lane
+ * (when it carries one) onto the wrapper it returns, so the promoted-
+ * decisions wrapper composed ABOVE it (runtime/job-promote.ts) can
+ * write the host route's minted records through — the wrapper chain is
+ * the one composition-time channel the seam's lane and the promotion
+ * registry share (the composition wires the chain; the lane rides it).
  */
 export function outcomeLearningWithProjectEvidence(
   inner: OutcomeLearningPort,
   projectEvidenceOf: (tenant: string, project: string) => ProjectEvidenceSeed | null,
 ): OutcomeLearningPort {
+  const lane = outcomeDurableLaneOf(inner); // null under demo — the per-instance law, unchanged
   return {
     queryOutcomes(query, options) {
       const result = inner.queryOutcomes(query, options);
@@ -788,7 +850,10 @@ export function outcomeLearningWithProjectEvidence(
       if (result.value.some((record) => record.postMortemId === seed.postMortem.postMortemId)) return result;
       return { ok: true, value: Object.freeze([...result.value, seed.postMortem]) };
     },
-  };
+    // FW-33-A: the lane rides the wrapper (the composition's outcome chain
+    // stays lane-capable end-to-end; absent under demo — no field, no lane).
+    ...(lane === null ? {} : { [OUTCOME_DURABLE_LANE_FIELD]: lane }),
+  } as OutcomeLearningPort;
 }
 
 // ---------------------------------------------------------------------------

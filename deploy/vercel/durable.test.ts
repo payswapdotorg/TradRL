@@ -1744,10 +1744,17 @@ describe('deploy/vercel — FW-31-B: the durable scope persistence (the full-pro
       // JOIN for the snapshot pass) — the missing records replay through the
       // REAL public routes into B's own store, and the compiled org's
       // snapshot reports through the REAL private route. The heal is
-      // fire-and-forget; flush the microtask chain it rides.
+      // fire-and-forget; flush the microtask chain it rides. FW-33-A
+      // lengthened the chain (the derived-truth probe's fresh reads — the
+      // session JOIN + the tenant-wide outcome/post-mortem/knowledge
+      // reads — and, on divergence, the quiet re-projection's own seven
+      // reads — all BEFORE the jobs half's replay): a fixed small loop
+      // no longer covers it. Flush until the queue genuinely drains
+      // (bounded, never hanging: each turn either makes progress or the
+      // chain has settled).
       vi.setSystemTime(T0 + 15_000);
       await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
-      for (let settle = 0; settle < 25; settle += 1) await Promise.resolve(); // the fake fleet's fetch resolves on microtasks
+      for (let settle = 0; settle < 400; settle += 1) await Promise.resolve(); // the fake fleet's fetch resolves on microtasks; the heal chain is O(reads) deep
 
       // The poll now serves on the SAME warm instance — the launch
       // un-sticks (the record carries A's durable completion: the
