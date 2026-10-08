@@ -86,9 +86,21 @@
 // owns its own world) the jobs + submissions routes fall through to the
 // boundary exactly as before (the pre-W-8 law).
 //
+// THE STANDING RISK-UTILIZATION READ (FW-31-A, Round A blocker 1 —
+// risk_tooling, the only losing dimension): GET /v1/risk/utilization?
+// project=<id> — ONE additive host-owned read serving, per constraint in
+// the project's own goal set, the declared bound + the STANDING CURRENT
+// UTILIZATION (a number only when the records on file can produce a
+// defensible one — else null with status "unknown", never fabricated)
+// + the ACTIVE-BREACH aggregation (every refusal on file, bound-vs-
+// observed, audit refs, instants). Served by BOTH arms with the same
+// auth + envelope discipline (see runtime/risk-utilization.ts — the
+// module owns the read; this file only dispatches).
+//
 // Zero-dep law: platform APIs only. Spec anchors: R43 (the composed
 // API surface — additive), L12, L20, R46, phase2-competitive-report
-// R2/R5, D-5, D-3 (W-25A + W-26C), D-4 (W-25B).
+// R2/R5, D-5, D-3 (W-25A + W-26C), D-4 (W-25B), ROUND-A-REPORT §4
+// blocker 1 + §6 (FW-31-A).
 
 import {
   apiError,
@@ -101,11 +113,30 @@ import {
   type ApiError,
   type ApiRequest,
   type ApiResponse,
+  type ConstraintSetStatement,
+  type GoalStatement,
   type JobRecord,
+  type OutcomeLearningPort,
+  type OutcomeRecordMirror,
   type RequestId,
+  type TimestampMs,
 } from '../../../services/api/src/index';
 import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, demoWorldOf, isLaunchWorldRecord, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
 import type { DurableBackingHandle, DdlApplyResult, DdlVerifyResult } from './durable';
+import { RISK_UTILIZATION_ROUTE_PATH, serveRiskUtilizationRoute } from './risk-utilization';
+
+/**
+ * One outcome-records read over a backing's outcome-learning port (the
+ * risk-utilization read's risk-budget source). Null = NOT READABLE (the
+ * port's typed failure) — never an empty array: an honest zero-record
+ * read is an empty array (the empty sum is 0, disclosed with its count);
+ * a failed read is unknown, and the read degrades to null/unknown (the
+ * honesty law — FW-31-A).
+ */
+function outcomeRecordsOf(port: OutcomeLearningPort, tenant: string, project: string): readonly OutcomeRecordMirror[] | null {
+  const result = port.queryOutcomes({ tenant, project }, { at: Date.now() as TimestampMs, retention: null });
+  return result.ok ? result.value : null;
+}
 
 /** The host auth's verdict: the credential tenant + principal behind the presented token. */
 export interface DemoSubstanceAuthorization {
@@ -169,8 +200,8 @@ export interface DemoSubstanceRouteInput extends FoldRouteInput {
   readonly ports: DemoPorts;
 }
 
-/** The demo-substance read paths this host serves (additive — declared nowhere in the frozen route table). */
-export const DEMO_SUBSTANCE_ROUTE_PATHS = deepFreeze(['/v1/execution/submissions', '/v1/projects/:projectId/goal', '/v1/jobs'] as const);
+/** The demo-substance read paths this host serves (additive — declared nowhere in the frozen route table; the risk-utilization read since FW-31-A). */
+export const DEMO_SUBSTANCE_ROUTE_PATHS = deepFreeze(['/v1/execution/submissions', '/v1/projects/:projectId/goal', '/v1/jobs', '/v1/risk/utilization'] as const);
 
 // ---------------------------------------------------------------------------
 // The envelope discipline (mirrors the boundary's own response builders)
@@ -319,6 +350,35 @@ export function serveDemoSubstanceRoute(input: DemoSubstanceRouteInput, request:
     // the frozen route's own 3-segment shape — never a collision).
     return jobsListRoute(input, request, demoRouteRequestId(request, serial));
   }
+  if (request.path === RISK_UTILIZATION_ROUTE_PATH) {
+    // THE STANDING RISK-UTILIZATION READ (FW-31-A): the demo arm's wiring
+    // — the constraint bounds from the project's OWN goal set (the demo
+    // project's seeded records byte-identical, every launched project's
+    // W-25B capture), the observations from the SAME blotter fold the
+    // execution route serves, and the risk-budget source from the
+    // backing's own (FW-MI-B wrapped) outcome-learning port. L12 by
+    // construction: every fold keys on the AUTHORIZED tenant.
+    return serveRiskUtilizationRoute(
+      {
+        verifyDeveloperAuthorization: input.verifyDeveloperAuthorization,
+        goalSetOf: (tenant, project) => {
+          if (project === DEMO_PROJECT_ID) {
+            // The seeded records — byte-identical to the goal route's own
+            // demo-project serve (the capture holds them too, but the seed
+            // is the canonical source for the demo scope).
+            return { ok: true, value: { goal: demoGoalStatement(tenant), constraintSet: demoConstraintSet(tenant) } };
+          }
+          const captured = demoGoalSetOf(input.ports, tenant, project);
+          return { ok: true, value: captured === null ? null : { goal: captured.goal, constraintSet: captured.constraintSet } };
+        },
+        submissionsOf: (tenant, project) => demoSubmissionsOf(input.ports, tenant, project),
+        outcomesOf: (tenant, project) => outcomeRecordsOf(input.ports.outcomeLearning, tenant, project),
+        backing: 'demo',
+      },
+      request,
+      serial,
+    );
+  }
   const goalProject = matchProjectGoalPath(request.path);
   if (goalProject !== null) {
     return projectGoalRoute(input, request, demoRouteRequestId(request, serial), goalProject);
@@ -402,6 +462,47 @@ export function serveDurableSubstanceRoute(input: DurableSubstanceRouteInput, re
     // The exact 2-segment list path (the per-id GET /v1/jobs/:jobId is
     // the frozen route's own 3-segment shape — never a collision).
     return jobsListRoute(foldInput, request, demoRouteRequestId(request, serial));
+  }
+  if (request.path === RISK_UTILIZATION_ROUTE_PATH) {
+    // THE STANDING RISK-UTILIZATION READ (FW-31-A), the durable arm's
+    // wiring: the constraint bounds from the seam's HYDRATED goal set
+    // (the W-25D surface the goal route reads — the typed degraded 503
+    // and the typed not-found are the read's own), the observations from
+    // the SAME demoSubstancesOf blotter fold the execution route serves
+    // (this composition's own stores), and the risk-budget source from
+    // the SEAM's hydrated outcome port (a disclosed limitation: the
+    // derived launched-desk outcomes ride the composed service's wrapped
+    // port and are NOT persisted into the seam). Under port overrides
+    // (demoSubstance === null — the injection seam owns its own world)
+    // the route falls through to the boundary exactly like the jobs +
+    // submissions routes (the pre-W-8 law).
+    const demoSubstance = input.demoSubstance;
+    if (demoSubstance === null) return null;
+    return serveRiskUtilizationRoute(
+      {
+        verifyDeveloperAuthorization: input.verifyDeveloperAuthorization,
+        goalSetOf: (_tenant, project) => {
+          const read = input.durable.goalOf(project);
+          if (!read.ok) return { ok: false, code: read.error.code, message: read.error.message };
+          if (read.value === null) return { ok: true, value: null };
+          const goal = read.value.goal;
+          const constraintSet = read.value.constraintSet;
+          // Structural narrowing of the hydrated row (the goal route
+          // serves the records verbatim; THIS read must iterate the
+          // constraints — a malformed row answers the honest not-found,
+          // never fabricated bounds, never a crash — R46).
+          if (typeof goal !== 'object' || goal === null || typeof constraintSet !== 'object' || constraintSet === null || !Array.isArray((constraintSet as { readonly constraints?: unknown }).constraints)) {
+            return { ok: true, value: null };
+          }
+          return { ok: true, value: { goal: goal as GoalStatement, constraintSet: constraintSet as ConstraintSetStatement } };
+        },
+        submissionsOf: (tenant, project) => demoSubmissionsOf(demoSubstance.ports, tenant, project),
+        outcomesOf: (tenant, project) => outcomeRecordsOf(input.durable.ports.outcomeLearning, tenant, project),
+        backing: 'durable',
+      },
+      request,
+      serial,
+    );
   }
   const goalProject = matchProjectGoalPath(request.path);
   if (goalProject === null) return null;
