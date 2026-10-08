@@ -558,6 +558,29 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           dispatchIfCurrent(projectId, { kind: 'job-updated', at: instants.nowMs(), job });
         }
       });
+      // THE STANDING RISK-UTILIZATION READ (FW-32-A, Round A blocker 1 —
+      // the risk manager's one glance): the FW-31-A host-owned route
+      // serves per-bound standing utilization (boundMax + current + the
+      // honest ok/breach/unknown verdict) plus the active-breach
+      // aggregation (bound-vs-observed, audit refs, instants) — the
+      // payload the Risk section's utilization panel renders. It rides
+      // the bundle's own cadence (boot + every scope-change refetch) and,
+      // like the goal read, degrades SILENTLY: the route is HOST-OWNED
+      // and project-scoped (a project without goal records answers the
+      // typed 404 — the host's answer, not a console failure), so on ANY
+      // failure NOTHING dispatches: no read event, no degraded-read note,
+      // no offline flip — the section renders its honest teaching note
+      // (never a fabricated meter). THE L4 LAW: the read is a
+      // current-instant standing read (its own asOf); the panel never
+      // fakes point-in-time risk.
+      try {
+        const utilization = await client.risk.utilization(projectId);
+        dispatchIfCurrent(projectId, { kind: 'risk-utilization-loaded', at: instants.nowMs(), read: utilization });
+      } catch {
+        // the risk-utilization route is host-owned — an absent read is the
+        // host's answer for this scope, not a failure of the console's own
+        // reads; skip silently and keep the bundle moving.
+      }
       // THE ORG-STATUS READ (D-7, W-27): at the bundle's end — its
       // pre-W-27 position (the org-snapshot notice folds AFTER the
       // outcomes read's, so the boot toast surfaces the shadow
@@ -1785,6 +1808,47 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
               // user typed while the request was in flight — is the one
               // the error renders into).
               view = { ...view, researchSubmit: view.researchSubmit === null ? { edits: {}, error: message } : { ...view.researchSubmit, error: message } };
+              render();
+            }
+          })();
+          return;
+        }
+        // FW-32-A (Round A blocker 2): THE RESEARCH→DECISION PROMOTION —
+        // the completed research job's "Propose as decision" affordance
+        // (the job sheet's own button, render/model.ts). The call rides the
+        // HOST-OWNED consequential route (POST /v1/jobs/:jobId/promote —
+        // idempotent per job, typed 401/404/409); the scope is captured at
+        // the click so a mid-flight desk switch never lands another desk's
+        // decision in this workspace (the reducer's scope gate is the law;
+        // the guard here is defense in depth). The minted record dispatches
+        // outcome-recorded — the SAME record the frozen /v1/outcomes/query
+        // read serves (the org's own decision stream), so the Decisions
+        // section renders it with its evidence + the producing-job backlink,
+        // and a beat's outcomes re-read merges it deduped by outcomeId.
+        if (kind === 'job-promote') {
+          const jobId = action.getAttribute('data-job-promote');
+          if (jobId === null) {
+            render();
+            return;
+          }
+          const projectId = state.scope.projectId;
+          if (isLaunchpadScope(projectId)) {
+            render();
+            return; // the affordance never renders on the launchpad — a stale press is refused honestly
+          }
+          void (async () => {
+            try {
+              const promotion = await client.jobs.promote(jobId);
+              if (state.scope.projectId === projectId) {
+                dispatch({ kind: 'outcome-recorded', at: instants.nowMs(), outcome: promotion.decision }); // renders via onState — the sheet's affordance flips to the promoted state
+              }
+            } catch (error) {
+              // The honest failure surface: the typed error family + route
+              // land in the workspace's degradation notes (the same surface
+              // every failed read rides) — never an unhandled rejection,
+              // never a fabricated promotion.
+              const failure = error as ApiConsoleError;
+              dispatch({ kind: 'degraded-read', at: instants.nowMs(), route: `POST /v1/jobs/${jobId}/promote`, family: failure?.family ?? 'unavailable', message: failure?.message ?? String(error) });
               render();
             }
           })();

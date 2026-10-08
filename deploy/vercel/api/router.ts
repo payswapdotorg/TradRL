@@ -51,6 +51,7 @@
 
 import { getDeploymentService, type DeploymentComposition } from '../runtime/compose';
 import { demoJobsOf } from '../runtime/demo';
+import { serveJobPromoteRoute } from '../runtime/job-promote';
 import { toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
 import { drainedFailureResponse, serveDemoSubstanceRoute, serveDurableSubstanceRoute, serveRunbookRoute } from '../runtime/routes';
 import { consoleSessionOf, serveSessionScopedRoute } from '../runtime/session-routes';
@@ -212,6 +213,35 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
     }
     writeApiResponse(response, sessionRoute);
     return;
+  }
+
+  // 3d. THE HOST-OWNED RESEARCH→DECISION PROMOTION (FW-32-A, Round A
+  //     blocker 2): POST /v1/jobs/:jobId/promote — a completed research
+  //     job's release-candidate deliverable promoted as a decision that
+  //     CITES the job's evidence through the SAME seam the org's own
+  //     decision stream rides (the outcome-learning port's derived-rows
+  //     wrapper — runtime/job-promote.ts; the minted record serves on the
+  //     frozen /v1/outcomes/query read the moment it registers). Served
+  //     BEFORE the boundary wrap with developer-credential authn (the
+  //     W-8/FW-31-A host-route law; the path is declared NOWHERE in the
+  //     frozen T041 route table). Idempotent per job; typed 401/404/409.
+  //     `deployment.promotions === null` (port overrides — the injection
+  //     seam owns its own world) leaves the route absent: the request
+  //     falls through to the boundary's typed not-found (the pre-law).
+  if (deployment.promotions !== null) {
+    const promoteRoute = serveJobPromoteRoute(
+      {
+        verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization,
+        jobs: () => deployment.service.jobs(),
+        promotions: deployment.promotions,
+      },
+      wrapped.request,
+      demoSubstanceSerial++,
+    );
+    if (promoteRoute !== null) {
+      writeApiResponse(response, promoteRoute);
+      return;
+    }
   }
 
   // 4. The host-owned demo-substance read routes (W-8, additive): served

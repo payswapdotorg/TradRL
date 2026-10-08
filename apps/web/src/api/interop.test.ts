@@ -173,7 +173,7 @@ describe('trip-wire: the transport wire shapes match the REAL SDK\'s', () => {
 describe('trip-wire: the client method surface + route table (literal)', () => {
   it("exposes exactly the SDK resource families and methods", () => {
     const client = createConsoleClient({ transport: async () => ({ status: 200, headers: {}, body: { data: {} } }), token: 't' });
-    expect(Object.keys(client).sort()).toEqual(['execution', 'jobs', 'knowledge', 'meta', 'negotiateVersion', 'organizations', 'outcomes', 'projects']);
+    expect(Object.keys(client).sort()).toEqual(['execution', 'jobs', 'knowledge', 'meta', 'negotiateVersion', 'organizations', 'outcomes', 'projects', 'risk']);
     // THE W-23 AMENDMENT (documented drift, not silent): the projects
     // family carries ONE method the frozen SDK does not — `goal`, the
     // HOST-OWNED goal read (GET /v1/projects/:projectId/goal, the W-8
@@ -194,7 +194,18 @@ describe('trip-wire: the client method surface + route table (literal)', () => {
     // read (D-3: the list fetch that refills state.jobs after every
     // reload/scope-switch) needs it; every other member stays
     // SDK-identical.
-    expect(Object.keys(client.jobs).sort()).toEqual(['get', 'list', 'submitLearning', 'submitResearch']);
+    // THE FW-32-A AMENDMENTS (documented drift, not silent): (1) the jobs
+    // family gains `promote` — the HOST-OWNED consequential promotion
+    // route (POST /v1/jobs/:jobId/promote — a completed research job's
+    // release-candidate deliverable promoted as a decision citing the
+    // job's evidence; idempotent per job; the route exists nowhere in
+    // the frozen route table, so the SDK has no mirror of it); (2) the
+    // NEW `risk` family carries `utilization` — the HOST-OWNED standing
+    // risk-utilization read (GET /v1/risk/utilization?project=<id>, the
+    // FW-31-A route — per-bound standing utilization + the active-breach
+    // aggregation; likewise absent from the frozen route table). Every
+    // other member stays SDK-identical.
+    expect(Object.keys(client.jobs).sort()).toEqual(['get', 'list', 'promote', 'submitLearning', 'submitResearch']);
     expect(Object.keys(client.knowledge)).toEqual(['query']);
     expect(Object.keys(client.outcomes).sort()).toEqual(['postMortems', 'query']);
     // THE W-22 AMENDMENT (documented drift, not silent): the execution
@@ -206,6 +217,10 @@ describe('trip-wire: the client method surface + route table (literal)', () => {
     // read needs it; every other family stays member-identical.
     expect(Object.keys(client.execution).sort()).toEqual(['submissions', 'submitRequest']);
     expect(Object.keys(client.organizations)).toEqual(['status']);
+    // THE FW-31-A/FW-32-A AMENDMENT (documented drift, not silent): the
+    // risk family is console-only — `utilization`, the HOST-OWNED
+    // standing risk-utilization read (see the jobs amendment above).
+    expect(Object.keys(client.risk)).toEqual(['utilization']);
   });
 });
 

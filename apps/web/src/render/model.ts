@@ -186,6 +186,21 @@ function resultValueOf(value: unknown): string {
  * served. Availability rides the job record's own gate (the result
  * arrives WITH completedAt; jobSheet's visibleAt covers it — L4).
  */
+/**
+ * The promotion gate's payload shape (FW-32-A): a job result record
+ * narrowed to its kind-bearing form. NAMED at module scope — an inline
+ * object-literal annotation on the ternary breaks the no-build stripper
+ * (its brace-pairing pairs the annotation's `{` with a later cast's
+ * `}`, swallowing the ternary's else arm — the boot-path law).
+ */
+type JobResultPayload = { readonly kind?: unknown };
+
+/** Narrow a job record's result to the kind-bearing payload (null when absent). */
+function jobResultPayloadOf(job: JobRecord): JobResultPayload | null {
+  if (typeof job.result !== 'object' || job.result === null) return null;
+  return job.result as JobResultPayload;
+}
+
 export function jobResultSectionOf(job: JobRecord): DefinitionSection | null {
   const result = job.result;
   if (typeof result !== 'object' || result === null) return null;
@@ -313,6 +328,18 @@ function decisionCard(scope: WorkspaceScope, outcome: OutcomeRecord, viewAt: num
       ['intent ref', outcome.decision.intentRef],
     ]),
     ...(outcome.decisionRationale === undefined ? [] : [v('p', { class: 'card-note decision-rationale' }, [outcome.decisionRationale])]),
+    // FW-32-A (Round A blocker 2, the C02 lineage ask): THE PRODUCING-JOB
+    // BACKLINK — a promoted decision cites the research job it came from
+    // (the record's own additive `promotedFromJob` field), with a working
+    // link that opens the job's detail sheet (the data-row sheet grammar
+    // the Research section's own rows ride — the audit chain now reads
+    // BOTH directions: the job cites its decision, the decision its job).
+    ...(outcome.promotedFromJob === undefined ? [] : [
+      factRow('producing job', outcome.promotedFromJob),
+      v('div', { class: 'tm-playback' }, [
+        v('button', { class: 'tm-button', 'data-row': `job:${outcome.promotedFromJob}`, type: 'button' }, ['Open the producing job']),
+      ]),
+    ]),
     ...(riskChecks.length === 0 ? [] : [
       v('div', { class: 'stream-checks' }, [
         v('span', { class: 'stream-label' }, ['Risk checks']),
@@ -371,8 +398,16 @@ function jobCard(scope: WorkspaceScope, job: JobRecord, viewAt: number): VNode {
  * the SESSION's observation points (empty for every non-tracked job and
  * after every reload), so the truth sitting in the record never rendered.
  * 'pending' shows ONLY while the record genuinely carries no completedAt.
+ *
+ * FW-32-A (Round A blocker 2): THE PROMOTION — a completed research job
+ * whose result is a RELEASE CANDIDATE carries the "Propose as decision"
+ * affordance (the host-owned POST /v1/jobs/:jobId/promote route), and a
+ * job whose decision is already promoted (this workspace's own outcome
+ * records cite it through the additive `promotedFromJob` backlink) renders
+ * the promoted state — the decision ref, never a second button (the route
+ * is idempotent; the affordance's honest end state is "promoted").
  */
-function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number): VNode[] {
+function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, promotion: { readonly decisionRef: string } | null): VNode[] {
   assertProjectScope(scope, job);
   visibleAt(job, availabilityOfJob(job), viewAt, job.jobId);
   const status: DefinitionSection = {
@@ -394,16 +429,51 @@ function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number): VNode[
   // instead of a dialog that proves the job ran while hiding what it
   // produced (0/15 evaluators could read the deliverable).
   const result = jobResultSectionOf(job);
+  // FW-32-A: the promotion lookup + the promotable gate (a completed
+  // research job with a release-candidate result — the route's own
+  // eligibility, mirrored here so the affordance never renders for a
+  // job the route would honestly refuse with the typed 409). The cast
+  // is hoisted OUT of any template-literal interpolation (the
+  // erasable-subset law) — and the payload's shape is named at MODULE
+  // scope (a brace-free annotation inline: the stripper's brace-pairing
+  // pairs an inline object-literal annotation's { with a later cast's },
+  // swallowing the ternary's else arm — the boot-path law).
+  const resultPayload: JobResultPayload | null = jobResultPayloadOf(job);
+  const resultKind = resultPayload !== null && typeof resultPayload.kind === 'string' ? resultPayload.kind : null;
+  const promotable = job.kind === 'research' && job.status === 'complete' && resultKind === 'release-candidate';
   const identity: DefinitionSection = {
     eyebrow: 'IDENTITY',
     pairs: [['job id', job.jobId], ['kind', job.kind], ['project', job.project]],
   };
-  return detailSheet({
-    sheetId: `job:${job.jobId}`,
-    title: job.jobId,
-    subtitle: `${job.kind} job${result === null ? '' : ' · result available'}`,
-    details: [status, metrics, ...(result === null ? [] : [result]), identity],
-  });
+  // FW-32-A: the promoted state rides the sheet's own definition grid (the
+  // decision ref — the audit chain's new link); the PROPOSE affordance
+  // renders as the sheet's single primary action card, exactly like the
+  // sibling sections' section-action pattern.
+  const promotionSection: DefinitionSection | null = promotion === null ? null : {
+    eyebrow: 'PROMOTION',
+    pairs: [
+      ['status', 'promoted as a decision'],
+      ['decision', promotion.decisionRef],
+    ],
+  };
+  const proposeAffordance: VNode[] = promotable && promotion === null
+    ? [v('div', { class: 'card', 'data-job-promotion': 'available' }, [
+        v('div', { class: 'card-title' }, ['Promotion']),
+        v('p', { class: 'card-note' }, ['Propose this release candidate as a decision — the promotion mints a decision record that cites this job and its deliverable, and it renders in the Decisions section with a backlink here.']),
+        v('div', { class: 'tm-playback' }, [
+          v('button', { class: 'tm-button', 'data-action': 'job-promote', 'data-job-promote': job.jobId, type: 'button' }, ['Propose as decision']),
+        ]),
+      ])]
+    : [];
+  return [
+    ...detailSheet({
+      sheetId: `job:${job.jobId}`,
+      title: job.jobId,
+      subtitle: `${job.kind} job${result === null ? '' : ' · result available'}`,
+      details: [status, metrics, ...(result === null ? [] : [result]), ...(promotionSection === null ? [] : [promotionSection]), identity],
+    }),
+    ...proposeAffordance,
+  ];
 }
 
 /** Render one org snapshot as an interactive list row. */
@@ -811,8 +881,14 @@ function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView):
     // bidirectional affordance: the result view links its capsule (the
     // fold mints one only for a COMPLETED job WITH a result; a pending or
     // failed job renders no capsule — nothing fabricated, L20).
+    //
+    // FW-32-A (Round A blocker 2): the promoted decision of THIS job, when
+    // the workspace's own outcome records cite it (the additive
+    // `promotedFromJob` backlink — the same lineage the Decisions section
+    // renders); null while none does (the honest pre-promotion state).
+    const promotion = state.outcomes.find((outcome) => outcome.promotedFromJob === job.jobId) ?? null;
     return [
-      ...jobSheet(state.scope, job, viewAt),
+      ...jobSheet(state.scope, job, viewAt, promotion === null ? null : { decisionRef: promotion.decision.decisionRef }),
       ...capsulesFromJobs(state.scope, [job]).map((capsule) => capsuleInline(capsule, viewAt, view.openCapsule)),
     ];
   }
@@ -1151,6 +1227,71 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           // 300,000,000 served by the record but never rendered.
           ...state.constraintSet.constraints.map((constraint) => factRow(`${constraint.severity} ${constraint.id}`, `${constraint.domain}.${constraint.subject} ${predicatePhraseOf(constraint.predicate)}`)),
         ]));
+      }
+      // FW-32-A (Round A blocker 1 — the ONLY losing dimension,
+      // risk_tooling 3.44 vs 3.56): THE STANDING UTILIZATION PANEL — the
+      // risk manager's "where am I right now" answer in one glance. The
+      // FW-31-A host-owned read (GET /v1/risk/utilization) serves per-bound
+      // standing utilization + the active-breach aggregation; the panel
+      // renders exactly what the read serves — the bound, the current
+      // number (ONLY when the records on file produce a defensible one),
+      // the honest ok/breach/unknown verdict (the unknown rendered AS
+      // unknown — never a fabricated zero), and each row's own source
+      // disclosure (exactly which records the number came from).
+      //
+      // THE L4 POINT-IN-TIME LAW (deliberate): this is a CURRENT-INSTANT
+      // standing read — the panel names its own asOf and is NOT projected
+      // through the Time Machine's view instant. Point-in-time risk is not
+      // computable from the records on file (the read's own disclosure
+      // says so); faking it would violate the anti-deception law.
+      const utilization = state.riskUtilization;
+      if (utilization !== null) {
+        rows.push(v('div', { class: 'card', 'data-risk-utilization': 'bounds' }, [
+          v('div', { class: 'card-title' }, ['Standing utilization']),
+          ...utilization.bounds.map((bound) => v('div', { class: 'decision-block', 'data-risk-bound': bound.constraintId }, [
+            v('div', { class: 'stream-checks' }, [
+              v('span', { class: 'stream-label' }, [`${bound.severity} ${bound.constraintId} · ${bound.metric}`]),
+              statusPill(bound.status === 'ok' ? 'live' : bound.status === 'breach' ? 'warn' : 'idle', bound.status, 'check-pill'),
+            ]),
+            ...factRows([
+              ['bound max', bound.boundMax === null ? 'none declared (no max-side numeric bound)' : formatNumberGrouped(Number(bound.boundMax))],
+              ['current', bound.current === null ? 'unknown — no defensible number on file' : formatNumberGrouped(bound.current)],
+            ]),
+            v('p', { class: 'hint', 'data-risk-source': bound.constraintId }, [bound.source]),
+          ])),
+          v('p', { class: 'hint' }, [`Standing read as of ${utilization.asOf} — the current instant, not projected to the view instant (point-in-time risk is not computable from the records on file).`]),
+        ]));
+        rows.push(v('div', { class: 'card', 'data-risk-utilization': 'breaches' }, [
+          v('div', { class: 'card-title' }, [`Active breaches (${utilization.activeBreaches.length})`]),
+          ...(utilization.activeBreaches.length === 0
+            ? [v('p', { class: 'card-note' }, ['No refusal is on file for this project — nothing stands in breach.'])]
+            : utilization.activeBreaches.map((breach) => v('div', { class: 'decision-block', 'data-risk-breach': breach.submissionId }, [
+                v('div', { class: 'stream-checks' }, [
+                  v('span', { class: 'stream-label' }, [breach.submissionId]),
+                  statusPill('warn', breach.kind === 'risk_limits_refusal' ? 'risk-limits refusal' : `refused · ${breach.stage}`, 'check-pill'),
+                ]),
+                ...factRows([
+                  ['stage', breach.stage],
+                  ['at', breach.at],
+                  ['audit', breach.auditId],
+                  ...(breach.decisionBody === undefined ? [] : ([['deciding body', breach.decisionBody]] as const)),
+                ]),
+                ...(breach.violations === undefined ? [] : breach.violations.map((violation) => {
+                  // the erasable-subset law: the cast hoists OUT of the
+                  // template-literal interpolation.
+                  const violationPredicate: { readonly kind?: unknown } = violation.predicate as { readonly kind?: unknown };
+                  const violationKind = typeof violationPredicate?.kind === 'string' ? violationPredicate.kind : 'predicate';
+                  return factRow(`violation ${violation.constraintId}`, `${violation.subject} ${violationKind} bound vs observed ${violation.observed}`);
+                })),
+                ...(breach.rationale === undefined ? [] : [v('p', { class: 'card-note decision-rationale' }, [breach.rationale])]),
+              ]))),
+          v('p', { class: 'hint', 'data-risk-disclosure': 'true' }, [utilization.disclosure]),
+        ]));
+      } else if (state.constraintSet !== null) {
+        // The honest pre-read absence: the bounds are declared and enforced
+        // (the gate's refusals carry receipts), but no standing read is on
+        // record for this scope — a teaching note, never a fabricated meter.
+        rows.push(v('p', { class: 'hint', 'data-risk-utilization': 'absent' }, ['No standing utilization read is on record for this scope — the declared bounds above are enforced at the pre-trade gate; the utilization read serves when the host route answers this project.']));
       }
       const riskPolicies: Map<string, string> = new Map();
       for (const outcome of projectToView(state.outcomes, viewAt, availabilityOfOutcome)) {

@@ -283,6 +283,8 @@ export interface OutcomeRecord {
   readonly decisionRationale?: string;
   /** The decision's risk checks (dimension + outcome, verbatim — L20). */
   readonly riskChecks?: readonly SubmissionRiskCheck[];
+  /** FW-32-A (Round A blocker 2): THE DECISION→JOB BACKLINK — when this outcome record is a promoted research deliverable, the producing job's own id (the host promote route's additive lineage field; absent on every other record). */
+  readonly promotedFromJob?: string;
   readonly lineage: {
     readonly shadow: {
       readonly sessionId: string;
@@ -351,6 +353,73 @@ export interface JobRecord {
   readonly submittedAt: number;
   readonly result?: unknown;
   readonly completedAt?: number;
+}
+
+// ---------------------------------------------------------------------------
+// THE STANDING RISK-UTILIZATION READ (FW-32-A — the mirror of the
+// FW-31-A host-owned route `GET /v1/risk/utilization?project=<id>`; the
+// payload's own field-for-field contract, deployed and live on the
+// production origin since FW-31-A merged — this is the CONSOLE's mirror
+// of the served shape, exactly like the W-8 goal bundle's).
+// ---------------------------------------------------------------------------
+
+/** ONE BOUND ROW of the standing risk-utilization read (the honesty law governs `current`). */
+export interface RiskUtilizationBound {
+  readonly constraintId: string;
+  readonly metric: string;
+  readonly boundMax: string | null;
+  readonly severity: string;
+  /** The standing current utilization — a number ONLY when the records on file produce a defensible one; null = status "unknown", never fabricated. */
+  readonly current: number | null;
+  readonly source: string;
+  readonly status: 'ok' | 'breach' | 'unknown';
+}
+
+/** ONE ACTIVE BREACH: a refusal on file, with its bound-vs-observed violations. */
+export interface RiskUtilizationBreach {
+  readonly kind: 'risk_limits_refusal' | 'gateway_refusal';
+  readonly submissionId: string;
+  readonly auditId: string;
+  readonly stage: string;
+  /** The refusal instant (ISO-8601). */
+  readonly at: string;
+  readonly decisionBody?: string;
+  readonly violations?: readonly {
+    readonly constraintId: string;
+    readonly domain: string;
+    readonly subject: string;
+    readonly severity: string;
+    readonly predicate: unknown;
+    readonly observed: string;
+  }[];
+  readonly rationale?: string;
+}
+
+/** The standing risk-utilization read's payload (the FW-31-A route's `data`). */
+export interface RiskUtilizationRead {
+  readonly projectId: string;
+  /** The serve instant (ISO-8601) — the read reflects the records on file AT this serve. */
+  readonly asOf: string;
+  readonly bounds: readonly RiskUtilizationBound[];
+  readonly activeBreaches: readonly RiskUtilizationBreach[];
+  readonly disclosure: string;
+}
+
+// ---------------------------------------------------------------------------
+// THE RESEARCH→DECISION PROMOTION (FW-32-A, Round A blocker 2 — the mirror
+// of the host-owned route `POST /v1/jobs/:jobId/promote`). The minted
+// decision record IS an outcome record (the org's own decision-stream
+// shape, served through the frozen /v1/outcomes/query read); the payload
+// adds only the replay marker. The additive `promotedFromJob` field on
+// OutcomeRecord (below) is the decision→job backlink.
+// ---------------------------------------------------------------------------
+
+/** The promote route's success payload (the response body's `data`). */
+export interface JobPromotionPayload {
+  /** The minted (or existing, on a repeat call) decision record — an OutcomeRecord. */
+  readonly decision: OutcomeRecord;
+  /** True when the decision already existed (idempotent replay — never a duplicate). */
+  readonly replay: boolean;
 }
 
 // ---------------------------------------------------------------------------

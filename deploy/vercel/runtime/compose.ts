@@ -80,6 +80,7 @@ import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import type { NeonStoreDeps } from '../../adapters/neon/stores';
 import { DEMO_PROJECT_ID, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableProjectEvidenceOf, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
+import { createPromotionRegistry, outcomeLearningWithPromotedDecisions, type PromotionRegistry } from './job-promote';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization, VerifyInternalAuthorization } from './routes';
 import type { DemoSessionWorld } from './session-routes';
 
@@ -230,7 +231,7 @@ export interface DemoBackingHandle {
 }
 
 export type DeploymentComposition =
-  | { readonly ok: true; readonly service: ApiService; readonly backing: DeployBacking; readonly demo: DemoBackingHandle | null; readonly durable: DurableDeploymentHandle | null; readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization; readonly verifyInternalAuthorization: VerifyInternalAuthorization }
+  | { readonly ok: true; readonly service: ApiService; readonly backing: DeployBacking; readonly demo: DemoBackingHandle | null; readonly durable: DurableDeploymentHandle | null; readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization; readonly verifyInternalAuthorization: VerifyInternalAuthorization; /** FW-32-A: the host-owned research→decision promotion registry (null under port overrides — the route then answers the boundary's typed not-found, the pre-law). */ readonly promotions: PromotionRegistry | null }
   | DeploymentNotConfigured;
 
 /**
@@ -295,10 +296,38 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     // KEY is reported, never the value (secrets never cross into errors).
     return { ok: false, code: 'deploy_not_configured', missing: ['TRADRL_API_DEVELOPER_TENANT (not a valid tenant id)'] };
   }
+  // Port overrides are the injection seam (tests + future hosts): an
+  // overridden port set owns its own world — the demo world seed, the
+  // machinery handle AND the FW-32-A promotion registry are suppressed
+  // under overrides. (Hoisted from its original position below so the
+  // promotion wiring can gate on it — same value, computed once.)
+  const hasOverrides = Object.keys(overrides).length > 0;
+  // FW-32-A — THE HOST-OWNED PROMOTION REGISTRY (Round A blocker 2): one
+  // per-instance registry behind POST /v1/jobs/:jobId/promote whose minted
+  // decision records serve through the outcome-learning port's
+  // derived-rows wrapper — the SAME seam the org's own decision stream
+  // rides (runtime/demo.ts's outcomeLearningWithProjectEvidence is the
+  // exact precedent). Null under port overrides (the injection seam owns
+  // its own world; the route then answers the boundary's typed not-found).
+  const promotions: PromotionRegistry | null = hasOverrides ? null : createPromotionRegistry();
   // The backing matrix: DEMO = the seeded fixture fakes (runtime/demo.ts);
   // DURABLE = the W-3e hydration seam (runtime/durable.ts) over the Neon
   // stores — or the typed absent stubs when the Neon keys are incomplete.
-  const demoPorts = backing === 'demo' ? seedDemoBacking(tenant) : null;
+  const seededDemoPorts = backing === 'demo' ? seedDemoBacking(tenant) : null;
+  const demoPorts = seededDemoPorts === null || promotions === null
+    ? seededDemoPorts
+    : {
+        ...seededDemoPorts,
+        // FW-32-A: the outcome port WRAPPED — the promoted decision records
+        // serve alongside the seeded + derived rows on the frozen
+        // /v1/outcomes/query read (idempotent by outcomeId; the same seam
+        // the org's own decision stream rides). The wrap reuses the SAME
+        // seeded port instance (one closure state — never a second seed).
+        outcomeLearning: outcomeLearningWithPromotedDecisions(
+          seededDemoPorts.outcomeLearning,
+          promotions.outcomesOf,
+        ),
+      };
   const stubs = degradedPorts();
   let durable: DurableDeploymentHandle | null = null;
   let durableStores: NeonStoreDeps | null = null;
@@ -384,13 +413,19 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
       ports = {
         ...stubs,
         ...seamHandle.ports, // controlPlane + firmMemory + outcomeLearning + the W-27 hydration-aware jobSubmission
-        // FW-MI-B (MI-D2): the seam's outcome-learning port WRAPPED — the
-        // frozen outcome/post-mortem reads serve the hydrated rows AND
-        // every launched desk's own derived stream (idempotent by
-        // content-addressed id; the degraded states pass through).
-        outcomeLearning: outcomeLearningWithProjectEvidence(
-          seamHandle.ports.outcomeLearning,
-          (evidenceTenant, evidenceProject) => durableProjectEvidenceOf(durableEvidenceSource as DurableEvidenceSource, evidenceTenant, evidenceProject),
+        outcomeLearning: outcomeLearningWithPromotedDecisions(
+          // FW-MI-B (MI-D2): the seam's outcome-learning port WRAPPED — the
+          // frozen outcome/post-mortem reads serve the hydrated rows AND
+          // every launched desk's own derived stream (idempotent by
+          // content-addressed id; the degraded states pass through).
+          // FW-32-A: WRAPPED AGAIN — the promoted decision records serve
+          // alongside (the same seam, the same idempotence; a null registry
+          // under port overrides keeps the fold empty — the pre-law).
+          outcomeLearningWithProjectEvidence(
+            seamHandle.ports.outcomeLearning,
+            (evidenceTenant, evidenceProject) => durableProjectEvidenceOf(durableEvidenceSource as DurableEvidenceSource, evidenceTenant, evidenceProject),
+          ),
+          promotions === null ? () => [] : promotions.outcomesOf,
         ),
         executionGateway: seamGateway,
       };
@@ -414,8 +449,8 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
   }
   // Port overrides are the injection seam (tests + future hosts): an
   // overridden port set owns its own world — the demo world seed and
-  // the machinery handle are suppressed under overrides.
-  const hasOverrides = Object.keys(overrides).length > 0;
+  // the machinery handle are suppressed under overrides (the FW-32-A
+  // promotion registry is already gated on the hoisted `hasOverrides`).
   const construction: ApiServiceConstruction = createApiService({
     credentials: [
       {
@@ -526,9 +561,9 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
             jobsOf: (tenant, project) => demoJobsOf(serving, tenant, project),
           };
       durable = { ...durable, tick: activation.tick, ensureBootWorld: activation.ensureBootWorld, demoSubstance };
-      return { ok: true, service: serving, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization };
+      return { ok: true, service: serving, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions };
     }
-    return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization };
+    return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions };
   }
   const seed = seedDemoWorld(construction.service, { tenant, developerToken: token, internalToken }, Date.now());
   const machinery: DemoMachineryContext = { ports: demoPorts, tenant, developerToken: token, internalToken: internalToken as string };
@@ -562,6 +597,9 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     durable,
     verifyDeveloperAuthorization,
     verifyInternalAuthorization,
+    // FW-32-A: the promotion registry (non-null — this arm owns the world;
+    // the override path returned above with the null it computed).
+    promotions,
   };
 }
 
@@ -576,6 +614,7 @@ let cachedDurable: DurableDeploymentHandle | null = null;
 let cachedBacking: DeployBacking | null = null;
 let cachedVerify: VerifyDeveloperAuthorization | null = null;
 let cachedVerifyInternal: VerifyInternalAuthorization | null = null;
+let cachedPromotions: PromotionRegistry | null = null;
 
 interface EnvIdentity {
   readonly source: Readonly<Record<string, string | undefined>>;
@@ -595,7 +634,7 @@ export function getDeploymentService(
   source: Readonly<Record<string, string | undefined>> = process.env,
 ): DeploymentComposition {
   if (cachedService !== null && cachedEnv !== null && cachedEnv.source === source && cachedBacking !== null && cachedVerify !== null && cachedVerifyInternal !== null) {
-    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo, durable: cachedDurable, verifyDeveloperAuthorization: cachedVerify, verifyInternalAuthorization: cachedVerifyInternal };
+    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo, durable: cachedDurable, verifyDeveloperAuthorization: cachedVerify, verifyInternalAuthorization: cachedVerifyInternal, promotions: cachedPromotions };
   }
   const composed = composeDeployment(readApiEnv(source));
   if (!composed.ok) return composed;
@@ -606,5 +645,6 @@ export function getDeploymentService(
   cachedBacking = composed.backing;
   cachedVerify = composed.verifyDeveloperAuthorization;
   cachedVerifyInternal = composed.verifyInternalAuthorization;
-  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo, durable: composed.durable, verifyDeveloperAuthorization: composed.verifyDeveloperAuthorization, verifyInternalAuthorization: composed.verifyInternalAuthorization };
+  cachedPromotions = composed.promotions;
+  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo, durable: composed.durable, verifyDeveloperAuthorization: composed.verifyDeveloperAuthorization, verifyInternalAuthorization: composed.verifyInternalAuthorization, promotions: composed.promotions };
 }
