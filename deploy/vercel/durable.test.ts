@@ -54,7 +54,7 @@ import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjec
 import type { NeonConfig } from '../adapters/neon/client';
 import type { FetchLike } from '../adapters/shared';
 import { fixtureKnowledge, validConstraintSet, validGoal, validStrategyIntent } from '../../services/api/src/fixtures';
-import { DEMO_ORGANIZATION_REF, DEMO_PROJECT_ID, compiledOrganizationRefOf, demoConstraintSet, demoGoalStatement } from './runtime/demo';
+import { DEMO_ORGANIZATION_REF, DEMO_PROJECT_ID, DEMO_SEED_JOB_COMPLETED_AT, DEMO_SEED_JOB_SUBMITTED_AT, compiledOrganizationRefOf, demoConstraintSet, demoGoalStatement, demoSeedJobRecord } from './runtime/demo';
 import type { FunctionRequest, FunctionResponse } from './runtime/http';
 
 // ---------------------------------------------------------------------------
@@ -836,11 +836,17 @@ describe('deploy/vercel — the W-26B activation: the demo world under durable (
     const mortems = await drive(first, streamingRequest({ method: 'POST', url: '/v1/post-mortems/query', headers: BEARER, body: { project: DEMO_PROJECT_ID, at: T0 + 10_000 } }));
     expect((((mortems.body as { data: { items: readonly { postMortemId: string }[] } }).data).items).map((entry) => entry.postMortemId)).toEqual(['pmr:demo0001']);
 
-    // The seeded jobs exist in the API-owned per-instance store (submitted —
-    // the tick's schedule has not elapsed for them yet).
+    // The seeded jobs exist in the API-owned per-instance store — and
+    // (FW-31-B) they are the DETERMINISTIC pair: the demo-epoch submittedAt
+    // means the first request's tick already completed them at their fixed
+    // completion instant (the pre-fix re-seed minted fresh ids per boot
+    // instant and left them 'submitted' — the rotating job list, closed).
     const firstJobs = first.service.jobs().filter((job) => job.project === DEMO_PROJECT_ID);
     expect(firstJobs.map((job) => job.kind).sort()).toEqual(['learning', 'research']);
-    expect(firstJobs.every((job) => job.status === 'submitted')).toBe(true);
+    expect(firstJobs.every((job) => job.status === 'complete')).toBe(true);
+    const seedByKind = new Map(firstJobs.map((job) => [job.kind as string, job]));
+    expect(seedByKind.get('research')).toMatchObject({ jobId: demoSeedJobRecord(TENANT, 'research').jobId, status: 'complete', submittedAt: DEMO_SEED_JOB_SUBMITTED_AT, completedAt: DEMO_SEED_JOB_COMPLETED_AT });
+    expect(seedByKind.get('learning')).toMatchObject({ jobId: demoSeedJobRecord(TENANT, 'learning').jobId, status: 'complete', submittedAt: DEMO_SEED_JOB_SUBMITTED_AT, completedAt: DEMO_SEED_JOB_COMPLETED_AT });
 
     // The store rows after the first boot (the write-through + the fixture boot-writes).
     const direct = storesOver(providers.fetchLike);
@@ -865,9 +871,16 @@ describe('deploy/vercel — the W-26B activation: the demo world under durable (
     expect(registryAgain.ok).toBe(true);
     if (registryAgain.ok) expect(registryAgain.value.filter((row) => (row as { id: string }).id === DEMO_PROJECT_ID)).toHaveLength(1);
     expect(counting.inserts()).toBe(insertsAfterFirstBoot); // the idempotency pin: the second boot wrote NOTHING new
-    // The jobs re-seeded per instance (a fresh service's own store).
+    // The jobs re-seeded per instance (a fresh service's own store) — and
+    // (FW-31-B) the re-seed is idempotent IN IDENTITY: the second instance
+    // carries the BYTE-IDENTICAL pair (same ids, same submittedAt, same
+    // deterministic completion) — the pre-fix rotation (fresh ids + fresh
+    // timestamps per instance) is closed.
     const secondJobs = second.service.jobs().filter((job) => job.project === DEMO_PROJECT_ID);
     expect(secondJobs.map((job) => job.kind).sort()).toEqual(['learning', 'research']);
+    expect(secondJobs.map((job) => ({ jobId: job.jobId, submittedAt: job.submittedAt, status: job.status, completedAt: job.completedAt }))).toEqual(
+      firstJobs.map((job) => ({ jobId: job.jobId, submittedAt: job.submittedAt, status: job.status, completedAt: job.completedAt })),
+    );
     // The substance hydrates from the store rows the first boot wrote.
     const knowledgeAgain = await drive(second, streamingRequest({ method: 'POST', url: '/v1/knowledge/query', headers: BEARER, body: { project: DEMO_PROJECT_ID, at: T0 + 10_000 } }));
     expect((((knowledgeAgain.body as { data: { items: readonly { record: { knowledgeId: string } }[] } }).data).items).map((entry) => entry.record.knowledgeId)).toEqual(fixtureKnowledge(TENANT, DEMO_PROJECT_ID).map((entry) => entry.record.knowledgeId));
@@ -1464,12 +1477,22 @@ describe('deploy/vercel — FW-MI-A: the durable session scope (the ownership st
     expect(ownListing.status).toBe(200);
     expect(((ownListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id)).toEqual([DEMO_PROJECT_ID, 'prj-session-a-1']);
 
-    // ...and session B still does NOT (the cold start changes nothing about isolation)
+    // ...and session B sees the SAME registry rows — FW-31-B's law: under
+    // durable the listing is the TENANT'S OWN registry (a browser restart
+    // that minted a fresh session id must never orphan a durable desk —
+    // Round A blocker 3), with the MARKER carrying the session grouping
+    // (A's desk is 'tenant-available' to B, 'session-owned' to A).
     const otherListing = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_B) }));
-    expect(((otherListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id)).toEqual([DEMO_PROJECT_ID]);
+    expect(otherListing.status).toBe(200);
+    const otherItems = ((otherListing.body as { data: { items: readonly { id: string; consoleSessionScope?: string }[] } }).data).items;
+    expect(otherItems.map((project) => project.id)).toEqual([DEMO_PROJECT_ID, 'prj-session-a-1']);
+    expect(otherItems.find((project) => project.id === 'prj-session-a-1')?.consoleSessionScope).toBe('tenant-available');
+    const ownItems = ((ownListing.body as { data: { items: readonly { id: string; consoleSessionScope?: string }[] } }).data).items;
+    expect(ownItems.find((project) => project.id === 'prj-session-a-1')?.consoleSessionScope).toBe('session-owned');
+    expect(ownItems.find((project) => project.id === DEMO_PROJECT_ID)?.consoleSessionScope).toBe('tenant-available'); // the shared teaching scope
   });
 
-  it('cross-session reads by id answer the typed not-found under durable too — and the session\'s own goal read serves FRESH from the JOIN row (never the projection)', async () => {
+  it('FW-31-B\'s durable law: EVERY registry row serves to every session (detail + goal + the jobs/blotter gates) — the ownerSession identity NEVER crosses the wire, and an id OUTSIDE the registry stays the typed not-found', async () => {
     const providers = fakeProviders();
     const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
     expect(instanceA.ok).toBe(true);
@@ -1484,15 +1507,35 @@ describe('deploy/vercel — FW-MI-A: the durable session scope (the ownership st
     expect(instanceB.ok).toBe(true);
     if (!instanceB.ok) return;
 
-    // B's direct id read of A's desk: the typed not-found (unknown and foreign indistinguishable)
+    // B's direct id read of A's desk now SERVES (FW-31-B — the tenant's own
+    // registry; the pre-fix law orphaned the desk when A's session id died),
+    // carrying the marker — never the ownerSession identity itself.
     const foreignDetail = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1', headers: sessionHeaders(SESSION_B) }));
-    expect(foreignDetail.status).toBe(404);
+    expect(foreignDetail.status).toBe(200);
+    const detailData = foreignDetail.body.data as { id: string; consoleSessionScope?: string; ownerSession?: unknown };
+    expect(detailData.id).toBe('prj-session-a-1');
+    expect(detailData.consoleSessionScope).toBe('tenant-available');
+    expect(detailData.ownerSession).toBeUndefined(); // the ownership identity is host-side only — never in the console's read
     const foreignGoal = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1/goal?project=prj-session-a-1', headers: sessionHeaders(SESSION_B) }));
-    expect(foreignGoal.status).toBe(404);
+    expect(foreignGoal.status).toBe(200);
+    const foreignJobs = await drive(instanceB, streamingRequest({ url: '/v1/jobs?project=prj-session-a-1', headers: sessionHeaders(SESSION_B) }));
+    expect(foreignJobs.status).toBe(200); // the gate passes for every registry row
+    const foreignBlotter = await drive(instanceB, streamingRequest({ url: '/v1/execution/submissions?project=prj-session-a-1', headers: sessionHeaders(SESSION_B) }));
+    expect(foreignBlotter.status).toBe(200);
+
+    // ...while an id OUTSIDE the tenant's registry answers the typed
+    // not-found (unknown and foreign indistinguishable — the boundary's own
+    // law, preserved).
+    const unknownDetail = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-never-created', headers: sessionHeaders(SESSION_B) }));
+    expect(unknownDetail.status).toBe(404);
+    expect((unknownDetail.body.error as { code: string }).code).toBe('not_found');
+    const unknownJobs = await drive(instanceB, streamingRequest({ url: '/v1/jobs?project=prj-never-created', headers: sessionHeaders(SESSION_B) }));
+    expect(unknownJobs.status).toBe(404);
 
     // A's own detail + goal read serve — the goal FRESH from the JOIN row, with the ownerSession field NEVER crossing the wire
     const ownDetail = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1', headers: sessionHeaders(SESSION_A) }));
     expect(ownDetail.status).toBe(200);
+    expect(((ownDetail.body.data as { consoleSessionScope?: string }).consoleSessionScope)).toBe('session-owned');
     const ownGoal = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1/goal?project=prj-session-a-1', headers: sessionHeaders(SESSION_A) }));
     expect(ownGoal.status).toBe(200);
     const goalBundle = ownGoal.body.data as { goal: unknown; constraintSet: unknown; ownerSession?: unknown };
@@ -1528,6 +1571,203 @@ describe('deploy/vercel — FW-MI-A: the durable session scope (the ownership st
     const boundaryListing = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: BEARER }));
     const boundaryIds = ((boundaryListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id);
     expect(boundaryIds).toEqual([DEMO_PROJECT_ID]); // the pre-fix projection staleness, preserved byte-identically for the headerless SDK caller
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-31-B (Round A blockers 3 + 6): the durable scope persistence wave —
+// the full-project-list switcher route (tenant-scoped, session markers),
+// the DETERMINISTIC demo-job re-seed (identity-stable across instance
+// boots), and the P02 LAUNCH-COMPILE STALL's root cause + heal (a warm
+// instance whose job store + watch store predate a launch that landed on
+// ANOTHER instance: the console's per-id job polls answered the typed
+// 404 forever and the compiled org was unobservable — the bounded
+// staleness heal re-reads the durable truth and replays the missing
+// records through the REAL public routes).
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-31-B: the durable scope persistence (the full-project-list switcher + the deterministic re-seed + the P02 stall heal)', () => {
+  const SESSION_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const SESSION_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const SESSION_FRESH = 'ffffffffffffffffffffffffffffffff'; // a browser restart's minted id — no owned desks
+
+  function sessionHeaders(session: string): Record<string, string> {
+    return { ...BEARER, 'x-tradrl-console-session': session };
+  }
+
+  it('the switcher lists ALL the tenant\'s durable projects — session-created desks marked session-owned, every other registry row (an SDK create, the demo project) marked tenant-available; a FRESH session (the browser restart) reaches every one', async () => {
+    const providers = fakeProviders();
+    const instance = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instance.ok).toBe(true);
+    if (!instance.ok) return;
+
+    // session A launches a desk; session B launches another; an SDK caller (headerless) creates a third.
+    await drive(instance, streamingRequest({ method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' }, body: createProjectBody('prj-fw31b-a') }));
+    await drive(instance, streamingRequest({ method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_B), 'content-type': 'application/json' }, body: createProjectBody('prj-fw31b-b') }));
+    await drive(instance, streamingRequest({ method: 'POST', url: '/v1/projects', headers: { ...BEARER, 'content-type': 'application/json' }, body: createProjectBody('prj-fw31b-sdk') }));
+
+    // A's listing: the WHOLE registry (Round A blocker 3's fix — the switcher never orphans a durable desk), marked.
+    const listing = await drive(instance, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_A) }));
+    expect(listing.status).toBe(200);
+    const items = ((listing.body as { data: { items: readonly { id: string; consoleSessionScope?: string; ownerSession?: unknown }[] } }).data).items;
+    expect(items.map((project) => project.id)).toEqual([DEMO_PROJECT_ID, 'prj-fw31b-a', 'prj-fw31b-b', 'prj-fw31b-sdk']);
+    expect(items.find((project) => project.id === 'prj-fw31b-a')?.consoleSessionScope).toBe('session-owned');
+    expect(items.find((project) => project.id === 'prj-fw31b-b')?.consoleSessionScope).toBe('tenant-available');
+    expect(items.find((project) => project.id === 'prj-fw31b-sdk')?.consoleSessionScope).toBe('tenant-available'); // an SDK create is a tenant scope, not a session's
+    expect(items.find((project) => project.id === DEMO_PROJECT_ID)?.consoleSessionScope).toBe('tenant-available');
+    expect(items.every((project) => project.ownerSession === undefined)).toBe(true); // the ownership identity NEVER crosses the wire
+
+    // THE BROWSER-RESTART LAW: a FRESH session (a new minted id — S1's
+    // restart scenario) reaches EVERY durable project in the switcher AND
+    // by id (the detail + the goal), so scope selection survives the
+    // restart — the pre-fix law orphaned A's compiled org entirely.
+    const freshListing = await drive(instance, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_FRESH) }));
+    expect(((freshListing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id)).toEqual([DEMO_PROJECT_ID, 'prj-fw31b-a', 'prj-fw31b-b', 'prj-fw31b-sdk']);
+    const recoveredDetail = await drive(instance, streamingRequest({ url: '/v1/projects/prj-fw31b-a', headers: sessionHeaders(SESSION_FRESH) }));
+    expect(recoveredDetail.status).toBe(200);
+    expect(((recoveredDetail.body.data as { consoleSessionScope?: string }).consoleSessionScope)).toBe('tenant-available');
+    const recoveredGoal = await drive(instance, streamingRequest({ url: '/v1/projects/prj-fw31b-a/goal?project=prj-fw31b-a', headers: sessionHeaders(SESSION_FRESH) }));
+    expect(recoveredGoal.status).toBe(200); // the recovered desk's own goal serves its re-selecting session
+  });
+
+  it('L12 holds: a FOREIGN tenant\'s registry row NEVER lists (the fresh JOIN is the credential tenant\'s own — pre-populated directly into the store)', async () => {
+    const providers = fakeProviders();
+    // A foreign tenant's durable rows, written directly through the store
+    // layer (the honest cross-tenant artifact — the JOIN must never carry it).
+    const direct = storesOver(providers.fetchLike);
+    const foreignRecord = { tenantId: 'tenant-other', id: 'prj-fw31b-foreign', name: 'the foreign desk', executionMode: 'simulation', lifecycle: { status: 'draft', organizationRef: null, createdAt: T0, updatedAt: T0 }, createdAt: T0, updatedAt: T0 };
+    const goalWritten = await direct.project.putGoalSet('tenant-other', 'prj-fw31b-foreign', { goal: validGoal('tenant-other'), constraintSet: validConstraintSet('tenant-other') });
+    expect(goalWritten.ok).toBe(true);
+    const recordWritten = await direct.project.putProjectRecord('tenant-other', foreignRecord);
+    expect(recordWritten.ok).toBe(true);
+
+    const instance = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+    expect(instance.ok).toBe(true);
+    if (!instance.ok) return;
+    const listing = await drive(instance, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_A) }));
+    const ids = ((listing.body as { data: { items: readonly { id: string }[] } }).data).items.map((project) => project.id);
+    expect(ids).toEqual([DEMO_PROJECT_ID]); // the foreign row never lists — L12 by construction
+    const foreignRead = await drive(instance, streamingRequest({ url: '/v1/projects/prj-fw31b-foreign', headers: sessionHeaders(SESSION_A) }));
+    expect(foreignRead.status).toBe(404); // ...and never reads by id (unknown and foreign indistinguishable)
+  });
+
+  it('DETERMINISTIC RE-SEED: two instance boots at DIFFERENT wall-clock instants carry the BYTE-IDENTICAL demo jobs (the pre-fix rotation — fresh ids + timestamps per instance — closed; fake timers prove the instant-independence)', async () => {
+    vi.useFakeTimers();
+    try {
+      const providers = fakeProviders();
+      // INSTANCE 1 boots at T0; INSTANCE 2 boots a full day later (the
+      // pre-fix re-seed minted its ids from the pipeline's request instant —
+      // a different day, different ids, the rotating job list).
+      vi.setSystemTime(T0);
+      const first = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+      await drive(first, streamingRequest({ method: 'GET', url: '/v1/projects', headers: BEARER }));
+
+      vi.setSystemTime(T0 + 24 * 3_600_000);
+      const second = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(second.ok).toBe(true);
+      if (!second.ok) return;
+      await drive(second, streamingRequest({ method: 'GET', url: '/v1/projects', headers: BEARER }));
+
+      const shape = (job: { jobId: string; kind: string; status: string; submittedAt: number; completedAt?: number }) =>
+        ({ jobId: job.jobId, kind: job.kind, status: job.status, submittedAt: job.submittedAt, ...(job.completedAt === undefined ? {} : { completedAt: job.completedAt }) });
+      const firstJobs = first.service.jobs().filter((job) => job.project === DEMO_PROJECT_ID).map(shape);
+      const secondJobs = second.service.jobs().filter((job) => job.project === DEMO_PROJECT_ID).map(shape);
+      expect(firstJobs).toHaveLength(2);
+      expect(secondJobs).toEqual(firstJobs); // BYTE-IDENTICAL across boots a day apart
+      // ...and the identity is the deterministic shape (the demo epoch, never the boot instant).
+      expect(firstJobs.map((job) => job.submittedAt).every((at) => at === DEMO_SEED_JOB_SUBMITTED_AT)).toBe(true);
+      expect(firstJobs.map((job) => job.jobId).sort()).toEqual([demoSeedJobRecord(TENANT, 'research').jobId, demoSeedJobRecord(TENANT, 'learning').jobId].sort());
+
+      // The demo ORG's watch snapshot is instant-stable too (the "observed
+      // 04:33→04:24→04:33" rotation, closed): the demo epoch's fixed
+      // observation instant, byte-identical on both instances.
+      const firstSnapshot = first.service.orgStatusSnapshots().find((snapshot) => snapshot.project === DEMO_PROJECT_ID);
+      const secondSnapshot = second.service.orgStatusSnapshots().find((snapshot) => snapshot.project === DEMO_PROJECT_ID);
+      expect(firstSnapshot).toBeDefined();
+      expect(secondSnapshot).toEqual(firstSnapshot);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('THE P02 STALL, root-caused and healed: a WARM instance that booted BEFORE the launch answers the kickoff poll 404 — the bounded staleness heal replays the durable job + reports the compiled org\'s snapshot, and the poll serves', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      // INSTANCE B boots FIRST (warm — its boot projection + job store
+      // predate the launch; this is the instance the balancer keeps routing
+      // the console's polls to: Round A's L1/M1 stall). Its first tick ARMS
+      // the heal interval (T0).
+      const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceB.ok).toBe(true);
+      if (!instanceB.ok) return;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/projects', headers: BEARER })); // the boot world settles
+
+      // INSTANCE A (a different serverless instance) carries the launch at
+      // T0+2s: create + the kickoff job (the durable truth moves).
+      vi.setSystemTime(T0 + 2_000);
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      const created = await drive(instanceA, streamingRequest({ method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' }, body: createProjectBody('prj-fw31b-stall', T0 + 2_000) }));
+      expect(created.status).toBe(201);
+      const kickoff = await drive(instanceA, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:fw31b:stall:kickoff' }, body: { kind: 'research', projectId: 'prj-fw31b-stall', spec: { source: 'fw31b-stall-test' } } }));
+      expect(kickoff.status).toBe(202);
+      const kickoffJob = (kickoff.body as { data: { jobId: string } }).data;
+
+      // THE PRE-FIX STALL, reproduced on the warm instance at T0+9s — BEFORE
+      // B's heal interval elapses (armed at T0): the per-id poll answers the
+      // typed 404 (the FROZEN route reads the instance's own API-owned
+      // store, which predates the launch) — and the compiled org's status
+      // read 404s the same way (the org IS compiled in the durable truth —
+      // A's kickoff-drive tick bound it — but B's projection + watch store
+      // predate the launch and nothing ever re-read the truth there). This
+      // is L1/M1's stall: CONNECTION degrades, the launch phase never
+      // advances, the org never compiles — as observed.
+      vi.setSystemTime(T0 + 9_000);
+      const stalledPoll = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/jobs/${kickoffJob.jobId}`, headers: BEARER }));
+      expect(stalledPoll.status).toBe(404);
+      const stalledOrg = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/organizations/${encodeURIComponent(compiledOrganizationRefOf('prj-fw31b-stall'))}/status?project=${encodeURIComponent('prj-fw31b-stall')}`, headers: BEARER }));
+      expect(stalledOrg.status).toBe(404);
+
+      // A's later tick completes the kickoff (age 10s) and the write-through
+      // persists the transition — the durable truth now carries the COMPLETE
+      // record (the compiled org's bind already persisted at the launch).
+      vi.setSystemTime(T0 + 12_000);
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+
+      // THE HEAL: past the staleness interval, B's next request (T0+15s)
+      // fires the bounded heal (one fresh tenant-wide jobs read + the fresh
+      // JOIN for the snapshot pass) — the missing records replay through the
+      // REAL public routes into B's own store, and the compiled org's
+      // snapshot reports through the REAL private route. The heal is
+      // fire-and-forget; flush the microtask chain it rides.
+      vi.setSystemTime(T0 + 15_000);
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      for (let settle = 0; settle < 25; settle += 1) await Promise.resolve(); // the fake fleet's fetch resolves on microtasks
+
+      // The poll now serves on the SAME warm instance — the launch
+      // un-sticks (the record carries A's durable completion: the
+      // release-candidate result, the persisted completedAt).
+      const healedPoll = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/jobs/${kickoffJob.jobId}`, headers: BEARER }));
+      expect(healedPoll.status).toBe(200);
+      const healedJob = (healedPoll.body as { data: { jobId: string; status: string; result: { kind: string } } }).data;
+      expect(healedJob.jobId).toBe(kickoffJob.jobId);
+      expect(healedJob.status).toBe('complete');
+      expect(healedJob.result.kind).toBe('release-candidate');
+
+      // ...and the compiled org's snapshot is observable on the same warm
+      // instance (the "org never compiles" half — the org WAS compiled in
+      // the durable truth; B can finally observe it).
+      const healedOrg = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/organizations/${encodeURIComponent(compiledOrganizationRefOf('prj-fw31b-stall'))}/status?project=${encodeURIComponent('prj-fw31b-stall')}`, headers: BEARER }));
+      expect(healedOrg.status).toBe(200);
+      expect(((healedOrg.body as { data: { status: string; project: string } }).data).project).toBe('prj-fw31b-stall');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
