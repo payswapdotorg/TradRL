@@ -4592,6 +4592,112 @@ describe('executed boot: FW-34-B §3.1 — the restart posture (wizard + scope +
   });
 });
 
+describe('executed boot: FW-35-B §3.2 — the hard-restart posture, root-caused (the wizard never blocks nav on ANY path)', () => {
+  it('ACTING PAST the wizard: a NAV click while it shows dismisses it in the SAME gesture (the nav lands, the dismissal persists synchronously) and a non-wizard ACTION dismisses it too — while the wizard OWN affordances keep their dedicated branches (the CTA steps, never an early dismissal), and a SYNTHETIC keyboard nav (the keydown composed on a nav button while the focus sits on BODY) dismisses it as well', async () => {
+    const shared = new MapStorage();
+    const rig = await bootRig({}, sharedDesksTransport(), 'prj-a', { scopeStorage: shared });
+    expect(countByClass(rig.root, 'onboarding')).toBe(1); // the first-run wizard shows
+    // ACTING PAST, mouse path: a plain sidebar nav — the nav lands AND the wizard dismisses, one gesture
+    clickNav(rig, 'inbox');
+    expect(countByClass(rig.root, 'onboarding')).toBe(0); // dismissed, never a prerequisite
+    expect(findByData(rig.root, 'data-target', 'inbox')).not.toBeNull(); // the shell still renders the nav vocabulary
+    expect(shared.map.get('tradrl_onboarded')).toBe('true'); // the dismissal PERSISTED, synchronously with the click
+    // the wizard OWN affordances keep their dedicated branches: a fresh browser's wizard STEPS on its CTA (never an acting-past dismissal)
+    const fresh = new MapStorage();
+    const rig2 = await bootRig({}, sharedDesksTransport(), 'prj-a', { scopeStorage: fresh });
+    expect(countByClass(rig2.root, 'onboarding')).toBe(1);
+    click(rig2, ctaOf(rig2)); // the CTA — the wizard's own branch
+    expect(countByClass(rig2.root, 'onboarding')).toBe(1); // step two renders — the wizard still owns its CTA
+    // ACTING PAST, action path: a non-wizard ACTION (the palette open) dismisses it too
+    clickAction(rig2, 'palette-open');
+    expect(countByClass(rig2.root, 'onboarding')).toBe(0);
+    expect(fresh.map.get('tradrl_onboarded')).toBe('true');
+    // ACTING PAST, synthetic keyboard path: a keydown composed on a NAV button while the focus sits on BODY (the backdrop visually covered nav — the eval/assistive-tech path)
+    const again = new MapStorage();
+    const rig3 = await bootRig({}, sharedDesksTransport(), 'prj-a', { scopeStorage: again });
+    expect(countByClass(rig3.root, 'onboarding')).toBe(1);
+    const navGoal = elementsOf(rig3.root).find((element) => element.getAttribute('data-target') === 'goal' && element.tagName === 'BUTTON' && element.hasClass('nav-item'));
+    if (navGoal === undefined) throw new Error('no nav item for goal');
+    expect(rig3.doc.activeElement).toBeNull(); // the focus is on BODY — nothing moved it
+    rig3.doc.fire('keydown', { target: navGoal, key: 'Enter', preventDefault: (): void => {} });
+    expect(rig3.handle.state().selectedSection).toBe('goal'); // the keyboard navigation landed
+    expect(countByClass(rig3.root, 'onboarding')).toBe(0); // and the wizard dismissed with it
+    expect(again.map.get('tradrl_onboarded')).toBe('true'); // persisted
+  });
+
+  it('the TRUE restart (a fresh boot, the SAME durable storage — a browser closed and reopened on its profile): the acting-past dismissal + the READ-STATE + the scope pointer + the TM posture all restore — the wizard never re-summons and the notice renders already-read', async () => {
+    const shared = new MapStorage();
+    const reads = new MapStorage();
+    // the notice the restarted desk folds (scoped to the desk the posture restores)
+    const DESK_JOB: JobRecord = { jobId: 'job-desk', kind: 'research', tenant: 'tenant-a', project: 'prj-b', status: 'failed', submittedAt: T0 + 25 };
+    const rig1 = await bootRig({}, sharedDesksTransport(), 'prj-a', { scopeStorage: shared, noticeReadStorage: reads });
+    expect(countByClass(rig1.root, 'onboarding')).toBe(1);
+    // ACTING PAST the wizard: a plain sidebar nav — the dismissal + the navigation in one gesture
+    clickNav(rig1, 'inbox');
+    expect(countByClass(rig1.root, 'onboarding')).toBe(0);
+    expect(shared.map.get('tradrl_onboarded')).toBe('true'); // the dismissal persisted synchronously with the click
+    // the scope pointer: switch to the second own desk
+    clickNav(rig1, 'settings');
+    const switcher = findByData(rig1.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the switcher is missing');
+    switcher.value = 'prj-b';
+    rig1.doc.fire('change', { target: switcher });
+    await settle();
+    expect(rig1.handle.state().scope.projectId).toBe('prj-b');
+    // the read-state: fold the desk's notice and mark it read (the write-through, synchronous with the mark)
+    rig1.handle.dispatch({ kind: 'job-updated', at: T0 + 26, job: DESK_JOB });
+    const notice = rig1.handle.state().inbox.notices.find((record) => record.projectId === 'prj-b');
+    if (notice === undefined) throw new Error('the desk notice did not fold');
+    clickNav(rig1, 'inbox');
+    const toggle = findByData(rig1.root, 'data-notice-read', notice.noticeId);
+    if (toggle === null) throw new Error('the unread row carries no read toggle');
+    click(rig1, toggle);
+    // the TM posture: scrub to an incident INSIDE the desk's own history (above the job record's instant, below the anchor) — a viewing instant the restart must restore exactly
+    const incidentAt = rig1.handle.state().timeMachine.anchorAt - 300;
+    scrubTo(rig1, incidentAt);
+    await settle();
+    // SESSION TWO — THE TRUE RESTART: a fresh console, the SAME durable seams (nothing in-memory carries over)
+    const rig2 = await bootRig({}, sharedDesksTransport(), 'prj-a', { scopeStorage: shared, noticeReadStorage: reads });
+    expect(countByClass(rig2.root, 'onboarding')).toBe(0); // the wizard never re-summons (the dismissal survived)
+    expect(elementsOf(rig2.root).some((element) => element.getAttribute('data-onboarding') !== null)).toBe(false); // NOTHING wizard-shaped in the tree
+    rig2.handle.dispatch({ kind: 'job-updated', at: T0 + 26, job: DESK_JOB }); // the same signal folds the same notice
+    const bell = elementsOf(rig2.root).find((element) => element.getAttribute('data-target') === 'inbox' && element.hasClass('bell'));
+    if (bell === undefined) throw new Error('no bell');
+    expect(bell.getAttribute('aria-label')).toContain('no unread notices'); // the READ-STATE survived the restart
+    expect(rig2.handle.state().scope.projectId).toBe('prj-b'); // the scope pointer survived
+    expect(rig2.handle.state().timeMachine.mode).toBe('timestamp'); // the TM posture survived — VIEWING, never a surprise auto-play
+    expect(viewAtOf(rig2.handle.state())).toBe(incidentAt); // the incident instant the analyst stood at
+  });
+});
+
+describe('executed boot: FW-35-B §3.6 — the keyboard/focus residuals closed (L4: no focus-to-BODY, no eaten activation)', () => {
+  it('the palette CLICKED close (the backdrop press) lands the focus on the CONTENT it uncovered — never on BODY', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    clickAction(rig, 'palette-open');
+    expect(findByData(rig.root, 'data-action', 'palette-close')).not.toBeNull(); // the modal renders with its close
+    clickAction(rig, 'palette-close'); // the CLICKED close (the Esc path already refocused)
+    expect(findByData(rig.root, 'data-action', 'palette-close')).toBeNull(); // the modal is gone
+    // the re-projection replaces the tree — the FRESH landmark is the element the focus landed on
+    const landed = findByData(rig.root, 'data-main-content', 'true');
+    if (landed === null) throw new Error('the re-projected landmark is missing');
+    expect(landed.focusCount).toBe(1); // the focus LANDS on the content, never on BODY
+  });
+
+  it('a SYNTHETIC keyboard activation (the keydown composed on the button while the focus sits on BODY — the assistive-tech/eval path) is never eaten: the Mark-read fires exactly once', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB }); // folds one unread notice
+    clickNav(rig, 'inbox');
+    const readButton = findByData(rig.root, 'data-action', 'notice-read');
+    if (readButton === null) throw new Error('the inbox renders no Mark-read affordance');
+    expect(rig.doc.activeElement).toBeNull(); // the focus is on BODY — the synthetic precondition
+    let prevented = false;
+    rig.doc.fire('keydown', { target: readButton, key: 'Enter', preventDefault: (): void => { prevented = true; } });
+    expect(prevented).toBe(true); // the native click synthesis is cancelled — one activation, never two
+    expect(rig.handle.state().inbox.readNoticeIds.length).toBe(1); // the read marked — the activation was NOT eaten
+    expect(countByData(rig.root, 'data-unread', '1')).toBe(0); // the badge dropped with it
+  });
+});
+
 describe('executed boot: FW-34-B §3.6 — the keyboard/focus law (no focus-to-BODY, the skip link, the beat-proof activation)', () => {
   it('the SKIP LINK renders first in the shell and lands the focus on the main content landmark (never on BODY)', async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());

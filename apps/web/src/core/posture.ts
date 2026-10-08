@@ -35,6 +35,31 @@
 // registry one explicit disclosure away — every desk stays reachable,
 // the FW-31-B win).
 //
+// FW-35-B (Round D register §3.2) — THE RELOAD-VS-RESTART DIVERGENCE,
+// ROOT-CAUSED: Round D's filers split cleanly — every posture surface
+// (wizard dismissal, scope pointer, read-state, desk membership, the
+// theme) survived a reload, while SOME filers lost ALL of them at once
+// to a "full browser restart" and others (L1, S1) measured the same
+// restart SURVIVING. The app's writes are all SYNCHRONOUS
+// WITH-THE-INTERACTION (localStorage setItem in the same tick — every
+// dismissal, scope move, read mark and the session id's mint write
+// through immediately; there is no async write to lose to a hard kill,
+// and the wizard's two keys — the record and the legacy — are written
+// in the same tick, so there is no divergent second path either). The
+// divergence is the RESTART ITSELF: the losing path reverted the THEME
+// too (a value written minutes before any restart — no write race can
+// explain it), and L1's own filing names it "the profile-wipe restart
+// path". A restart that keeps the browser profile keeps ALL of this
+// record (the surviving filers' measurement); a restart into a fresh
+// profile wipes the whole trust zone at once (the honest limit above —
+// a new browser identity, disclosed, never papered over). FW-35-B's
+// half of the fix is the FAST-RECOVERY posture made total: the wizard
+// is NON-MODAL (no aria-modal — the nav tree stays in the a11y tree
+// behind it) and an interaction that resolves PAST it (a nav click, a
+// keyboard activation, any non-wizard action) DISMISSES it in the same
+// gesture, synchronously persisted — the re-summoned wizard costs ZERO
+// manual recoveries where Round D's filers paid three to five.
+//
 // THE LEGACY FALLBACK: browsers that already carry the pre-FW-34-B
 // keys (tradrl_onboarded, tradrl_scope_project) migrate transparently
 // — the record reads them when it carries none of its own, and every

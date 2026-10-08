@@ -360,6 +360,29 @@ describe('executed boot: FW-MI-A — the console session (the header, the stabil
     }
   });
 
+  it('FW-35-B (Round D register §3.2): the DESK-MEMBERSHIP identity survives a TRUE browser restart — a fresh boot on the same durable storage re-serves the SAME session view (the own desks stay the session own, the foreign desk stays out), so a browser closed and reopened on its profile never misclassifies its desks into other-sessions', async () => {
+    const storage = new MapStorage();
+    // SESSION ONE: the browser launches, the session id mints, the host serves the session view
+    const api = sessionViewTransport();
+    const first = await bootSessionRig(storage, api.transport);
+    const sessionId = first.storage.map.get('tradrl_console_session');
+    if (sessionId === undefined) throw new Error('the entry persisted no session id');
+    expect(first.handle.state().projectDirectory.length).toBe(26); // the demo project + 25 own desks
+    expect(first.handle.state().projectDirectory.some((project) => project.id === 'prj-foreign-01')).toBe(false);
+
+    // SESSION TWO — THE TRUE RESTART: a fresh bootFromShell on the SAME localStorage (a browser closed and reopened on its profile — nothing in-memory carries over)
+    const restarted = sessionViewTransport();
+    const second = await bootSessionRig(storage, restarted.transport);
+    expect(second.storage.map.get('tradrl_console_session')).toBe(sessionId); // the SAME identity — the desk-membership key survived
+    expect(second.handle.state().projectDirectory.length).toBe(26); // the host re-served the SAME session view — every own desk still classifies as the session own
+    expect(second.handle.state().projectDirectory.some((project) => project.id === 'prj-foreign-01')).toBe(false); // the foreign desk never leaked in
+    clickNav(second, 'settings');
+    const switcher = findByData(second.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the Settings panel renders no project switcher');
+    const options = elementsOf(switcher).filter((element) => element.tagName === 'OPTION');
+    expect(options.length).toBe(26); // the switcher carries the whole session view — no own desk demoted behind the other-sessions disclosure
+  });
+
   it('MI-D1: the console renders EXACTLY the session view the host serves — the switcher, the palette and the EXPORT never carry another session\'s desks (S5\'s ask)', async () => {
     const api = sessionViewTransport();
     const rig = await bootSessionRig(new MapStorage(), api.transport);
