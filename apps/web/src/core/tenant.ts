@@ -30,6 +30,21 @@ export interface WorkspaceScope {
  */
 export const LAUNCHPAD_PROJECT_ID = '(launchpad)';
 
+/**
+ * FW-34-B (Round C register §3.8 — the shared-tenant wall): the shared
+ * DEMO project's id (the workspace's teaching desk — the runtime's own
+ * constant mirrored by name and value: deploy/vercel/runtime/demo.ts's
+ * DEMO_PROJECT_ID, the same-name-same-shape law the console session
+ * header rides). The default desk listing ALWAYS includes it (every
+ * session's teaching desk), whatever the session-scope marker says.
+ */
+export const DEMO_PROJECT_ID = 'prj-demo-console';
+
+/** True when a project id is the shared demo project (the workspace's teaching desk). */
+export function isDemoProject(projectId: string): boolean {
+  return projectId === DEMO_PROJECT_ID;
+}
+
 /** True when a project id is the pre-launch launchpad placeholder (no project exists yet — the primary flow starts here). */
 export function isLaunchpadScope(projectId: string): boolean {
   return projectId === LAUNCHPAD_PROJECT_ID;

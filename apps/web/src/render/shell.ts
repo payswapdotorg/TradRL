@@ -22,7 +22,7 @@ import type { ProjectRecord } from '../api/contracts';
 import { scopedInbox, unreadCount } from '../core/notices';
 import type { ThemeName } from '../core/theme';
 import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellTarget } from '../core/nav';
-import { isLaunchpadScope } from '../core/tenant';
+import { DEMO_PROJECT_ID, isLaunchpadScope } from '../core/tenant';
 import { formatInstantUtc } from '../core/format';
 import type { PlaybackSpeedKey } from '../core/timemachine';
 import { notificationBell, toastRecord } from './flow';
@@ -104,6 +104,27 @@ export interface ShellView {
    * dispatches the machine's playback-retuned event).
    */
   readonly playbackSpeed: PlaybackSpeedKey;
+  /**
+   * FW-34-B (Round C register §3.2) — THE FREE SPEED INPUT's committed
+   * text ('' = none committed; the select's key is the active step). A
+   * VALID committed value is the EFFECTIVE step (the next arm's, and a
+   * committed change on an ARMED playback retunes it now); the select's
+   * face reads "custom" while one is active. Chrome state, the same
+   * class as playbackSpeed.
+   */
+  readonly playbackCustomSpeed: string;
+  /** FW-34-B: the free speed's named refusal (null when the committed text is valid or empty) — rendered inline beside the control, never a silent clamp. */
+  readonly playbackCustomSpeedError: string | null;
+  /**
+   * FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): the
+   * project switcher's DEFAULT listing is the session's OWN desks (the
+   * demo project + the session-owned registry rows). This flag holds
+   * the explicit "all desks in this workspace" disclosure state — false
+   * (the hygienic default) until the user expands it; the registry
+   * itself stays whole in the workspace state (the durable win — every
+   * desk stays reachable, one explicit disclosure away).
+   */
+  readonly showAllDesks: boolean;
 }
 
 /** A reference to the record a detail sheet shows (§4.5a). */
@@ -129,7 +150,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null, scrubBounds: null, playbackSpeed: '1x' };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null, scrubBounds: null, playbackSpeed: '1x', playbackCustomSpeed: '', playbackCustomSpeedError: null, showAllDesks: false };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */
@@ -372,9 +393,49 @@ function settingsRow(title: string, description: string, body: readonly VNode[])
  * render identical option lists.
  */
 export function switcherOptions(state: WorkspaceState, view: ShellView): readonly ProjectRecord[] {
+  // FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): the
+  // DEFAULT listing is the session's OWN desks — the records the
+  // session-scoped listing marks 'session-owned', plus every UNMARKED
+  // row (a backing that predates the marker — the honest fallback that
+  // keeps the switcher full, never silently empty) and the shared demo
+  // project (every session's teaching desk). The workspace's WHOLE
+  // registry stays ONE EXPLICIT DISCLOSURE AWAY (view.showAllDesks —
+  // the "all desks in this workspace" expander in the row below): the
+  // durable registry was the FW-31-B win, and it stays reachable —
+  // the default view is hygienic, not blind.
+  const listing = view.showAllDesks ? state.projectDirectory : sessionOwnDesksOf(state, DEMO_PROJECT_ID);
   const filter = view.projectFilter.trim().toLowerCase();
-  if (filter.length === 0) return state.projectDirectory;
-  return state.projectDirectory.filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), filter) >= 0);
+  if (filter.length === 0) return listing;
+  return listing.filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), filter) >= 0);
+}
+
+/**
+ * FW-34-B (§3.8): true when a directory row belongs to THIS session's own
+ * desks — the host's additive 'session-owned' marker, with the UNMARKED
+ * fallback (a backing that predates the marker serves none: every row
+ * reads as the session's own — the listing's honest fallback).
+ */
+export function isSessionOwnDesk(project: ProjectRecord): boolean {
+  return project.consoleSessionScope !== 'tenant-available';
+}
+
+/**
+ * FW-34-B (§3.8): the session's own desks (the default listing's own
+ * fold — the session-owned + the unmarked rows; the shared demo project
+ * carries the marker's 'tenant-available' but IS every session's teaching
+ * desk, so it is ALWAYS in — one workspace, one teaching desk).
+ */
+export function sessionOwnDesksOf(state: WorkspaceState, demoProjectId: string): readonly ProjectRecord[] {
+  return state.projectDirectory.filter((project) => project.id === demoProjectId || isSessionOwnDesk(project));
+}
+
+/**
+ * FW-34-B (§3.8): the desks the DEFAULT listing hides — OTHER console
+ * sessions' desks in this shared workspace (the explicit disclosure's
+ * own count).
+ */
+export function otherSessionsDesksOf(state: WorkspaceState, demoProjectId: string): readonly ProjectRecord[] {
+  return state.projectDirectory.filter((project) => project.id !== demoProjectId && !isSessionOwnDesk(project));
 }
 
 /**
@@ -386,9 +447,16 @@ export function switcherOptions(state: WorkspaceState, view: ShellView): readonl
 export function switcherCountLine(state: WorkspaceState, view: ShellView): string | null {
   const trimmed = view.projectFilter.trim();
   if (trimmed.length === 0) return null;
+  const listing = view.showAllDesks ? state.projectDirectory : sessionOwnDesksOf(state, DEMO_PROJECT_ID);
   const matches = switcherOptions(state, view).length;
-  if (matches === 0) return `No project matches “${trimmed}” — clear the filter to see all ${state.projectDirectory.length}.`;
-  return `${matches} of ${state.projectDirectory.length} projects match “${trimmed}”.`;
+  if (matches === 0 && !view.showAllDesks) {
+    const hidden = otherSessionsDesksOf(state, DEMO_PROJECT_ID).filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), trimmed.toLowerCase()) >= 0).length;
+    return hidden > 0
+      ? `No desk of yours matches “${trimmed}” — ${hidden} other desk${hidden === 1 ? '' : 's'} in this workspace do. Expand “all desks in this workspace” below to search them.`
+      : `No project matches “${trimmed}” — clear the filter to see all ${listing.length}.`;
+  }
+  if (matches === 0) return `No project matches “${trimmed}” — clear the filter to see all ${listing.length}.`;
+  return `${matches} of ${listing.length} projects match “${trimmed}”.`;
 }
 
 /**
@@ -613,6 +681,12 @@ export function renderAppShell(
     'data-simulated': view.simulated ? 'true' : 'false',
     'data-sheet': view.sheet === null ? 'closed' : `${view.sheet.kind}:${view.sheet.id}`,
   }, [
+    // FW-34-B (Round C register §3.6 — L4's finding: NO skip link, ~29
+    // focusable elements before the main content): THE SKIP LINK, the
+    // first focusable in the shell. Keyboard-only: hidden until focused
+    // (the standard visually-hidden-until-focus pattern), one Enter to
+    // land the focus on the main content region below.
+    v('a', { class: 'skip-link', href: '#tradrl-main', 'data-action': 'skip-to-main' }, ['Skip to main content']),
     shellHeader(state, view),
     v('button', { class: 'drawer-backdrop', 'data-action': 'drawer-close', type: 'button', 'aria-label': 'Close navigation' }, []),
     v('aside', { class: 'shell-sidebar' }, [
@@ -628,7 +702,12 @@ export function renderAppShell(
     // — one per page, wrapping every section; the pre-existing landmarks
     // (the complementary sidebar, the Primary nav, the scaffold headers)
     // are untouched. Class-styled only, so the §2 layout is unchanged.
-    v('main', { class: 'shell-main' }, [
+    // FW-34-B (Round C register §3.6): the landmark carries the skip
+    // link's target (id=tradrl-main, tabindex -1, data-main-content) so
+    // the keyboard journey can LAND on the content — one skip, and the
+    // overlay closings (palette/sheet/wizard) hand the focus here too
+    // (never BODY).
+    v('main', { class: 'shell-main', id: 'tradrl-main', tabindex: '-1', 'data-main-content': 'true' }, [
       v('div', { class: 'shell-content' }, [
         ...(activeTarget === 'home' ? [] : [pageScaffold(activeTarget, state, view)]),
         content.timeMachine,

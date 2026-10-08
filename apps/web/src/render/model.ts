@@ -33,6 +33,7 @@ import { withRenderGuard } from '../core/clock';
 import { assertVisible, availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfProject, availabilityOfSubmission, projectToView } from '../core/availability';
 import { assertProjectScope, isLaunchpadScope, type WorkspaceScope } from '../core/tenant';
 import { renderDecimal } from '../core/decimals';
+import { blotterTotalsNoteOf, blotterTotalsOf } from '../core/blotter';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { PolicyEnforcementError } from '../core/errors';
 import { elapsedMsOfJobRecord, initialLaunchState, renderJobProgress, LAUNCH_STEPS, researchFormValuesOf, type LaunchState, type LaunchStep } from '../core/launch';
@@ -504,32 +505,93 @@ function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, promoti
   });
 }
 
-/** Render one org snapshot as an interactive list row. */
+/** Render one org snapshot as an interactive list row (FW-34-B: the subtitle names the instances AND the desk — the drill-down is the row's own sheet). */
 function orgSnapshotCard(scope: WorkspaceScope, snapshot: OrgStatusSnapshot, viewAt: number): VNode {
   assertProjectScope(scope, snapshot);
   visibleAt(snapshot, availabilityOfOrgSnapshot(snapshot), viewAt, snapshot.organizationRef);
   return listRow({
     icon: 'layers',
     title: snapshot.organizationRef,
-    subtitle: `${snapshot.instanceRefs.length} instance${snapshot.instanceRefs.length === 1 ? '' : 's'}`,
+    subtitle: `${snapshot.instanceRefs.length} instance${snapshot.instanceRefs.length === 1 ? '' : 's'} · ${snapshot.instanceRefs.map((ref) => instanceRoleOf(ref)).join(' + ') || 'none'}`,
     pill: { tone: snapshot.status === 'active' ? 'live' : 'idle', label: snapshot.status },
     meta: formatTimeUtc(snapshot.at),
     rowId: `snapshot:${snapshot.organizationRef}`,
   });
 }
 
-/** The snapshot's detail sheet. */
-function snapshotSheet(scope: WorkspaceScope, snapshot: OrgStatusSnapshot, viewAt: number): VNode[] {
-  assertProjectScope(scope, snapshot);
+/**
+ * FW-34-B (Round C register §3.7 — the recurring bare-ids residual,
+ * L4/M3/P05): the ORG INSTANCE DRILL-DOWN. The served org snapshot
+ * carries instance REFS only (the frozen OrgStatusSnapshot shape —
+ * services/api's own contracts), so the drill-down renders exactly
+ * what is ON RECORD and never invents a mandate the API does not
+ * serve:
+ *
+ *   - the ROLE, read from the instance ref's own grammar
+ *     (`ai:<role>-<serial>` — the id IS the served identity);
+ *   - the MANDATE the whole organization works — the project's own
+ *     goal statement (objective + budgets + horizon, the records the
+ *     Goal section renders);
+ *   - the OBSERVED ACTS — the watch feed's own events for that agent
+ *     (counted + capability-named, the seven-lens record verbatim);
+ *   - the honest disclosure: the per-agent mandate TEXT is not served
+ *     by the API today (stated in-card, never papered over).
+ */
+function instanceRoleOf(instanceRef: string): string {
+  // The served instance refs' own grammar: `ai:<role>-<serial>` (the
+  // fixtures' ai:director-1 / ai:researcher-2). Anything else reads as
+  // 'unspecified' — never a guessed role.
+  const match = /^ai:([a-z]+)-\d+$/i.exec(instanceRef);
+  return match === null ? 'unspecified' : (match[1] ?? 'unspecified');
+}
+
+/** One org instance's drill-down section (the sheet's own definition grid). */
+function instanceSectionOf(state: WorkspaceState, instanceRef: string, viewAt: number): DefinitionSection {
+  const acts = projectToView(watchEventsOf(state), viewAt, (event) => event.at).filter((event) => event.agent === instanceRef);
+  const capabilities = [...new Set(acts.map((event) => event.capability).filter((capability): capability is string => capability !== null))];
+  const mandate = state.goal === null
+    ? 'no goal statement on record for this project'
+    : state.goal.objective;
+  const budget = state.world === null
+    ? 'no launch specification on record'
+    : `capital ${state.world.capitalBudget} · risk ${state.world.riskBudget} · horizon ${formatInstantUtc(state.world.horizon.startsAt)} → ${formatInstantUtc(state.world.horizon.endsAt)}`;
+  return {
+    eyebrow: `INSTANCE ${instanceRef}`,
+    pairs: [
+      ['role', `${instanceRoleOf(instanceRef)} (read from the instance ref’s own grammar)`],
+      ['mandate (the organization’s own goal)', mandate],
+      ['budget', budget],
+      ['observed acts at this view instant', `${acts.length} watch event${acts.length === 1 ? '' : 's'}${capabilities.length > 0 ? ` (${capabilities.join(', ')})` : ''}`],
+    ],
+  };
+}
+
+/** The snapshot's detail sheet (FW-34-B: the per-instance drill-down rides it). */
+function snapshotDetailSheet(state: WorkspaceState, snapshot: OrgStatusSnapshot, viewAt: number): VNode[] {
+  assertProjectScope(state.scope, snapshot);
   visibleAt(snapshot, availabilityOfOrgSnapshot(snapshot), viewAt, snapshot.organizationRef);
+  const instances = snapshot.instanceRefs.map((instanceRef) => instanceSectionOf(state, instanceRef, viewAt));
   return detailSheet({
     sheetId: `snapshot:${snapshot.organizationRef}`,
     title: snapshot.organizationRef,
-    subtitle: 'organization snapshot',
+    subtitle: `organization snapshot${state.project === null ? '' : ` · ${state.project.name}`}`,
     details: [
       { eyebrow: 'STATUS', pairs: [['state', snapshot.status], ['observed at', formatInstantUtc(snapshot.at)]] },
-      { eyebrow: 'IDENTITY', pairs: [['organization', snapshot.organizationRef], ['project', snapshot.project], ['instances', snapshot.instanceRefs.join(', ') || 'none']] },
+      { eyebrow: 'IDENTITY', pairs: [['organization', snapshot.organizationRef], ['project', snapshot.project], ['instances', String(snapshot.instanceRefs.length)]] },
+      ...instances,
+      ...(state.goal === null ? [] : [{
+        eyebrow: 'THE MANDATE THIS ORGANIZATION WORKS',
+        pairs: [
+          ['objective', state.goal.objective],
+          ['goal ref', state.goal.id],
+        ] as const,
+      }]),
     ],
+    // The honest disclosure rides the sheet's FOOTER slot (inside the
+    // dialog, the FW-33-B provenance slot's own pattern): the served
+    // snapshot carries instance refs only — the per-agent mandate text
+    // is not served by the API today, and nothing here is invented.
+    footer: [v('p', { class: 'card-note' }, ['The organization status the API serves carries instance refs and the org-level state; roles are read from the refs\u2019 own grammar, the mandate is the project\u2019s own goal statement, and per-agent mandate text is not served yet \u2014 nothing here is invented.'])],
   });
 }
 
@@ -787,8 +849,12 @@ function timeMachineBar(state: WorkspaceState, viewAt: number, view: ShellView):
       progress,
       // FW-33-B (Round B blocker 5): the disclosed speed select — the
       // chrome's chosen key rides the control (the closed set's own
-      // step, the honest caption beneath).
+      // step, the honest caption beneath). FW-34-B: the FREE speed's
+      // committed text + named refusal ride the same control (the
+      // effective step is the free speed's when one is valid).
       speed: view.playbackSpeed,
+      customSpeed: view.playbackCustomSpeed,
+      customSpeedError: view.playbackCustomSpeedError,
     }),
     v('p', { class: 'hint' }, ['Every visible datum passed the availability projection for this view instant (L4).']),
   ]);
@@ -975,7 +1041,7 @@ function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView):
   }
   const snapshot = state.orgSnapshots.find((candidate) => candidate.organizationRef === sheet.id);
   if (snapshot === undefined) return [];
-  return snapshotSheet(state.scope, snapshot, viewAt);
+  return snapshotDetailSheet(state, snapshot, viewAt);
 }
 
 /**
@@ -1358,8 +1424,27 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       ]);
   } else if (selector === 'execution') {
       const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
+      // FW-34-B (Round C register §3.7 — L4's finding: "no aggregate
+      // blotter totals (filled notional/fees)"): THE TOTALS CARD, a pure
+      // fold of the SAME projected rows the section renders (point-in-time
+      // honest — at a past view instant the totals are the totals THEN).
+      // Exact decimal sums (never float math); refusals count in their own
+      // row — the blotter's honest shape includes what the gateway STOPPED.
+      const totals = blotterTotalsOf(submissions);
       return v('section', { class: 'panel', 'data-section': 'execution' }, [
         v('p', { class: 'hint' }, ['The console submits execution REQUESTS through the API; the gateway alone decides (L8/L20).']),
+        ...(submissions.length === 0 ? [] : [
+          v('div', { class: 'card blotter-totals', 'data-blotter-totals': 'true' }, [
+            v('div', { class: 'card-title' }, ['Execution totals']),
+            ...factRows([
+              ['fills', String(totals.fills)],
+              ['notional total', renderDecimal(totals.notionalTotal)],
+              ['fee total', renderDecimal(totals.feeTotal)],
+              ['refusals (stopped by the gateway)', String(totals.refusals)],
+            ]),
+            v('p', { class: 'card-note' }, [blotterTotalsNoteOf(totals)]),
+          ]),
+        ]),
         ...submissions.map((submission) => v('div', { class: 'decision-block' }, [
           submissionCard(scope, submission, viewAt),
           capsuleInline(capsuleFromSubmission(scope, submission), viewAt, view.openCapsule),

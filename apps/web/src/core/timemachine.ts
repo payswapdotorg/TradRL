@@ -87,6 +87,49 @@ export function isPlaybackSpeedKey(value: unknown): value is PlaybackSpeedKey {
   return typeof value === 'string' && (PLAYBACK_SPEED_KEYS as readonly string[]).includes(value);
 }
 
+/**
+ * FW-34-B (Round C register §3.2 — the closed-set residual, L3/L1/M5/S5):
+ * THE FREE SPEED INPUT's own validated grammar. The disclosed set stays
+ * (1x/10x/100x — one select, the honest caption beside it); the FREE input
+ * accepts any POSITIVE multiple of the 1x step (0.5x … 10000x), so an
+ * analyst can traverse an incident at exactly the rate their review needs
+ * (L3: "the speed set is CLOSED (no 0.5x/2x/custom)"). The multiplier maps
+ * to the same per-beat advance every speed key maps to —
+ * `multiplier × TIME_MACHINE_STEP_MS` ms per scheduler beat — and the
+ * bounds are the input's own honest law: a multiple below 0.5x or above
+ * 10000x (or a non-number, an empty string, an infinity, a NaN) is
+ * REFUSED with the reason named (never clamped silently — a speed the
+ * user did not type is a speed the caption must not claim).
+ */
+export const PLAYBACK_CUSTOM_SPEED_MIN = 0.5;
+
+/** The free speed's upper bound (10000x = 5,000,000ms per beat — an honest ceiling, refused beyond). */
+export const PLAYBACK_CUSTOM_SPEED_MAX = 10_000;
+
+/** The parsed outcome of one free-speed input: either the validated step or the named refusal. */
+export type PlaybackCustomSpeed = { readonly ok: true; readonly multiplier: number; readonly stepMs: number } | { readonly ok: false; readonly reason: string };
+
+/**
+ * Parse the free speed input's committed text (the change/Enter commit).
+ * The grammar: a positive decimal multiple of the 1x step, e.g. "2" or
+ * "0.5" or "12.5". The step is ALWAYS an integer of milliseconds (the
+ * machine's own law — startPlayback/retunePlayback refuse a fractional
+ * step), so a multiplier whose step rounds to 0 is refused (0.5x = 250ms
+ * is the floor by construction).
+ */
+export function parsePlaybackCustomSpeed(text: string): PlaybackCustomSpeed {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return { ok: false, reason: 'enter a speed as a multiple of the 1x step, e.g. 2 or 0.5' };
+  const multiplier = Number(trimmed);
+  if (!Number.isFinite(multiplier)) return { ok: false, reason: `"${trimmed}" is not a number — enter a speed as a multiple of the 1x step, e.g. 2 or 0.5` };
+  if (multiplier <= 0) return { ok: false, reason: 'the speed must be a positive multiple of the 1x step' };
+  if (multiplier < PLAYBACK_CUSTOM_SPEED_MIN) return { ok: false, reason: `the slowest free speed is ${PLAYBACK_CUSTOM_SPEED_MIN}x (${PLAYBACK_CUSTOM_SPEED_MIN * TIME_MACHINE_STEP_MS}ms per beat)` };
+  if (multiplier > PLAYBACK_CUSTOM_SPEED_MAX) return { ok: false, reason: `the fastest free speed is ${PLAYBACK_CUSTOM_SPEED_MAX}x (${PLAYBACK_CUSTOM_SPEED_MAX * TIME_MACHINE_STEP_MS}ms per beat)` };
+  const stepMs = Math.round(multiplier * TIME_MACHINE_STEP_MS);
+  if (stepMs < 1) return { ok: false, reason: `the slowest free speed is ${PLAYBACK_CUSTOM_SPEED_MIN}x (${PLAYBACK_CUSTOM_SPEED_MIN * TIME_MACHINE_STEP_MS}ms per beat)` };
+  return { ok: true, multiplier, stepMs };
+}
+
 /** The Time Machine state (pure — transitions below). */
 export interface TimeMachineState {
   readonly mode: TimeMachineMode;
