@@ -17,7 +17,7 @@
 //      the last known world, never a blank.
 
 import { describe, expect, it } from 'vitest';
-import type { ConstraintSetStatement, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ServedKnowledge } from '../api/contracts';
 import type { LaunchDraft } from '../core/launch';
 import { systemNowMs } from '../core/clock';
 import { AvailabilityViolationError, CrossTenantRenderError, PolicyEnforcementError, WallClockReadError } from '../core/errors';
@@ -1065,5 +1065,122 @@ describe('render model: FW-32-B — Home\'s capsule stat is the Evidence section
     const jobCapsule = capsuleFromJob(SCOPE, { jobId: 'job:57d1815d', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: T0 + 40, completedAt: T0 + 48, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' } });
     expect(evidenceBytes).toContain(`data-capsule-row="${jobCapsule.capsuleId}"`);
     expect(Number(tile[1])).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-33-B (Round B blocker 6, M3 + S2) — THE DEMO SCOPE'S OBSERVED WORLD:
+// every new user's first view is the demo scope, whose seeded goal
+// genuinely serves no `world` (the host route's additive field) — the
+// section rendered "No launch context yet" over an ACTIVE desk. The
+// honest render is the world state that EXISTS: the markets and venues
+// the desk's execution submissions name, projected at the view instant
+// (L4). The teaching empty state survives ONLY for a scope whose
+// records show nothing.
+// ---------------------------------------------------------------------------
+
+describe('render model: FW-33-B — the observed market world of a world-less scope', () => {
+  /** A minimal goal statement (the demo scope's own shape — NO world field ever rides it). */
+  function demoGoal(): GoalStatement {
+    return {
+      id: 'goal-tradrl-demo', version: 1, tenantId: 'tenant-a', objective: 'Operate the demo organization inside its declared risk envelope.',
+      horizon: { startsAt: T0 - 90_000, endsAt: T0 + 90_000, label: 'the demo evaluation window' },
+      successCriteria: { criteria: [], requiredSatisfaction: 1 },
+      evaluation: { blindRef: 'ev-blind', walkForwardRef: 'ev-wf', regimeRef: 'ev-regime', adversarialRequired: false },
+      createdAt: T0 - 1_000,
+    };
+  }
+
+  /** A minimal constraint set (the goal-loaded pair's second half). */
+  function demoConstraintSet(): ConstraintSetStatement {
+    return { id: 'cs-tradrl-demo', version: 1, tenantId: 'tenant-a', name: 'the demo constraint set', constraints: [], createdAt: T0 - 1_000 };
+  }
+
+  /** One routed blotter row with its order leg (the demo backing's own shape: BTC-USD orders on BROKER-FIX). */
+  function blotterRow(overrides: Partial<GatewaySubmissionRecord> & { readonly routedAt: number }): GatewaySubmissionRecord {
+    return {
+      kind: 'routed',
+      submissionId: 'xgs:demo',
+      decisionId: 'xd:demo',
+      auditId: 'xga:demo',
+      requestRef: 'gor:demo',
+      venue: 'BROKER-FIX',
+      adapterRef: 'adapter:demo-broker',
+      channelRef: 'chan:demo-main',
+      order: {
+        clientOrderId: 'ord-demo',
+        instrumentId: 'BTC-USD',
+        venueId: 'BROKER-FIX',
+        side: 'buy',
+        kind: 'limit',
+        quantity: '0.75',
+        price: '61000.50',
+        timeInForce: 'gtc',
+        createdAt: new Date(overrides.routedAt).toISOString(),
+      },
+      ...overrides,
+    } as GatewaySubmissionRecord;
+  }
+
+  it("a world-less scope with execution submissions renders the OBSERVED world — the demo scope's every first view — never \"No launch context yet\"", () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      // the demo scope's own reads: a goal bundle with NO world field (the wire truth) + the seeded blotter
+      { kind: 'goal-loaded', at: T0 + 5, goal: demoGoal(), constraintSet: demoConstraintSet() }, // NO world on the wire
+      { kind: 'submission-recorded', at: T0 + 40, submission: blotterRow({ routedAt: T0 + 30 }) },
+      { kind: 'submission-recorded', at: T0 + 41, submission: blotterRow({ submissionId: 'xgs:demo2', decisionId: 'xd:demo2', auditId: 'xga:demo2', requestRef: 'gor:demo2', routedAt: T0 + 31, order: { clientOrderId: 'ord-demo2', instrumentId: 'ETH-USD', venueId: 'BROKER-FIX', side: 'sell', kind: 'limit', quantity: '6.0', price: '3412.10', timeInForce: 'gtc', createdAt: new Date(T0 + 31).toISOString() } }) },
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-market-world="observed"');            // the observed-world card
+    expect(bytes).toContain('Market world (observed)');                 // the honest title — never "No launch context yet"
+    expect(bytes).toContain('BTC-USD, ETH-USD');                        // the markets the orders name
+    expect(bytes).toContain('BROKER-FIX');                              // the venue the orders name
+    expect(bytes).toContain('none on record');                          // data sources carry no record — never fabricated
+    expect(bytes).not.toContain('No launch context yet');               // the misleading teaching state is GONE
+    // the card names its own derivation (the honesty law)
+    expect(bytes).toContain('no launch specification on record');
+    expect(bytes).toContain('observed from its own execution submissions');
+  });
+
+  it('the observed world is L4-PROJECTED: a view instant BEFORE the first submission renders the teaching empty state (nothing was knowable then)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'goal-loaded', at: T0 + 5, goal: demoGoal(), constraintSet: demoConstraintSet() },
+      { kind: 'submission-recorded', at: T0 + 40, submission: blotterRow({ routedAt: T0 + 30 }) },
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    // the view instant sits BEFORE the blotter's verdict instant — the observed fold sees nothing
+    const early = reduceAll(state, [{ kind: 'view-timestamp', at: T0 + 50, timestamp: T0 + 10 }]);
+    const bytes = serializeConsoleModel(early, T0 + 50);
+    expect(bytes).toContain('No launch context yet — the market world is specified at launch.'); // the honest teaching state at this instant
+    expect(bytes).not.toContain('data-market-world="observed"');
+    // ...and the same state at a view AFTER the verdict renders the observed world again (the projection is instant-derived, never sticky)
+    const later = reduceAll(state, [{ kind: 'view-timestamp', at: T0 + 50, timestamp: T0 + 35 }]);
+    expect(serializeConsoleModel(later, T0 + 50)).toContain('data-market-world="observed"');
+  });
+
+  it('a world-less scope with an EMPTY blotter keeps the teaching empty state (the genuine case — nothing to observe)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'goal-loaded', at: T0 + 5, goal: demoGoal(), constraintSet: demoConstraintSet() }, // NO world
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('No launch context yet — the market world is specified at launch.');
+    expect(bytes).not.toContain('data-market-world="observed"');
+    expect(bytes).toContain('Open Goal'); // the single action stays
+  });
+
+  it('a routed row with NO order leg still names its venue (the routed verdict carries it); a refused row with an order leg names its market', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'submission-recorded', at: T0 + 40, submission: { kind: 'routed', submissionId: 'sub-legless', decisionId: 'dec', auditId: 'aud', requestRef: 'req', venue: 'VENUE-ROUTE-ONLY', adapterRef: 'ad', channelRef: 'ch', routedAt: T0 + 30 } as GatewaySubmissionRecord },
+      { kind: 'submission-recorded', at: T0 + 41, submission: blotterRow({ routedAt: T0 + 31, order: { clientOrderId: 'ord-3', instrumentId: 'SOL-USD', venueId: 'VENUE-ORDER', side: 'buy', kind: 'limit', quantity: '1', price: '100', timeInForce: 'gtc', createdAt: new Date(T0 + 31).toISOString() } }) },
+      { kind: 'section-selected', at: T0 + 50, section: 'market-world' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('SOL-USD');                    // the order's own instrument
+    expect(bytes).toContain('VENUE-ROUTE-ONLY, VENUE-ORDER'); // BOTH venues, first-appearance order (the route fallback then the order's own)
   });
 });

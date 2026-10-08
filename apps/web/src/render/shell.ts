@@ -24,6 +24,7 @@ import type { ThemeName } from '../core/theme';
 import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellTarget } from '../core/nav';
 import { isLaunchpadScope } from '../core/tenant';
 import { formatInstantUtc } from '../core/format';
+import type { PlaybackSpeedKey } from '../core/timemachine';
 import { notificationBell, toastRecord } from './flow';
 import { paletteAffordance, paletteOverlay, fuzzyScore } from '../core/palette';
 import { onboardingPanel, onboardingReopenAffordance, type OnboardingState } from '../core/onboarding';
@@ -93,6 +94,16 @@ export interface ShellView {
    * the drag's first buffered input, cleared at the change-commit.
    */
   readonly scrubBounds: { readonly min: number; readonly max: number } | null;
+  /**
+   * FW-33-B (Round B blocker 5) — THE DISCLOSED PLAYBACK SPEED: the
+   * speed key the Time Machine's select shows (1x / 10x / 100x — the
+   * step-per-beat each advances by, core/timemachine.ts's closed set).
+   * Chrome state, not machine state: it selects the NEXT arm's step,
+   * and a committed change on an ARMED playback re-arms that playback
+   * at its current view instant with the new step (the app layer
+   * dispatches the machine's playback-retuned event).
+   */
+  readonly playbackSpeed: PlaybackSpeedKey;
 }
 
 /** A reference to the record a detail sheet shows (§4.5a). */
@@ -118,7 +129,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null, scrubBounds: null };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null, scrubBounds: null, playbackSpeed: '1x' };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */

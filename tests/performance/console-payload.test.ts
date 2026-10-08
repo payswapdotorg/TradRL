@@ -64,9 +64,21 @@ function consolePayload(): { readonly files: readonly string[]; readonly bytes: 
 describe('the console boot payload budgets (the no-build console\'s boot transfer)', () => {
   // The recorded budgets. Today's measurements (2026-10-05, main @ 14357ae):
   //   38 files, 501,755 bytes total (490.0 KiB), largest file src/loader/strip-types.ts at 61,327 bytes.
-  // The budgets carry deliberate headroom (~1.5x): growing past one is a CONSCIOUS decision.
+  // Re-recorded (FW-33-B, 2026-10-08): 40 files, 808,591 bytes total (789.6 KiB),
+  //   largest src/app/console.ts. The T050 headroom was consumed by the fix
+  //   waves (main @ 8ab358a measured 763.6 of the 768 KiB budget — 99.4%);
+  //   FW-33-B's four product fixes (the in-dialog Propose affordance, the
+  //   horizon datetime grammar, the playback speed select + the anchor
+  //   clamp, the observed Market World) added 26.0 KiB of source — the
+  //   no-build console transfers the source itself, documentation included.
+  //   The byte budget was CONSCIOUSLY raised 768 -> 896 KiB per this file's
+  //   own protocol ("growing past one is a CONSCIOUS decision" — the
+  //   measurement note records this crossing; the next one needs its own).
+  //   NB: src/app/console.ts now measures 125.5 of the 128 KiB single-file
+  //   budget — the next growth there crosses that one too.
+  // The budgets carry deliberate headroom: growing past one is a CONSCIOUS decision.
   const FILE_COUNT_BUDGET = 64; // each source is one boot fetch — the fetch count stays bounded
-  const TOTAL_BYTES_BUDGET = 768 * 1024; // 768 KiB — the whole boot transfer
+  const TOTAL_BYTES_BUDGET = 896 * 1024; // 896 KiB — the whole boot transfer (raised from 768 KiB at FW-33-B — see the note above)
   const LARGEST_FILE_BUDGET = 128 * 1024; // 128 KiB — one fetch + one strip pass
 
   it('the payload is the copy spec\'s set on the real tree: index.html + non-test sources, NO test sources, the loader\'s critical path present', () => {

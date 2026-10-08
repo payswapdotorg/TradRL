@@ -18,17 +18,23 @@ import { AvailabilityViolationError } from './errors';
 import {
   advanceAnchor,
   backToLive,
+  isPlaybackSpeedKey,
   liveTimeMachine,
   pausePlayback,
   playbackProgressOf,
+  playbackStepMsOf,
+  PLAYBACK_SPEED_KEYS,
   resumePlayback,
+  retunePlayback,
   setTimestamp,
   setTMinus,
   startPlayback,
+  stopPlaybackAtAnchor,
   stepBackPlayback,
   stepForwardPlayback,
   tickPlayback,
   viewAtOf,
+  TIME_MACHINE_STEP_MS,
 } from './timemachine';
 
 const ANCHOR = 1_700_000_000_000;
@@ -308,5 +314,103 @@ describe('timemachine: THE L4 INTERACTION (the demanded pin)', () => {
   it('live view at the anchor: the late datum still hidden (its availability is after the anchor)', () => {
     const live = liveTimeMachine(ANCHOR);
     expect(projectToView(records, viewAtOf(live), (r) => r.availableAt)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-33-B (Round B blocker 5) — THE DISCLOSED PLAYBACK SPEEDS + THE RETUNE.
+// ---------------------------------------------------------------------------
+
+describe('FW-33-B: the disclosed playback speeds', () => {
+  it('the closed set: 1x is the pre-FW-33-B knowable-then step; 10x/100x step 5s/50s per beat', () => {
+    expect(PLAYBACK_SPEED_KEYS).toEqual(['1x', '10x', '100x']);
+    expect(playbackStepMsOf('1x')).toBe(TIME_MACHINE_STEP_MS);
+    expect(playbackStepMsOf('10x')).toBe(5_000);
+    expect(playbackStepMsOf('100x')).toBe(50_000);
+    expect(isPlaybackSpeedKey('10x')).toBe(true);
+    expect(isPlaybackSpeedKey('1000x')).toBe(false); // a speed outside the disclosed set is never accepted
+    expect(isPlaybackSpeedKey(10)).toBe(false);
+  });
+
+  it('retunePlayback re-arms the ARMED playback at its CURRENT view instant with the new step — no view jump, paused preserved', () => {
+    let machine = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 10_000, TIME_MACHINE_STEP_MS);
+    machine = tickPlayback(machine);
+    machine = tickPlayback(machine);
+    const viewBefore = viewAtOf(machine); // ANCHOR - 9000
+    const retuned = retunePlayback(machine, 5_000);
+    expect(viewAtOf(retuned)).toBe(viewBefore); // the view does not move
+    expect(retuned.playback?.stepMs).toBe(5_000);
+    expect(retuned.playback?.fromAt).toBe(viewBefore); // re-armed AT the current view
+    expect(retuned.playback?.ticks).toBe(0);
+    expect(retuned.playback?.paused).toBe(false);
+    // the next tick advances by the NEW step
+    expect(viewAtOf(tickPlayback(retuned))).toBe(viewBefore + 5_000);
+  });
+
+  it("retunePlayback preserves a PAUSED playback's freeze (only the next tick's step changes)", () => {
+    // armed 60s back so the 100x step's first resumed leap (50s) stays
+    // inside the anchor — the pure machine's own typed law (the test
+    // below) is never excused by the retune
+    let machine = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 60_000, TIME_MACHINE_STEP_MS);
+    machine = tickPlayback(machine);
+    machine = pausePlayback(machine);
+    const frozenAt = viewAtOf(machine);
+    const retuned = retunePlayback(machine, 50_000);
+    expect(retuned.playback?.paused).toBe(true); // still frozen
+    expect(viewAtOf(retuned)).toBe(frozenAt);
+    expect(tickPlayback(retuned)).toBe(retuned); // the freeze law holds under the new step too
+    // resume steps forward by the NEW step from exactly the frozen instant
+    const resumed = resumePlayback(retuned);
+    expect(viewAtOf(tickPlayback(resumed))).toBe(frozenAt + 50_000);
+  });
+
+  it("retunePlayback is the siblings' own typed error when playback is not armed (never a silent no-op)", () => {
+    const live = liveTimeMachine(ANCHOR);
+    expect(() => retunePlayback(live, 5_000)).toThrow(/playback not armed/);
+    const badStep = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 100, TIME_MACHINE_STEP_MS);
+    expect(() => retunePlayback(badStep, -1)).toThrow(/non-negative integer of milliseconds/);
+  });
+
+  it('the retune never breaks the anchor law (the view was already legal; the ceiling still holds)', () => {
+    let machine = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 10_000, TIME_MACHINE_STEP_MS);
+    machine = tickPlayback(machine);
+    machine = retunePlayback(machine, 50_000);
+    // a tick beyond the anchor stays the machine's own typed error — speed never licenses the future
+    let current = machine;
+    for (let tick = 0; tick < 300; tick += 1) {
+      const nextView = current.playback === null ? null : current.playback.fromAt + (current.playback.ticks + 1) * current.playback.stepMs;
+      if (nextView === null || nextView > current.anchorAt) break;
+      current = tickPlayback(current);
+    }
+    expect(viewAtOf(current)).toBeLessThanOrEqual(current.anchorAt);
+    expect(() => {
+      let hot = current;
+      while (hot.playback !== null && hot.playback.fromAt + (hot.playback.ticks + 1) * hot.playback.stepMs <= hot.anchorAt) hot = tickPlayback(hot);
+      tickPlayback(hot); // the one step past the anchor — the typed law
+    }).toThrow(/never the future/);
+  });
+
+  it('stopPlaybackAtAnchor — the seam\'s clamp: a tick whose step would pass the anchor LANDS AT it and stops (paused, the disclosed step preserved) — the workspace event layer\'s graceful form of the same law', () => {
+    // armed 6s back with a 5s step: the first step lands 1s before
+    // "now"; the NEXT 5s step would pass it — the one the seam clamps
+    let machine = startPlayback(liveTimeMachine(ANCHOR), ANCHOR - 6_000, 5_000);
+    machine = tickPlayback(machine);
+    expect(viewAtOf(machine)).toBe(ANCHOR - 1_000);         // the first step: a full 5s leap, 1s before "now"
+    const clamped = stopPlaybackAtAnchor(machine);
+    expect(viewAtOf(clamped)).toBe(ANCHOR);                 // landed AT "now" — the final partial step (1s), never past it
+    expect(clamped.playback?.fromAt).toBe(ANCHOR);          // re-armed at "now"
+    expect(clamped.playback?.ticks).toBe(0);
+    expect(clamped.playback?.stepMs).toBe(5_000);           // the disclosed step survives the clamp
+    expect(clamped.playback?.paused).toBe(true);            // stopped there, as a pause would
+    expect(playbackProgressOf(clamped)).toBe(1);            // the progress readout: caught up (100%)
+    // a resumed playback at "now" clamps again on its next tick — the view never moves past the anchor, whatever the speed
+    const resumed = resumePlayback(clamped);
+    const reclamped = stopPlaybackAtAnchor(resumed);
+    expect(viewAtOf(reclamped)).toBe(ANCHOR);
+    expect(reclamped.playback?.paused).toBe(true);
+    // the PURE tick keeps its typed law — the clamp is the seam's form of it, never the machine's
+    expect(() => tickPlayback(resumed)).toThrow(/never the future/);
+    // a disarmed machine is the siblings' own typed error, never a silent no-op
+    expect(() => stopPlaybackAtAnchor(liveTimeMachine(ANCHOR))).toThrow(/playback not armed/);
   });
 });

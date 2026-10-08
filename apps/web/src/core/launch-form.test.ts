@@ -28,12 +28,14 @@ import {
   blankLaunchDraft,
   editLaunchField,
   firstBadConstraintEntry,
+  formatHorizonInstant,
   launchFieldValidation,
   launchFieldValue,
   launchDraftProblems,
   launchFormValues,
   launchFormValuesOfDraft,
   parseConstraintsValue,
+  parseHorizonInstant,
   parseListValue,
   parsePreferencesValue,
   type LaunchFormValues,
@@ -42,7 +44,7 @@ import {
 
 const T0 = 1_700_000_000_000;
 
-/** A fully valid form (every field valid — the review gate's passing case). */
+/** A fully valid form (every field valid — the review gate's passing case). FW-33-B: the horizon fields carry the datetime-local grammar (UTC, second precision — the form's own canonical shape), never raw epoch ms. */
 function validValues(): LaunchFormValues {
   return {
     name: 'Momentum scout',
@@ -52,8 +54,8 @@ function validValues(): LaunchFormValues {
     markets: 'binance:BTC-USDT, kraken:ETH-USDT',
     venues: 'binance, kraken',
     dataSources: 'candles:1m, ticker',
-    horizonStartsAt: String(T0),
-    horizonEndsAt: String(T0 + 86_400_000),
+    horizonStartsAt: formatHorizonInstant(T0),
+    horizonEndsAt: formatHorizonInstant(T0 + 86_400_000),
     executionMode: 'simulation',
     preferences: 'rebalance=daily, report=weekly',
     constraints: 'c-1:outcome:risk.maxDrawdown:limit.max:0.2, c-2:action:position.size:limit.max:10:advisory',
@@ -154,8 +156,8 @@ describe('launch-form: the per-field §4.11 validation', () => {
       ['markets', ' , ,', 'List at least one market.'],
       ['venues', '', 'List at least one venue.'],
       ['dataSources', '   ', 'List at least one data source.'],
-      ['horizonStartsAt', 'soon', 'Enter the horizon instants as epoch milliseconds.'],
-      ['horizonEndsAt', 'never', 'Enter the horizon instants as epoch milliseconds.'],
+      ['horizonStartsAt', 'soon', 'Enter the horizon as a UTC date and time, e.g. 2026-01-15T09:30:00 (epoch milliseconds also parse).'],
+      ['horizonEndsAt', 'never', 'Enter the horizon as a UTC date and time, e.g. 2026-01-15T09:30:00 (epoch milliseconds also parse).'],
       ['executionMode', 'paper', 'Choose an execution mode.'],
       ['preferences', 'broken', 'Preferences are key=value pairs, e.g. rebalance=daily.'],
       // D-6b (W-25C): the constraint message NAMES the offending entry —
@@ -173,9 +175,12 @@ describe('launch-form: the per-field §4.11 validation', () => {
 
   it('the horizon PAIR: equal or inverted bounds are caught (on both fields)', () => {
     const base = validValues();
-    const inverted = { ...base, horizonEndsAt: String(T0) } as LaunchFormValues;
+    const inverted = { ...base, horizonEndsAt: formatHorizonInstant(T0) } as LaunchFormValues; // equal to the start
     expect(launchFieldValidation(inverted, 'horizonEndsAt')).toBe('The horizon must end after it starts.');
     expect(launchFieldValidation(inverted, 'horizonStartsAt')).toBe('The horizon must end after it starts.');
+    // the epoch-ms form (the seeded drafts' own shape) still validates
+    const epochForm = { ...base, horizonStartsAt: String(T0), horizonEndsAt: String(T0) } as LaunchFormValues;
+    expect(launchFieldValidation(epochForm, 'horizonStartsAt')).toBe('The horizon must end after it starts.');
   });
 
   it('D-6b: the constraint validation names the OFFENDING entry — a mixed list points at the broken one (index + raw text), the good ones stay unnamed', () => {
@@ -244,5 +249,63 @@ describe('launch-form: the pending-edit merge', () => {
     for (const field of LAUNCH_FIELD_NAMES) draft = editLaunchField(draft, field, validValues()[field]);
     expect(launchFormValues(draft, {})).toEqual(validValues());
     expect(launchFormValues(draft, {})).toEqual(launchFormValuesOfDraft(draft));
+  });
+});
+
+describe('launch-form: FW-33-B — the horizon datetime grammar (Round B blocker 3)', () => {
+  it('parses the datetime-local grammar as UTC: date-only, minute and second precision', () => {
+    // 2023-11-14T22:13:20Z = T0 (the whole console renders UTC; the input's hint says so)
+    expect(parseHorizonInstant('2023-11-14T22:13:20')).toBe(Date.UTC(2023, 10, 14, 22, 13, 20));
+    expect(parseHorizonInstant('2023-11-14T22:13')).toBe(Date.UTC(2023, 10, 14, 22, 13, 0));
+    expect(parseHorizonInstant('2023-11-14')).toBe(Date.UTC(2023, 10, 14, 0, 0, 0));
+    expect(parseHorizonInstant('  2023-11-14T22:13:20  ')).toBe(Date.UTC(2023, 10, 14, 22, 13, 20)); // trimmed
+  });
+
+  it('a bare epoch-ms integer still parses (the seeded drafts and pre-FW-33-B edits round-trip)', () => {
+    expect(parseHorizonInstant(String(T0))).toBe(T0);
+    expect(parseHorizonInstant('0')).toBe(0);
+  });
+
+  it('refuses what is neither: garbage, impossible calendars, impossible clock components, empty', () => {
+    expect(parseHorizonInstant('')).toBeNull();
+    expect(parseHorizonInstant('soon')).toBeNull();
+    expect(parseHorizonInstant('2023-02-30')).toBeNull(); // Feb 30 is not a calendar date
+    expect(parseHorizonInstant('2023-13-01')).toBeNull(); // month 13
+    expect(parseHorizonInstant('2023-11-14T24:00')).toBeNull(); // hour 24
+    expect(parseHorizonInstant('2023-11-14T22:60')).toBeNull(); // minute 60
+    expect(parseHorizonInstant('2023-11-14T22:13:60')).toBeNull(); // second 60
+    expect(parseHorizonInstant('14/11/2023')).toBeNull(); // a locale-form date, never silently re-read
+    expect(parseHorizonInstant('0099-01-01')).toBeNull(); // Date.UTC remaps years <100 to 1900+year — never a silently-wrong instant
+  });
+
+  it('formatHorizonInstant renders the UTC datetime-local shape at SECOND precision (the lossless round-trip)', () => {
+    expect(formatHorizonInstant(Date.UTC(2026, 0, 15, 9, 30, 0))).toBe('2026-01-15T09:30:00');
+    expect(formatHorizonInstant(Date.UTC(2023, 10, 14, 22, 13, 20))).toBe('2023-11-14T22:13:20');
+    // the seeded draft's horizon renders as a DATE, never a 13-digit epoch integer (S5's finding)
+    const values = launchFormValuesOfDraft(blankLaunchDraft(T0));
+    expect(values.horizonStartsAt).toBe('2023-11-14T22:13:20');
+    expect(values.horizonStartsAt).not.toMatch(/^\d{13}$/);
+    // and the round-trip is exact: format -> parse -> the same instant
+    expect(parseHorizonInstant(values.horizonStartsAt)).toBe(T0);
+  });
+
+  it('editLaunchField absorbs a typed datetime and a typed epoch identically (one law, both forms)', () => {
+    const draft = blankLaunchDraft(T0);
+    expect(editLaunchField(draft, 'horizonEndsAt', '2023-11-20T09:00:00').horizon.endsAt).toBe(Date.UTC(2023, 10, 20, 9, 0, 0));
+    expect(editLaunchField(draft, 'horizonEndsAt', String(T0 + 60_000)).horizon.endsAt).toBe(T0 + 60_000);
+    expect(absorbedEdit('horizonStartsAt', '2023-11-14T22:13:20')).toBe(true);
+    expect(absorbedEdit('horizonStartsAt', 'soon')).toBe(false);
+    // the canonical form value of a datetime edit is the datetime form (never the epoch integer)
+    const edited = editLaunchField(draft, 'horizonStartsAt', '2023-11-14T22:13:20');
+    expect(launchFieldValue(edited, 'horizonStartsAt')).toBe('2023-11-14T22:13:20');
+  });
+
+  it('the validation message names the datetime grammar and never says "epoch milliseconds" alone (S5: "a CFO must hand-compute epoch milliseconds")', () => {
+    const base = validValues();
+    const broken = { ...base, horizonStartsAt: '2023-02-30' } as LaunchFormValues; // an impossible date
+    const message = launchFieldValidation(broken, 'horizonStartsAt');
+    expect(message).toBe('Enter the horizon as a UTC date and time, e.g. 2026-01-15T09:30:00 (epoch milliseconds also parse).');
+    expect(message).not.toBe('Enter the horizon instants as epoch milliseconds.');
+    expect(message).not.toContain(' 0'); // never a bare "0" (the pre-fix "ISO dates parse to 0")
   });
 });

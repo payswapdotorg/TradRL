@@ -54,6 +54,39 @@ export interface PlaybackState {
   readonly paused: boolean;
 }
 
+/**
+ * FW-33-B (Round B blocker 5, ~5 personas) — THE DISCLOSED PLAYBACK
+ * SPEEDS: the one controlled step a playback tick advances the view
+ * instant by, per scheduler beat (~1s). 1x is the pre-FW-33-B step
+ * (TIME_MACHINE_STEP_MS — 500ms/beat, the knowable-then granularity
+ * the Step controls disclose); 10x and 100x step 5s and 50s per beat
+ * so a multi-year history is traversable in a session. The speed NEVER
+ * changes what playback IS: each tick still renders only what was
+ * knowable then (L4) and never passes the anchor (the machine's own
+ * typed law) — the caption in the render says exactly that.
+ */
+export type PlaybackSpeedKey = '1x' | '10x' | '100x';
+
+/** The speed key -> step-per-tick mapping (one closed set, disclosed in the control). */
+export const PLAYBACK_SPEED_STEPS: Readonly<Record<PlaybackSpeedKey, number>> = Object.freeze({
+  '1x': TIME_MACHINE_STEP_MS,
+  '10x': 5_000,
+  '100x': 50_000,
+});
+
+/** The speed keys in render order (the select's own order). */
+export const PLAYBACK_SPEED_KEYS: readonly PlaybackSpeedKey[] = ['1x', '10x', '100x'];
+
+/** The step of one speed key (the closed set's own lookup — never a fabricated step). */
+export function playbackStepMsOf(speed: PlaybackSpeedKey): number {
+  return PLAYBACK_SPEED_STEPS[speed];
+}
+
+/** True when a string is one of the disclosed speed keys (the change-handler's guard). */
+export function isPlaybackSpeedKey(value: unknown): value is PlaybackSpeedKey {
+  return typeof value === 'string' && (PLAYBACK_SPEED_KEYS as readonly string[]).includes(value);
+}
+
 /** The Time Machine state (pure — transitions below). */
 export interface TimeMachineState {
   readonly mode: TimeMachineMode;
@@ -205,6 +238,47 @@ export function stepForwardPlayback(state: TimeMachineState): TimeMachineState {
   const next: TimeMachineState = { ...state, playback: { ...state.playback, ticks: state.playback.ticks + 1 } };
   requireNotAfterAnchor(viewAtOf(next), next.anchorAt);
   return next;
+}
+
+/**
+ * Transition: FW-33-B (Round B blocker 5) — RETUNE the ARMED playback's
+ * speed (the disclosed select's committed change). The playback
+ * RE-ARMS AT THE CURRENT VIEW INSTANT with the new step: the view does
+ * not jump (fromAt = the view this instant, ticks = 0) and the paused
+ * flag is PRESERVED (a paused playback stays paused — the freeze law;
+ * only the next tick's step changes). The anchor law holds by
+ * construction (the view instant was already legal). Playback not
+ * armed is the same typed input error the sibling controls raise —
+ * the speed of a DISARMED machine is the app layer's next-arm choice,
+ * never a machine transition.
+ */
+export function retunePlayback(state: TimeMachineState, stepMs: number): TimeMachineState {
+  requireNonNegativeMs(stepMs, 'the playback step');
+  if (state.mode !== 'playback' || state.playback === null) {
+    throw new Error('time machine: retuning the speed with playback not armed is a typed input error');
+  }
+  return { ...state, playback: { fromAt: viewAtOf(state), stepMs, ticks: 0, paused: state.playback.paused } };
+}
+
+/**
+ * Transition: FW-33-B (Round B blocker 5) — THE ANCHOR CLAMP for a tick
+ * whose step would PASS the anchor (the workspace seam's own guard —
+ * see reduceWorkspace's playback-tick). Playback LANDS AT the anchor:
+ * a final partial step (never a jump past "now", never the pure tick's
+ * typed future-inspection error) that re-arms the view AT "now" with
+ * ticks 0, and then STOPS — paused, exactly as if the user had paused
+ * there: playback has caught up with the present. The disclosed step
+ * is PRESERVED (a resumed playback at "now" clamps again on its next
+ * tick — the view never moves past the anchor, whatever the speed).
+ * The pure tickPlayback KEEPS its typed law (a direct machine tick
+ * past the anchor is still the future-inspection error); this
+ * transition is the seam's graceful total form of the same law.
+ */
+export function stopPlaybackAtAnchor(state: TimeMachineState): TimeMachineState {
+  if (state.mode !== 'playback' || state.playback === null) {
+    throw new Error('time machine: stopping at the anchor with playback not armed is a typed input error');
+  }
+  return { ...state, playback: { fromAt: state.anchorAt, stepMs: state.playback.stepMs, ticks: 0, paused: true } };
 }
 
 /** Transition: return to the live view. */

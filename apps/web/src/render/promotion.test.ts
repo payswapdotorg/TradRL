@@ -91,6 +91,38 @@ describe('the research→decision promotion surface (FW-32-A, Round A blocker 2)
     expect(bytes).toContain('data-job-promote="job:research01"');
   });
 
+  it('FW-33-B (Round B blocker 2): the affordance rides INSIDE the dialog surface — the LEAD of the sheet body, never a backdrop-covered sibling after the aside', () => {
+    // THE DEFECT: the affordance rendered AFTER `aside.sheet` as a page-left
+    // sibling below the fold, where the fixed `button.sheet-backdrop`
+    // (z-index 40, inset 0) covered it — elementFromPoint at its center hit
+    // the backdrop; only Tab+Enter reached it (7/9 personas).
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 20, job: researchJob() } as WorkspaceEvent,
+    ]);
+    const bytes = jobSheetBytes(state, 'job:research01');
+    const bodyIndex = bytes.indexOf('class="sheet-body"');
+    const affordanceIndex = bytes.indexOf('data-job-promotion="available"');
+    const statusIndex = bytes.indexOf('>STATUS<');
+    const sheetCloseIndex = bytes.indexOf('</aside>', bodyIndex);
+    expect(bodyIndex).toBeGreaterThan(-1);
+    expect(affordanceIndex).toBeGreaterThan(bodyIndex); // INSIDE the sheet body, not a sibling
+    expect(affordanceIndex).toBeLessThan(statusIndex);  // the LEAD slot: above the definition grid — visible without scrolling when the sheet opens
+    expect(affordanceIndex).toBeLessThan(sheetCloseIndex); // inside the dialog's own closing tag
+    // the job's OWN evidence capsule rides the FOOTER slot — inside the dialog too (the same defect class, fixed with it)
+    const capsuleIndex = bytes.indexOf('data-capsule-row=');
+    expect(capsuleIndex).toBeGreaterThan(bodyIndex);
+    expect(capsuleIndex).toBeGreaterThan(statusIndex);   // the footer: below the definition grid, inside the scrollable dialog
+    expect(capsuleIndex).toBeLessThan(sheetCloseIndex);
+    // the backdrop covers ONLY outside the dialog: it opens BEFORE the aside and never reappears after the sheet's close
+    const backdropIndex = bytes.indexOf('class="sheet-backdrop"');
+    const asideIndex = bytes.indexOf('class="sheet"');
+    expect(backdropIndex).toBeGreaterThan(-1);
+    expect(backdropIndex).toBeLessThan(asideIndex);
+    expect(bytes.indexOf('class="sheet-backdrop"', asideIndex)).toBe(-1);
+    // the affordance is a real button inside the dialog (the keyboard path stays: focusable, actionable)
+    expect(bytes).toContain('data-action="job-promote"');
+  });
+
   it('the affordance never renders for a job the route would honestly refuse (not complete, not research, not a release candidate)', () => {
     for (const job of [
       researchJob({ status: 'running', completedAt: undefined }),

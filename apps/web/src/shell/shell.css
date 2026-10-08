@@ -415,6 +415,11 @@
 }
 .card-title { font-weight: 650; font-size: 0.9375rem; }
 .card-note { font-size: 0.8125rem; color: var(--muted-foreground); margin: 0; }
+/* FW-33-B (Round B blocker 2): the sheet's inside-the-dialog LEAD slot —
+   the flagship action card (the Propose affordance) rides the TOP of the
+   sheet body, visually distinct (an accent edge) and never under the
+   backdrop the pre-fix sibling placement suffered. */
+.sheet-lead { border-left: 3px solid var(--accent); }
 .fact { display: grid; grid-template-columns: 11rem 1fr; gap: 8px; font-size: 0.8125rem; }
 .fact-label { color: var(--muted-foreground); }
 .fact-value { font-family: var(--font-mono); font-size: 0.75rem; overflow-wrap: anywhere; }
@@ -512,11 +517,11 @@
    stuck bar sat over low-viewport click points and people had to hunt
    for a scroll position that uncovered them). The reserve token covers
    the bar's tallest wrapped layout (the modes row + the controls row +
-   the notice line + padding); manual scrolling was always able to move
-   content past a top-sticky bar, and the z-index ladder keeps every
-   overlay above it (sheet 40/41, toasts 60, palette 70/71, the
-   onboarding overlay 80). */
-:root { --tm-bar-reserve: 104px; }
+   the notice line + the FW-33-B speed-caption line + padding); manual
+   scrolling was always able to move content past a top-sticky bar,
+   and the z-index ladder keeps every overlay above it (sheet 40/41,
+   toasts 60, palette 70/71, the onboarding overlay 80). */
+:root { --tm-bar-reserve: 124px; }
 html { scroll-padding-top: calc(var(--tm-bar-reserve) + 8px); }
 @media (max-width: 767px) {
   /* The mobile reserve adds the sticky 56px header (§2) to the bar's. */
@@ -955,7 +960,30 @@ details.list-row > summary::-webkit-details-marker { display: none; }
 }
 .tm-notice { flex-basis: 100%; font-size: 0.75rem; color: var(--muted-foreground); }
 .tm-progress { font-size: 0.75rem; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
-.tm-playback { display: inline-flex; gap: 6px; }
+.tm-playback { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* FW-33-B (Round B blocker 5): the disclosed playback speed select — 1x /
+   10x / 100x (the step-per-beat each advances by) + the honest caption
+   line beneath the controls (what playback does, never a claim the
+   machine does not support). */
+.tm-speed { display: inline-flex; align-items: center; gap: 6px; }
+.tm-speed-label {
+  font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.tm-speed-select {
+  cursor: pointer;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-family: inherit;
+}
+.tm-speed-select:focus-visible { outline: 2px solid var(--tradrl-live); outline-offset: 2px; }
+.tm-speed-note { flex-basis: 100%; font-size: 0.75rem; color: var(--muted-foreground); }
 
 /* §4.10 Notifications: the bell badge + toasts. */
 .nav-item.bell { position: relative; }
@@ -1360,6 +1388,9 @@ details.list-row > summary::-webkit-details-marker { display: none; }
   .icon-button { min-width: 44px; min-height: 44px; }
   /* The styled scrubber: the whole range input is the touch surface. */
   .tm-scrubber { min-height: 44px; }
+  /* FW-33-B: the playback speed select — the same 44px floor (J12's own
+     law: every interactive surface, not just the listed ones). */
+  .tm-speed-select { min-height: 44px; }
   /* The verify affordance's picker button — the file input is the touch
      surface (the D-11 law: no 19px targets, not even on a Settings side
      path; the ::file-selector-button box is what grows). */

@@ -43,6 +43,7 @@ import {
   launchDraftProblems,
   launchFieldValidation,
   launchFormValues,
+  parseHorizonInstant,
   type LaunchFormValues,
   type LaunchFieldName,
 } from '../core/launch-form';
@@ -390,6 +391,17 @@ function jobCard(scope: WorkspaceScope, job: JobRecord, viewAt: number): VNode {
 }
 
 /**
+ * FW-32-A (Round A blocker 2): the promoted decision of a job, as the
+ * workspace's own outcome records cite it (the additive
+ * `promotedFromJob` backlink). FW-33-B: named at module scope (the
+ * stripper law — complex shapes never ride inline annotations).
+ */
+interface JobPromotionRef {
+  /** The promoted decision's ref (the Decisions section renders the same lineage). */
+  readonly decisionRef: string;
+}
+
+/**
  * The job's detail sheet (§4.5a) — the same availability + scope gates as
  * the row. D-17 (W-29): the METRICS elapsed derives from the RECORD's own
  * timestamps (completedAt − submittedAt, elapsedMsOfJobRecord) — the
@@ -407,8 +419,16 @@ function jobCard(scope: WorkspaceScope, job: JobRecord, viewAt: number): VNode {
  * records cite it through the additive `promotedFromJob` backlink) renders
  * the promoted state — the decision ref, never a second button (the route
  * is idempotent; the affordance's honest end state is "promoted").
+ *
+ * FW-33-B (Round B blocker 2): the affordance — and the completed job's
+ * own evidence capsule — ride INSIDE the dialog surface (the sheet's
+ * lead/footer slots), never as siblings after `aside.sheet` where the
+ * fixed backdrop covered them (the mouse-unreachable placement 7/9
+ * personas met). The affordance rides the LEAD (visible without
+ * scrolling the moment the sheet opens); the capsule rides the FOOTER
+ * (supplementary provenance, inside the scrollable dialog).
  */
-function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, promotion: { readonly decisionRef: string } | null): VNode[] {
+function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, promotion: JobPromotionRef | null, capsule: EvidenceCapsule | null, openCapsule: string | null): VNode[] {
   assertProjectScope(scope, job);
   visibleAt(job, availabilityOfJob(job), viewAt, job.jobId);
   const status: DefinitionSection = {
@@ -448,8 +468,10 @@ function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, promoti
   };
   // FW-32-A: the promoted state rides the sheet's own definition grid (the
   // decision ref — the audit chain's new link); the PROPOSE affordance
-  // renders as the sheet's single primary action card, exactly like the
-  // sibling sections' section-action pattern.
+  // rides the sheet's LEAD slot (FW-33-B: inside the dialog, above the
+  // definition grid — visible without scrolling when the sheet opens,
+  // never under the backdrop), exactly like the sibling sections'
+  // section-action pattern.
   const promotionSection: DefinitionSection | null = promotion === null ? null : {
     eyebrow: 'PROMOTION',
     pairs: [
@@ -457,8 +479,8 @@ function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, promoti
       ['decision', promotion.decisionRef],
     ],
   };
-  const proposeAffordance: VNode[] = promotable && promotion === null
-    ? [v('div', { class: 'card', 'data-job-promotion': 'available' }, [
+  const proposeAffordance: readonly VNode[] = promotable && promotion === null
+    ? [v('div', { class: 'card sheet-lead', 'data-job-promotion': 'available' }, [
         v('div', { class: 'card-title' }, ['Promotion']),
         v('p', { class: 'card-note' }, ['Propose this release candidate as a decision — the promotion mints a decision record that cites this job and its deliverable, and it renders in the Decisions section with a backlink here.']),
         v('div', { class: 'tm-playback' }, [
@@ -466,15 +488,20 @@ function jobSheet(scope: WorkspaceScope, job: JobRecord, viewAt: number, promoti
         ]),
       ])]
     : [];
-  return [
-    ...detailSheet({
-      sheetId: `job:${job.jobId}`,
-      title: job.jobId,
-      subtitle: `${job.kind} job${result === null ? '' : ' · result available'}`,
-      details: [status, metrics, ...(result === null ? [] : [result]), ...(promotionSection === null ? [] : [promotionSection]), identity],
-    }),
-    ...proposeAffordance,
-  ];
+  // D-9 (W-28) + FW-33-B: the completed job's OWN evidence capsule rides
+  // the sheet's FOOTER slot — inside the dialog (the pre-fix sibling
+  // placement was the same below-the-fold, backdrop-covered defect the
+  // Propose affordance had). No capsule for a pending or failed job —
+  // nothing fabricated, L20.
+  const capsuleFooter: readonly VNode[] = capsule === null ? [] : [capsuleInline(capsule, viewAt, openCapsule)];
+  return detailSheet({
+    sheetId: `job:${job.jobId}`,
+    title: job.jobId,
+    subtitle: `${job.kind} job${result === null ? '' : ' · result available'}`,
+    details: [status, metrics, ...(result === null ? [] : [result]), ...(promotionSection === null ? [] : [promotionSection]), identity],
+    lead: proposeAffordance,
+    footer: capsuleFooter,
+  });
 }
 
 /** Render one org snapshot as an interactive list row. */
@@ -758,6 +785,10 @@ function timeMachineBar(state: WorkspaceState, viewAt: number, view: ShellView):
       // tick's instant until then).
       playing: state.timeMachine.mode === 'playback' && state.timeMachine.playback !== null && !state.timeMachine.playback.paused,
       progress,
+      // FW-33-B (Round B blocker 5): the disclosed speed select — the
+      // chrome's chosen key rides the control (the closed set's own
+      // step, the honest caption beneath).
+      speed: view.playbackSpeed,
     }),
     v('p', { class: 'hint' }, ['Every visible datum passed the availability projection for this view instant (L4).']),
   ]);
@@ -919,22 +950,28 @@ function sheetContentOf(state: WorkspaceState, viewAt: number, view: ShellView):
   if (sheet.kind === 'job') {
     const job = state.jobs.find((candidate) => candidate.jobId === sheet.id);
     if (job === undefined) return [];
-    // D-9 (W-28): the completed job's OWN evidence capsule renders INLINE
-    // beside the sheet (the same §4.9 convention as the outcome's capsule
-    // under Outcomes and the submission's under Execution) — the
-    // bidirectional affordance: the result view links its capsule (the
-    // fold mints one only for a COMPLETED job WITH a result; a pending or
-    // failed job renders no capsule — nothing fabricated, L20).
+    // D-9 (W-28): the completed job's OWN evidence capsule renders in
+    // the sheet's FOOTER slot (FW-33-B: inside the dialog — the same
+    // §4.9 convention as the outcome's capsule under Outcomes and the
+    // submission's under Execution) — the bidirectional affordance: the
+    // result view links its capsule (the fold mints one only for a
+    // COMPLETED job WITH a result; a pending or failed job renders no
+    // capsule — nothing fabricated, L20).
     //
     // FW-32-A (Round A blocker 2): the promoted decision of THIS job, when
     // the workspace's own outcome records cite it (the additive
     // `promotedFromJob` backlink — the same lineage the Decisions section
     // renders); null while none does (the honest pre-promotion state).
     const promotion = state.outcomes.find((outcome) => outcome.promotedFromJob === job.jobId) ?? null;
-    return [
-      ...jobSheet(state.scope, job, viewAt, promotion === null ? null : { decisionRef: promotion.decision.decisionRef }),
-      ...capsulesFromJobs(state.scope, [job]).map((capsule) => capsuleInline(capsule, viewAt, view.openCapsule)),
-    ];
+    const capsule = capsulesFromJobs(state.scope, [job])[0] ?? null;
+    return jobSheet(
+      state.scope,
+      job,
+      viewAt,
+      promotion === null ? null : { decisionRef: promotion.decision.decisionRef },
+      capsule,
+      view.openCapsule,
+    );
   }
   const snapshot = state.orgSnapshots.find((candidate) => candidate.organizationRef === sheet.id);
   if (snapshot === undefined) return [];
@@ -1042,6 +1079,113 @@ function lifecycleRowsOf(state: WorkspaceState, viewAt: number): { readonly rows
   return { rows, note };
 }
 
+/**
+ * FW-33-B (Round B blocker 6, M3 + S2) — THE OBSERVED WORLD DERIVATION:
+ * what a world-less project's OWN records show. Every new user's first
+ * view is the demo scope (prj-demo-console), whose seeded goal
+ * genuinely carries no launch world fields (the host route serves no
+ * `world` — verified: the deploy backing's demo goal carries horizon +
+ * criteria, never markets/venues/data sources), so the section
+ * rendered "No launch context yet" on every first view — a teaching
+ * state that lies about an ACTIVE desk. The honest render is the world
+ * state that EXISTS: the markets and venues the desk's execution
+ * submissions name (the demo blotter's BTC-USD/ETH-USD orders on
+ * BROKER-FIX), projected at the view instant (L4 — the observed world
+ * at a past view shrinks to what was knowable then). Data sources
+ * carry no record on the demo scope — 'none on record', never a
+ * fabricated list. Nothing observed at the view instant → the teaching
+ * empty state (the genuine case: the launchpad, a world-less desk with
+ * an empty blotter).
+ */
+interface ObservedWorld {
+  /** The instrument ids the projected submissions name, first-appearance order. */
+  readonly markets: readonly string[];
+  /** The venue ids the projected submissions name, first-appearance order. */
+  readonly venues: readonly string[];
+}
+
+/** The observed world of one state at one view instant (FW-33-B, Round B blocker 6). */
+function observedWorldOf(state: WorkspaceState, viewAt: number): ObservedWorld {
+  const submissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
+  const markets: string[] = [];
+  const venues: string[] = [];
+  for (const submission of submissions) {
+    const instrument = submission.order?.instrumentId;
+    if (typeof instrument === 'string' && instrument.length > 0 && !markets.includes(instrument)) markets.push(instrument);
+    const venueOfOrder = submission.order?.venueId;
+    const venueOfRoute = submission.kind === 'routed' ? submission.venue : undefined;
+    const venue = typeof venueOfOrder === 'string' && venueOfOrder.length > 0 ? venueOfOrder : venueOfRoute;
+    if (typeof venue === 'string' && venue.length > 0 && !venues.includes(venue)) venues.push(venue);
+  }
+  return { markets, venues };
+}
+
+/**
+ * The Market World section (§3): the project's OWN persisted world first
+ * (D-8, W-28 — state.world); the in-session draft while the wizard is
+ * open in a scope that has no world yet; the OBSERVED world (FW-33-B)
+ * for a world-less scope whose records show one — the demo scope's
+ * every first view; the teaching empty state only when the scope
+ * genuinely shows nothing at this view instant.
+ */
+function marketWorldPanel(state: WorkspaceState, viewAt: number): VNode {
+  const world = state.world;
+  if (world !== null) {
+    return v('section', { class: 'panel', 'data-section': 'market-world' }, [
+      v('div', { class: 'card', 'data-market-world': 'persisted' }, [
+        v('div', { class: 'card-title' }, ['Market world']),
+        ...factRows([
+          ['markets', world.markets.join(', ')],
+          ['venues', world.venues.join(', ')],
+          ['data sources', world.dataSources.join(', ')],
+          ['execution mode', world.executionMode],
+          ['capital budget', renderDecimal(world.capitalBudget)],
+          ['risk budget', renderDecimal(world.riskBudget)],
+          ['horizon', `${formatInstantUtc(world.horizon.startsAt)} -> ${formatInstantUtc(world.horizon.endsAt)}`],
+        ]),
+        v('p', { class: 'card-note' }, ['The launch specification this project\'s market world was set to — persisted with the project, restored on every visit.']),
+      ]),
+    ]);
+  }
+  const draft = state.launch.draft;
+  if (draft === null) {
+    // FW-33-B: the observed world — the honest state that exists for a
+    // world-less scope (the demo scope's first view), never the
+    // misleading "No launch context yet" over an ACTIVE desk. The card
+    // names its own derivation; the note still teaches the way to a
+    // full specification.
+    const observed = observedWorldOf(state, viewAt);
+    if (observed.markets.length === 0 && observed.venues.length === 0) {
+      return v('section', { class: 'panel', 'data-section': 'market-world' }, [sectionEmpty('market-world')]);
+    }
+    return v('section', { class: 'panel', 'data-section': 'market-world' }, [
+      v('div', { class: 'card', 'data-market-world': 'observed' }, [
+        v('div', { class: 'card-title' }, ['Market world (observed)']),
+        ...factRows([
+          ['markets', observed.markets.join(', ')],
+          ['venues', observed.venues.join(', ')],
+          ['data sources', 'none on record'],
+        ]),
+        v('p', { class: 'card-note' }, ['This desk has no launch specification on record — the markets and venues above are observed from its own execution submissions at this view instant. A launch from Goal writes the full specification here.']),
+      ]),
+    ]);
+  }
+  return v('section', { class: 'panel', 'data-section': 'market-world' }, [
+    v('div', { class: 'card' }, [
+      v('div', { class: 'card-title' }, ['Market world (launch context)']),
+      ...factRows([
+        ['markets', draft.markets.join(', ')],
+        ['venues', draft.venues.join(', ')],
+        ['data sources', draft.dataSources.join(', ')],
+        ['execution mode', draft.executionMode],
+        ['capital budget', renderDecimal(draft.capitalBudget)],
+        ['risk budget', renderDecimal(draft.riskBudget)],
+        ['horizon', `${formatInstantUtc(draft.horizon.startsAt)} -> ${formatInstantUtc(draft.horizon.endsAt)}`],
+      ]),
+    ]),
+  ]);
+}
+
 /** The per-section panel — the selected section's projection at the view instant. */
 function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = defaultShellView(state)): VNode {
   const scope = state.scope;
@@ -1118,49 +1262,11 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       // field, read at boot and on every scope refetch), NOT to the
       // in-session launch draft: after a reload, a scope switch or a cold
       // start the section renders the SCOPE's own markets/venues/data
-      // sources (the pre-fix behavior — the draft was the only source —
-      // rendered the teaching empty state forever, and the session draft
-      // could BLEED across scopes when one stayed open). The in-session
-      // draft remains the source while the wizard is open in a scope that
-      // has no world yet (the launchpad, a fresh boot); the teaching empty
-      // state renders ONLY when the project genuinely has no world on
-      // record (the demo scope — its seeded goal carries no world fields).
-      const world = state.world;
-      if (world !== null) {
-        return v('section', { class: 'panel', 'data-section': 'market-world' }, [
-          v('div', { class: 'card', 'data-market-world': 'persisted' }, [
-            v('div', { class: 'card-title' }, ['Market world']),
-            ...factRows([
-              ['markets', world.markets.join(', ')],
-              ['venues', world.venues.join(', ')],
-              ['data sources', world.dataSources.join(', ')],
-              ['execution mode', world.executionMode],
-              ['capital budget', renderDecimal(world.capitalBudget)],
-              ['risk budget', renderDecimal(world.riskBudget)],
-              ['horizon', `${formatInstantUtc(world.horizon.startsAt)} -> ${formatInstantUtc(world.horizon.endsAt)}`],
-            ]),
-            v('p', { class: 'card-note' }, ['The launch specification this project\'s market world was set to — persisted with the project, restored on every visit.']),
-          ]),
-        ]);
-      }
-      const draft = state.launch.draft;
-      if (draft === null) {
-        return v('section', { class: 'panel', 'data-section': 'market-world' }, [sectionEmpty('market-world')]);
-      }
-      return v('section', { class: 'panel', 'data-section': 'market-world' }, [
-        v('div', { class: 'card' }, [
-          v('div', { class: 'card-title' }, ['Market world (launch context)']),
-          ...factRows([
-            ['markets', draft.markets.join(', ')],
-            ['venues', draft.venues.join(', ')],
-            ['data sources', draft.dataSources.join(', ')],
-            ['execution mode', draft.executionMode],
-            ['capital budget', renderDecimal(draft.capitalBudget)],
-            ['risk budget', renderDecimal(draft.riskBudget)],
-            ['horizon', `${formatInstantUtc(draft.horizon.startsAt)} -> ${formatInstantUtc(draft.horizon.endsAt)}`],
-          ]),
-        ]),
-      ]);
+      // sources. FW-33-B (Round B blocker 6): the world-less scope renders
+      // the OBSERVED world its own records show (marketWorldPanel below)
+      // — the demo scope's every first view — never the misleading
+      // "No launch context yet" over an active desk.
+      return marketWorldPanel(state, viewAt);
   } else if (selector === 'time-machine') {
       const knowable: VNode[] = [
         factRow('view instant', formatInstantUtc(viewAt)),
@@ -1417,14 +1523,18 @@ function nextStepOf(step: LaunchStep): LaunchStep {
  * FW-32-B (b4) — THE HORIZON REVIEW LINE: the launch review renders
  * the horizon HUMAN-READABLE (the console's own formatInstantUtc +
  * formatDurationMs discipline), never raw epoch ms (L1/M1/L3/M5's
- * finding: "horizon rendered as raw epoch ms at review"). An
- * unparseable pair renders verbatim — the review gate's problems card
- * owns the validation; this line never invents an instant.
+ * finding: "horizon rendered as raw epoch ms at review"). FW-33-B: the
+ * form's values are now the datetime-local grammar (UTC) — the line
+ * parses BOTH that grammar and a bare epoch integer (the seeded
+ * drafts) through core/launch-form.ts's own parser, one law for both
+ * forms. An unparseable pair renders verbatim — the review gate's
+ * problems card owns the validation; this line never invents an
+ * instant.
  */
 function horizonReviewLine(startsAt: string, endsAt: string): string {
-  const start = Number.parseInt(startsAt, 10);
-  const end = Number.parseInt(endsAt, 10);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < 0 || end < start) {
+  const start = parseHorizonInstant(startsAt);
+  const end = parseHorizonInstant(endsAt);
+  if (start === null || end === null || end < start) {
     return `${startsAt} -> ${endsAt}`;
   }
   return `${formatInstantUtc(start)} -> ${formatInstantUtc(end)} (${formatDurationMs(end - start)})`;
@@ -1465,8 +1575,13 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
       ...labeledInput({ label: 'Data sources', name: 'dataSources', value: form.dataSources, required: true, hint: 'Comma-separated data source refs.', validation: validationOf('dataSources') }),
     ];
     const worldFields = [
-      ...labeledInput({ label: 'Horizon starts', name: 'horizonStartsAt', value: form.horizonStartsAt, type: 'number', required: true, hint: 'Epoch ms.', validation: validationOf('horizonStartsAt') }),
-      ...labeledInput({ label: 'Horizon ends', name: 'horizonEndsAt', value: form.horizonEndsAt, type: 'number', required: true, hint: 'Epoch ms.', validation: validationOf('horizonEndsAt') }),
+      // FW-33-B (Round B blocker 3): the horizon inputs are
+      // datetime-local controls — the value is the UTC date-and-time
+      // grammar (core/launch-form.ts's formatHorizonInstant), the hint
+      // discloses UTC, and the validation message names the grammar
+      // (never "Epoch ms", never a hand-computed integer).
+      ...labeledInput({ label: 'Horizon starts', name: 'horizonStartsAt', value: form.horizonStartsAt, type: 'datetime-local', required: true, hint: 'UTC date and time, e.g. 2026-01-15T09:30:00.', validation: validationOf('horizonStartsAt') }),
+      ...labeledInput({ label: 'Horizon ends', name: 'horizonEndsAt', value: form.horizonEndsAt, type: 'datetime-local', required: true, hint: 'UTC date and time — the horizon must end after it starts.', validation: validationOf('horizonEndsAt') }),
       ...labeledSelect({ label: 'Execution mode', name: 'executionMode', value: form.executionMode, required: true, hint: 'Simulation is the safe default — live execution goes through the gateway.', choices: EXECUTION_MODES.map((mode) => [mode, mode] as const), validation: validationOf('executionMode') }),
       ...labeledInput({ label: 'Preferences', name: 'preferences', value: form.preferences, hint: 'Optional key=value pairs.', validation: validationOf('preferences') }),
       ...labeledInput({ label: 'Constraints', name: 'constraints', value: form.constraints, hint: `Optional executable limits, e.g. ${constraintGrammarExample()}.`, validation: validationOf('constraints') }),
