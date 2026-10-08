@@ -352,6 +352,7 @@ describe('flow §4.10: notifications (bell + toast + the eight event types)', ()
 
   it('FW-32-B (b3): the export-download confirmation toast renders on the SAME surface + lifecycle (a closed icon vocabulary, never a broken glyph lookup)', () => {
     expect(toastIconOf('export-download')).toBe('box');                 // the download confirmation's own glyph
+    expect(toastIconOf('export-failed')).toBe('shield');                // FW-35-A: the honest export failure's own face, never the inbox fallback
     expect(toastIconOf('failed_evaluation')).toBe('flask');             // the eight notice kinds keep theirs
     expect(toastIconOf('anything-else')).toBe('inbox');                 // a closed fallback, never undefined
     const bytes = render(toastRecord('export-download', 'Export downloaded', 'tradrl-workspace-prj-a.json — verify it any time in Settings: "Verify an export file".'));
