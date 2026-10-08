@@ -251,12 +251,7 @@ export function persistScopeProject(storage: { setItem(key: string, value: strin
 /** A head element's querySelector (the erasable-subset law: function types live in named aliases, never inline in casts). */
 type HeadQuerySelectorOf = (selector: string) => Element | null;
 
-/**
- * FW-35-B (Round D register §3.6): one keyboard-activation candidate —
- * the settled focus or the event's own dispatched target (the
- * erasable-subset law: the union lives in a named alias, never a
- * parenthesized inline union the loader's strip cannot erase).
- */
+/** FW-35-B (§3.6): one keyboard-activation candidate — the settled focus or the event's own target (the erasable-subset law: unions live in named aliases). */
 type ActivationCandidate = ClickTarget | null;
 
 /** Boot the console (every seam injected; DOM-free until mount). */
@@ -1058,15 +1053,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       return element.getAttribute('data-action') === 'playback-speed-custom' ? element : null;
     };
     /**
-     * FW-34-B + FW-35-B (Round D register §3.3 — label == machine): the
-     * EFFECTIVE playback step of the chrome's speed state — the free
-     * speed's when one is committed and valid, else the select's
-     * disclosed key — at THIS console's own beat cadence (the label is
-     * a real-time multiple: the step per beat is the multiplier x
-     * beatMs, so 10x plays 10 s/s; the pre-FW-35-B law stepped a fixed
-     * 500ms/beat for 1x and 5s/50s for 10x/100x — every preset at HALF
-     * its label). One source of truth for the NEXT arm and for a
-     * committed retune (the caption renders the same multiplier).
+     * FW-34-B + FW-35-B (§3.3 — label == machine): the EFFECTIVE playback
+     * step — the free speed's when committed and valid, else the select's
+     * key — at THIS console's beat cadence (multiplier x beatMs per beat,
+     * so 10x plays 10 s/s; the pre-fix law stepped every preset at HALF
+     * its label).
      */
     const playbackStepOfView = (): number => {
       if (view.playbackCustomSpeed.length > 0) {
@@ -1580,17 +1571,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         return;
       }
-      // FW-34-B (Round C register §3.2) + FW-35-B (Round D register
-      // §3.3 — the custom speed must reach the machine, apply live):
-      // THE FREE SPEED INPUT's live text — BUFFER + LIVE COMMIT. The
-      // text buffers into the view (the render's focus preservation
-      // keeps the caret in the input across the beat re-projection),
-      // and the MOMENT the buffer parses VALID it becomes the machine's
-      // step: an ARMED playback retunes NOW and the posture's freeSpeed
-      // field writes through (write-through, synchronous with the
-      // value — never a display-only face). A half-typed invalid prefix
-      // ("2.") buffers only — the machine keeps the last valid step and
-      // the refusal belongs to the change commit (never mid-typing).
+      // FW-34-B (§3.2) + FW-35-B (§3.3): THE FREE SPEED INPUT's live text
+      // — BUFFER + LIVE COMMIT: the text buffers into the view, and the
+      // MOMENT it parses VALID it becomes the machine's step (an ARMED
+      // playback retunes NOW; the posture's freeSpeed writes through,
+      // synchronous with the value — never a display-only face).
       const customSpeedInput = customSpeedTargetOf(event.target);
       if (customSpeedInput !== null) {
         const text = typeof customSpeedInput.value === 'string' ? customSpeedInput.value : '';
@@ -1599,17 +1584,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           const parsed = parsePlaybackCustomSpeed(text);
           if (parsed.ok) {
             // LIVE APPLY (FW-35-B): the valid value reaches the machine
-            // through the INPUT event itself — the change event's
-            // delegated listener dies on the element this very render
-            // just detached (the eval's keyboard-equivalent dispatch
-            // sequence: set value + input + change on the captured
-            // element — the input handler's synchronous render replaces
-            // the tree, the change then composes on the DETACHED node
-            // and never bubbles to the document; M5/S5 measured the
-            // committed custom as inert while the select's changes
-            // applied — the select's input event renders nothing, so its
-            // element survives for the change). The commit here rides
-            // the FIRST event, on the still-attached element.
+            // through the INPUT event itself — this handler's synchronous
+            // render detaches the element before a change dispatched on it
+            // could bubble (the M5/S5 "display-only face" root cause).
             sessionPosture = { ...sessionPosture, timeMachine: { ...sessionPosture.timeMachine, freeSpeed: text } };
             writeSessionPosture();
             const machine = state.timeMachine;
@@ -1777,9 +1754,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         const text = typeof customSpeedCommit.value === 'string' ? customSpeedCommit.value : view.playbackCustomSpeed;
         if (text.trim().length === 0) {
           // The EMPTY commit clears the free speed (back to the select's
-          // key — the escape hatch) — and an ARMED machine retunes back
-          // to the select's step NOW (FW-35-B: never a stale custom step
-          // the caption stops claiming).
+          // key); an ARMED machine retunes back to the select's step NOW
+          // (FW-35-B: never a stale custom step).
           view = { ...view, playbackCustomSpeed: '', playbackCustomSpeedError: null };
           sessionPosture = { ...sessionPosture, timeMachine: { ...sessionPosture.timeMachine, freeSpeed: '' } };
           writeSessionPosture();
@@ -1961,19 +1937,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // flush triggers cannot strand this click), so every action —
       // step navigation, review, arm, confirm — reads the FULL draft.
       if (navResolved || actionKind !== null) flushLaunchEdits();
-      // FW-35-B (Round D register §3.2 — the wizard never blocks nav on
-      // ANY path): an interaction that resolves PAST the wizard (a nav
-      // target, any non-wizard action — the keyboard/synthetic paths
-      // reach nav buttons the backdrop visually covers) DISMISSES the
-      // wizard as it acts — the dismissal persists through the posture
-      // (synchronous, write-through) and the action runs to completion.
-      // The wizard's OWN affordances (next/skip/reopen/backdrop) keep
-      // their dedicated branches below — the backdrop branch keeps its
-      // inside-card discrimination, so a press inside the card still
-      // resolves to the card's own controls.
+      // FW-35-B (§3.2 — the wizard never blocks nav on ANY path): an
+      // interaction that resolves PAST the wizard (a nav target, any
+      // non-wizard action) DISMISSES the wizard as it acts — the dismissal
+      // persists synchronously through the posture; the wizard's OWN
+      // affordances keep their branches.
       if (
         view.onboarding !== null &&
-        ((navResolved && actionKind === null) || (actionKind !== null && actionKind !== 'onboarding-next' && actionKind !== 'onboarding-skip' && actionKind !== 'onboarding-reopen' && actionKind !== 'onboarding-backdrop'))
+        (navResolved || (actionKind !== null && actionKind !== 'onboarding-next' && actionKind !== 'onboarding-skip' && actionKind !== 'onboarding-reopen' && actionKind !== 'onboarding-backdrop'))
       ) {
         view = { ...view, onboarding: null };
         sessionPosture = { ...sessionPosture, onboarded: true };
@@ -2222,11 +2193,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (kind === 'palette-close') {
           view = { ...view, palette: null };
           render();
-          // FW-35-B (Round D register §3.6 — L4: "focus resets to BODY
-          // after EVERY palette action"): the CLICKED close (the Esc
-          // path already refocused) removes the modal from the DOM —
-          // the focus would fall to BODY. The close hands the keyboard
-          // journey to the content it uncovered, never to BODY.
+          // FW-35-B (§3.6 — L4): the CLICKED close removes the modal —
+          // the focus lands on the content, never on BODY.
           focusMainContent();
         }
         // §4.12/§4.14 the palette's empty-state action: Clear search
@@ -2741,18 +2709,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // file input's Enter must keep opening the OS picker, the
       // select's Enter its dropdown).
       if ((key === 'Enter' || key === ' ') && document.activeElement !== undefined) {
-        // FW-35-B (Round D register §3.6 — "a keyboard Mark-read eaten
-        // (mouse works)"): the settled focus is the PRIMARY candidate,
-        // but a SYNTHETIC activation (an assistive-tech dispatch, the
-        // eval's keyboard-equivalent path — a keydown composed on the
-        // button WITHOUT a prior native focus move) leaves
-        // document.activeElement on BODY while the event's own target
-        // IS the button; the native click synthesis never comes (only
-        // trusted keys compose clicks), so the activation silently
-        // no-ops. The event's own target serves as the FALLBACK
-        // candidate — the activation is never eaten on either path.
-        // (The erasable-subset law: the union lives in a named alias —
-        // a parenthesized inline union would break the loader's strip.)
+        // FW-35-B (§3.6 — "a keyboard Mark-read eaten (mouse works)"):
+        // a SYNTHETIC activation (a keydown composed on the button
+        // WITHOUT a prior native focus move) leaves activeElement on BODY
+        // while the event's own target IS the button — the event's own
+        // target is the FALLBACK candidate, never eaten on either path.
         const settled = document.activeElement as ActivationCandidate;
         const dispatched = (event.target ?? null) as ActivationCandidate;
         const candidates: readonly ActivationCandidate[] = settled?.tagName === 'BUTTON' ? [settled, dispatched] : [dispatched, settled];
