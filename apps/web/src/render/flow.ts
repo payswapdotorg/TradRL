@@ -347,7 +347,16 @@ export function timeMachineControls(options: {
   const customText = options.customSpeed ?? '';
   const customError = options.customSpeedError ?? null;
   const custom = customText.length > 0 ? parsePlaybackCustomSpeed(customText) : null;
-  const customActive = custom !== null && custom.ok;
+  // FW-34-B (Round C register §3.1 — the restart posture): the "custom"
+  // FACE belongs to the ARMED machine (the playback mode running the
+  // free speed as its effective step — "the closed set never shows a
+  // step that is not armed" cuts BOTH ways). A VIEWING session (a
+  // scrubbed timestamp, a restored restart posture) keeps the select's
+  // committed KEY on its face while the free input carries its own
+  // committed text — the two controls' choices persist independently,
+  // and a reload restores exactly what the analyst left (the key, the
+  // free text), never a face the unarmed machine cannot honor.
+  const customActive = options.mode === 'playback' && custom !== null && custom.ok;
   // The EFFECTIVE step: the free speed's when one is committed and
   // valid, else the select's disclosed key — the caption never claims
   // a step that is not the armed one.

@@ -499,8 +499,22 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         if (state.timeMachine.mode === 'live' && bootStoredTimeMachine.mode !== 'live' && bootStoredTimeMachine.viewAt !== null) {
           const anchor = state.timeMachine.anchorAt;
-          const floor = Math.min(historyFloorOf(state).floorAt, anchor);
-          const clamped = Math.min(Math.max(bootStoredTimeMachine.viewAt, floor), anchor);
+          // FW-34-B (Round C register §3.1) — the restore's floor clamp is
+          // the RECORD-DERIVED floor ONLY (the MI-D9 step-back law: the
+          // session-open fallback floor is TAUGHT by the scrubber's range,
+          // never ENFORCED on a commit). The restart moment is exactly the
+          // case that demands it: the boot bundle's own listing adoption
+          // resets every record (project null — the refetch has not landed
+          // yet), so the session fold would return the SESSION OPEN instant
+          // and a stored instant below it would clamp UP to it (the degenerate
+          // [openedAt, anchor] range erasing the analyst's incident view on
+          // every restart — the exact residual this restore exists to close).
+          // With the project's own history on record the clamp holds exactly
+          // like the scrubber's commit; with none on hand the view restores
+          // at its stored instant, capped only by the anchor.
+          const history = historyFloorOf(state);
+          const floor = history.derived === 'records' ? Math.min(history.floorAt, anchor) : null;
+          const clamped = floor === null ? Math.min(bootStoredTimeMachine.viewAt, anchor) : Math.min(Math.max(bootStoredTimeMachine.viewAt, floor), anchor);
           if (bootStoredTimeMachine.mode === 't-minus') {
             // The relative lens restores at the same offset from the
             // CURRENT anchor (t-minus follows now by definition — the
@@ -1759,9 +1773,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // session start: the pre-session history (the auditor's incident
       // review) stays reachable across every load/reload. When no
       // records are on hand the fold returns the session open instant
-      // (derived: 'session') — the pre-fix behavior stands, taught by
-      // the range note. The drag pin clears here: the commit is the
-      // drag's one end point.
+      // (derived: 'session') — taught by the range note. FW-34-B (Round C
+      // register §3.1): the session-open fallback floor is TAUGHT, never
+      // ENFORCED on the commit (the MI-D9 step-back law, the same class
+      // exactly): a commit below the session open lands where the user
+      // dragged it, capped only by the anchor — a scope adoption (the
+      // switcher's move, the boot restore) resets every record and the
+      // refetch has not landed yet, so enforcing the fallback here would
+      // clamp a fresh desk's FIRST scrub straight to the degenerate
+      // [openedAt, anchor] point (the scrubbed incident erased before the
+      // posture could ever record it). The drag pin clears here: the
+      // commit is the drag's one end point.
       const scrubber = scrubTargetOf(event.target);
       if (scrubber !== null) {
         const raw = scrubAt ?? scrubValueOf(scrubber);
@@ -1769,8 +1791,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (view.scrubBounds !== null) view = { ...view, scrubBounds: null };
         if (raw !== null) {
           const anchor = state.timeMachine.anchorAt;
-          const floor = Math.min(historyFloorOf(state).floorAt, anchor);
-          const clamped = Math.min(Math.max(raw, floor), anchor);
+          const history = historyFloorOf(state);
+          const floor = history.derived === 'records' ? Math.min(history.floorAt, anchor) : null;
+          const clamped = floor === null ? Math.min(raw, anchor) : Math.min(Math.max(raw, floor), anchor);
           dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: clamped }); // renders via onState
         }
         return;
@@ -2014,10 +2037,22 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             //     FW-33-B anchor clamp still lands a crossing tick AT
             //     "now", paused, never a throw.
             const anchor = state.timeMachine.anchorAt;
-            const floor = Math.min(historyFloorOf(state).floorAt, anchor);
+            // FW-34-B (§3.1 + the MI-D9 law): the SELECTED-instant arm's
+            // floor clamp is the RECORD-DERIVED floor only (the
+            // session-open fallback is taught by the range, never enforced
+            // on the arm — a fresh desk whose refetch has not landed can
+            // still play forward from a scrubbed incident below the session
+            // open). The RELAXED (live) arm keeps the full floor — the
+            // arc's START is the range's own floor, whichever way it
+            // derived (with no records the arc replays from the session
+            // open, exactly the pre-FW-34-B behavior).
+            const history = historyFloorOf(state);
+            const rangeFloor = Math.min(history.floorAt, anchor);
+            const selectedFloor = history.derived === 'records' ? rangeFloor : null;
+            const selected = viewAtOfTimeMachine(state.timeMachine);
             const fromAt = state.timeMachine.mode === 'live'
-              ? floor
-              : Math.min(Math.max(viewAtOfTimeMachine(state.timeMachine), floor), anchor);
+              ? rangeFloor
+              : (selectedFloor === null ? Math.min(selected, anchor) : Math.min(Math.max(selected, selectedFloor), anchor));
             dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt, stepMs: playbackStepOfView() });
           }
         }
