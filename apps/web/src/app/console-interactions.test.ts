@@ -659,6 +659,48 @@ describe('executed boot: the delegated action layer', () => {
     expect(verifyWorkspaceExport(doc)).toEqual({ ok: true });
   });
 
+  it('FW-35-A: the export NEVER silences — a state shape that trips the composition surfaces the honest export-failed toast (no file, no silent no-op — M1\'s 4x + M5\'s 8-click class, closed)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    // A record carrying a REASONING-SHAPED key (a serving defect class the
+    // chain-of-thought firewall refuses loudly) — the ingest gate passes
+    // (it is project-scoped), but ANY fold over it throws: the export's
+    // watch fold dies. The pre-fix click handler let the throw propagate
+    // out of the delegated listener — the browser swallowed it: NO file,
+    // NO error, NO toast, the user\'s 4th click as dead as the 1st.
+    const poisoned = { ...outcomeRecord(), rationale: 'hidden reasoning text' } as unknown as OutcomeRecord;
+    rig.handle.dispatch({ kind: 'outcomes-loaded', at: T0 + 30, records: [poisoned] });
+    clickNav(rig, 'settings');
+    const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
+    if (exportButton === null) throw new Error('no export-workspace action');
+    const anchorsBefore = downloadAnchorsOf(rig).length;
+    click(rig, exportButton);
+    // NOTHING downloaded (the composition died before the anchor existed)...
+    expect(downloadAnchorsOf(rig).length).toBe(anchorsBefore);
+    // ...and the honest failure SURFACED: the export-failed toast, the
+    // sentence naming the failure — never silence (the toast's title +
+    // sentence live in their own child lines — the toast record's shape).
+    const toast = elementsOf(rig.root).find((element) => element.getAttribute('data-toast') === 'export-failed');
+    if (toast === undefined) throw new Error('the failed export rendered no export-failed toast');
+    const toastTitle = elementsOf(rig.root).find((element) => element.hasClass('toast-title'));
+    if (toastTitle === undefined) throw new Error('the failed export toast renders no title line');
+    expect(textOf(toastTitle)).toContain('Export failed');
+    const toastSentence = elementsOf(rig.root).find((element) => element.hasClass('toast-sentence'));
+    if (toastSentence === undefined) throw new Error('the failed export toast renders no sentence line');
+    expect(textOf(toastSentence)).toContain('could not be composed');
+    expect(textOf(toastSentence)).toContain('Nothing was downloaded');
+    // The toast carries its own dismissal (the W-15b-r lifecycle).
+    expect(toast.getAttribute('data-toast')).toBe('export-failed');
+    const closeButton = elementsOf(rig.root).find((element) => element.getAttribute('data-action') === 'toast-close');
+    expect(closeButton).toBeDefined();
+    // And a LATER export over a clean state still downloads (the failure
+    // poisoned nothing — the branch recovers with the state).
+    rig.handle.dispatch({ kind: 'outcomes-loaded', at: T0 + 40, records: [outcomeRecord()] });
+    click(rig, exportButton);
+    expect(downloadAnchorsOf(rig).length).toBe(anchorsBefore + 1); // the download fired
+    const successToast = elementsOf(rig.root).find((element) => element.getAttribute('data-toast') === 'export-download');
+    expect(successToast).toBeDefined();
+  });
+
   it('the primary flow branches: launch-step-* navigates, confirm-arm-launch arms, confirm-launch submits (draft seeded via the sanctioned dispatch path)', async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' });
     rig.handle.dispatch({ kind: 'launch-draft-started', at: T0 + 30, draft: VALID_DRAFT });

@@ -490,11 +490,14 @@ export function notificationBell(unread: number, target = 'inbox'): VNode {
 
 /**
  * FW-32-B (b3): the toast's icon — the eight notice kinds' own glyph;
- * the export-download confirmation toast's 'box' glyph; a closed
+ * the export-download confirmation toast's 'box' glyph; the export
+ * failure toast's 'shield' glyph (FW-35-A — an honest failure deserves
+ * its own face, never the inbox fallback); a closed
  * fallback for anything else (never a broken glyph lookup).
  */
 export function toastIconOf(kind: string): ComponentIcon {
   if (kind === 'export-download') return 'box';
+  if (kind === 'export-failed') return 'shield';
   const icon = NOTICE_ICONS[kind as NoticeKind];
   return icon === undefined ? 'inbox' : icon;
 }
