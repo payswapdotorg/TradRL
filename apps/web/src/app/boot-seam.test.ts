@@ -24,6 +24,7 @@ import type { ApiTransport } from '../api/transport';
 import type { ConsoleHandle } from './console';
 import { bootFromShell, CONSOLE_ROOT_ID } from '../index';
 import { formatInstantUtc } from '../core/format';
+import { playbackProgressOf } from '../core/timemachine';
 import type * as ConsoleModule from './console';
 
 const T0 = 1_700_000_000_000;
@@ -357,9 +358,23 @@ describe('the boot seam (bootFromShell): the REAL browser boot injects a REAL sc
     // 30s of idle beats (the anchor stays at the boot instant until a
     // Time Machine event observes a fresh one — the app's own law).
     await vi.advanceTimersByTimeAsync(30_000);
+    // FW-34-B (Round C register §3.2 — the live-edge anchor): PLAYBACK
+    // arms at the RANGE FLOOR from the relaxed live mode now (the
+    // launch-to-now arc), so a boot whose history spans months cannot
+    // show visible % movement in 4 beats of 500ms — the test SCRUBS to
+    // an incident 4s before the anchor first, then arms: play-forward-
+    // from-the-scrubbed-instant is the wave's own product law, and the
+    // arm MUST take the scrubbed instant (not the floor, not the live
+    // edge) for the progress to climb exactly as the machine says.
+    const anchorBeforeScrub = rig.handle.state().timeMachine.anchorAt;
+    const scrubber = findByData(rig.root, 'data-action', 'tm-scrub');
+    if (scrubber === null) throw new Error('the Time Machine renders no scrubber');
+    scrubber.value = String(anchorBeforeScrub - 4000);
+    rig.doc.fire('input', { target: scrubber }); // the drag buffers
+    rig.doc.fire('change', { target: scrubber }); // the release commits the view instant
     const play = findByData(rig.root, 'data-action', 'tm-mode-playback');
     if (play === null) throw new Error('the Time Machine renders no PLAYBACK mode button');
-    rig.doc.fire('click', { target: play }); // arms playback from the opened instant; the click's own instant becomes the anchor
+    rig.doc.fire('click', { target: play }); // arms playback FROM THE SCRUBBED INSTANT (the FW-34-B law)
     const readoutOf = (): string => {
       const readout = elementsOf(rig.root).find((element) => element.hasClass('tm-readout'));
       if (readout === undefined) throw new Error('the mono readout is missing');
@@ -370,10 +385,15 @@ describe('the boot seam (bootFromShell): the REAL browser boot injects a REAL sc
     const playback = rig.handle.state().timeMachine.playback;
     if (playback === null) throw new Error('playback is not armed');
     expect(playback.ticks).toBe(4); // RED on the unfixed tree: no scheduler, no beats, 0 ticks forever
+    expect(playback.fromAt).toBe(anchorBeforeScrub - 4000); // the FW-34-B arm: the scrubbed instant, never the floor
     expect(readoutOf()).toBe(formatInstantUtc(playback.fromAt + playback.ticks * playback.stepMs)); // the readout advanced
     expect(readoutOf()).not.toBe(before);
     const progress = elementsOf(rig.root).find((element) => element.hasClass('tm-progress'));
     if (progress === undefined) throw new Error('the progress readout is missing while playing');
-    expect(textOf(progress)).not.toBe('0%'); // progress climbed off zero
+    expect(textOf(progress)).not.toBe('0%'); // progress climbed off zero (2000ms of advance over the scrubbed-to-anchor span)
+    // exactly the machine's own fraction — the render mirrors the pure
+    // state (the beats also observe fresh anchors, so the exact % is the
+    // machine's to say, pinned against its own pure progress function)
+    expect(textOf(progress)).toBe(`${Math.round((playbackProgressOf(rig.handle.state().timeMachine) ?? 0) * 100)}%`);
   });
 });

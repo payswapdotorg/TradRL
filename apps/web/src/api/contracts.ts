@@ -144,6 +144,19 @@ export interface ProjectRecord {
   };
   readonly createdAt: number;
   readonly updatedAt: number;
+  /**
+   * FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): the
+   * ADDITIVE session-scope marker the host serves on the session
+   * listing (GET /v1/projects — deploy/vercel/runtime/session-routes.ts's
+   * CONSOLE_SESSION_SCOPE_FIELD): 'session-owned' = THIS console session
+   * created the project; 'tenant-available' = the workspace's registry
+   * carries it, this session did not create it (the shared demo project
+   * included). OPTIONAL at the wire: a backing that predates the marker
+   * (or a direct SDK read) serves none — the console then treats every
+   * row as the session's own (the listing's own honest fallback, never a
+   * silently empty switcher).
+   */
+  readonly consoleSessionScope?: 'session-owned' | 'tenant-available';
 }
 
 /** The lifecycle events. */

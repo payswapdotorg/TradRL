@@ -275,7 +275,13 @@ describe('onboarding: the panel chrome (§4.13)', () => {
     expect(bytes).toContain('data-onboarding="step-1"');
     expect(bytes).toContain('onboarding-circle');
     expect(bytes).toContain('<div class="onboarding-eyebrow">Welcome</div>');
-    expect(bytes).toContain('<h1 class="onboarding-title">Welcome to TradRL</h1>');
+    // FW-34-B (Round C register §3.1 — L3's a11y-invisible-blocker finding):
+    // the wizard is a REAL, LABELLED DIALOG now — the title carries the
+    // aria-labelledby target id, and the overlay declares dialog semantics.
+    expect(bytes).toContain('<h1 class="onboarding-title" id="onboarding-title">Welcome to TradRL</h1>');
+    expect(bytes).toContain('role="dialog"');
+    expect(bytes).toContain('aria-modal="true"');
+    expect(bytes).toContain('aria-labelledby="onboarding-title"');
     expect(bytes).toContain('audit every decision');
     expect(bytes).toContain('data-action="onboarding-next"');
     expect(bytes).toContain('Continue');
@@ -438,5 +444,73 @@ describe('palette: D-16 — the entity-open grammar (project + capsule ref parse
     expect(capsuleRefOf('nav:evidence')).toBeNull();
     expect(capsuleRefOf('job:job-1')).toBeNull();
     expect(capsuleRefOf('project:prj-a')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): the
+// palette's desk listing defaults to the SESSION'S OWN desks; the whole
+// registry stays one explicit disclosure away (the desksOf override), and
+// the empty state DISCLOSES the hidden matches with its own include-all
+// action — never a silent wall, never a lost desk.
+// ---------------------------------------------------------------------------
+
+describe('FW-34-B: the palette defaults to the session own desks (§3.8)', () => {
+  /** A shared-origin directory: the demo project, two own desks (one explicitly marked, one legacy-unmarked), two OTHER sessions' desks. */
+  function sharedWorkspace(): WorkspaceState {
+    const project = (id: string, name: string, marker?: 'session-owned' | 'tenant-available') => ({
+      id, tenantId: 'tenant-a', name, executionMode: 'simulation', consoleSessionScope: marker,
+      lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+      lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+      createdAt: T0, updatedAt: T0,
+    });
+    const base = populatedWorkspace(); // scoped to proj-a
+    return reduceAll(base, [
+      { kind: 'projects-listed', at: T0 + 40, records: [
+        project('proj-a', 'Console Test Project', 'session-owned') as never,
+        project('prj-demo-console', 'the TradRL demo project', 'tenant-available') as never, // the demo desk carries the marker but is ALWAYS in
+        project('prj-own-legacy', 'A Legacy Unmarked Desk') as never, // UNMARKED = the honest fallback
+        project('prj-s1-desk', 'S1 desk', 'tenant-available') as never, // ANOTHER session's desk
+        project('prj-m1-desk', 'M1 desk', 'tenant-available') as never, // ANOTHER session's desk
+      ] },
+    ]);
+  }
+
+  it('the DEFAULT index carries the session own desks + the demo project — other sessions desks are NOT searchable until disclosed', () => {
+    const index = paletteIndex(sharedWorkspace(), capsulesOf);
+    const refs = index.filter((entry) => entry.kind === 'PROJECT').map((entry) => entry.ref);
+    expect(refs).toContain('project:proj-a'); // the current desk
+    expect(refs).toContain('project:prj-demo-console'); // the shared teaching desk is ALWAYS in
+    expect(refs).toContain('project:prj-own-legacy'); // the unmarked legacy desk reads as the session's own
+    expect(refs).not.toContain('project:prj-s1-desk'); // another session's desk is NOT in the default listing
+    expect(refs).not.toContain('project:prj-m1-desk');
+    // a query for another session's desk finds NOTHING by default
+    const ranked = rankPalette(index, 'S1 desk');
+    expect(ranked.some((entry) => entry.ref === 'project:prj-s1-desk')).toBe(false);
+  });
+
+  it('the desksOf override (the all-desks disclosure expanded state) indexes the WHOLE registry — nothing lost, everything reachable', () => {
+    const whole: import('./palette').DesksOf = (state: WorkspaceState) => state.projectDirectory;
+    const index = paletteIndex(sharedWorkspace(), capsulesOf, whole);
+    const refs = index.filter((entry) => entry.kind === 'PROJECT').map((entry) => entry.ref);
+    expect(refs).toContain('project:prj-s1-desk'); // the other session's desk is searchable once disclosed
+    expect(refs).toContain('project:prj-m1-desk');
+    expect(rankPalette(index, 'S1 desk').some((entry) => entry.ref === 'project:prj-s1-desk')).toBe(true);
+  });
+
+  it("the overlay's empty state DISCLOSES the hidden desk matches with its own include-all action (never a silent wall)", () => {
+    const bytes = render(paletteOverlay({ query: 'S1 desk', results: [], selected: 0, unread: 0, hiddenDeskMatches: 1, allDesks: false }));
+    expect(bytes).toContain('No matches');
+    expect(bytes).toContain('1 other desk in this workspace'); // the count, named
+    expect(bytes).toContain('data-palette-hidden-desks');
+    expect(bytes).toContain('data-action="palette-all-desks"'); // the explicit include-all action
+    expect(bytes).toContain('Include all desks in this workspace');
+    // once expanded, the disclosure hides itself (the listing already carries everything)
+    const expanded = render(paletteOverlay({ query: 'S1 desk', results: [], selected: 0, unread: 0, hiddenDeskMatches: 0, allDesks: true }));
+    expect(expanded).not.toContain('data-palette-hidden-desks');
+    expect(expanded).not.toContain('palette-all-desks');
+    // a plain no-match (nothing hidden either) renders the classic teaching shape, no disclosure noise
+    const plain = render(paletteOverlay({ query: 'zzz', results: [], selected: 0, unread: 0 }));
+    expect(plain).not.toContain('other desk');
   });
 });

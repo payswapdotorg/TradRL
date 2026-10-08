@@ -126,11 +126,25 @@ export function onboardingDots(step: number): VNode {
 export function onboardingPanel(state: OnboardingState): VNode {
   if ('completed' in state) return v('div', { class: 'onboarding-hidden', 'data-onboarding': 'completed' }, []);
   const step = ONBOARDING_STEPS[state.step];
-  return v('div', { class: 'onboarding', 'data-onboarding': `step-${state.step + 1}` }, [
+  return v('div', {
+    class: 'onboarding',
+    'data-onboarding': `step-${state.step + 1}`,
+    // FW-34-B (Round C register §3.1 — L3's finding: the restart-summoned
+    // wizard was an A11Y-INVISIBLE div that BLOCKED native mouse clicks):
+    // the overlay is a real, labelled DIALOG — assistive tech announces it,
+    // and the backdrop itself is the mouse dismissal (the click handler's
+    // onboarding-backdrop branch skips the wizard when the press lands
+    // OUTSIDE the card; a dismissed wizard renders NOTHING at all, so it
+    // can never block the page).
+    role: 'dialog',
+    'aria-modal': 'true',
+    'aria-labelledby': 'onboarding-title',
+    'data-action': 'onboarding-backdrop',
+  }, [
     v('div', { class: 'onboarding-card' }, [
       v('div', { class: 'onboarding-circle', 'aria-hidden': 'true' }, [stepGlyph(state.step)]),
       v('div', { class: 'onboarding-eyebrow' }, [step.eyebrow]),
-      v('h1', { class: 'onboarding-title' }, [step.title]),
+      v('h1', { class: 'onboarding-title', id: 'onboarding-title' }, [step.title]),
       v('p', { class: 'onboarding-sentence' }, [step.sentence]),
       v('div', { class: 'onboarding-actions' }, [
         v('button', { class: 'onboarding-cta', 'data-action': 'onboarding-next', type: 'button' }, [

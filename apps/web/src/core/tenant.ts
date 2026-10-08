@@ -12,6 +12,7 @@
 // trajectories, memory, artifacts, credentials and usage".
 
 import { CrossTenantRenderError } from './errors';
+import type { ProjectRecord } from '../api/contracts';
 
 /** The workspace's scope: one tenant, one project (the console is project-centric — R36). */
 export interface WorkspaceScope {
@@ -29,6 +30,56 @@ export interface WorkspaceScope {
  * skips it and every per-project affordance stays away.
  */
 export const LAUNCHPAD_PROJECT_ID = '(launchpad)';
+
+/**
+ * FW-34-B (Round C register §3.8 — the shared-tenant wall): the shared
+ * DEMO project's id (the workspace's teaching desk — the runtime's own
+ * constant mirrored by name and value: deploy/vercel/runtime/demo.ts's
+ * DEMO_PROJECT_ID, the same-name-same-shape law the console session
+ * header rides). The default desk listing ALWAYS includes it (every
+ * session's teaching desk), whatever the session-scope marker says.
+ */
+export const DEMO_PROJECT_ID = 'prj-demo-console';
+
+/** True when a project id is the shared demo project (the workspace's teaching desk). */
+export function isDemoProject(projectId: string): boolean {
+  return projectId === DEMO_PROJECT_ID;
+}
+
+/**
+ * FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): true
+ * when a directory row belongs to THIS session's own desks — the
+ * host's additive 'session-owned' marker on GET /v1/projects
+ * (deploy/vercel/runtime/session-routes.ts's CONSOLE_SESSION_SCOPE_FIELD).
+ * The UNMARKED fallback is the listing's own honest law: a backing
+ * that predates the marker (or a direct SDK read) serves none, and
+ * every unmarked row reads as the session's own — the switcher and
+ * the palette stay full, never silently empty.
+ */
+export function isSessionOwnDesk(project: ProjectRecord): boolean {
+  return project.consoleSessionScope !== 'tenant-available';
+}
+
+/**
+ * FW-34-B (§3.8): the session's own desks of a directory — the
+ * session-owned rows, the UNMARKED rows (the honest fallback), and the
+ * shared demo project (every session's teaching desk, whatever its
+ * marker says). This is the DEFAULT listing law the switcher, the
+ * palette and the boot-restore all ride; the whole registry stays one
+ * explicit disclosure away (never lost — the FW-31-B durability win).
+ */
+export function sessionOwnDesksOf(directory: readonly ProjectRecord[], demoProjectId: string): readonly ProjectRecord[] {
+  return directory.filter((project) => project.id === demoProjectId || isSessionOwnDesk(project));
+}
+
+/**
+ * FW-34-B (§3.8): the desks the default listing hides — OTHER console
+ * sessions' desks in this shared workspace (the explicit disclosure's
+ * own count, never a silent wall).
+ */
+export function otherSessionsDesksOf(directory: readonly ProjectRecord[], demoProjectId: string): readonly ProjectRecord[] {
+  return directory.filter((project) => project.id !== demoProjectId && !isSessionOwnDesk(project));
+}
 
 /** True when a project id is the pre-launch launchpad placeholder (no project exists yet — the primary flow starts here). */
 export function isLaunchpadScope(projectId: string): boolean {

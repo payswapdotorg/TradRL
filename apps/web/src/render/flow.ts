@@ -36,7 +36,7 @@
 
 import { NOTICE_TITLES, type NoticeKind } from '../core/notices';
 import { formatInstantUtc } from '../core/format';
-import { PLAYBACK_SPEED_KEYS, playbackStepMsOf, TIME_MACHINE_STEP_MS, type PlaybackSpeedKey } from '../core/timemachine';
+import { parsePlaybackCustomSpeed, PLAYBACK_CUSTOM_SPEED_MAX, PLAYBACK_CUSTOM_SPEED_MIN, PLAYBACK_SPEED_KEYS, playbackStepMsOf, TIME_MACHINE_STEP_MS, type PlaybackSpeedKey } from '../core/timemachine';
 import { v, type VNode } from './vtree';
 import { iconOf, statusPill, type ComponentIcon } from './components';
 
@@ -318,6 +318,15 @@ export function playbackSpeedCaptionOf(stepMs: number): string {
  * rides the playback group — 1x / 10x / 100x, the step-per-beat each
  * speed advances by, with the honest caption beside it (what playback
  * does, at that speed, L4 and the anchor ceiling unchanged).
+ *
+ * FW-34-B (Round C register §3.2 — the closed-set residual): a FREE
+ * numeric speed input rides the SAME group — any validated multiple of
+ * the 1x step (0.5x … 10000x, core/timemachine.ts's own grammar), so
+ * an incident review can traverse at exactly the rate it needs. The
+ * select keeps the disclosed set; committing a free speed makes IT the
+ * active choice (the select's face says "custom" — it never shows a
+ * step that is not armed), and a REFUSED free speed names its reason
+ * inline (never a silent clamp).
  */
 export function timeMachineControls(options: {
   readonly mode: string;
@@ -326,12 +335,32 @@ export function timeMachineControls(options: {
   readonly playing: boolean;
   readonly progress: number | null;
   readonly speed?: PlaybackSpeedKey;
+  /** FW-34-B: the free-speed input committed text ('' = the select key is the active step). */
+  readonly customSpeed?: string;
+  /** FW-34-B: the free-speed named refusal (null when the committed text is valid or empty) — rendered inline, never a silent clamp. */
+  readonly customSpeedError?: string | null;
 }): VNode {
   const bounds = scrubberBoundsOf(options.range);
   const value = Math.min(Math.max(options.viewAt, bounds.min), bounds.max);
   const stepWord = `${TIME_MACHINE_STEP_MS}ms`;
   const speed = options.speed ?? '1x';
-  const speedStepMs = playbackStepMsOf(speed);
+  const customText = options.customSpeed ?? '';
+  const customError = options.customSpeedError ?? null;
+  const custom = customText.length > 0 ? parsePlaybackCustomSpeed(customText) : null;
+  // FW-34-B (Round C register §3.1 — the restart posture): the "custom"
+  // FACE belongs to the ARMED machine (the playback mode running the
+  // free speed as its effective step — "the closed set never shows a
+  // step that is not armed" cuts BOTH ways). A VIEWING session (a
+  // scrubbed timestamp, a restored restart posture) keeps the select's
+  // committed KEY on its face while the free input carries its own
+  // committed text — the two controls' choices persist independently,
+  // and a reload restores exactly what the analyst left (the key, the
+  // free text), never a face the unarmed machine cannot honor.
+  const customActive = options.mode === 'playback' && custom !== null && custom.ok;
+  // The EFFECTIVE step: the free speed's when one is committed and
+  // valid, else the select's disclosed key — the caption never claims
+  // a step that is not the armed one.
+  const speedStepMs = customActive && custom.ok ? custom.stepMs : playbackStepMsOf(speed);
   return v('div', { class: 'tm-controls-bar', 'data-tm-mode': options.mode, 'data-tm-range': options.range.derived }, [
     v('div', { class: 'tm-modes', role: 'group', 'aria-label': 'Time Machine mode' }, TIME_MACHINE_MODES.map((entry) => v('button', {
       class: `tm-mode-btn${options.mode === entry.key ? ' active' : ''}`,
@@ -364,7 +393,10 @@ export function timeMachineControls(options: {
       v('button', { class: 'tm-button', 'data-action': 'playback-step', type: 'button', 'aria-label': 'Step forward', title: `Step the selected view instant forward ${stepWord} (clamped at the live anchor)` }, ['Step']),
       // FW-33-B: the disclosed speed select — the step each beat advances
       // by (1x = the 500ms knowable-then step; 10x/100x traverse
-      // multi-year histories), the honest caption beside it.
+      // multi-year histories). FW-34-B: when a FREE speed is the active
+      // choice the select renders its own "custom" face (selected +
+      // disabled — a face the closed set does not carry, so the select
+      // never shows a step that is not armed).
       v('label', { class: 'tm-speed' }, [
         v('span', { class: 'tm-speed-label' }, ['Speed']),
         v('select', {
@@ -372,21 +404,45 @@ export function timeMachineControls(options: {
           'data-action': 'playback-speed',
           'aria-label': 'Playback speed',
           title: playbackSpeedCaptionOf(speedStepMs),
-        }, PLAYBACK_SPEED_KEYS.map((key) => v('option', { value: key, ...(key === speed ? { selected: 'selected' } : {}) }, [key]))),
+        }, [
+          ...PLAYBACK_SPEED_KEYS.map((key) => v('option', { value: key, ...(key === speed && !customActive ? { selected: 'selected' } : {}) }, [key])),
+          ...(customActive ? [v('option', { value: 'custom', selected: 'selected', disabled: 'disabled' }, [`custom (${customText}x)`])] : []),
+        ]),
+      ]),
+      // FW-34-B: THE FREE SPEED INPUT — any validated multiple of the 1x
+      // step. Its committed text is chrome state (buffered on input like
+      // the project filter; validated + applied on the change commit);
+      // a refused value names its reason beside the control.
+      v('label', { class: 'tm-speed tm-speed-free' }, [
+        v('span', { class: 'tm-speed-label' }, ['Free']),
+        v('input', {
+          class: 'tm-speed-input',
+          type: 'text',
+          inputmode: 'decimal',
+          value: customText,
+          placeholder: 'e.g. 2.5x',
+          'aria-label': 'Free playback speed, as a multiple of the 1x step',
+          'data-action': 'playback-speed-custom',
+          title: `Any multiple of the 1x step between ${PLAYBACK_CUSTOM_SPEED_MIN}x and ${PLAYBACK_CUSTOM_SPEED_MAX}x — the armed playback retunes to it the moment you commit.`,
+          autocomplete: 'off',
+        }, []),
       ]),
     ]),
     v('output', { class: 'tm-readout', 'aria-label': 'Selected view instant' }, [formatInstantUtc(options.viewAt)]),
     v('span', { class: 'tm-notice' }, [projectionNoticeOf(options.mode, options.mode === 'playback' && !options.playing)]),
     ...(options.progress === null ? [] : [v('span', { class: 'tm-progress' }, [`${Math.round(options.progress * 100)}%`])]),
+    // FW-34-B: the free speed's honest verdict line — a refused value
+    // names its reason (never a silent clamp, never a dropped claim).
+    ...(customError === null ? [] : [v('span', { class: 'tm-speed-note tm-speed-error', role: 'alert', 'data-tm-speed-error': 'true' }, [customError])]),
     // FW-32-B: the range's honest-derivation note — the derivation
     // stated with the instant it derived (or the session fallback
     // taught plainly). aria-hidden: the scrubber's own min/max
     // attributes carry the same facts to assistive tech.
     v('span', { class: 'tm-range-note', 'data-tm-range-derived': options.range.derived }, [scrubberRangeNoteOf(options.range)]),
-    // FW-33-B: the speed's own honest caption — what playback does at
-    // the selected step, one sentence, never a claim the machine does
-    // not support.
-    v('span', { class: 'tm-speed-note', 'data-tm-speed': speed }, [playbackSpeedCaptionOf(speedStepMs)]),
+    // FW-33-B + FW-34-B: the speed's own honest caption — what playback
+    // does at the EFFECTIVE step (the free speed's when one is armed),
+    // one sentence, never a claim the machine does not support.
+    v('span', { class: 'tm-speed-note', 'data-tm-speed': customActive ? `custom:${customText}` : speed }, [playbackSpeedCaptionOf(speedStepMs)]),
   ]);
 }
 

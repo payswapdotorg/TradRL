@@ -14,7 +14,9 @@
 import type { WorkspaceState } from './workspace';
 import { NAV_GROUPS, SHELL_TARGETS, SHELL_TITLES, type ShellTarget } from './nav';
 import { unreadCount, NOTICE_TITLES } from './notices';
+import { DEMO_PROJECT_ID, sessionOwnDesksOf } from './tenant';
 import type { EvidenceCapsule } from './evidence';
+import type { ProjectRecord } from '../api/contracts';
 import { capsuleBadgeLabel } from '../render/flow';
 import { v, type VNode } from '../render/vtree';
 
@@ -45,7 +47,15 @@ const KIND_ORDER: readonly PaletteEntry['kind'][] = ['NAVIGATION', 'PROJECT', 'J
 /** The evidence-capsule view of a state (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
 export type CapsulesOf = (state: WorkspaceState) => readonly EvidenceCapsule[];
 
-export function paletteIndex(state: WorkspaceState, capsulesOf: CapsulesOf): readonly PaletteEntry[] {
+/** The desks the palette indexes (defaults to the session own desks — the FW-34-B §3.8 law). */
+export type DesksOf = (state: WorkspaceState) => readonly ProjectRecord[];
+
+/** The default desk listing: the session own desks (core/tenant.ts §3.8 — the demo project, the session-owned rows, the unmarked rows). */
+export function sessionDesksForPalette(state: WorkspaceState): readonly ProjectRecord[] {
+  return sessionOwnDesksOf(state.projectDirectory, DEMO_PROJECT_ID);
+}
+
+export function paletteIndex(state: WorkspaceState, capsulesOf: CapsulesOf, desksOf: DesksOf = sessionDesksForPalette): readonly PaletteEntry[] {
   const entries: PaletteEntry[] = SHELL_TARGETS.map((target) => {
     const group = NAV_GROUPS.find((candidate) => candidate.label !== undefined && candidate.targets.includes(target));
     return {
@@ -67,15 +77,22 @@ export function paletteIndex(state: WorkspaceState, capsulesOf: CapsulesOf): rea
       haystack: `${state.project.name} ${state.project.id}`.toLowerCase(),
     });
   }
-  // D-16 (W-29 wave 2): CROSS-PROJECT JUMP ENTRIES — every OTHER desk in
-  // the tenant's project directory is searchable from the palette (S4's
-  // finding: the palette indexed the current project only — a "demo"
-  // query while scoped to another desk found nothing, and the Settings
+  // D-16 (W-29 wave 2): CROSS-PROJECT JUMP ENTRIES — the desks the
+  // listing law allows are searchable from the palette (S4's finding:
+  // the palette indexed the current project only — a "demo" query
+  // while scoped to another desk found nothing, and the Settings
   // select was the only way across desks). Selecting a jump entry
   // switches the workspace's scope (the same user-initiated
   // project-adopted the switcher rides — the D-15 generation guard
   // counts it) and lands on the Goal section, the project's own surface.
-  for (const project of state.projectDirectory) {
+  // FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): the
+  // DEFAULT listing is the SESSION OWN DESKS (core/tenant.ts's own
+  // fold — the demo project, the session-owned rows, the unmarked
+  // fallback), so a shared origin's ~60-69 desks never flood the
+  // palette with other sessions' work; the caller may pass the WHOLE
+  // directory instead (the explicit all-desks disclosure's expanded
+  // state — one expander, both surfaces, never a silent wall).
+  for (const project of desksOf(state)) {
     if (project.id === state.scope.projectId) continue; // the current project already carries its own entry above — never a duplicate
     entries.push({
       kind: 'PROJECT',
@@ -290,8 +307,16 @@ function searchGlyph(): VNode {
  * search — it restores the palette's opened state). The empty query
  * can never land here (it matches every entry), so the state is
  * reachable only through a query that matched nothing.
+ *
+ * FW-34-B (Round C register §3.8 — the shared-tenant wall): when the
+ * query DID match desks this session does not own (other sessions'
+ * desks on the shared origin), the state discloses them BY COUNT with
+ * ONE explicit include-all-desks action — the same disclosure the
+ * Settings switcher carries, never a silent wall, never a lost
+ * registry (the FW-31-B durability win stays intact: the whole
+ * directory remains one explicit expansion away).
  */
-function paletteEmpty(query: string): VNode {
+function paletteEmpty(query: string, hiddenDeskMatches: number): VNode {
   const trimmed = query.trim();
   return v('div', { class: 'palette-empty', 'data-palette-empty': trimmed, role: 'status' }, [
     v('div', { class: 'empty-circle', 'aria-hidden': 'true' }, [searchGlyph()]),
@@ -300,6 +325,12 @@ function paletteEmpty(query: string): VNode {
       ? 'Nothing matches — try a different search.'
       : `Nothing matches “${trimmed}” — try a different search.`]),
     v('button', { class: 'empty-action', 'data-action': 'palette-clear', type: 'button' }, ['Clear search']),
+    ...(hiddenDeskMatches <= 0 ? [] : [
+      v('p', { class: 'empty-sentence', 'data-palette-hidden-desks': 'true' }, [
+        `${hiddenDeskMatches} other desk${hiddenDeskMatches === 1 ? '' : 's'} in this workspace (other sessions’ — not yours) match “${trimmed}”.`,
+      ]),
+      v('button', { class: 'empty-action', 'data-action': 'palette-all-desks', type: 'button' }, ['Include all desks in this workspace']),
+    ]),
   ]);
 }
 
@@ -309,6 +340,10 @@ export function paletteOverlay(options: {
   readonly results: readonly PaletteEntry[];
   readonly selected: number;
   readonly unread: number;
+  /** FW-34-B §3.8: other sessions desks matching the query when the listing is session-scoped (0 = none / already expanded) — the empty state disclosure. */
+  readonly hiddenDeskMatches?: number;
+  /** FW-34-B §3.8: true when the listing already includes every desk in the workspace (the expanded state — the disclosure hides itself). */
+  readonly allDesks?: boolean;
 }): VNode {
   const groups: { kind: PaletteEntry['kind']; entries: { entry: PaletteEntry; position: number }[] }[] = [];
   let position = 0;
@@ -333,7 +368,7 @@ export function paletteOverlay(options: {
         autocomplete: 'off',
       }, []),
       v('div', { class: 'palette-results', role: 'listbox', 'aria-label': 'Results' }, options.results.length === 0
-        ? [paletteEmpty(options.query)] // the §4.12 teaching shape — never a blank region
+        ? [paletteEmpty(options.query, options.allDesks === true ? 0 : options.hiddenDeskMatches ?? 0)] // the §4.12 teaching shape — never a blank region
         : groups.map((group) => v('div', { class: 'palette-group' }, [
         v('div', { class: 'palette-group-label' }, [group.kind]),
         ...group.entries.map(({ entry, position: entryPosition }) => v('button', {

@@ -984,6 +984,24 @@ details.list-row > summary::-webkit-details-marker { display: none; }
 }
 .tm-speed-select:focus-visible { outline: 2px solid var(--tradrl-live); outline-offset: 2px; }
 .tm-speed-note { flex-basis: 100%; font-size: 0.75rem; color: var(--muted-foreground); }
+/* FW-34-B (Round C register §3.2): the FREE speed input — the same row
+   discipline as the disclosed select (a labelled compact control), and
+   the refused-value verdict line in the honest-error tone. */
+.tm-speed-free { margin-left: 4px; }
+.tm-speed-input {
+  cursor: text;
+  width: 6.5rem;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-family: inherit;
+}
+.tm-speed-input:focus-visible { outline: 2px solid var(--tradrl-live); outline-offset: 2px; }
+.tm-speed-error { color: var(--tradrl-down-text); }
 
 /* §4.10 Notifications: the bell badge + toasts. */
 .nav-item.bell { position: relative; }
@@ -1212,6 +1230,33 @@ details.list-row > summary::-webkit-details-marker { display: none; }
 }
 
 /* §4.13 The onboarding wizard. */
+/* FW-34-B (Round C register §3.6 — L4's finding: no skip link): the
+   skip link — visually hidden until focused (the standard pattern),
+   then a visible, reachable landing target at the shell's top-left. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 90;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--popover);
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-family: inherit;
+  text-decoration: none;
+  transform: translateY(-64px);
+  transition: transform 160ms ease;
+}
+.skip-link:focus-visible {
+  outline: 2px solid var(--tradrl-live);
+  outline-offset: 2px;
+  transform: none;
+}
+.skip-link:focus { transform: none; }
+.shell-main:focus { outline: none; } /* the landmark is a focus LANDING target, not a visible focus ring owner */
 .onboarding {
   position: fixed;
   inset: 0;

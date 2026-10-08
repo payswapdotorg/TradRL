@@ -7,7 +7,7 @@
 //   - budgets are zero-or-positive exact decimals.
 
 import { describe, expect, it } from 'vitest';
-import { isDecimalString, isExactDecimal, isNonNegativeDecimal, renderDecimal } from './decimals';
+import { isDecimalString, isExactDecimal, isNonNegativeDecimal, renderDecimal, sumExactDecimals } from './decimals';
 
 describe('decimals: the exact-decimal grammar', () => {
   it('accepts the wire grammar', () => {
@@ -65,5 +65,40 @@ describe('decimals: budgets are zero-or-positive', () => {
     expect(isNonNegativeDecimal('-0.5')).toBe(false);
     expect(isNonNegativeDecimal('abc')).toBe(false);
     expect(isNonNegativeDecimal('1e3')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-34-B (Round C register §3.7 — the execution blotter's aggregate
+// totals): THE EXACT DECIMAL SUM. Totals are sums of the served decimal
+// strings — BigInt-scaled integer math, never float arithmetic — and an
+// operand outside the exact grammar throws the typed error (never a
+// silently coerced operand).
+// ---------------------------------------------------------------------------
+
+describe('FW-34-B: the exact decimal sum (sumExactDecimals)', () => {
+  it('sums exact decimals EXACTLY (the float traps are the point: 0.1 + 0.2 === 0.3 here)', () => {
+    expect(sumExactDecimals(['0.1', '0.2'])).toBe('0.3'); // the classic float lie, exact here
+    expect(sumExactDecimals(['1000000.50', '250.25', '0.25'])).toBe('1000251.00');
+    expect(sumExactDecimals(['1', '2', '3'])).toBe('6');
+    expect(sumExactDecimals(['12.345', '0.000001'])).toBe('12.345001'); // mixed fraction widths pad exactly
+    expect(sumExactDecimals(['-10.50', '20.25'])).toBe('9.75'); // negatives ride the integer path
+    expect(sumExactDecimals(['-10.50', '10.50'])).toBe('0.00'); // sign-cancelling keeps the widest fraction
+  });
+
+  it('the empty fold is exactly "0" (the honest empty total)', () => {
+    expect(sumExactDecimals([])).toBe('0');
+  });
+
+  it('a non-exact operand throws the named error — never a coerced operand, never a silently wrong total', () => {
+    expect(() => sumExactDecimals(['1.5', 'abc'])).toThrow(/is not an exact decimal string/);
+    expect(() => sumExactDecimals(['1e3'])).toThrow(/is not an exact decimal string/);
+    expect(() => sumExactDecimals([''])).toThrow(/is not an exact decimal string/);
+  });
+
+  it('scale honesty at the blotter magnitudes (fees at sub-cent precision, notionals at millions)', () => {
+    expect(sumExactDecimals(['12345678.90', '0.01'])).toBe('12345678.91');
+    expect(sumExactDecimals(['999999999.99', '0.01'])).toBe('1000000000.00'); // the carry widens the whole part
+    expect(sumExactDecimals(['0.001', '0.009'])).toBe('0.010'); // the widest fraction is preserved verbatim
   });
 });

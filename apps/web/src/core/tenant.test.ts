@@ -12,8 +12,13 @@ import { describe, expect, it } from 'vitest';
 import {
   assertProjectScope,
   assertTenantScope,
+  DEMO_PROJECT_ID,
+  isDemoProject,
+  isSessionOwnDesk,
   isWorkspaceScope,
+  otherSessionsDesksOf,
   projectOfRecord,
+  sessionOwnDesksOf,
   tenantOfRecord,
   type WorkspaceScope,
 } from './tenant';
@@ -101,5 +106,47 @@ describe('tenant: the project gate', () => {
     expect(() => assertProjectScope(scope, { tenantId: 'tenant-z', projectId: 'proj-z' })).toThrow(
       /cross-tenant renders are a typed error/,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): the
+// session-desks law. The default listing is the session's OWN desks (the
+// 'session-owned' marker + the UNMARKED honest fallback + the shared demo
+// project); other sessions' desks stay one explicit disclosure away.
+// ---------------------------------------------------------------------------
+
+describe('FW-34-B: the session-desks law (isSessionOwnDesk + the folds)', () => {
+  /** A directory row carrying the given session-scope marker. */
+  const row = (id: string, marker?: 'session-owned' | 'tenant-available') => ({ id, consoleSessionScope: marker }) as never as Parameters<typeof isSessionOwnDesk>[0];
+
+  it('the marker splits the rows: session-owned and UNMARKED are the session own; tenant-available is another session desk', () => {
+    expect(isSessionOwnDesk(row('prj-a'))).toBe(true); // UNMARKED = the honest fallback (a backing that predates the marker)
+    expect(isSessionOwnDesk(row('prj-a', 'session-owned'))).toBe(true);
+    expect(isSessionOwnDesk(row('prj-a', 'tenant-available'))).toBe(false);
+  });
+
+  it('the default listing folds the session own desks + the shared demo project (whatever its marker says)', () => {
+    const directory = [
+      row('prj-a', 'session-owned'),
+      row('prj-other-session', 'tenant-available'),
+      row('prj-legacy-unmarked'),
+      row(DEMO_PROJECT_ID, 'tenant-available'), // the demo project carries the marker but IS every session's teaching desk
+    ];
+    const listing = sessionOwnDesksOf(directory, DEMO_PROJECT_ID);
+    expect(listing.map((entry) => entry.id)).toEqual(['prj-a', 'prj-legacy-unmarked', DEMO_PROJECT_ID]); // the other session's desk is NOT here
+    expect(otherSessionsDesksOf(directory, DEMO_PROJECT_ID).map((entry) => entry.id)).toEqual(['prj-other-session']); // it is exactly the hidden set
+  });
+
+  it('a registry with no other-session desks hides nothing (the disclosure count is its own truth)', () => {
+    const directory = [row('prj-a', 'session-owned'), row(DEMO_PROJECT_ID)];
+    expect(otherSessionsDesksOf(directory, DEMO_PROJECT_ID)).toEqual([]);
+    expect(sessionOwnDesksOf(directory, DEMO_PROJECT_ID).length).toBe(2);
+  });
+
+  it('the demo project constant mirrors the runtime (deploy/vercel/runtime/demo.ts — same name, same value)', () => {
+    expect(DEMO_PROJECT_ID).toBe('prj-demo-console');
+    expect(isDemoProject('prj-demo-console')).toBe(true);
+    expect(isDemoProject('prj-a')).toBe(false);
   });
 });

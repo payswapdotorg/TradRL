@@ -23,6 +23,7 @@
 
 import type { ApiTransport, FetchLike } from '../api/transport';
 import { createFetchTransport } from '../api/transport';
+import type { ProjectRecord } from '../api/contracts';
 import { createConsoleClient, type ConsoleClient } from '../api/client';
 import type { ApiConsoleError } from '../api/errors';
 import type { LaunchDraft, LaunchIds, StandaloneResearchInput } from '../core/launch';
@@ -36,13 +37,13 @@ import type { SectionId } from '../core/sections';
 import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
 import { historyFloorOf, openWorkspace, reduceWorkspace, serializeWorkspaceExport, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
-import { isPlaybackSpeedKey, playbackStepMsOf, TIME_MACHINE_STEP_MS, viewAtOf as viewAtOfTimeMachine } from '../core/timemachine';
+import { isPlaybackSpeedKey, parsePlaybackCustomSpeed, playbackStepMsOf, TIME_MACHINE_STEP_MS, viewAtOf as viewAtOfTimeMachine } from '../core/timemachine';
 import type { WorkspaceScope } from '../core/tenant';
 import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
 import { persistTheme } from '../core/theme';
 import { isShellTarget } from '../core/nav';
-import { capsuleRefOf, paletteIndex, paletteOverlay, projectRefOf, rankPalette, type PaletteEntry } from '../core/palette';
+import { capsuleRefOf, paletteIndex, paletteOverlay, projectRefOf, rankPalette, sessionDesksForPalette, type DesksOf, type PaletteEntry } from '../core/palette';
 import {
   NOTICE_READ_STORAGE_KEY,
   noticeReadKey,
@@ -231,8 +232,10 @@ export interface MountDocument {
 /** The launchpad project id — the workspace's pre-launch scope placeholder (core/tenant.ts owns the constant; re-exported for the existing imports). */
 export { LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 
-/** The persisted-scope storage key (R6b, W-22 — localStorage `tradrl_scope_project` in production). */
-export const SCOPE_STORAGE_KEY = 'tradrl_scope_project';
+/** The persisted-scope storage key (R6b, W-22 — localStorage `tradrl_scope_project` in production; the canonical home is core/posture.ts — FW-34-B — re-exported unchanged for the existing importers). */
+export { SCOPE_STORAGE_KEY } from '../core/posture';
+import { SCOPE_STORAGE_KEY } from '../core/posture';
+import { initialConsolePosture, persistPosture, postureTimeMachineOf, readStoredPosture, type ConsoleSessionPosture } from '../core/posture';
 
 /** Read the persisted workspace project id (null when none is stored). */
 export function readStoredScopeProject(storage: { getItem(key: string): string | null }): string | null {
@@ -274,6 +277,32 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   // the Lead reproduced twice: "the first select change did not take",
   // the select snapping back to the boot scope).
   let scopeGeneration = 0;
+  // FW-34-B (Round C register §3.1 — the browser-restart residuals):
+  // THE SESSION POSTURE. One validated record (core/posture.ts) carries
+  // the wizard's dismissal, the scope pointer and the Time Machine's
+  // mode + speed — read ONCE, synchronously, at boot (the D-15
+  // discipline), written through on every posture change. It rides the
+  // SAME seam as the scope (options.scopeStorage — localStorage in
+  // production): the record is the scope seam's successor and its
+  // legacy-key writes keep the pre-FW-34-B keys alive, so a downgrade
+  // never loses the user's world. The TM restore itself runs inside the
+  // listing read (only while the machine still sits at its boot 'live'
+  // mode — a user who touched the Time Machine first is driving, never
+  // overwritten).
+  let sessionPosture: ConsoleSessionPosture = options.scopeStorage === undefined
+    ? initialConsolePosture()
+    : (readStoredPosture(options.scopeStorage) ?? initialConsolePosture());
+  // FW-34-B: the stored TM posture captured ONCE at boot — the restore
+  // own source, immune to the write-through fold that lands during the
+  // boot listing (a scope adoption RESETS the machine to live before the
+  // restore re-lands the analyst instant — without the capture, the
+  // fold would clobber the stored posture to live a dispatch before the
+  // restore reads it; bootStoredScope own law, the TM own form).
+  const bootStoredTimeMachine: ConsoleSessionPosture['timeMachine'] = sessionPosture.timeMachine;
+  const writeSessionPosture = (): void => {
+    if (options.scopeStorage === undefined) return;
+    persistPosture(options.scopeStorage, sessionPosture);
+  };
 
   let state: WorkspaceState = openWorkspace(scope, instants.nowMs());
   const listeners: WorkspaceListener[] = [];
@@ -299,8 +328,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // reload reopens THE USER'S world, not the env pin's (the 69-friction-row
     // finding: reload silently reset the scope to the demo project).
     // The launchpad placeholder never persists (there is no project yet).
+    // FW-34-B: the same move rides THE POSTURE RECORD (the scope field's
+    // write-through is one with the record's — the legacy key keeps its
+    // own write inside persistPosture).
     if (state.scope.projectId !== scopeBefore && state.scope.projectId !== LAUNCHPAD_PROJECT_ID && options.scopeStorage !== undefined) {
       persistScopeProject(options.scopeStorage, state.scope.projectId);
+      sessionPosture = { ...sessionPosture, scopeProjectId: state.scope.projectId };
+      writeSessionPosture();
     }
     // THE READ-STATE WRITE-THROUGH (D-6c, W-25C): a mark-read /
     // mark-all-read persists the affected notices' read marks (keyed
@@ -433,14 +467,63 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // refetches for the adopted scope). A stored id that no longer
         // exists is stale — cleared and ignored, falling back to the env
         // pin EXACTLY as the pre-W-22 boot behaved.
-        const stored = bootStoredScope;
-        if (stored === null) return;
-        if (scopeGeneration !== 0) return; // a scope move already happened — the user (or the restore itself) is driving
-        if (stored === state.scope.projectId) return;
-        if (records.some((record) => record.id === stored)) {
-          dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
-        } else if (options.scopeStorage !== undefined) {
-          persistScopeProject(options.scopeStorage, ''); // stale (deleted upstream) — clear it and keep the env pin
+        // FW-34-B (Round C register §3.1) — THE TIME-MACHINE POSTURE
+        // RESTORE, in the SAME listing pass but AFTER the scope branch
+        // (the scope adoption is a reset+switch transition that RE-OPENS
+        // the machine at live — the TM posture then re-lands the
+        // analyst view instant on the adopted scope own machine; a
+        // browser may carry a TM posture with no scope posture at all:
+        // the demo-scope analyst who scrubbed an incident and reloaded):
+        // when the stored posture left the machine at a selected instant
+        // (a scrubbed timestamp, a T-x lens, a paused playback — all fold
+        // to an explicit instant) and the machine STILL sits at its boot
+        // 'live' mode, the console REOPENS VIEWING THAT INSTANT (L3's
+        // finding: an incident review that reloads the page lost the
+        // view it was reviewing — mode+speed reset to LIVE/1x on every
+        // reload). A user who touched the Time Machine before the
+        // listing landed left 'live' already — their choice stands,
+        // never overwritten (the D-15 discipline, the TM's own form).
+        // The restore clamps to [the history floor, the anchor] exactly
+        // like the scrubber's own commit — never a throw, never a
+        // fabricated instant. A 'live' stored posture restores nothing
+        // (the anchor follows the observed now — that IS the live mode).
+        const stored = sessionPosture.scopeProjectId ?? bootStoredScope;
+        if (stored !== null && scopeGeneration === 0 && stored !== state.scope.projectId) { // the early-return-free form of the W-22/D-15 guards (the TM restore below must run on EVERY path, never skipped by a scope-branch return)
+          if (records.some((record) => record.id === stored)) {
+            dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
+          } else if (options.scopeStorage !== undefined) {
+            persistScopeProject(options.scopeStorage, ''); // stale (deleted upstream) — clear it and keep the env pin
+            sessionPosture = { ...sessionPosture, scopeProjectId: null };
+            writeSessionPosture(); // the posture record clears with the legacy key (FW-34-B)
+          }
+        }
+        if (state.timeMachine.mode === 'live' && bootStoredTimeMachine.mode !== 'live' && bootStoredTimeMachine.viewAt !== null) {
+          const anchor = state.timeMachine.anchorAt;
+          // FW-34-B (Round C register §3.1) — the restore's floor clamp is
+          // the RECORD-DERIVED floor ONLY (the MI-D9 step-back law: the
+          // session-open fallback floor is TAUGHT by the scrubber's range,
+          // never ENFORCED on a commit). The restart moment is exactly the
+          // case that demands it: the boot bundle's own listing adoption
+          // resets every record (project null — the refetch has not landed
+          // yet), so the session fold would return the SESSION OPEN instant
+          // and a stored instant below it would clamp UP to it (the degenerate
+          // [openedAt, anchor] range erasing the analyst's incident view on
+          // every restart — the exact residual this restore exists to close).
+          // With the project's own history on record the clamp holds exactly
+          // like the scrubber's commit; with none on hand the view restores
+          // at its stored instant, capped only by the anchor.
+          const history = historyFloorOf(state);
+          const floor = history.derived === 'records' ? Math.min(history.floorAt, anchor) : null;
+          const clamped = floor === null ? Math.min(bootStoredTimeMachine.viewAt, anchor) : Math.min(Math.max(bootStoredTimeMachine.viewAt, floor), anchor);
+          if (bootStoredTimeMachine.mode === 't-minus') {
+            // The relative lens restores at the same offset from the
+            // CURRENT anchor (t-minus follows now by definition — the
+            // offset, not a wall instant, is the posture).
+            const tMinusMs = Math.max(anchor - clamped, 0);
+            dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs });
+          } else {
+            dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: clamped });
+          }
         }
       });
       const projectId = bundleScope;
@@ -786,7 +869,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       drawerOpen: false,
       sheet: null,
       palette: null,
-      onboarding: options.onboardingStorage === undefined ? initialOnboarding() : readStoredOnboarding(options.onboardingStorage),
+      // FW-34-B (Round C register §3.1): the wizard's dismissal rides the
+      // SESSION POSTURE record (with the legacy tradrl_onboarded read as
+      // the fallback when only that seam is injected). An onboarded
+      // browser renders NO wizard at all (null — the pre-fix completed
+      // state rendered an empty div.onboarding-hidden; null is cleaner
+      // and the render's own guard already handles it). A browser with
+      // no posture at all is a first run: the wizard shows, session-only
+      // when storage refuses (§4.13's own law).
+      onboarding: (sessionPosture.onboarded || (options.onboardingStorage !== undefined && isOnboarded(readStoredOnboarding(options.onboardingStorage))))
+        ? null
+        : initialOnboarding(),
       toast: null,
       confirm: null,
       touchedFields: [],
@@ -796,7 +889,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       projectFilter: '',
       exportVerify: null,
       scrubBounds: null,
-      playbackSpeed: '1x',
+      // FW-34-B (Round C register §3.1): the SPEED posture restores from
+      // the session posture record (the TM posture's own fields — the
+      // select's key + the free input's committed text; L3's "TM mode+speed
+      // reset to LIVE/1x on every reload" residual).
+      playbackSpeed: sessionPosture.timeMachine.speed,
+      playbackCustomSpeed: sessionPosture.timeMachine.freeSpeed,
+      playbackCustomSpeedError: null,
+      showAllDesks: false,
     };
     let paletteResults: readonly PaletteEntry[] = [];
     // §4.10's once-per-notice toast guard: the id of the notice the
@@ -935,6 +1035,34 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       return element.getAttribute('data-action') === 'playback-speed' ? element : null;
     };
     /**
+     * FW-34-B (Round C register §3.2) — THE FREE SPEED INPUT: the
+     * delegated input/change target [data-action=playback-speed-custom].
+     * The input events BUFFER the live text (chrome state — the same
+     * discipline as the project filter); the change event (the release /
+     * the Enter commit) VALIDATES it under core/timemachine.ts's own
+     * grammar and makes it the EFFECTIVE step (a committed select key
+     * clears it, a committed free speed makes the select read "custom").
+     * Null when the target is not the input.
+     */
+    const customSpeedTargetOf = (target: unknown): FieldEventTarget | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      return element.getAttribute('data-action') === 'playback-speed-custom' ? element : null;
+    };
+    /**
+     * FW-34-B: the EFFECTIVE playback step of the chrome's speed state —
+     * the free speed's step when one is committed and valid, else the
+     * select's disclosed key. One source of truth for the NEXT arm and
+     * for a committed retune (the caption renders the same value).
+     */
+    const playbackStepOfView = (): number => {
+      if (view.playbackCustomSpeed.length > 0) {
+        const parsed = parsePlaybackCustomSpeed(view.playbackCustomSpeed);
+        if (parsed.ok) return parsed.stepMs;
+      }
+      return playbackStepMsOf(view.playbackSpeed);
+    };
+    /**
      * MI-D7 (S5's ask — the in-UI chain verify): THE EXPORT-VERIFY FILE
      * INPUT — the delegated change on [data-action=export-verify-file].
      * The user selected a downloaded export; the browser serves it as a
@@ -968,6 +1096,33 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       if (typeof candidate.name !== 'string') return null;
       return { element, file: candidate as SelectedExportFile };
     };
+    /**
+     * FW-34-B (§3.9): whether a change/input target IS the verify input (an
+     * empty-FileList match — the change lands on the replaced element whose
+     * selection the buffer holds).
+     */
+    const isVerifyInputTarget = (target: unknown): boolean => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return false;
+      return element.getAttribute('data-action') === 'export-verify-file';
+    };
+    /**
+     * FW-34-B (Round C register §3.9 — the export-verify file-input
+     * regression, L1+M3): the SELECTED FILE BUFFER. The browser fires
+     * `input` and `change` on a file selection; when the ~1s beat
+     * re-projection replaces the input BETWEEN them (or the automation
+     * path stages the file on one element and commits on its
+     * replacement), the change lands on the FRESH element whose
+     * FileList is EMPTY — files=0, the verify never runs, and the
+     * re-projected input renders the browser's own "No file chosen"
+     * (the Round C regression: worked in Round B, refused every attempt
+     * in Round C). The input-time selection BUFFERS here (the J3
+     * discipline — the same class as the launch edits and the scrub
+     * position); the change commit reads the LIVE element's file when
+     * it carries one (a fresh selection always wins) and the BUFFERED
+     * file otherwise, so the commit path survives every replacement.
+     */
+    let pendingVerifyFile: SelectedExportFile | null = null;
     // THE SCRUB BUFFER (the J5 wiring — the J3 pointer discipline): a
     // drag fires `input` per pointer move; those BUFFER here and never
     // dispatch, because a re-render under the pointer replaces the
@@ -1045,6 +1200,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     const focusProjectFilter = (): void => {
       if (document.querySelectorAll === undefined) return;
       for (const candidate of document.querySelectorAll('[data-project-filter]')) {
+        (candidate as { focus(): void }).focus();
+        return;
+      }
+    };
+    /** FW-34-B: re-focus the free speed input after a re-projection (the caret survives the full tree rebuild). */
+    const focusFreeSpeedInput = (): void => {
+      if (document.querySelectorAll === undefined) return;
+      for (const candidate of document.querySelectorAll('[data-action="playback-speed-custom"]')) {
         (candidate as { focus(): void }).focus();
         return;
       }
@@ -1184,14 +1347,33 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     /** The evidence capsules for the palette (the Evidence section's own fold). */
     const capsulesForPalette = capsuleFromOutcomeList;
 
-    /** The palette's live results for the current query (§4.14; D4's 100% coverage). */
+    /** FW-34-B (§3.8 — the shared-tenant wall): the whole-workspace desk listing (the all-desks disclosure's expanded state — every desk in the directory, other sessions' included). */
+    const allDesksForPalette: DesksOf = (workspace: WorkspaceState): readonly ProjectRecord[] => workspace.projectDirectory;
+
+    /** The palette's live results for the current query (§4.14; D4's 100% coverage). FW-34-B (§3.8): the desks the index rides are the SESSION'S OWN by default (core/palette.ts's own law) — the WHOLE directory only while the all-desks disclosure is expanded (view.showAllDesks, the one expander governing the switcher and the palette both). */
     const refreshPalette = (): void => {
       if (view.palette === null) { paletteResults = []; return; }
-      paletteResults = rankPalette(paletteIndex(state, capsulesForPalette), view.palette.query);
+      paletteResults = rankPalette(paletteIndex(state, capsulesForPalette, view.showAllDesks ? allDesksForPalette : sessionDesksForPalette), view.palette.query);
     };
 
     onState((next: WorkspaceState) => {
       render();
+      // FW-34-B (Round C register §3.1) — THE TIME-MACHINE POSTURE
+      // WRITE-THROUGH: every dispatch passes through here, so the
+      // machine's own mode + view instant (folded with the chrome's
+      // speed state) lands in the session posture the moment it
+      // changes — a reload reopens the console VIEWING WHERE THE
+      // ANALYST STOOD (L3's finding: the incident view was lost on
+      // every reload). The change check keeps the storage write off
+      // the no-op paths (a live machine's posture is stable across
+      // beats — viewAt null by the fold's own law).
+      {
+        const foldedTm = postureTimeMachineOf(next.timeMachine.mode, viewAtOfTimeMachine(next.timeMachine), view.playbackSpeed, view.playbackCustomSpeed);
+        if (JSON.stringify(foldedTm) !== JSON.stringify(sessionPosture.timeMachine)) {
+          sessionPosture = { ...sessionPosture, timeMachine: foldedTm };
+          writeSessionPosture();
+        }
+      }
       // §4.10 D6: a NEW notice surfaces as a toast within the poll cycle; the
       // toast auto-dismisses after ~5s (the scheduler seam — never a wall-clock
       // read in a render path; the timer only clears chrome state). §4.10's own
@@ -1248,6 +1430,32 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       if (document.querySelectorAll === undefined) return;
       for (const focusable of document.querySelectorAll('.tradrl-shell .nav-item')) {
         focusable.focus();
+        return;
+      }
+    };
+
+    /**
+     * FW-34-B (Round C register §3.6 — L4's keyboard/focus findings):
+     * focus THE MAIN CONTENT region (the shell's own <main> landmark,
+     * tabindex -1 — the skip link's own target). The palette's actions,
+     * the sheet close and the wizard's dismissal all LEFT THE FOCUS ON
+     * <body> (L4: "focus resets to BODY after EVERY palette nav AND
+     * sheet close") — every one of those closes an overlay and hands
+     * the keyboard journey to the content that was under it.
+     */
+    const focusMainContent = (): void => {
+      if (document.querySelectorAll === undefined) return;
+      for (const focusable of document.querySelectorAll('[data-main-content="true"]')) {
+        (focusable as { focus(): void }).focus();
+        return;
+      }
+    };
+
+    /** FW-34-B: focus the onboarding wizard's CTA (the modal's own entry point — the keyboard journey starts inside the dialog, never on BODY). */
+    const focusOnboardingStart = (): void => {
+      if (document.querySelectorAll === undefined) return;
+      for (const focusable of document.querySelectorAll('.tradrl-shell .onboarding-cta')) {
+        (focusable as { focus(): void }).focus();
         return;
       }
     };
@@ -1359,6 +1567,34 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         return;
       }
+      // FW-34-B (Round C register §3.2): THE FREE SPEED INPUT's live text —
+      // BUFFER ONLY (chrome state, the same discipline as the project
+      // filter): the render's focus preservation keeps the caret in the
+      // input across the beat re-projection, and the VALIDATION + the
+      // retune belong to the change commit (never mid-typing — a half-typed
+      // "2." is not a refusal).
+      const customSpeedInput = customSpeedTargetOf(event.target);
+      if (customSpeedInput !== null) {
+        const text = typeof customSpeedInput.value === 'string' ? customSpeedInput.value : '';
+        if (view.playbackCustomSpeed !== text) {
+          view = { ...view, playbackCustomSpeed: text, playbackCustomSpeedError: null };
+          render();
+          focusFreeSpeedInput();
+        }
+        return;
+      }
+      // FW-34-B (Round C register §3.9 — the export-verify regression):
+      // the file input's INPUT event BUFFERS the selection (the browser
+      // fires input + change on one selection; a beat re-projection
+      // between them leaves the change's element EMPTY — the buffer is
+      // the commit path's survivor). NO render, NO dispatch: the input's
+      // own chosen-file state is the browser's, and the commit belongs to
+      // the change (the same J3 discipline as every other buffer).
+      const verifyInputSelection = verifyFileTargetOf(event.target);
+      if (verifyInputSelection !== null) {
+        pendingVerifyFile = verifyInputSelection.file;
+        return;
+      }
       // THE SCRUBBER (the J5 wiring): a drag's input events BUFFER the
       // live position — never a dispatch, never a render (a re-projection
       // under the pointer replaces the range input and the browser
@@ -1431,8 +1667,18 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // Runs FIRST (the input is not a text field: none of the
       // launch-field branches below may claim it).
       const verifySelection = verifyFileTargetOf(event.target);
-      if (verifySelection !== null) {
-        void verifySelectedExport(verifySelection.element, verifySelection.file);
+      if (verifySelection !== null || (pendingVerifyFile !== null && isVerifyInputTarget(event.target))) {
+        // FW-34-B (§3.9): the change commit — the LIVE element's fresh
+        // selection wins; an empty live FileList falls back to the
+        // INPUT-TIME BUFFER (the beat replaced the element between the
+        // two events — the Round C regression's files=0 class). The
+        // buffer clears either way: one commit per selection.
+        const committed = verifySelection !== null ? verifySelection.file : pendingVerifyFile;
+        const element = verifySelection !== null ? verifySelection.element : event.target as FieldEventTarget;
+        pendingVerifyFile = null;
+        if (committed !== null) {
+          void verifySelectedExport(element, committed);
+        }
         return;
       }
       // THE PROJECT SWITCHER'S COMMIT (R6c, W-22): the select's change
@@ -1455,18 +1701,62 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // re-arms it at its CURRENT view instant with the new step (no
       // view jump, the paused flag preserved — the pure transition's own
       // law). A disarmed machine never receives the event (retuning a
-      // disarmed machine is the machine's own typed error).
+      // disarmed machine is the machine's own typed error). FW-34-B: a
+      // committed select key is the user's EXPLICIT choice of the closed
+      // set — it clears any free speed (the select's face and the
+      // caption name exactly one effective step, never a stale hybrid).
       const speedSelect = speedTargetOf(event.target);
       if (speedSelect !== null) {
         const chosen = typeof speedSelect.value === 'string' ? speedSelect.value : '';
         if (isPlaybackSpeedKey(chosen)) {
-          view = { ...view, playbackSpeed: chosen };
+          view = { ...view, playbackSpeed: chosen, playbackCustomSpeed: '', playbackCustomSpeedError: null };
+          // FW-34-B: the speed posture follows the chrome's choice (the
+          // chrome-only change never passes through onState's fold).
+          sessionPosture = { ...sessionPosture, timeMachine: { ...sessionPosture.timeMachine, speed: chosen, freeSpeed: '' } };
+          writeSessionPosture();
           const machine = state.timeMachine;
           if (machine.mode === 'playback' && machine.playback !== null) {
             dispatch({ kind: 'playback-retuned', at: instants.nowMs(), stepMs: playbackStepMsOf(chosen) }); // renders via onState
           } else {
             render(); // chrome-only change — the select's own face + the honest caption
           }
+        }
+        return;
+      }
+      // FW-34-B (Round C register §3.2) — THE FREE SPEED'S COMMIT (the
+      // change event: the release / the Enter commit). The committed
+      // text validates under core/timemachine.ts's own grammar; a VALID
+      // value becomes the EFFECTIVE step (the next arm's, and an ARMED
+      // playback retunes NOW — the same law the select's commit rides);
+      // a REFUSED value keeps the select's key as the effective step and
+      // names its reason in the control's own verdict line (never a
+      // silent clamp, never a throw). An EMPTY commit clears the free
+      // speed (back to the select's key — the escape hatch).
+      const customSpeedCommit = customSpeedTargetOf(event.target);
+      if (customSpeedCommit !== null) {
+        const text = typeof customSpeedCommit.value === 'string' ? customSpeedCommit.value : view.playbackCustomSpeed;
+        if (text.trim().length === 0) {
+          view = { ...view, playbackCustomSpeed: '', playbackCustomSpeedError: null };
+          sessionPosture = { ...sessionPosture, timeMachine: { ...sessionPosture.timeMachine, freeSpeed: '' } };
+          writeSessionPosture();
+          render();
+          return;
+        }
+        const parsed = parsePlaybackCustomSpeed(text);
+        if (parsed.ok) {
+          view = { ...view, playbackCustomSpeed: text, playbackCustomSpeedError: null };
+          sessionPosture = { ...sessionPosture, timeMachine: { ...sessionPosture.timeMachine, freeSpeed: text } };
+          writeSessionPosture();
+          const machine = state.timeMachine;
+          if (machine.mode === 'playback' && machine.playback !== null) {
+            dispatch({ kind: 'playback-retuned', at: instants.nowMs(), stepMs: parsed.stepMs }); // renders via onState
+          } else {
+            render(); // chrome-only change — the select's "custom" face + the honest caption
+          }
+        } else {
+          view = { ...view, playbackCustomSpeed: text, playbackCustomSpeedError: parsed.reason };
+          render();
+          focusFreeSpeedInput();
         }
         return;
       }
@@ -1483,9 +1773,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // session start: the pre-session history (the auditor's incident
       // review) stays reachable across every load/reload. When no
       // records are on hand the fold returns the session open instant
-      // (derived: 'session') — the pre-fix behavior stands, taught by
-      // the range note. The drag pin clears here: the commit is the
-      // drag's one end point.
+      // (derived: 'session') — taught by the range note. FW-34-B (Round C
+      // register §3.1): the session-open fallback floor is TAUGHT, never
+      // ENFORCED on the commit (the MI-D9 step-back law, the same class
+      // exactly): a commit below the session open lands where the user
+      // dragged it, capped only by the anchor — a scope adoption (the
+      // switcher's move, the boot restore) resets every record and the
+      // refetch has not landed yet, so enforcing the fallback here would
+      // clamp a fresh desk's FIRST scrub straight to the degenerate
+      // [openedAt, anchor] point (the scrubbed incident erased before the
+      // posture could ever record it). The drag pin clears here: the
+      // commit is the drag's one end point.
       const scrubber = scrubTargetOf(event.target);
       if (scrubber !== null) {
         const raw = scrubAt ?? scrubValueOf(scrubber);
@@ -1493,8 +1791,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (view.scrubBounds !== null) view = { ...view, scrubBounds: null };
         if (raw !== null) {
           const anchor = state.timeMachine.anchorAt;
-          const floor = Math.min(historyFloorOf(state).floorAt, anchor);
-          const clamped = Math.min(Math.max(raw, floor), anchor);
+          const history = historyFloorOf(state);
+          const floor = history.derived === 'records' ? Math.min(history.floorAt, anchor) : null;
+          const clamped = floor === null ? Math.min(raw, anchor) : Math.min(Math.max(raw, floor), anchor);
           dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: clamped }); // renders via onState
         }
         return;
@@ -1562,13 +1861,27 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // console — Continue, Skip, theme, refresh, launch steps, export —
     // was intercepted here as a navigation and returned silently,
     // before any [data-action] branch could run (the J1 hard block).
-    document.addEventListener('click', (event) => {
-      pointerDown = false; // the click concludes the press
-      let target = event.target?.closest?.('[data-target]');
+/**
+     * FW-34-B (Round C register §3.6 — the Mark-read incident, L4) — THE
+     * ONE INTERACTION RESOLVER: the delegated click handler's whole body,
+     * lifted so the KEYBOARD path can run the IDENTICAL branches. The
+     * beat re-projection replaces the whole tree ~every 500ms-1s; when it
+     * lands between a focused button's keydown and the browser's composed
+     * click, the click composes on the DETACHED node and never bubbles to
+     * the document — the activation silently no-ops (L4's finding: a
+     * focused Mark-read + native Enter — "button vanished on the beat,
+     * heading stayed '1 unread', action never fired"). The keyboard path
+     * below dispatches on the SETTLED state — the live focused element at
+     * keydown time (whose identity D-10's restore keeps fresh across every
+     * beat) — and cancels the browser's own click synthesis, so the action
+     * fires EXACTLY once, on the element the user actually sees.
+     */
+    const interactionAt = (rawTarget: ClickTarget | null): void => {
+      let target = rawTarget?.closest?.('[data-target]');
       let navResolved = target !== null && target !== undefined && target.tagName === 'BUTTON' && target.getAttribute('data-target') !== null && isShellTarget(target.getAttribute('data-target') as string);
-      let action = event.target?.closest?.('[data-action]');
+      let action = rawTarget?.closest?.('[data-action]');
       let actionKind = action === null || action === undefined ? null : action.getAttribute('data-action');
-      const row = event.target?.closest?.('[data-row]');
+      const row = rawTarget?.closest?.('[data-row]');
       const rowId = row === null || row === undefined ? null : row.getAttribute('data-row');
       const sheetRef = rowId === null ? null : parseSheetRef(rowId);
       // THE BEAT-RACE REPLAY (D-6a, W-25C): the composed click resolved
@@ -1641,6 +1954,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             view = { ...view, accountView: id, drawerOpen: false };
             render();
             if (openedSheet !== null) focusSheetStart();
+            // FW-34-B (L4): a palette/click navigation that opened NO
+            // sheet lands the focus on the content, never on BODY.
+            else focusMainContent();
             return;
           }
           // A workspace section: the state machine owns selection.
@@ -1651,6 +1967,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             render();
           }
           if (openedSheet !== null) focusSheetStart();
+          // FW-34-B (L4): same law — no sheet, no BODY: the content.
+          else focusMainContent();
           return;
         }
       }
@@ -1696,23 +2014,46 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           } else if (timeMachine.mode === 'playback' && timeMachine.playback !== null && timeMachine.playback.paused) {
             dispatch({ kind: 'playback-resumed', at: instants.nowMs() }); // renders via onState
           } else {
-            // FW-33-B (Round B blocker 5) — THE NEVER-BELOW-THE-FLOOR ARM:
-            // the pre-fix arm was ALWAYS state.openedAt; when every record
-            // on hand arrived AFTER the session opened (a fresh session
-            // whose first read lands seconds later), the history-derived
-            // slider floor (min(historyFloorOf, anchor) — what the scrubber
-            // renders) sat ABOVE openedAt, so the armed playback's instant
-            // rendered BELOW the slider floor: the readout showed an
-            // instant the slider could not express (the ~5-personas'
-            // residual). The arm now clamps to the SAME floor the slider
-            // renders — max(openedAt, the derived floor), capped at the
-            // anchor — so the playback instant is always inside the range
-            // from the first tick. The step rides the DISCLOSED SPEED
-            // select's committed key (1x = the pre-FW-33-B 500ms step).
+            // FW-34-B (Round C register §3.2 — the live-edge anchor, L1/M5/S5/L3):
+            // THE ARM PLAYS FORWARD FROM WHERE THE ANALYST STANDS. The
+            // pre-fix arm was ALWAYS a computed instant (max(openedAt,
+            // floor)) — never the scrubbed instant, never the floor — so
+            // play-forward-from-incident was impossible (L3: arming
+            // PLAYBACK discarded her scrubbed instant and anchored at the
+            // live edge) and the launch-to-now arc was unreachable (L1:
+            // armed from the committed FLOOR instant, playback still
+            // started at the session-open instant). The arm now follows
+            // the machine's own mode:
+            //   - TIMESTAMP / T-MINUS (a selected past instant — the
+            //     scrubber's commit, the Steps' selection): the arm IS
+            //     that instant, clamped to [the history floor, the
+            //     anchor] exactly like the scrubber's own commit — the
+            //     incident review plays forward FROM the incident.
+            //   - LIVE (the relaxed state — no instant selected): the arm
+            //     IS the range floor (the history-derived floor the
+            //     scrubber renders, capped at the anchor) — the
+            //     launch-to-now arc replays from the start. The
+            //     never-below-the-floor law holds by construction; the
+            //     FW-33-B anchor clamp still lands a crossing tick AT
+            //     "now", paused, never a throw.
             const anchor = state.timeMachine.anchorAt;
-            const floor = Math.min(historyFloorOf(state).floorAt, anchor);
-            const fromAt = Math.min(Math.max(state.openedAt, floor), anchor);
-            dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt, stepMs: playbackStepMsOf(view.playbackSpeed) });
+            // FW-34-B (§3.1 + the MI-D9 law): the SELECTED-instant arm's
+            // floor clamp is the RECORD-DERIVED floor only (the
+            // session-open fallback is taught by the range, never enforced
+            // on the arm — a fresh desk whose refetch has not landed can
+            // still play forward from a scrubbed incident below the session
+            // open). The RELAXED (live) arm keeps the full floor — the
+            // arc's START is the range's own floor, whichever way it
+            // derived (with no records the arc replays from the session
+            // open, exactly the pre-FW-34-B behavior).
+            const history = historyFloorOf(state);
+            const rangeFloor = Math.min(history.floorAt, anchor);
+            const selectedFloor = history.derived === 'records' ? rangeFloor : null;
+            const selected = viewAtOfTimeMachine(state.timeMachine);
+            const fromAt = state.timeMachine.mode === 'live'
+              ? rangeFloor
+              : (selectedFloor === null ? Math.min(selected, anchor) : Math.min(Math.max(selected, selectedFloor), anchor));
+            dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt, stepMs: playbackStepOfView() });
           }
         }
         // §4.8: the Time Machine mode select + playback stepping (pure dispatches —
@@ -1800,6 +2141,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           render();
           focusPaletteInput(); // the keyboard-first journey: Ctrl+K / the affordance -> type immediately
         }
+        // FW-34-B (Round C register §3.6 — L4: no skip link, ~29
+        // focusables before the content): THE SKIP LINK's own landing —
+        // the anchor's default hash navigation is kept (the browser
+        // scrolls the region into view), and the focus lands on the
+        // main content landmark itself (tabindex -1), so the next Tab
+        // continues INSIDE the content, never from the sidebar's top.
+        if (kind === 'skip-to-main') {
+          focusMainContent();
+          return;
+        }
         if (kind === 'palette-close') {
           view = { ...view, palette: null };
           render();
@@ -1824,18 +2175,84 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             render();
           }
         }
+        // FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): THE
+        // SWITCHER'S EXPLICIT ALL-DESKS EXPANDER. The default listing is
+        // the session's own desks; the expander — rendered only when other
+        // sessions' desks exist in this shared workspace — discloses them
+        // BY COUNT and swaps the listing to the WHOLE registry (the
+        // FW-31-B durable win: every desk stays reachable, one explicit
+        // disclosure away, never a silent wall). The toggle is
+        // chrome-only state (never a dispatch); the focus lands back on
+        // the fresh expander so a keyboard journey can toggle it again.
+        if (kind === 'switcher-all-desks') {
+          view = { ...view, showAllDesks: !view.showAllDesks };
+          refreshPalette(); // the same expander governs the palette's desk listing
+          render();
+          if (document.querySelectorAll !== undefined) {
+            for (const candidate of document.querySelectorAll('[data-action="switcher-all-desks"]')) {
+              (candidate as { focus(): void }).focus();
+              break;
+            }
+          }
+        }
+        // FW-34-B (§3.8): the palette empty state's OWN all-desks action —
+        // a query that matched nothing of the session's own but DID match
+        // other sessions' desks discloses them inline; the explicit
+        // include-all expansion re-ranks the SAME query over the whole
+        // registry (never a silent wall), and the focus returns to the
+        // palette input (the keyboard journey continues where it was).
+        if (kind === 'palette-all-desks') {
+          if (!view.showAllDesks) {
+            view = { ...view, showAllDesks: true };
+            refreshPalette();
+            render();
+            focusPaletteInput();
+          }
+        }
+        // FW-34-B (Round C register §3.1) — THE WIZARD'S BACKDROP = THE
+        // MOUSE DISMISSAL (L3: the restart-summoned wizard was an
+        // a11y-invisible blocker that native mouse clicks could not
+        // dismiss). A press that lands on the overlay OUTSIDE the card
+        // skips the wizard — the standard modal dismissal, one click from
+        // anywhere on the dimmed page. A press inside the card resolves
+        // to the card's own affordances (the CTA/Skip branches) and never
+        // reaches this branch with a card-internal target.
+        if (kind === 'onboarding-backdrop') {
+          const insideCard = rawTarget?.closest?.('.onboarding-card');
+          if (insideCard === null || insideCard === undefined) {
+            view = { ...view, accountView: 'home', onboarding: null };
+            sessionPosture = { ...sessionPosture, onboarded: true };
+            writeSessionPosture();
+            if (options.onboardingStorage !== undefined) persistOnboarding(options.onboardingStorage);
+            render();
+            focusMainContent();
+          }
+        }
         // §4.13 the onboarding wizard (completion persists; returning users never see it)
+        // FW-34-B: completion rides THE SESSION POSTURE record (the legacy
+        // tradrl_onboarded key keeps its own write inside persistOnboarding)
+        // and the COMPLETED state renders NOTHING (view.onboarding = null —
+        // the pre-fix completed state rendered an empty div.onboarding-hidden;
+        // null keeps the dismissed overlay out of the DOM entirely, so a
+        // dismissed wizard can never block the page).
         if (kind === 'onboarding-next' || kind === 'onboarding-skip') {
           const current = view.onboarding ?? initialOnboarding();
           const next: OnboardingState = kind === 'onboarding-skip' ? skipOnboarding(current) : advanceOnboarding(current);
-          view = { ...view, onboarding: next };
-          if (isOnboarded(next) && options.onboardingStorage !== undefined) persistOnboarding(options.onboardingStorage);
-          if (isOnboarded(next)) view = { ...view, accountView: 'home', onboarding: next }; // completion lands on Home
+          if (isOnboarded(next)) {
+            view = { ...view, accountView: 'home', onboarding: null }; // completion lands on Home, renders no overlay
+            sessionPosture = { ...sessionPosture, onboarded: true };
+            writeSessionPosture();
+            if (options.onboardingStorage !== undefined) persistOnboarding(options.onboardingStorage);
+          } else {
+            view = { ...view, onboarding: next };
+          }
           render();
+          focusMainContent(); // the wizard closed — the focus lands on the content the wizard was covering, never on BODY
         }
         if (kind === 'onboarding-reopen') {
           view = { ...view, onboarding: initialOnboarding() };
           render();
+          focusOnboardingStart(); // the dialog's own entry point (the keyboard journey starts inside the modal)
         }
         // §5 D7 the data export — the R9 v2 chain export (W-21 seam:
         // the button now emits serializeWorkspaceExport — the real
@@ -2057,6 +2474,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (kind === 'sheet-close') {
           view = { ...view, sheet: null };
           render();
+          focusMainContent(); // FW-34-B (L4): the sheet closed — the focus lands on the content, never on BODY
         }
         if (kind === 'theme-light' || kind === 'theme-dark') {
           const theme = kind === 'theme-dark' ? 'dark' : 'light';
@@ -2066,7 +2484,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         return;
       }
-      const section = event.target?.closest?.('[data-section]');
+      const section = rawTarget?.closest?.('[data-section]');
       if (section !== null && section !== undefined) {
         const id = section.getAttribute('data-section');
         if (id !== null && isSectionId(id) && id !== state.selectedSection) {
@@ -2074,6 +2492,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           dispatch({ kind: 'section-selected', at: instants.nowMs(), section: id }); // renders via onState
         }
       }
+    };
+
+    // The delegated click: the composed target runs the ONE resolver.
+    document.addEventListener('click', (event) => {
+      pointerDown = false; // the click concludes the press
+      interactionAt(event.target);
     });
 
     // The keyboard contract: Esc closes the palette, the sheet, then the drawer;
@@ -2095,14 +2519,29 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
       if (key === 'Escape') {
+        // FW-34-B (Round C register §3.1): THE ONBOARDING WIZARD is the
+        // TOPMOST modal — Esc dismisses it FIRST (the keyboard dismissal
+        // beside the backdrop's mouse dismissal; the dismissal persists in
+        // the session posture, so it never re-summons for this browser).
+        if (view.onboarding !== null) {
+          view = { ...view, accountView: 'home', onboarding: null };
+          sessionPosture = { ...sessionPosture, onboarded: true };
+          writeSessionPosture();
+          if (options.onboardingStorage !== undefined) persistOnboarding(options.onboardingStorage);
+          render();
+          focusMainContent();
+          return;
+        }
         if (view.palette !== null) {
           view = { ...view, palette: null };
           render();
+          focusMainContent(); // FW-34-B: the palette closed — the focus lands on the content, never on BODY
           return;
         }
         if (view.sheet !== null) {
           view = { ...view, sheet: null };
           render();
+          focusMainContent(); // FW-34-B: the sheet closed — same law (L4: "focus resets to BODY after EVERY ... sheet close")
           return;
         }
         if (view.drawerOpen) {
@@ -2164,8 +2603,51 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           }
           render();
           if (openedSheet !== null) focusSheetStart();
+          // FW-34-B (Round C register §3.6, L4): the palette navigated
+          // WITHOUT opening a sheet — the focus lands on the content it
+          // navigated to, never on BODY ("focus resets to BODY after
+          // EVERY palette action").
+          else focusMainContent();
         }
         return;
+      }
+      // FW-34-B (Round C register §3.6 — THE MARK-READ INCIDENT, L4) —
+      // THE KEYBOARD ACTIVATION DISPATCHES ON THE SETTLED STATE. A
+      // focused BUTTON's Enter/Space activation used to ride the
+      // browser's own click synthesis; when the ~1s beat re-projection
+      // replaced the tree between keydown and that click, the click
+      // composed on the DETACHED node and never reached the document —
+      // the activation silently no-ops (L4's finding: a focused
+      // Mark-read + native Enter, "button vanished on the beat, heading
+      // stayed '1 unread', action never fired"). The activation now
+      // runs HERE, synchronously at keydown, against the LIVE focused
+      // element (D-10's restore keeps the focus on the current
+      // equivalent node across every beat), through the SAME resolver a
+      // click takes — and the browser's own click synthesis is
+      // cancelled (preventDefault), so the action fires EXACTLY once.
+      // The guard is the click handler's own vocabulary: BUTTONs that
+      // carry a data-action or a data-target (nav items, notice
+      // toggles, TM controls, the wizard's CTA/Skip) — text inputs,
+      // selects and the scrubber keep their native key behavior (the
+      // file input's Enter must keep opening the OS picker, the
+      // select's Enter its dropdown).
+      if ((key === 'Enter' || key === ' ') && document.activeElement !== undefined) {
+        const activeButton = document.activeElement as ClickTarget | null;
+        if (
+          activeButton !== null &&
+          typeof activeButton.closest === 'function' &&
+          activeButton.tagName === 'BUTTON'
+        ) {
+          const actionCandidate = activeButton.closest('[data-action]');
+          const targetCandidate = activeButton.closest('[data-target]');
+          const isActionable = (actionCandidate !== null && actionCandidate !== undefined)
+            || (targetCandidate !== null && targetCandidate !== undefined && targetCandidate.tagName === 'BUTTON');
+          if (isActionable) {
+            if (event.preventDefault !== undefined) event.preventDefault(); // one activation, never two
+            interactionAt(activeButton);
+            return;
+          }
+        }
       }
       if (key !== 'Tab' || document.querySelectorAll === undefined || event.preventDefault === undefined) return;
       const selector = view.sheet !== null

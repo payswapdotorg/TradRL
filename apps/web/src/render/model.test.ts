@@ -1184,3 +1184,112 @@ describe('render model: FW-33-B — the observed market world of a world-less sc
     expect(bytes).toContain('VENUE-ROUTE-ONLY, VENUE-ORDER'); // BOTH venues, first-appearance order (the route fallback then the order's own)
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-34-B (Round C register §3.7): the execution blotter's AGGREGATE
+// TOTALS card (L4's finding: "no aggregate blotter totals — 'what team
+// works my book' is unanswerable in-product") and the ORG PER-AGENT
+// MANDATE/SPEC DRILL-DOWN (L4/M3: "bare instance ids, no per-agent
+// mandate/spec drill-down").
+// ---------------------------------------------------------------------------
+
+describe('FW-34-B: the Execution totals card (the aggregate blotter fold, rendered)', () => {
+  /** A routed row (fill economics optional — the blotter's own demo shape). */
+  function routedRow(id: string, at: number, fill?: { readonly notional: string; readonly fee: string }): GatewaySubmissionRecord {
+    return {
+      kind: 'routed', submissionId: id, decisionId: `dec-${id}`, auditId: `aud-${id}`, requestRef: `req-${id}`,
+      venue: 'BROKER-FIX', adapterRef: 'adapter:demo-broker', channelRef: 'chan:demo-main', routedAt: at,
+      order: { clientOrderId: `ord-${id}`, instrumentId: 'BTC-USD', venueId: 'BROKER-FIX', side: 'buy', kind: 'limit', quantity: '1', price: '61000.50', timeInForce: 'gtc', createdAt: new Date(at).toISOString() },
+      ...(fill === undefined ? {} : { fill: { state: 'filled', quantity: '1', price: '1', notional: fill.notional, fee: fill.fee, filledAt: at } }),
+    } as GatewaySubmissionRecord;
+  }
+
+  it('the totals card renders the exact-decimal sums over the PROJECTED rows — fills, notional, fees, refusals (never a fabricated fill)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'submission-recorded', at: T0 + 40, submission: routedRow('sub-1', T0 + 30, { notional: '1000.10', fee: '0.025' }) },
+      { kind: 'submission-recorded', at: T0 + 41, submission: routedRow('sub-2', T0 + 31, { notional: '250.25', fee: '0.01' }) },
+      { kind: 'submission-recorded', at: T0 + 42, submission: routedRow('sub-routed-only', T0 + 32) }, // routed, NO fill yet
+      { kind: 'submission-recorded', at: T0 + 43, submission: { kind: 'refused', submissionId: 'sub-refused', decisionId: null, auditId: 'aud-x', refusal: { stage: 'risk_limits', bound: '2', observed: '2.4', constraintId: 'k-position' }, refusedAt: T0 + 33 } as GatewaySubmissionRecord },
+      { kind: 'section-selected', at: T0 + 50, section: 'execution' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-blotter-totals');
+    expect(bytes).toContain('Execution totals');
+    expect(bytes).toContain('1250.35'); // the exact notional sum: 1000.10 + 250.25 (the float trap is the point)
+    expect(bytes).toContain('0.035');   // the exact fee sum: 0.025 + 0.01
+    expect(bytes).toContain('2 fills');
+    expect(bytes).toContain('1 routed without a fill record yet'); // the honest clause (not a fabricated fill)
+    expect(bytes).toContain('1 refusal the gateway stopped');      // the refusal counts its own row
+    expect(bytes).toContain('exact-decimal sum');                  // the note states how the numbers were computed
+  });
+
+  it('the totals are L4-PROJECTED: a view instant BEFORE the fills renders the totals THEN (never a future leak)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'submission-recorded', at: T0 + 40, submission: routedRow('sub-1', T0 + 30, { notional: '1000.10', fee: '0.025' }) },
+      { kind: 'submission-recorded', at: T0 + 41, submission: routedRow('sub-2', T0 + 45, { notional: '250.25', fee: '0.01' }) }, // filled LATER
+      { kind: 'section-selected', at: T0 + 50, section: 'execution' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const early = reduceAll(state, [{ kind: 'view-timestamp', at: T0 + 50, timestamp: T0 + 35 }]);
+    const bytes = serializeConsoleModel(early, T0 + 50);
+    expect(bytes).toContain('1 fill');               // only the FIRST fill was knowable at T0+35
+    expect(bytes).toContain('notional 1000.10');     // the note's total reflects exactly that
+    expect(bytes).not.toContain('1250.35');          // the later fill NEVER leaks into the past view
+  });
+
+  it('an empty blotter renders NO totals card (never a fabricated zero-sum over nothing)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'section-selected', at: T0 + 50, section: 'execution' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    expect(serializeConsoleModel(state, T0 + 50)).not.toContain('data-blotter-totals');
+  });
+});
+
+describe('FW-34-B: the org per-agent mandate/spec drill-down (the snapshot detail sheet)', () => {
+  /** A workspace with a goal + a snapshot whose instances follow the served ref grammar. */
+  function orgWorkspace(): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
+      { kind: 'goal-loaded', at: T0 + 5, goal: {
+      id: 'goal-1', version: 1, tenantId: 'tenant-a',
+      objective: 'Compound the book inside the risk framework.',
+      horizon: { startsAt: T0, endsAt: T0 + 90_000, label: 'Q1' },
+      successCriteria: { criteria: [{ id: 'sc-1', metric: 'return.net', predicate: { kind: 'limit.min', bound: 1_250_000 } }], requiredSatisfaction: 1 },
+      evaluation: { blindRef: 'ev-blind', walkForwardRef: 'ev-wf', regimeRef: 'ev-reg', adversarialRequired: false },
+      createdAt: T0,
+    } as GoalStatement, constraintSet: { id: 'cs-tradrl-demo', version: 1, tenantId: 'tenant-a', name: 'the demo constraint set', constraints: [], createdAt: T0 - 1_000 } as ConstraintSetStatement },
+      { kind: 'org-snapshot', at: T0 + 10, snapshot: { organizationRef: 'org:alpha', tenant: 'tenant-a', project: 'proj-a', status: 'active', at: T0 + 10, instanceRefs: ['ai:director-1', 'ai:researcher-2', 'inst:opaque-3'] } as OrgStatusSnapshot },
+      { kind: 'section-selected', at: T0 + 50, section: 'organization' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  it('the snapshot row NAMES the roles (read from the instance refs own grammar) — never a bare id list', () => {
+    const bytes = serializeConsoleModel(orgWorkspace(), T0 + 50);
+    expect(bytes).toContain('3 instances'); // the count
+    expect(bytes).toContain('director + researcher + unspecified'); // the roles, in ref order (the opaque id reads as unspecified — never a guess)
+  });
+
+  it('the drill-down sheet: one section PER INSTANCE — the role, the mandate (the project own goal statement), the spec, the observed acts — plus the honest not-served disclosure', () => {
+    const view = { ...defaultShellView(orgWorkspace()), sheet: { kind: 'snapshot', id: 'org:alpha' } as const };
+    const bytes = serializeVNode(renderConsoleModel(orgWorkspace(), T0 + 50, view));
+    expect(bytes).toContain('INSTANCE ai:director-1');
+    expect(bytes).toContain('INSTANCE ai:researcher-2');
+    expect(bytes).toContain('INSTANCE inst:opaque-3');
+    // the ROLE reads from the ref grammar, stated as such
+    expect(bytes).toContain('director (read from the instance ref');
+    expect(bytes).toContain('unspecified (read from the instance ref'); // the opaque ref never guesses
+    // the MANDATE is the project own goal statement — the whole organization works it
+    expect(bytes).toContain('Compound the book inside the risk framework.');
+    expect(bytes).toContain('THE MANDATE THIS ORGANIZATION WORKS');
+    // the budget row (no launch spec on record for this fixture — the honest line, never fabricated)
+    expect(bytes).toContain('no launch specification on record');
+    // the observed acts row (counted at this view instant)
+    expect(bytes).toContain('observed acts at this view instant');
+    // THE HONEST DISCLOSURE: the per-agent mandate TEXT is not served by the API today — stated, never papered over
+    expect(bytes).toContain('per-agent mandate text is not served yet');
+    expect(bytes).toContain('nothing here is invented');
+  });
+});
