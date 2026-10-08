@@ -52,6 +52,7 @@ import type {
   PostMortemRecord,
   ProjectGoalWorldSpec,
   ProjectRecord,
+  RiskUtilizationRead,
   ServedKnowledge,
 } from '../api/contracts';
 import { DEFAULT_SECTION, isSectionId, type SectionId } from './sections';
@@ -153,6 +154,18 @@ export interface WorkspaceState {
   readonly postMortems: readonly PostMortemRecord[];
   readonly knowledge: readonly ServedKnowledge[];
   readonly submissions: readonly GatewaySubmissionRecord[];
+  /**
+   * THE STANDING RISK-UTILIZATION READ (FW-32-A, Round A blocker 1 — the
+   * FW-31-A host-owned route's payload): per-bound current utilization +
+   * the active-breach aggregation + the honesty disclosure, as the Risk
+   * section renders it. Null when no read is on record (the honest
+   * pre-read absence — the section renders its teaching note, never a
+   * fabricated meter). THE L4 POINT-IN-TIME LAW: this read is a
+   * CURRENT-INSTANT standing read (its own `asOf` names the serve); it is
+   * deliberately NOT projected through the Time Machine's view instant —
+   * the panel never fakes point-in-time risk.
+   */
+  readonly riskUtilization: RiskUtilizationRead | null;
   /** The tenant's project directory (R6c, W-22): every project the credential can read — the scope switcher's list. Cross-project by design (the workspace stays ONE project's world; this is the directory you may switch that world to). */
   readonly projectDirectory: readonly ProjectRecord[];
   readonly timeMachine: TimeMachineState;
@@ -181,6 +194,7 @@ export function openWorkspace(scope: WorkspaceScope, at: number): WorkspaceState
     postMortems: [],
     knowledge: [],
     submissions: [],
+    riskUtilization: null,
     projectDirectory: [],
     timeMachine: liveTimeMachine(at),
     inbox: emptyInbox(),
@@ -205,6 +219,8 @@ export type WorkspaceEvent =
   | { readonly kind: 'post-mortems-loaded'; readonly at: number; readonly records: readonly PostMortemRecord[] }
   | { readonly kind: 'knowledge-loaded'; readonly at: number; readonly records: readonly ServedKnowledge[] }
   | { readonly kind: 'submission-recorded'; readonly at: number; readonly submission: GatewaySubmissionRecord }
+  | { readonly kind: 'risk-utilization-loaded'; readonly at: number; readonly read: RiskUtilizationRead }
+  | { readonly kind: 'outcome-recorded'; readonly at: number; readonly outcome: OutcomeRecord }
   | { readonly kind: 'projects-listed'; readonly at: number; readonly records: readonly ProjectRecord[] }
   | { readonly kind: 'section-selected'; readonly at: number; readonly section: SectionId }
   | { readonly kind: 'view-live'; readonly at: number }
@@ -400,6 +416,7 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         postMortems: [],
         knowledge: [],
         submissions: [],
+        riskUtilization: null,
       };
       return { ...superseded, scope: { tenantId: state.scope.tenantId, projectId: event.projectId } };
   } else if (selector === 'project-loaded') {
@@ -477,6 +494,29 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       const next: WorkspaceState = seen
         ? withHistory
         : { ...withHistory, submissions: [...state.submissions, event.submission] };
+      return { ...next, inbox: refoldNotices(next) };
+  } else if (selector === 'risk-utilization-loaded') {
+      // FW-32-A (Round A blocker 1): the standing read enters ONLY for its
+      // own scope (L12) — a read of another project never crosses (the
+      // ingest gate is the law; the app layer's dispatchIfCurrent guard is
+      // defense in depth on top). The read REPLACES the prior one wholesale:
+      // the state always mirrors THIS scope's latest serve (the current-
+      // instant law — see the state field's own note).
+      if (event.read.projectId !== state.scope.projectId) {
+        throw new Error(`reduceWorkspace: risk-utilization-loaded requires the read's own project scope (got ${JSON.stringify(event.read.projectId)}, the workspace holds ${JSON.stringify(state.scope.projectId)})`);
+      }
+      return { ...withHistory, riskUtilization: event.read };
+  } else if (selector === 'outcome-recorded') {
+      // FW-32-A (Round A blocker 2): ONE outcome record enters the state
+      // (the promote route's minted decision — the org's own decision-stream
+      // shape). The merge is the outcomes fold's own dedup-by-id law: a
+      // record the state already carries is an idempotent no-op (the host
+      // registry's replay answer never duplicates here either).
+      assertProjectScope(state.scope, event.outcome);
+      const seen = state.outcomes.some((existing) => existing.outcomeId === event.outcome.outcomeId);
+      const next: WorkspaceState = seen
+        ? withHistory
+        : { ...withHistory, outcomes: [...state.outcomes, event.outcome] };
       return { ...next, inbox: refoldNotices(next) };
   } else if (selector === 'projects-listed') {
       // THE PROJECT DIRECTORY (R6c, W-22): the tenant's readable

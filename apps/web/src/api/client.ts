@@ -28,6 +28,7 @@ import type {
   ExecutionRequest,
   GoalStatement,
   GatewaySubmissionRecord,
+  JobPromotionPayload,
   JobRecord,
   KnowledgeQueryRequest,
   KnowledgeQueryResponse,
@@ -40,6 +41,7 @@ import type {
   ProjectGoalWorldSpec,
   ProjectLifecycleEvent,
   ProjectRecord,
+  RiskUtilizationRead,
   StrategyIntent,
   SubmitJobRequest,
   OrgStatusSnapshot,
@@ -163,6 +165,8 @@ export interface ConsoleClient {
     get(jobId: string): Promise<JobRecord>;
     /** `GET /v1/jobs?project=<id>` — the project's job list (the HOST-OWNED W-25A demo-substance route: the backing's API-owned job store — the same store the per-id GET reads — served from the deployed backing BEFORE the boundary wrap, so the frozen SDK surface does not carry it; the mirror extends the family for the console's boot read, interop.test.ts documents the amendment). */
     list(project: string): Promise<Page<JobRecord>>;
+    /** `POST /v1/jobs/:jobId/promote` — THE RESEARCH→DECISION PROMOTION (FW-32-A, Round A blocker 2 — the HOST-OWNED consequential route: a completed research job's release-candidate deliverable promoted as a decision that cites the job's evidence through the same seam the org's own decision stream rides; idempotent per job — a repeat call returns the existing decision with replay=true, never a duplicate; typed 401/404/409 per the established laws). */
+    promote(jobId: string, options?: ConsequentialOptions): Promise<JobPromotionPayload>;
   };
 
   /** The execution routes: THE L8 ROUTE (forward an intent — the console REQUESTS; the gateway decides) + the HOST-OWNED blotter read. */
@@ -175,6 +179,12 @@ export interface ConsoleClient {
   /** `GET /v1/organizations/:organizationRef/status?project=...` — the watch read. */
   readonly organizations: {
     status(organizationRef: string, project: string): Promise<OrgStatusSnapshot>;
+  };
+
+  /** THE STANDING RISK-UTILIZATION READ (FW-32-A): the HOST-OWNED FW-31-A route — per-bound standing utilization + the active-breach aggregation + the honesty disclosure. */
+  readonly risk: {
+    /** `GET /v1/risk/utilization?project=<id>` — the risk manager's one glance (the W-8 host-route law; the caller degrades honestly on its typed errors). */
+    utilization(project: string): Promise<RiskUtilizationRead>;
   };
 }
 
@@ -362,6 +372,13 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
         // host-owned read, and the envelope unwraps to the Page listing.
         return request('GET', withQuery('/v1/jobs', { project })) as Promise<Page<JobRecord>>;
       },
+      async promote(jobId, options) {
+        // FW-32-A: the HOST-OWNED consequential promotion route — the
+        // idempotency key derives from the operation (a replay of the same
+        // promote call carries the same key; the host registry keeps the
+        // first mint verbatim and answers replay=true, never a duplicate).
+        return request('POST', `/v1/jobs/${encodeURIComponent(jobId)}/promote`, { idempotencyKey: keyFor('jobs.promote', jobId, options) }) as Promise<JobPromotionPayload>;
+      },
     },
 
     execution: {
@@ -377,6 +394,15 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
     organizations: {
       async status(organizationRef, project) {
         return request('GET', withQuery(`/v1/organizations/${encodeURIComponent(organizationRef)}/status`, { project })) as Promise<OrgStatusSnapshot>;
+      },
+    },
+
+    risk: {
+      async utilization(project) {
+        // The FW-31-A host-owned read — the same project query parameter
+        // discipline as every sibling host-owned read (the blotter, the
+        // jobs list, the org-status); the envelope unwraps to the payload.
+        return request('GET', withQuery('/v1/risk/utilization', { project })) as Promise<RiskUtilizationRead>;
       },
     },
   };
