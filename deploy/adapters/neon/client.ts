@@ -103,6 +103,25 @@ export type NeonResult<T> =
   | { readonly ok: false; readonly error: NeonFailure };
 
 // ---------------------------------------------------------------------------
+// The per-query abort budget (W-30, PROD-504)
+// ---------------------------------------------------------------------------
+
+/**
+ * THE PER-QUERY ABORT BUDGET (W-30, PROD-504): every SQL-over-HTTP call is
+ * wrapped in `AbortSignal.timeout(8s)` so a black-holed connection (a TCP
+ * session the proxy accepts but never answers — the shape the production
+ * FUNCTION_INVOCATION_TIMEOUT evidence showed) becomes the typed
+ * `neon_unreachable` within the query's OWN budget, feeding the existing
+ * R46 degradation path (the typed 503 + the per-request retry heal),
+ * instead of eating the platform function's whole duration. Platform API
+ * only (AbortSignal.timeout — zero-dep law; Node 17.3+/the Vercel runtime
+ * carry it); the platform's timer never holds the function open (the
+ * runtime unrefs it). The value is disclosed in deploy/README.md +
+ * deploy/wire/production.md and PINNED by test (neon.test.ts).
+ */
+export const NEON_QUERY_TIMEOUT_MS = 8_000;
+
+// ---------------------------------------------------------------------------
 // The request construction (pure — the determinism surface)
 // ---------------------------------------------------------------------------
 
@@ -187,24 +206,52 @@ export type NeonQueryOutcome =
  * `neon_unreachable`, a non-2xx is `neon_http_error` (with the server's
  * message when the body carries one — SQL errors arrive this way), a
  * body that is neither shape is `neon_malformed_response` (R46).
+ *
+ * W-30 (PROD-504): the fetch init carries a per-query `AbortSignal.timeout`
+ * (default `NEON_QUERY_TIMEOUT_MS`; the optional `timeoutMs` argument lets
+ * tests pin the abort degradation with a short budget — production callers
+ * never pass it). A signal-aborted fetch — the black-holed connection —
+ * degrades to the typed `neon_unreachable` with the budget named, never a
+ * hang past the function's own duration.
  */
 export async function executeNeonStatement(
   config: NeonConfig,
   query: string,
   params: readonly string[],
   fetchLike: FetchLike,
+  timeoutMs: number = NEON_QUERY_TIMEOUT_MS,
 ): Promise<NeonResult<NeonQueryOutcome>> {
   const request = buildNeonRequest(config, query, params);
+  // The abort signal rides the fetch init (the platform fetch honors
+  // `signal`; the injected test fakes ignore the extra property — the
+  // structural FetchLike type never sees it). Built as a WIDER local type
+  // so the signal passes through without touching the shared FetchLike
+  // shape (deploy/adapters/shared.ts is frozen surface for this wave).
+  const timeoutSignal = typeof AbortSignal === 'function' && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(timeoutMs)
+    : undefined;
+  const init: { method: string; headers: Readonly<Record<string, string>>; body: string; signal?: AbortSignal } = {
+    method: request.method,
+    headers: request.headers,
+    body: request.body,
+    ...(timeoutSignal === undefined ? {} : { signal: timeoutSignal }),
+  };
   let response: Awaited<ReturnType<FetchLike>>;
   try {
-    response = await fetchLike(request.url, { method: request.method, headers: request.headers, body: request.body });
+    response = await fetchLike(request.url, init);
   } catch (cause) {
+    if (timeoutSignal?.aborted === true) {
+      return { ok: false, error: { code: 'neon_unreachable', message: `the Neon SQL-over-HTTP query exceeded the ${timeoutMs}ms per-query abort budget (W-30) — the query was aborted and degrades to the typed unreachable (R46)` } };
+    }
     return { ok: false, error: { code: 'neon_unreachable', message: `the Neon SQL-over-HTTP endpoint could not be reached (${String(cause)})` } };
   }
   let text: string;
   try {
     text = await response.text();
   } catch (cause) {
+    if (timeoutSignal?.aborted === true) {
+      return { ok: false, error: { code: 'neon_unreachable', message: `the Neon SQL-over-HTTP response body read exceeded the ${timeoutMs}ms per-query abort budget (W-30) — the query was aborted and degrades to the typed unreachable (R46)` } };
+    }
     return { ok: false, error: { code: 'neon_unreachable', message: `the Neon response body could not be read (${String(cause)})` } };
   }
   if (!response.ok) {

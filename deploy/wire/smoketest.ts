@@ -161,6 +161,27 @@ export function fakeProviders(): FakeProviders {
         });
         return responder(JSON.stringify({ fields: [{ name: 'project_payload', typeOID: 25 }, { name: 'goal_payload', typeOID: 25 }], rows: joined }));
       }
+      // W-30 (PROD-504): the tenant-wide batched reads — `SELECT
+      // project_id|project, payload FROM <table> WHERE tenant = $1
+      // [AND as_of <= $2] ORDER BY project, ordinal|submitted_at`. TWO-cell
+      // rows (the owning project + the payload) — the live wire's answer to
+      // the two-column select; the fake models it over the same in-memory
+      // tables (tenant = params[0] ALWAYS — L12; the knowledge ceiling
+      // predicate `as_of <= $2` is modeled too — the knowledge INSERT's
+      // as_of column is param 5). The fakes match the live wire, never the
+      // adapter's expectations.
+      const tenantWide = /^SELECT (?:project_id|project), payload FROM (tradrl_\w+)/.exec(parsed.query);
+      if (tenantWide !== null) {
+        const table = tenantWide[1] as string;
+        const payloadIndex = table === 'tradrl_knowledge' ? 6 : table === 'tradrl_outcomes' || table === 'tradrl_post_mortems' ? 7 : 5;
+        const orderIndex = table === 'tradrl_project_events' ? 2 : 3; // events: ordinal is param 2; the others' order column is param 3 (ordinal / submitted_at)
+        let scoped = (tables.get(table) ?? []).filter((row) => row.params[0] === parsed.params[0]);
+        if (parsed.query.includes('AND as_of <= $2')) {
+          scoped = scoped.filter((row) => Number(row.params[5]) <= Number(parsed.params[1]));
+        }
+        const sorted = [...scoped].sort((a, b) => (a.params[1] === b.params[1] ? Number(a.params[orderIndex]) - Number(b.params[orderIndex]) : a.params[1] < b.params[1] ? -1 : 1));
+        return responder(JSON.stringify({ fields: [{ name: 'project', typeOID: 25 }, { name: 'payload', typeOID: 25 }], rows: sorted.map((row) => [row.params[1], row.params[payloadIndex]]) }));
+      }
       const select = /^SELECT payload FROM (tradrl_\w+)/.exec(parsed.query);
       if (select !== null) {
         const orderIndex = select[1] === 'tradrl_projects' ? 5 : select[1] === 'tradrl_project_goals' ? 1 : 3;

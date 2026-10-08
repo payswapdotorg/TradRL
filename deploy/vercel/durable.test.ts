@@ -1628,3 +1628,94 @@ describe('deploy/vercel — the launched-desk evidence stream under durable (FW-
     expect((((demoOutcomes.body as { data: { items: readonly { outcomeId: string }[] } }).data).items).map((entry) => entry.outcomeId)).toEqual(['out:demo0001']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// W-30 (PROD-504): THE ROUND-TRIP LAW — the boot projection's SQL fetch count
+// is CONSTANT regardless of project count (the regression the production
+// 504 shipped: ~6 queries PER PROJECT, ≈151 sequential fetches at 25 durable
+// projects, past the 10s function cap before authn on every cold start).
+// RED on the pre-fix code shape (count(3) = 19 ≠ count(30) = 181), GREEN on
+// the batched reads. The completeness assertions prove the batched read
+// actually HYDRATES the whole world — a projection that read nothing would
+// also be constant.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — W-30: the boot-projection round-trip law (PROD-504)', () => {
+  it('the hydration ceiling the projection reads at IS the point-in-time MAX (the tenant-wide knowledge boot read refuses every other shape — the two constants must stay one)', async () => {
+    const { HYDRATION_AT } = await import('./runtime/durable');
+    expect(HYDRATION_AT).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+
+  /** Seed N full projects through the durable stores over the injected fetch (registry row + goal set + one binding event + knowledge + outcome + post-mortem + job each). */
+  async function seedProjects(providers: ReturnType<typeof fakeProviders>, count: number): Promise<void> {
+    const direct = storesOver(providers.fetchLike);
+    const jobStore = new NeonJobStore({ config: NEON_CONFIG, fetchLike: providers.fetchLike, instants: { next: () => T0 } });
+    for (let index = 0; index < count; index += 1) {
+      const projectId = `prj-law-${index}`;
+      expect((await direct.project.putGoalSet(TENANT, projectId, { goal: validGoal(TENANT), constraintSet: validConstraintSet(TENANT) })).ok).toBe(true);
+      expect((await direct.project.putProjectRecord(TENANT, {
+        id: projectId,
+        tenantId: TENANT,
+        name: `the law desk ${index}`,
+        executionMode: 'simulation',
+        lifecycle: { status: 'draft', organizationRef: null },
+        createdAt: T0 + index,
+        updatedAt: T0 + index,
+      })).ok).toBe(true);
+      expect((await direct.project.appendProjectEvent({ tenant: TENANT, projectId, event: 'organization-bound', at: T0 + index + 1, detail: { organizationRef: `org:law-${index}` } })).ok).toBe(true);
+      expect((await direct.firmMemory.putKnowledge(TENANT, {
+        record: { knowledgeId: `fkr:law-${index}`, ordinal: 1, tenant: TENANT, project: projectId, claim: { kind: 'claim' }, confidence: '0.800', evidenceCount: 1, provenance: { source: 'law' }, validity: { from: T0, to: null }, asOf: T0, priorChainHead: 'genesis' },
+        status: 'active',
+        supersededBy: null,
+      })).ok).toBe(true);
+      expect((await direct.outcomeLearning.putOutcome(TENANT, { outcomeId: `ocm:law-${index}`, ordinal: 1, tenant: TENANT, project: projectId, decisionRef: `dec:law-${index}`, outcomeClass: 'profit', expectation: {}, realization: {}, deviation: {}, evidence: [], lineage: {}, asOf: T0, priorChainHead: 'genesis' })).ok).toBe(true);
+      expect((await direct.outcomeLearning.putPostMortem(TENANT, { postMortemId: `pmr:law-${index}`, ordinal: 1, tenant: TENANT, project: projectId, subject: {}, expected: {}, happened: {}, gap: {}, hypotheses: [], evidence: [], lineage: {}, asOf: T0, priorChainHead: 'genesis' })).ok).toBe(true);
+      expect((await jobStore.putJobRecord(TENANT, { jobId: `job:${String(index).padStart(8, '0')}`, kind: 'research', tenant: TENANT, project: projectId, status: 'submitted', submittedAt: T0 + index })).ok).toBe(true);
+    }
+  }
+
+  it('the cold-boot projection issues the SAME number of SQL round trips at 3 and at 30 durable projects (≤ 12) — and the batched reads hydrate the whole world', async () => {
+    const counts: number[] = [];
+    for (const projectCount of [3, 30]) {
+      const providers = fakeProviders();
+      await seedProjects(providers, projectCount);
+
+      // THE COLD INSTANCE over the same durable store (the fake fleet's
+      // in-memory tables), with a counting fetch around the injected one.
+      let fetches = 0;
+      const counting: FetchLike = (url, init) => {
+        fetches += 1;
+        return providers.fetchLike(url, init);
+      };
+      const instance = composeInstance(durableSource(), counting);
+      expect(instance.ok).toBe(true);
+      if (!instance.ok) return;
+      await instance.durable!.settled(); // the boot projection — and nothing else
+
+      // COMPLETENESS (the honesty half of the law): the batched reads
+      // actually hydrated EVERY project's whole world — projects, binding
+      // events, knowledge, outcomes, post-mortems and jobs alike.
+      expect(instance.durable!.lastProjection()).toEqual({
+        projects: projectCount,
+        events: projectCount,
+        knowledge: projectCount,
+        outcomes: projectCount,
+        postMortems: projectCount,
+        jobs: projectCount,
+        skipped: [],
+      });
+      // The rehydrated control plane serves the full registry (creation order).
+      const listed = instance.service.handle({ method: 'GET', path: '/v1/projects', headers: BEARER, query: {} });
+      expect(listed.status).toBe(200);
+      const page = (listed.body as { data: { items: readonly { id: string; lifecycle: { organizationRef: string | null } }[] } }).data;
+      expect(page.items.length).toBe(projectCount);
+      expect(page.items[0]!.lifecycle.organizationRef).toBe('org:law-0'); // the binding event replayed through the real binder
+
+      counts.push(fetches);
+    }
+    // THE LAW: the count is CONSTANT w.r.t. project count, and small.
+    expect(counts[0]).toBe(counts[1]);
+    expect(counts[0]).toBeLessThanOrEqual(12);
+  });
+});
