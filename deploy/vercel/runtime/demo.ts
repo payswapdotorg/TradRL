@@ -123,6 +123,7 @@ import {
   type ApiService,
   type ControlPlanePort,
   type ExecutionGatewayPort,
+  type FirmMemoryPort,
   type GatewaySubmissionRecord,
   type GoalStatement,
   type JobRecord,
@@ -310,6 +311,39 @@ export function demoSeedJobRecord(tenant: string, kind: 'research' | 'learning')
     status: 'submitted',
     submittedAt: DEMO_SEED_JOB_SUBMITTED_AT,
   });
+}
+
+/**
+ * THE SEEDED PAIR'S OWN IDENTITY (FW-34-A, the M3 job-blink root cause's
+ * fix half): is this job record one of THIS tenant's two deterministic demo
+ * SEED records (the content-addressed ids `demoSeedJobRecord` derives — the
+ * tenant + the demo scope + the kind, never the boot instant)? The durable
+ * job write-through lane (W-27, D-7) excludes EXACTLY these two records:
+ * they are re-stored byte-identically by EVERY instance's per-instance
+ * re-seed (R3's disclosed limitation — the frozen service's closure), so
+ * persisting them would re-queue an identical upsert on every cold start
+ * (harmless but pure noise — the lane never re-writes what did not change,
+ * and the projection-match skip already covers it; the exclusion keeps the
+ * durable table free of the seed pair's write flapping as the re-seeded
+ * 'submitted' record lands and the tick re-advances it to 'complete').
+ *
+ * The PRE-FW-34-A lane excluded the WHOLE demo project — every
+ * USER-submitted job in the shared teaching scope (M3's job:b32e6a51,
+ * submitted by a research persona working the demo scope) was per-instance
+ * state: it vanished from live surfaces AND the fresh export whenever the
+ * balancer routed a later read to an instance that never received the
+ * submission, and the per-id GET /v1/jobs/:jobId (the promoted decision's
+ * producing-job backlink) answered the typed 404 there — the exact
+ * system-of-record violation Round C's register item 5 filed. The
+ * exclusion now keys on the SEED PAIR'S OWN IDENTITY, so every OTHER
+ * demo-scope job rides the lane like any launched desk's job (the D-7
+ * law's whole point): submission + every transition write-through, the
+ * boot hydration replays it on fresh instances, and the staleness heal's
+ * jobs half re-reads it on warm ones.
+ */
+export function isDemoSeedJob(tenant: string, job: { readonly jobId: unknown }): boolean {
+  if (typeof job.jobId !== 'string') return false;
+  return job.jobId === demoSeedJobRecord(tenant, 'research').jobId || job.jobId === demoSeedJobRecord(tenant, 'learning').jobId;
 }
 
 /** One captured job-submission port input (the seam's structural shape — the validated, tenant-injected submission the port sees). */
@@ -1167,6 +1201,23 @@ export interface DurableDemoSubstance {
   readonly ports: DemoSubstanceSource;
   /** The jobs fold (demoJobsOf over the composed service — the same store the per-id GET /v1/jobs/:jobId reads). */
   readonly jobsOf: (tenant: string, project: string) => readonly JobRecord[];
+  /**
+   * THE WRAPPED OUTCOME-LEARNING PORT CHAIN the composed service drives
+   * (FW-34-A): the seam's hydrated port + the per-project evidence fold +
+   * the promoted-decisions registry — the SAME object POST
+   * /v1/outcomes/query and POST /v1/post-mortems/query serve. The
+   * hydration read's counts must match what the console's own reads will
+   * serve, never the seam's raw rows (an undercount would lie "loading"
+   * about records that are already readable; the whole wrapped chain is
+   * the console's read surface).
+   */
+  readonly outcomeLearning: OutcomeLearningPort;
+  /**
+   * THE FIRM-MEMORY PORT the composed service drives (FW-34-A): POST
+   * /v1/knowledge/query's own data source (the seam's projection-backed
+   * port under durable).
+   */
+  readonly firmMemory: FirmMemoryPort;
 }
 
 /**

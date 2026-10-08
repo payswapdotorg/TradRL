@@ -469,6 +469,28 @@ export interface DurableBackingHandle {
    */
   freshJobRecordsOfTenant(): Promise<StoreResult<readonly JobRecord[]>>;
   /**
+   * THE ORG-BIND INSTANT READ (FW-34-A — the notification-state drift fix,
+   * Round C register item 4): the durable COMPILE instant of one project —
+   * the latest `organization-bound` event's own `at` from the durable
+   * event log, as this instance's projection replay captured it. The
+   * durable activation's org-status snapshot pass (R7 at boot, the
+   * staleness heal's org half at its interval) reports the re-hydrated
+   * watch snapshot AT THIS INSTANT — never the boot/heal instant — so the
+   * snapshot is byte-identical on every instance that reports it and the
+   * console's notice fold derives a STABLE content-addressed id from it:
+   * an "Organization compiled" notice never re-notifies as NEW unread
+   * after a reload/restart (the pre-fix re-report stamped the session
+   * instant, minting a fresh notice id per cold start and defeating the
+   * persisted read marks), and the notice's availability instant is the
+   * compile EVENT time (never the session-start instant — L4's own law).
+   * The typed degraded state while the projection is down (R46); `null`
+   * when the projection carries no bind event for the project (unbound,
+   * or a bind this projection predates — the caller SKIPS the report
+   * rather than fabricating a churned instant; the next interval, after
+   * the quiet re-projection lands, reports the stable identity).
+   */
+  organizationBoundAtOf(projectId: string): { readonly ok: true; readonly value: number | null } | { readonly ok: false; readonly error: StoreFailure };
+  /**
    * THE OUTCOME WRITE-THROUGH LANE (FW-33-A, Round B blocker 1): queue the
    * durable putOutcome write for one outcome record onto the SAME pending
    * drain every control-plane write rides — a promoted decision minted by
@@ -608,6 +630,8 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     readonly postMortems: readonly unknown[];
     readonly goalSets: ReadonlyMap<string, GoalSetRecord>;
     readonly jobs: ReadonlyMap<string, readonly JobRecord[]>;
+    /** FW-34-A: each project's LATEST `organization-bound` event instant (the durable compile instant — the notification-identity fix's own anchor). */
+    readonly organizationBoundAt: ReadonlyMap<string, number>;
     readonly report: ProjectionReport;
   };
   let phase: Phase = 'idle';
@@ -656,6 +680,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     const postMortems: unknown[] = [];
     const goalSets = new Map<string, GoalSetRecord>();
     const jobs = new Map<string, readonly JobRecord[]>();
+    const organizationBoundAt = new Map<string, number>();
     const skipped: { readonly project: string; readonly reason: string }[] = [];
     let events = 0;
     let jobCount = 0;
@@ -785,6 +810,16 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
               continue;
             }
             controlPlane.bindOrganization({ tenantId: deps.tenant as never, projectId: id as never, organizationRef: detail.organizationRef as never, at: entry.at as never });
+            // FW-34-A (the notification-state drift fix): capture the bind
+            // event's OWN instant — the durable compile instant. The R7
+            // snapshot pass and the heal's org half report the re-hydrated
+            // watch snapshot AT THIS INSTANT (never the boot/heal instant),
+            // so the snapshot is byte-identical across instances and the
+            // console's notice fold derives a STABLE content-addressed id
+            // from it (the same compile event never re-notifies as new
+            // unread on a restart, and the notice's availability instant is
+            // the compile EVENT time, not the session start).
+            organizationBoundAt.set(id, entry.at);
           } else {
             controlPlane.transition({ tenantId: deps.tenant as never, projectId: id as never, event: entry.event as never, at: entry.at as never });
           }
@@ -828,6 +863,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
         postMortems: Object.freeze(postMortems),
         goalSets,
         jobs,
+        organizationBoundAt,
         report: { projects: reconstructed.length, events, knowledge: knowledge.length, outcomes: outcomes.length, postMortems: postMortems.length, jobs: jobCount, skipped: Object.freeze([...skipped]) },
       },
     };
@@ -1521,6 +1557,33 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     return { ok: true, value: Object.freeze(rows.value.map((row) => row.record).filter((record): record is JobRecord => isJobRecord(record))) };
   }
 
+  /**
+   * THE ORG-BIND INSTANT READ (FW-34-A — the notification-state drift fix):
+   * the durable compile instant of one project — the LATEST
+   * `organization-bound` event's own `at` from the durable event log, as
+   * the projection's replay captured it (the same replay that re-binds the
+   * org). The R7 snapshot pass (runtime/durable-world.ts) and the heal's
+   * org half report the re-hydrated watch snapshot AT THIS INSTANT, so the
+   * snapshot is byte-identical across instances: the console's notice fold
+   * derives a STABLE content-addressed notice id from it (a 23-minute-old
+   * compile event never re-notifies as new unread on a restart) and the
+   * notice's availability instant is the compile EVENT time (never the
+   * session-start instant the pre-fix boot re-report stamped). The typed
+   * degraded state while the projection is down (R46); `null` when the
+   * projection carries no bind event for the project (an unbound project,
+   * or a bind this projection has not seen yet — the caller skips, never
+   * fabricates an instant).
+   */
+  function organizationBoundAtOf(projectId: string): { readonly ok: true; readonly value: number | null } | { readonly ok: false; readonly error: StoreFailure } {
+    if (phase !== 'ready' || current === null || dirty) {
+      const degradedFailure: StoreFailure = failure !== null
+        ? failure
+        : { code: 'durable_projection_pending', message: 'the durable projection is in flight; the org-bind instant read degrades (R46)' };
+      return { ok: false, error: degradedFailure };
+    }
+    return { ok: true, value: current.organizationBoundAt.get(projectId) ?? null };
+  }
+
   return {
     ports: { controlPlane: controlPlanePort, firmMemory: firmMemoryPort, outcomeLearning: outcomeLearningPort, jobSubmission: jobSubmissionPort },
     settled,
@@ -1534,6 +1597,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     stampSessionOwner,
     sessionProjectRows,
     freshJobRecordsOfTenant,
+    organizationBoundAtOf,
     recordOutcome,
     projectionMembership,
     reprojectQuietly,

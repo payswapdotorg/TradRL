@@ -79,7 +79,7 @@ import { buildDurableActivation, type DurableActivation } from './durable-world'
 import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import type { NeonStoreDeps } from '../../adapters/neon/stores';
-import { DEMO_PROJECT_ID, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableProjectEvidenceOf, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
+import { DEMO_PROJECT_ID, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableProjectEvidenceOf, isDemoSeedJob, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
 import { createPromotionRegistry, outcomeLearningWithPromotedDecisions, type PromotionRegistry } from './job-promote';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization, VerifyInternalAuthorization } from './routes';
 import type { DemoSessionWorld } from './session-routes';
@@ -147,15 +147,26 @@ function apifyAbsentJobPort(): JobSubmissionPort {
  * the host per the W-25D ordering law. The wrapper is TRANSPARENT: every
  * other surface delegates to the inner service verbatim.
  *
- * THE DEMO-PROJECT EXCLUSION: the boot world re-seeds the demo project's
- * two jobs per instance (R3's disclosed limitation — the frozen service's
- * closure); persisting them would accumulate one seeded pair per cold
- * start in the durable table (the seed ids are minted fresh per
- * instance), so the write-through lane skips the demo project's records.
- * The durable (launched) projects' records — D-7's subject — all ride the
- * lane.
+ * THE DEMO-SEED EXCLUSION (narrowed by FW-34-A — the M3 job-blink root
+ * cause's fix): the lane excludes ONLY this tenant's two deterministic
+ * demo SEED records (isDemoSeedJob — the content-addressed ids the
+ * FW-31-B priming latch serves, byte-identical on every instance). They
+ * are re-stored by every instance's per-instance re-seed (R3's disclosed
+ * limitation — the frozen service's closure), so persisting them would
+ * flap the durable row (the re-seeded 'submitted' record, re-advanced to
+ * 'complete' by the first tick) on every cold start. The PRE-FW-34-A lane
+ * excluded the WHOLE demo project — and with it every USER-submitted job
+ * in the shared teaching scope (Round C register item 5, M3's evidence:
+ * jobs 4→1 after a scope cycle/restart, the job capsules gone with them,
+ * the surviving promoted decision's producing-job backlink silently
+ * no-op'ing — the job was per-instance state that vanished the moment the
+ * balancer routed a read to an instance that never received the
+ * submission). Every OTHER demo-scope job now rides the lane like any
+ * launched desk's job (D-7's law): the submission and each transition
+ * write-through, the boot hydration replays it on fresh instances, and
+ * the staleness heal's jobs half re-reads it on warm ones.
  */
-function wrapServiceForDurableJobs(service: ApiService, durable: DurableBackingHandle, demoProjectId: string): ApiService {
+function wrapServiceForDurableJobs(service: ApiService, durable: DurableBackingHandle, tenant: string): ApiService {
   return deepFreeze({
     ...service, // every surface delegates verbatim (the frozen service's own closures)
     handle(request: ApiRequest): ApiResponse {
@@ -166,7 +177,7 @@ function wrapServiceForDurableJobs(service: ApiService, durable: DurableBackingH
       // their identity — the map lookup is the cheap diff).
       const changed = service.jobs().filter((job) => before.get(job.jobId as string) !== (job as unknown));
       if (changed.length > 0) {
-        durable.recordJobs(changed.filter((job) => (job.project as string) !== demoProjectId));
+        durable.recordJobs(changed.filter((job) => !isDemoSeedJob(tenant, job)));
       }
       return response;
     },
@@ -533,7 +544,7 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
       // tick and the demo-substance folds all drive (ONE capture point for
       // every mutation path). Under port overrides the injection seam owns
       // the world — the raw service rides, exactly as before.
-      const serving = hasOverrides ? construction.service : wrapServiceForDurableJobs(construction.service, durable, DEMO_PROJECT_ID);
+      const serving = hasOverrides ? construction.service : wrapServiceForDurableJobs(construction.service, durable, tenant);
       const activation: DurableActivation = hasOverrides
         ? { tick: null, ensureBootWorld: async () => undefined }
         : buildDurableActivation({
@@ -558,7 +569,15 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
               // outcome-learning port serves, over the same evidence source.
               projectEvidenceOf: (evidenceTenant, evidenceProject) => durableProjectEvidenceOf(durableEvidenceSource as DurableEvidenceSource, evidenceTenant, evidenceProject)?.submissions ?? [],
             },
-            jobsOf: (tenant, project) => demoJobsOf(serving, tenant, project),
+            jobsOf: (tenantOfJobs, project) => demoJobsOf(serving, tenantOfJobs, project),
+            // FW-34-A: the WRAPPED port chain the composed service drives —
+            // the SAME objects POST /v1/outcomes/query +
+            // /v1/post-mortems/query (outcomeLearning, with the per-project
+            // evidence fold + the promoted-decisions registry) and POST
+            // /v1/knowledge/query (firmMemory) serve — so the hydration
+            // read's counts match the console's own reads exactly.
+            outcomeLearning: ports.outcomeLearning,
+            firmMemory: ports.firmMemory,
           };
       durable = { ...durable, tick: activation.tick, ensureBootWorld: activation.ensureBootWorld, demoSubstance };
       return { ok: true, service: serving, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions };

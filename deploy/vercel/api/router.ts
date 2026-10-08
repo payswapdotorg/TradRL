@@ -263,6 +263,10 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
         ports: deployment.demo.ports,
         verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization,
         jobsOf: (tenant, project) => demoJobsOf(deployment.service, tenant, project),
+        // FW-34-A (the hydration read's organization fold): the composition's
+        // own watch-store surface — the SAME per-instance store the
+        // org-status read serves.
+        watchSnapshots: () => deployment.service.orgStatusSnapshots(),
       },
       wrapped.request,
       demoSubstanceSerial++,
@@ -277,6 +281,10 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
         durable: deployment.durable,
         verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization,
         demoSubstance: deployment.durable.demoSubstance,
+        // FW-34-A (the hydration read's organization fold): the composition's
+        // own watch-store surface — the SAME per-instance store the
+        // org-status read serves.
+        watchSnapshots: () => deployment.service.orgStatusSnapshots(),
       },
       wrapped.request,
       demoSubstanceSerial++,

@@ -138,6 +138,7 @@ import {
 import type { SessionProjectRow, StoreResult } from '../../adapters/neon/stores';
 import type { StoreFailure } from '../../adapters/shared';
 import { DEMO_PROJECT_ID, isLaunchWorldRecord } from './demo';
+import { matchProjectHydrationPath } from './hydration';
 import { demoRouteError, demoRouteRequestId, demoRouteSuccess, type DemoSubstanceAuthorization, type DemoSubstanceRequest, type VerifyDeveloperAuthorization } from './routes';
 
 /** The console session header (the client mirror: apps/web/src/core/session.ts — same name, same shape law). */
@@ -344,8 +345,14 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
   const isListing = request.path === '/v1/projects';
   const goalProject = matchSessionProjectGoalPath(request.path);
   const project = matchSessionProjectPath(request.path);
+  // FW-34-A: the hydration read carries its project as a PATH segment (the
+  // goal route's own grammar) — the session gate applies the SAME
+  // visibility law to it as to the jobs list + the execution blotter (a
+  // foreign project answers the typed not-found; a passing gate falls
+  // through to the substance dispatcher, which serves the read).
+  const hydrationProject = matchProjectHydrationPath(request.path);
   const isGatedRead = request.path === '/v1/jobs' || request.path === '/v1/execution/submissions';
-  if (!isListing && goalProject === null && project === null && !isGatedRead) return null;
+  if (!isListing && goalProject === null && project === null && !isGatedRead && hydrationProject === null) return null;
   const requestId = demoRouteRequestId(request, serial);
   // The host-route auth law (W-8): the credential tenant, never a request value.
   const authorization = deployment.verifyDeveloperAuthorization(request.headers.authorization);
@@ -450,13 +457,19 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
   // not-found, unknown and foreign indistinguishable). The demo project and
   // a passing row fall through to the existing routes, which serve them
   // unchanged.
-  const projectQuery = request.query?.project;
-  if (projectQuery === undefined || !isProjectId(projectQuery)) return null; // the existing routes' own validation answers
+  //
+  // FW-34-A: the hydration read (path-segment project) rides the SAME law
+  // — the gate blocks a foreign project for a session request before the
+  // substance dispatcher serves it.
+  const gatedProject = hydrationProject !== null
+    ? hydrationProject
+    : (request.query?.project !== undefined && isProjectId(request.query.project) ? request.query.project : null);
+  if (gatedProject === null) return null; // the existing routes' own validation answers
   if (scope.kind === 'degraded') return sessionDegraded(requestId, scope.error);
   if (scope.kind === 'demo') {
     const ownerOf = (candidate: string): string | null => ownerOfScope(scope, candidate);
-    if (!sessionSeesProject(projectQuery, session, ownerOf)) {
-      return sessionNotFound(requestId, projectQuery);
+    if (!sessionSeesProject(gatedProject, session, ownerOf)) {
+      return sessionNotFound(requestId, gatedProject);
     }
     return null; // the gate passed — the existing demo-substance routes serve the read
   }
@@ -464,8 +477,8 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
   // row under durable by construction — the boot world seeded it through
   // the real routes).
   const registryIds = new Set(scope.rows.map((row) => projectOfRow(row)).filter((id) => id.length > 0));
-  if (!durableSessionSeesProject(projectQuery, registryIds)) {
-    return sessionNotFound(requestId, projectQuery);
+  if (!durableSessionSeesProject(gatedProject, registryIds)) {
+    return sessionNotFound(requestId, gatedProject);
   }
   return null; // the gate passed — the existing demo-substance routes serve the read
 }

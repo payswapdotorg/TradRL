@@ -29,7 +29,7 @@
 // Spec anchors: R43 (additive), R46, L12, UX-DESIGN §7 (the anti-deception
 // law), ROUND-A-REPORT §4 blocker 1 + §6 (FW-31-A).
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { composeDeployment, degradedPorts } from './runtime/compose';
 import { API_ENV_KEYS, readApiEnv } from './runtime/env';
 import { handleDeploymentRequest } from './api/router';
@@ -670,5 +670,59 @@ describe('deploy/vercel — the standing risk-utilization read, the durable arm 
     const unauthenticated = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/risk/utilization?project=${DEMO_PROJECT_ID}` }));
     expect(unauthenticated.status).toBe(401);
     expect((unauthenticated.body as { error: { code: string } }).error.code).toBe('unauthenticated');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-34-A — THE PER-REQUEST AS-OF (Round C register item 4, M5's evidence:
+// "'Refresh Risk' button no-op (as-of unchanged across 3 activations incl.
+// native click; reads do refresh on reload/scope-change)")
+//
+// THE RUNTIME-SIDE PIN: the route re-derives its standing read on EVERY
+// request — `asOf` is the request's own instant, and the standing values
+// re-fold from the serving stores each time. The pin proves the runtime
+// half is NEVER the freeze: two consecutive reads a wall-clock interval
+// apart serve two DIFFERENT as-of instants (the pre-fix symptom's freeze
+// was the CONSOLE's click path not re-fetching — the beat-render race
+// class, FW-34-B's apps/web surface, disclosed here for the register).
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-34-A: the risk read re-derives per request (the as-of is never frozen at the host)', () => {
+  it('two consecutive reads a wall-clock interval apart serve TWO DIFFERENT as-of instants — the standing read is re-derived on every request (the runtime half of "Refresh Risk", pinned)', async () => {
+    vi.useFakeTimers();
+    const firstInstant = 1_800_600_000_000;
+    vi.setSystemTime(firstInstant);
+    try {
+      const providers = fakeProviders();
+      const deployment = composeDeployment(
+        readApiEnv({ ...VALID_ENV, NEON_API_HOST: 'ep-demo-pooler.us-east-2.aws.neon.tech', NEON_DATABASE: 'neondb', NEON_API_USER: 'neondb_owner', NEON_API_KEY: 'fake-neon-key-demo' }),
+        {},
+        { fetchLike: providers.fetchLike, instants: { next: () => firstInstant } },
+      );
+      expect(deployment.ok).toBe(true);
+      if (!deployment.ok) return;
+
+      const first = await driveRisk(deployment, DEMO_PROJECT_ID);
+      expect(first.status).toBe(200);
+      expect(first.data.asOf).toBe(new Date(firstInstant).toISOString());
+
+      // A wall-clock interval passes (the "Refresh Risk" the persona
+      // pressed); the next read serves the FRESH instant — the standing
+      // values re-derive from the same stores (byte-stable records, the
+      // honest re-observation), but the AS-OF always names the read's own
+      // request instant.
+      const secondInstant = firstInstant + 23_000;
+      vi.setSystemTime(secondInstant);
+      const second = await driveRisk(deployment, DEMO_PROJECT_ID);
+      expect(second.status).toBe(200);
+      expect(second.data.asOf).toBe(new Date(secondInstant).toISOString());
+      expect(second.data.asOf).not.toBe(first.data.asOf);
+      // The standing values themselves are unchanged (the records on file
+      // did not move) — the refresh is honest about both halves.
+      expect(second.data.bounds).toEqual(first.data.bounds);
+      expect(second.data.activeBreaches).toEqual(first.data.activeBreaches);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

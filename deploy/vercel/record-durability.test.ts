@@ -49,11 +49,11 @@ import { composeDeployment } from './runtime/compose';
 import { API_ENV_KEYS, readApiEnv } from './runtime/env';
 import { handleDeploymentRequest } from './api/router';
 import { fakeProviders } from '../wire/smoketest';
-import { NeonOutcomeLearningStore, NeonProjectStore, type NeonStoreDeps } from '../adapters/neon/stores';
+import { NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, type NeonStoreDeps } from '../adapters/neon/stores';
 import type { NeonConfig } from '../adapters/neon/client';
 import type { FetchLike } from '../adapters/shared';
 import { validConstraintSet, validGoal } from '../../services/api/src/fixtures';
-import { DEMO_PROJECT_ID } from './runtime/demo';
+import { DEMO_ORG_SNAPSHOT_AT, DEMO_ORGANIZATION_REF, DEMO_PROJECT_ID } from './runtime/demo';
 import { HYDRATION_AT } from './runtime/durable';
 import type { FunctionRequest, FunctionResponse } from './runtime/http';
 
@@ -565,6 +565,331 @@ describe('deploy/vercel — FW-33-A: the export never loses a record (the manife
       expect(demoAfter).toEqual(demoBefore);
       expect(deskAfter.capsules).toBe(deskBefore.capsules); // the manifest count, pinned
       expect(deskAfter.decisionsGateway).toBe(deskBefore.decisionsGateway); // S5's 1->0, closed
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (d) FW-34-A — THE JOB-RECORD BLINK (Round C register item 5, M3's evidence:
+//     "my job b32e6a51 + seed job:09a871b6 + capsules evc:01c818d6/evc:577578fc
+//     vanished from live surfaces AND the demo export after the cycle (capsules
+//     12→10, jobs 4→1); the surviving decision's producing-job backlink
+//     silently no-ops")
+//
+// THE ROOT CAUSE (reproduced below): the durable job write-through lane
+// (W-27, D-7) excluded the WHOLE demo project — every USER-submitted job in
+// the shared teaching scope was per-instance state that vanished the moment
+// the balancer routed a read to an instance that never received the
+// submission (the console's job capsules fold from the job records
+// client-side, so the capsules vanished with them; the per-id GET answered
+// the typed 404 — the producing-job backlink no-op). The exclusion's
+// original purpose (never accumulating the re-seeded pair) is void since
+// FW-31-B's deterministic seed identity — the fix narrows the exclusion to
+// the SEED PAIR'S OWN two records (isDemoSeedJob), so every other
+// demo-scope job rides the lane like any launched desk's job.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-34-A: the demo-scope user job persists (the job-record blink, M3\'s class)', () => {
+  /**
+   * THE DEMO-SCOPE USER JOB (M3's flow — a research persona working the
+   * shared teaching scope): submit a research job to the DEMO project with
+   * a USER spec (never the demo-seed spec — the priming latch's identity
+   * law), then let the machinery tick complete it. Returns the completed
+   * job record.
+   */
+  async function submitDemoScopeUserJob(deployment: Deployment): Promise<{ readonly jobId: string; readonly status: string; readonly result: { readonly kind: string } }> {
+    const submitted = await drive(deployment, streamingRequest({
+      method: 'POST',
+      url: '/v1/jobs/research',
+      headers: { ...BEARER, 'idempotency-key': 'idem:fw34a:demo-user:1' },
+      body: {
+        kind: 'research',
+        projectId: DEMO_PROJECT_ID,
+        spec: { source: 'fw34a-m3-evidence', objective: '2s10s steepener: measure the venue-lag gap between executed and modeled fills over the trailing window' },
+      },
+    }));
+    expect(submitted.status).toBe(202);
+    const jobId = (submitted.body as { data: { jobId: string } }).data.jobId;
+    // The machinery tick at +10s completes the job (the DEMO-scope
+    // transition law: the deterministic instant = submittedAt + schedule).
+    vi.setSystemTime(T0 + 10_000);
+    await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+    const finished = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/jobs/${jobId}`, headers: BEARER }));
+    expect(finished.status).toBe(200);
+    return (finished.body as { data: { jobId: string; status: string; result: { kind: string } } }).data;
+  }
+
+  it('a user-submitted DEMO-scope job survives instance recreation: the list, the per-id read (the producing-job backlink route) and the export fold all serve it on the FRESH instance — never the pre-fix blink', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER })); // the boot world settles
+
+      // THE USER JOB IN THE SHARED TEACHING SCOPE (M3's job:b32e6a51).
+      const userJob = await submitDemoScopeUserJob(instanceA);
+      expect(userJob.status).toBe('complete');
+      expect(userJob.result.kind).toBe('release-candidate');
+      // The submission's + the transition's durable writes drain (the ordering law).
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+
+      // A serves the demo scope's jobs: the 2 deterministic seeds + the user job.
+      const onA = await jobsOf(instanceA, DEMO_PROJECT_ID);
+      expect(onA).toHaveLength(3);
+      const demoBefore = await exportFoldOf(instanceA, DEMO_PROJECT_ID);
+      expect(demoBefore.jobs.filter((job) => job.jobId === userJob.jobId)).toHaveLength(1);
+
+      // THE RESTART-EQUIVALENT (M3's browser restart landing on a fresh
+      // serverless instance — the pre-fix blink's exact window): a new
+      // instance boots from the durable truth alone.
+      const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceB.ok).toBe(true);
+      if (!instanceB.ok) return;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+
+      // THE BLINK IS CLOSED: the fresh instance serves the user job on the
+      // list (the Research section + the palette's JOB group) — the pre-fix
+      // defect served ONLY the re-seeded pair (the user job was per-instance
+      // state; the console's job capsule folded from it vanished with it).
+      const onB = await jobsOf(instanceB, DEMO_PROJECT_ID);
+      expect(onB).toHaveLength(3);
+      expect(onB.filter((job) => job.jobId === userJob.jobId)).toHaveLength(1);
+      // ...AND the per-id read — the producing-job backlink's own route —
+      // answers 200 with the completed record (M3's 4-attempt silent no-op).
+      const backlink = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/jobs/${userJob.jobId}`, headers: BEARER }));
+      expect(backlink.status).toBe(200);
+      expect((backlink.body as { data: { status: string; result: { kind: string } } }).data.result.kind).toBe('release-candidate');
+      // ...AND the export fold is IDENTICAL across the recreation (M3's
+      // manifest jobs 4→1, capsules 12→10 — closed).
+      const demoAfter = await exportFoldOf(instanceB, DEMO_PROJECT_ID);
+      expect(demoAfter).toEqual(demoBefore);
+      expect(demoAfter.capsules).toBe(demoBefore.capsules);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the seed pair never rides the lane (the exclusion\'s original purpose, kept): tradrl_jobs holds the demo scope\'s USER rows only — never the re-seeded pair, byte-stable across instances', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const userJob = await submitDemoScopeUserJob(instanceA);
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+
+      // A SECOND instance boots (the re-seed fires again on it — the
+      // per-instance closure law) and serves the world.
+      const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceB.ok).toBe(true);
+      if (!instanceB.ok) return;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER })); // the drain settles
+
+      // THE STORE-LEVEL PIN: tradrl_jobs carries the demo scope's rows —
+      // EXACTLY the user job (the seed pair never accumulates: the
+      // FW-31-B deterministic identity made the pair byte-identical per
+      // instance, and the lane keeps it out of the durable table entirely).
+      const direct = new NeonJobStore({ config: NEON_CONFIG, fetchLike: providers.fetchLike, instants: { next: () => T0 } });
+      const rows = await direct.jobRecordsOfTenant(TENANT);
+      expect(rows.ok).toBe(true);
+      if (!rows.ok) return;
+      const demoRows = rows.value.filter((row) => row.project === DEMO_PROJECT_ID);
+      expect(demoRows.map((row) => (row.record as { jobId: string }).jobId)).toEqual([userJob.jobId]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the staleness heal lands the demo-scope user job on a WARM instance that booted BEFORE the submission (the FW-31-B jobs half, extended to the teaching scope)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      // INSTANCE B boots FIRST (T0) — its boot world + projection predate the
+      // submission; its first tick arms the heal interval (T0).
+      const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceB.ok).toBe(true);
+      if (!instanceB.ok) return;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+
+      // INSTANCE A carries the demo-scope user job (T0..T0+10s).
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const userJob = await submitDemoScopeUserJob(instanceA);
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER })); // the drain confirms the durable rows
+
+      // B BEFORE the heal (T0+5s — 5s into its interval): the honest
+      // emptiness (the pre-fix FOREVER-state — B never received the
+      // submission and nothing ever re-read the durable truth for it).
+      vi.setSystemTime(T0 + 5_000);
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      expect((await jobsOf(instanceB, DEMO_PROJECT_ID)).filter((job) => job.jobId === userJob.jobId)).toHaveLength(0);
+
+      // THE HEAL at T0+11s: the jobs half's fresh tenant-wide read finds the
+      // user job B's store lacks and replays it through the REAL public job
+      // routes (the same driver the boot hydration rides).
+      vi.setSystemTime(T0 + 11_000);
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      await flushAsyncWork();
+
+      // The user job serves on the SAME warm instance — the list and the
+      // per-id read both.
+      expect((await jobsOf(instanceB, DEMO_PROJECT_ID)).filter((job) => job.jobId === userJob.jobId)).toHaveLength(1);
+      const backlink = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/jobs/${userJob.jobId}`, headers: BEARER }));
+      expect(backlink.status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (e) FW-34-A — THE ORG-SNAPSHOT IDENTITY (Round C register item 4, the
+//     notification-state drift: L3's "unread badge 4 vs Home stat 3 across a
+//     reload", L4's "a 23-min-old 'Organization compiled' re-notified as NEW
+//     unread stamped at the session start", M5's "compiled notice instant
+//     mislabeled").
+//
+// THE ROOT CAUSE (reproduced below): the durable activation's org-status
+// snapshot pass (R7 at boot + the heal's org half) re-reported every
+// launched desk's watch snapshot stamped with the BOOT/HEAL instant
+// (demoOrgSnapshotInstantOf(project.id, at)) — a DIFFERENT instant per
+// instance. The console folds its "Organization compiled" notice over the
+// snapshot's `at` with a CONTENT-ADDRESSED id: every cold start minted a
+// FRESH notice id for the same compile event, the persisted read marks
+// (keyed by notice id) never matched again, and the old compile event
+// re-notified as NEW unread while the notice's instant mislabeled as the
+// session start. THE FIX: the re-hydrated snapshot is reported at the
+// DURABLE COMPILE INSTANT (the org-bind event's own `at`, captured by the
+// projection's replay — organizationBoundAtOf), so the snapshot is
+// byte-identical on every instance that reports it.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-34-A: the org-snapshot identity is instance-stable (the notification-state drift)', () => {
+  /** The org-status read of one project's bound organization (the console's own read — the notice fold's data source). */
+  async function orgSnapshotOf(deployment: Deployment, organizationRef: string, projectId: string): Promise<Record<string, unknown>> {
+    const read = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/organizations/${encodeURIComponent(organizationRef)}/status?project=${encodeURIComponent(projectId)}`, headers: BEARER }));
+    expect(read.status).toBe(200);
+    return (read.body as { data: Record<string, unknown> }).data;
+  }
+
+  it('the re-hydrated watch snapshot carries the DURABLE COMPILE instant on a fresh instance (never the boot instant) — byte-identical to the compiling instance\'s own report, so the notice fold\'s content-addressed id is stable across restarts', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER })); // the boot world settles
+
+      // THE LAUNCH + THE COMPILE at a KNOWN instant: the create lands at
+      // T0, then the kickoff request's own tick (T0+2s — the router's step
+      // 2b) compiles the org: the bind event AND the first snapshot report
+      // both carry T0+2s.
+      const created = await drive(instanceA, streamingRequest({ method: 'POST', url: '/v1/projects', headers: { ...BEARER, 'content-type': 'application/json' }, body: createProjectBody('prj-fw34a-notice') }));
+      expect(created.status).toBe(201);
+      const compileAt = T0 + 2_000;
+      vi.setSystemTime(compileAt);
+      const kickoff = await drive(instanceA, streamingRequest({
+        method: 'POST',
+        url: '/v1/jobs/research',
+        headers: { ...BEARER, 'idempotency-key': 'idem:fw34a-notice:kickoff' },
+        body: { kind: 'research', projectId: 'prj-fw34a-notice', spec: consoleLaunchSpec() },
+      }));
+      expect(kickoff.status).toBe(202); // this request's tick compiled the org (the R4 pass)
+      const organizationRef = `org:compiled-prj-fw34a-notice`;
+      const snapshotOnA = await orgSnapshotOf(instanceA, organizationRef, 'prj-fw34a-notice');
+      expect(snapshotOnA.at).toBe(compileAt); // the compile instant — the FIRST report's own law
+
+      // THE RESTART-EQUIVALENT: a fresh instance boots at T0+23min (L4's
+      // 23-minute-old compile event) — the PRE-FIX defect re-reported the
+      // snapshot stamped at THIS boot instant (a fresh notice id → the
+      // re-notification + the mislabeled instant).
+      const restartAt = T0 + 23 * 60_000;
+      vi.setSystemTime(restartAt);
+      const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceB.ok).toBe(true);
+      if (!instanceB.ok) return;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+
+      // THE IDENTITY PIN: B's watch snapshot is BYTE-IDENTICAL to A's — the
+      // COMPILE instant, never the boot instant (the console's notice fold
+      // derives the same content-addressed id from it; the persisted read
+      // marks apply; the 23-minute-old compile event never re-notifies as
+      // new unread, and the notice's instant names the EVENT time).
+      const snapshotOnB = await orgSnapshotOf(instanceB, organizationRef, 'prj-fw34a-notice');
+      expect(snapshotOnB).toEqual(snapshotOnA);
+      expect(snapshotOnB.at).toBe(compileAt);
+      expect(snapshotOnB.at).not.toBe(restartAt);
+
+      // THE DEMO PROJECT'S OWN SNAPSHOT keeps the deterministic demo epoch
+      // (unchanged — it was already instant-stable).
+      const demoSnapshot = await orgSnapshotOf(instanceB, DEMO_ORGANIZATION_REF, DEMO_PROJECT_ID);
+      expect(demoSnapshot.at).toBe(DEMO_ORG_SNAPSHOT_AT);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the heal\'s org half re-reports at the compile instant on a WARM instance that booted BEFORE the launch — never the heal instant (the warm-instance half of the identity law)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      // INSTANCE C boots FIRST (T0) — its projection + watch store predate
+      // the launch; its first tick arms the heal interval (T0).
+      const instanceC = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceC.ok).toBe(true);
+      if (!instanceC.ok) return;
+      await drive(instanceC, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+
+      // INSTANCE A carries the launch + the compile at T0+2s (the durable
+      // bind event + the first snapshot report both land).
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const created = await drive(instanceA, streamingRequest({ method: 'POST', url: '/v1/projects', headers: { ...BEARER, 'content-type': 'application/json' }, body: createProjectBody('prj-fw34a-heal-org') }));
+      expect(created.status).toBe(201);
+      const compileAt = T0 + 2_000;
+      vi.setSystemTime(compileAt);
+      const kickoff = await drive(instanceA, streamingRequest({
+        method: 'POST',
+        url: '/v1/jobs/research',
+        headers: { ...BEARER, 'idempotency-key': 'idem:fw34a-heal-org:kickoff' },
+        body: { kind: 'research', projectId: 'prj-fw34a-heal-org', spec: consoleLaunchSpec() },
+      }));
+      expect(kickoff.status).toBe(202);
+      const organizationRef = 'org:compiled-prj-fw34a-heal-org';
+      const snapshotOnA = await orgSnapshotOf(instanceA, organizationRef, 'prj-fw34a-heal-org');
+      expect(snapshotOnA.at).toBe(compileAt);
+
+      // C's heal at T0+11s: the derived-truth half's registry probe (the
+      // fresh JOIN carries the unseen project) triggers the QUIET
+      // re-projection FIRST, then the org half reports the snapshot over
+      // the fresh rows — AT THE COMPILE INSTANT (the pre-fix defect stamped
+      // the heal instant: a fresh notice id per warm instance too).
+      const healAt = T0 + 11_000;
+      vi.setSystemTime(healAt);
+      await drive(instanceC, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      await flushAsyncWork();
+
+      const snapshotOnC = await orgSnapshotOf(instanceC, organizationRef, 'prj-fw34a-heal-org');
+      expect(snapshotOnC).toEqual(snapshotOnA); // byte-identical — the compile instant
+      expect(snapshotOnC.at).toBe(compileAt);
+      expect(snapshotOnC.at).not.toBe(healAt);
     } finally {
       vi.useRealTimers();
     }
