@@ -265,15 +265,45 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
    * rows (a warm instance's projection predates the launch — the R7-at-boot
    * law alone left the compiled org's snapshot unobservable there, the
    * "org never compiles" half of the P02 stall).
+   *
+   * FW-34-A (the notification-state drift fix): each project's input now
+   * carries its durable compile instant — the ORG-BIND EVENT'S OWN `at`
+   * from the durable event log (the seam's organizationBoundAtOf, read
+   * against the CURRENT serving projection) — and the re-hydrated snapshot
+   * is reported AT THAT INSTANT, never the boot/heal instant. The PRE-FW-34-A
+   * pass stamped `demoOrgSnapshotInstantOf(project.id, at)` (the report
+   * instant) for every launched desk: every cold start re-reported a
+   * DIFFERENT instant, the console folded a NEW content-addressed notice id
+   * per instance (its persisted read marks keyed by notice id never
+   * matched), and a 23-minute-old "Organization compiled" event re-notified
+   * as NEW unread on every restart while the notice's instant mislabeled as
+   * the session start (Round C register item 4: L3/L4/M5/S2). With the
+   * compile instant the snapshot is byte-identical on every instance that
+   * reports it — the stable identity the notice fold derives from. A
+   * project whose bind instant the projection does not carry yet (a warm
+   * instance whose quiet re-projection is still pending) is SKIPPED this
+   * interval: never a churned fresh instant (the next interval reports the
+   * stable one). The DEMO project keeps the deterministic demo epoch
+   * (unchanged — its snapshot was already instant-stable).
    */
-  function reportMissingOrgStatusSnapshots(projects: readonly { readonly id: string; readonly organizationRef: string | null }[], at: number): void {
+  function reportMissingOrgStatusSnapshots(projects: readonly { readonly id: string; readonly organizationRef: string | null; readonly organizationBoundAt: number | null }[], at: number): void {
     if (seed.internalToken === null) return; // the private plane stays closed — the watch store stays honestly empty
     const known = new Set(service.orgStatusSnapshots().map((snapshot) => `${snapshot.organizationRef as string}/${snapshot.project as string}`));
     for (const project of projects) {
       const organizationRef = project.organizationRef;
       if (organizationRef === null) continue; // unbound — the tick's compile pass owns those
       if (known.has(`${organizationRef}/${project.id}`)) continue; // already reported on this instance
-      const snapshot = demoOrgStatusSnapshot(seed.tenant, project.id, organizationRef, demoOrgSnapshotInstantOf(project.id, at));
+      // FW-34-A: the report instant is the DURABLE COMPILE instant for every
+      // launched desk (the org-bind event's own `at` — the snapshot carries
+      // the compile EVENT time, and the byte-identical report never mints a
+      // fresh notice identity); the demo project keeps its deterministic
+      // epoch. A launched desk whose bind instant is not yet readable is
+      // SKIPPED — never a churned instant (the stable identity law above).
+      const snapshotAt = project.id === DEMO_PROJECT_ID
+        ? demoOrgSnapshotInstantOf(DEMO_PROJECT_ID, at)
+        : project.organizationBoundAt;
+      if (snapshotAt === null) continue;
+      const snapshot = demoOrgStatusSnapshot(seed.tenant, project.id, organizationRef, snapshotAt);
       if (snapshot === null) continue; // unreachable (the fixture builder is the canonical shape) — skip, never a crash
       service.handle({
         method: 'POST',
@@ -284,23 +314,40 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
     }
   }
 
-  /** The hydrated projection's project listing as the snapshot pass's structural input (R46: a degraded projection answers nothing — the pass skips, never a crash). */
-  function hydratedProjectsForSnapshots(): readonly { readonly id: string; readonly organizationRef: string | null }[] {
+  /** The hydrated projection's project listing as the snapshot pass's structural input (R46: a degraded projection answers nothing — the pass skips, never a crash). The bind instant comes from the SAME projection (the org-bind event's own `at` — the notification-identity fix's anchor); a degraded bind read is a null (the pass skips that project, never a churned instant). */
+  function hydratedProjectsForSnapshots(): readonly { readonly id: string; readonly organizationRef: string | null; readonly organizationBoundAt: number | null }[] {
     const listed = durable.ports.controlPlane.projectsOf(tenantId);
     if (!listed.ok) return [];
-    return listed.value.map((project) => ({ id: project.id as string, organizationRef: typeof project.lifecycle.organizationRef === 'string' ? project.lifecycle.organizationRef : null }));
+    return listed.value.map((project) => {
+      const bindAt = durable.organizationBoundAtOf(project.id as string);
+      return {
+        id: project.id as string,
+        organizationRef: typeof project.lifecycle.organizationRef === 'string' ? project.lifecycle.organizationRef : null,
+        organizationBoundAt: bindAt.ok ? bindAt.value : null,
+      };
+    });
   }
 
-  /** The fresh session-JOIN rows' project payloads as the snapshot pass's structural input (malformed rows skip fail-closed — never a crash). */
-  function freshProjectsForSnapshots(rows: readonly { readonly project: unknown }[]): readonly { readonly id: string; readonly organizationRef: string | null }[] {
-    const projects: { readonly id: string; readonly organizationRef: string | null }[] = [];
+  /**
+   * The fresh session-JOIN rows' project payloads as the snapshot pass's
+   * structural input (malformed rows skip fail-closed — never a crash). The
+   * bind instant comes from the SERVING projection's captured org-bind
+   * events (FW-34-A): the derived-truth half (step 1) triggers the quiet
+   * re-projection FIRST, so by the time this input feeds the org half the
+   * projection carries the launch's bind; a row whose bind instant is not
+   * readable yet feeds null and the pass SKIPS it (never a churned instant
+   * — the next interval reports the stable identity).
+   */
+  function freshProjectsForSnapshots(rows: readonly { readonly project: unknown }[]): readonly { readonly id: string; readonly organizationRef: string | null; readonly organizationBoundAt: number | null }[] {
+    const projects: { readonly id: string; readonly organizationRef: string | null; readonly organizationBoundAt: number | null }[] = [];
     for (const row of rows) {
       if (!isRecord(row.project)) continue;
       const id = row.project.id;
       const lifecycle = row.project.lifecycle;
       if (typeof id !== 'string' || id.length === 0 || !isRecord(lifecycle)) continue;
       const organizationRef = lifecycle.organizationRef;
-      projects.push({ id, organizationRef: typeof organizationRef === 'string' && organizationRef.length > 0 ? organizationRef : null });
+      const bindAt = durable.organizationBoundAtOf(id);
+      projects.push({ id, organizationRef: typeof organizationRef === 'string' && organizationRef.length > 0 ? organizationRef : null, organizationBoundAt: bindAt.ok ? bindAt.value : null });
     }
     return projects;
   }

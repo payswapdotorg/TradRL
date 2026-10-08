@@ -114,15 +114,20 @@ import {
   type ApiRequest,
   type ApiResponse,
   type ConstraintSetStatement,
+  type FirmMemoryPort,
   type GoalStatement,
   type JobRecord,
+  type OrgStatusSnapshot,
   type OutcomeLearningPort,
   type OutcomeRecordMirror,
+  type PostMortemRecordMirror,
   type RequestId,
+  type ServedKnowledge,
   type TimestampMs,
 } from '../../../services/api/src/index';
 import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, demoWorldOf, isLaunchWorldRecord, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
 import type { DurableBackingHandle, DdlApplyResult, DdlVerifyResult } from './durable';
+import { matchProjectHydrationPath, serveProjectHydrationRoute } from './hydration';
 import { RISK_UTILIZATION_ROUTE_PATH, serveRiskUtilizationRoute } from './risk-utilization';
 
 /**
@@ -135,6 +140,26 @@ import { RISK_UTILIZATION_ROUTE_PATH, serveRiskUtilizationRoute } from './risk-u
  */
 function outcomeRecordsOf(port: OutcomeLearningPort, tenant: string, project: string): readonly OutcomeRecordMirror[] | null {
   const result = port.queryOutcomes({ tenant, project }, { at: Date.now() as TimestampMs, retention: null });
+  return result.ok ? result.value : null;
+}
+
+/**
+ * One post-mortem-records read over a backing's outcome-learning port (the
+ * hydration read's fold — the FW-31-A honesty law, verbatim: null = NOT
+ * READABLE, never a lying zero).
+ */
+function postMortemRecordsOf(port: OutcomeLearningPort, tenant: string, project: string): readonly PostMortemRecordMirror[] | null {
+  const result = port.queryPostMortems({ tenant, project }, { at: Date.now() as TimestampMs, retention: null });
+  return result.ok ? result.value : null;
+}
+
+/**
+ * One knowledge read over a backing's firm-memory port (the hydration
+ * read's fold — the SAME read POST /v1/knowledge/query drives; null = NOT
+ * READABLE, never a lying zero — the FW-31-A honesty law).
+ */
+function knowledgeRecordsOf(port: FirmMemoryPort, tenant: string, project: string): readonly ServedKnowledge[] | null {
+  const result = port.queryKnowledge({ tenant, project }, { at: Date.now() as TimestampMs, retention: null });
   return result.ok ? result.value : null;
 }
 
@@ -198,10 +223,17 @@ export interface FoldRouteInput {
 export interface DemoSubstanceRouteInput extends FoldRouteInput {
   /** The demo backing's FULL port set (the goal route's capture reads the control-plane seam — demoGoalSetOf). */
   readonly ports: DemoPorts;
+  /**
+   * THE WATCH-STORE SNAPSHOTS (FW-34-A — the hydration read's organization
+   * fold): the composition's own service surface (the SAME per-instance
+   * store GET /v1/organizations/:ref/status serves). Optional so existing
+   * constructions stay valid; the router always wires it.
+   */
+  readonly watchSnapshots?: () => readonly OrgStatusSnapshot[];
 }
 
-/** The demo-substance read paths this host serves (additive — declared nowhere in the frozen route table; the risk-utilization read since FW-31-A). */
-export const DEMO_SUBSTANCE_ROUTE_PATHS = deepFreeze(['/v1/execution/submissions', '/v1/projects/:projectId/goal', '/v1/jobs', '/v1/risk/utilization'] as const);
+/** The demo-substance read paths this host serves (additive — declared nowhere in the frozen route table; the risk-utilization read since FW-31-A; the hydration read since FW-34-A). */
+export const DEMO_SUBSTANCE_ROUTE_PATHS = deepFreeze(['/v1/execution/submissions', '/v1/projects/:projectId/goal', '/v1/projects/:projectId/hydration', '/v1/jobs', '/v1/risk/utilization'] as const);
 
 // ---------------------------------------------------------------------------
 // The envelope discipline (mirrors the boundary's own response builders)
@@ -342,6 +374,31 @@ function projectGoalRoute(input: DemoSubstanceRouteInput, request: DemoSubstance
  */
 export function serveDemoSubstanceRoute(input: DemoSubstanceRouteInput, request: DemoSubstanceRequest, serial: number): ApiResponse | null {
   if (request.method !== 'GET') return null;
+  // THE PROJECT HYDRATION READ (FW-34-A, Round C register item 3 — the
+  // loading-vs-empty truth): served from the SAME folds the console's own
+  // boot bundle reads (the demo backing's per-instance stores — honest
+  // under SIMULATED), so the first paint can distinguish LOADING from
+  // HONEST-EMPTY without lying in either direction.
+  if (matchProjectHydrationPath(request.path) !== null) {
+    return serveProjectHydrationRoute(
+      {
+        verifyDeveloperAuthorization: input.verifyDeveloperAuthorization,
+        projectOf: (tenant, project) => {
+          const listed = input.ports.controlPlane.projectsOf(tenant as never);
+          return listed.ok ? (listed.value.find((record) => (record.id as string) === project) ?? null) : null;
+        },
+        jobsOf: input.jobsOf,
+        submissionsOf: (tenant, project) => demoSubmissionsOf(input.ports, tenant, project),
+        outcomesOf: (tenant, project) => outcomeRecordsOf(input.ports.outcomeLearning, tenant, project),
+        postMortemsOf: (tenant, project) => postMortemRecordsOf(input.ports.outcomeLearning, tenant, project),
+        knowledgeOf: (tenant, project) => knowledgeRecordsOf(input.ports.firmMemory, tenant, project),
+        ...(input.watchSnapshots === undefined ? {} : { watchSnapshots: input.watchSnapshots }),
+      },
+      request,
+      serial,
+      'demo',
+    );
+  }
   if (request.path === '/v1/execution/submissions') {
     return executionSubmissionsRoute(input, request, demoRouteRequestId(request, serial));
   }
@@ -407,6 +464,13 @@ export type DurableSubstanceRouteInput = {
    * as before (the pre-W-8 law).
    */
   readonly demoSubstance: DurableDemoSubstance | null;
+  /**
+   * THE WATCH-STORE SNAPSHOTS (FW-34-A — the hydration read's organization
+   * fold): the composition's own service surface (the SAME per-instance
+   * store GET /v1/organizations/:ref/status serves). Optional so existing
+   * constructions stay valid; the router always wires it.
+   */
+  readonly watchSnapshots?: () => readonly OrgStatusSnapshot[];
 };
 
 /**
@@ -445,6 +509,35 @@ export type DurableSubstanceRouteInput = {
  */
 export function serveDurableSubstanceRoute(input: DurableSubstanceRouteInput, request: DemoSubstanceRequest, serial: number): ApiResponse | null {
   if (request.method !== 'GET') return null;
+  // THE PROJECT HYDRATION READ (FW-34-A, Round C register item 3 — the
+  // loading-vs-empty truth): served from the SAME folds the console's own
+  // boot bundle reads — the seam's hydrated projection (the project record
+  // + the knowledge/outcome port chains) and the composition's per-instance
+  // stores (the jobs + submissions folds, the watch store). Under port
+  // overrides (demoSubstance === null) the read falls through to the
+  // boundary exactly like the jobs + submissions routes (the pre-W-8 law).
+  if (matchProjectHydrationPath(request.path) !== null) {
+    if (input.demoSubstance === null) return null;
+    const demoSubstance = input.demoSubstance;
+    return serveProjectHydrationRoute(
+      {
+        verifyDeveloperAuthorization: input.verifyDeveloperAuthorization,
+        projectOf: (tenant, project) => {
+          const listed = input.durable.ports.controlPlane.projectsOf(tenant as never);
+          return listed.ok ? (listed.value.find((record) => (record.id as string) === project) ?? null) : null;
+        },
+        jobsOf: demoSubstance.jobsOf,
+        submissionsOf: (tenant, project) => demoSubmissionsOf(demoSubstance.ports, tenant, project),
+        outcomesOf: (tenant, project) => outcomeRecordsOf(demoSubstance.outcomeLearning, tenant, project),
+        postMortemsOf: (tenant, project) => postMortemRecordsOf(demoSubstance.outcomeLearning, tenant, project),
+        knowledgeOf: (tenant, project) => knowledgeRecordsOf(demoSubstance.firmMemory, tenant, project),
+        ...(input.watchSnapshots === undefined ? {} : { watchSnapshots: input.watchSnapshots }),
+      },
+      request,
+      serial,
+      'durable',
+    );
+  }
   // R4 (W-26C): the jobs list + the execution blotter serve under durable
   // through the DEMO arm's own handlers — the same folds (demoJobsOf +
   // demoSubmissionsOf), the same auth, the same envelope, D-3 preserved.
