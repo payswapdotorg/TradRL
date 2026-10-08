@@ -36,7 +36,7 @@
 
 import { NOTICE_TITLES, type NoticeKind } from '../core/notices';
 import { formatInstantUtc } from '../core/format';
-import { TIME_MACHINE_STEP_MS } from '../core/timemachine';
+import { PLAYBACK_SPEED_KEYS, playbackStepMsOf, TIME_MACHINE_STEP_MS, type PlaybackSpeedKey } from '../core/timemachine';
 import { v, type VNode } from './vtree';
 import { iconOf, statusPill, type ComponentIcon } from './components';
 
@@ -295,6 +295,17 @@ export function scrubberRangeNoteOf(range: ScrubberRange): string {
 }
 
 /**
+ * FW-33-B (Round B blocker 5) — THE HONEST SPEED CAPTION: what playback
+ * does at one step, stated with the number (the D-18 law — the meaning
+ * before the click). The caption names the per-beat advance AND the two
+ * laws that never change with speed: L4 (only what was knowable then
+ * renders) and the anchor ceiling (never past now).
+ */
+export function playbackSpeedCaptionOf(stepMs: number): string {
+  return `Playback advances the view instant ${stepMs}ms per scheduler beat (~1s), rendering only what was knowable then — never past now.`;
+}
+
+/**
  * The Time Machine control bar (§4.8): mode select + scrubber +
  * playback controls + the mono instant readout + the projection
  * notice. FW-32-B (Round A blocker 4): the scrubber range anchors to
@@ -302,6 +313,11 @@ export function scrubberRangeNoteOf(range: ScrubberRange): string {
  * from the records on hand, disclosed by the range note), never the
  * session start; the Step controls' titles disclose the exact
  * granularity they move the selected instant by.
+ *
+ * FW-33-B (Round B blocker 5): the disclosed playback SPEED select
+ * rides the playback group — 1x / 10x / 100x, the step-per-beat each
+ * speed advances by, with the honest caption beside it (what playback
+ * does, at that speed, L4 and the anchor ceiling unchanged).
  */
 export function timeMachineControls(options: {
   readonly mode: string;
@@ -309,10 +325,13 @@ export function timeMachineControls(options: {
   readonly range: ScrubberRange;
   readonly playing: boolean;
   readonly progress: number | null;
+  readonly speed?: PlaybackSpeedKey;
 }): VNode {
   const bounds = scrubberBoundsOf(options.range);
   const value = Math.min(Math.max(options.viewAt, bounds.min), bounds.max);
   const stepWord = `${TIME_MACHINE_STEP_MS}ms`;
+  const speed = options.speed ?? '1x';
+  const speedStepMs = playbackStepMsOf(speed);
   return v('div', { class: 'tm-controls-bar', 'data-tm-mode': options.mode, 'data-tm-range': options.range.derived }, [
     v('div', { class: 'tm-modes', role: 'group', 'aria-label': 'Time Machine mode' }, TIME_MACHINE_MODES.map((entry) => v('button', {
       class: `tm-mode-btn${options.mode === entry.key ? ' active' : ''}`,
@@ -343,6 +362,18 @@ export function timeMachineControls(options: {
       // moves it forward one, both clamped to the range.
       v('button', { class: 'tm-button', 'data-action': 'playback-step-back', type: 'button', 'aria-label': 'Step back', title: `Step the selected view instant back ${stepWord} (clamped at the range floor)` }, ['Step back']),
       v('button', { class: 'tm-button', 'data-action': 'playback-step', type: 'button', 'aria-label': 'Step forward', title: `Step the selected view instant forward ${stepWord} (clamped at the live anchor)` }, ['Step']),
+      // FW-33-B: the disclosed speed select — the step each beat advances
+      // by (1x = the 500ms knowable-then step; 10x/100x traverse
+      // multi-year histories), the honest caption beside it.
+      v('label', { class: 'tm-speed' }, [
+        v('span', { class: 'tm-speed-label' }, ['Speed']),
+        v('select', {
+          class: 'tm-speed-select',
+          'data-action': 'playback-speed',
+          'aria-label': 'Playback speed',
+          title: playbackSpeedCaptionOf(speedStepMs),
+        }, PLAYBACK_SPEED_KEYS.map((key) => v('option', { value: key, ...(key === speed ? { selected: 'selected' } : {}) }, [key]))),
+      ]),
     ]),
     v('output', { class: 'tm-readout', 'aria-label': 'Selected view instant' }, [formatInstantUtc(options.viewAt)]),
     v('span', { class: 'tm-notice' }, [projectionNoticeOf(options.mode, options.mode === 'playback' && !options.playing)]),
@@ -352,6 +383,10 @@ export function timeMachineControls(options: {
     // taught plainly). aria-hidden: the scrubber's own min/max
     // attributes carry the same facts to assistive tech.
     v('span', { class: 'tm-range-note', 'data-tm-range-derived': options.range.derived }, [scrubberRangeNoteOf(options.range)]),
+    // FW-33-B: the speed's own honest caption — what playback does at
+    // the selected step, one sentence, never a claim the machine does
+    // not support.
+    v('span', { class: 'tm-speed-note', 'data-tm-speed': speed }, [playbackSpeedCaptionOf(speedStepMs)]),
   ]);
 }
 
@@ -455,7 +490,7 @@ export function labeledInput(options: {
   readonly label: string;
   readonly name: string;
   readonly value: string;
-  readonly type?: 'text' | 'number';
+  readonly type?: 'text' | 'number' | 'datetime-local';
   readonly placeholder?: string;
   readonly hint?: string;
   readonly validation?: FieldValidation;

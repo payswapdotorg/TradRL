@@ -1187,6 +1187,43 @@ describe('workspace: MI-D9 — the manual stepping events (Step back / Step whil
     expect(state.timeMachine.playback?.paused).toBe(true);  // still paused — a manual step is not a resume
     expect(viewAtOf(state)).toBe(T0 + 1_000);                // one step forward from the frozen T0+500
   });
+
+  it('FW-33-B (Round B blocker 5): playback-retuned re-arms the armed playback at its current view with the new step — no view jump, paused preserved, its own append-only history entry', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'playback-start', at: T0 + 2_000, fromAt: T0, stepMs: 500 });
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 2_000 });
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 2_000 });
+    const viewBefore = viewAtOf(state); // T0 + 1_000
+    const before = state.history.length;
+    state = reduceWorkspace(state, { kind: 'playback-retuned', at: T0 + 2_000, stepMs: 5_000 });
+    expect(state.timeMachine.mode).toBe('playback');              // no mode flip
+    expect(viewAtOf(state)).toBe(viewBefore);                     // NO view jump — the re-arm sits at the current view
+    expect(state.timeMachine.playback?.stepMs).toBe(5_000);       // the disclosed speed's own step
+    expect(state.timeMachine.playback?.fromAt).toBe(viewBefore);  // re-armed AT the current view instant
+    expect(state.timeMachine.playback?.ticks).toBe(0);
+    expect(state.history.length).toBe(before + 1);                // append-only — the retune is its own event
+    expect(state.history[state.history.length - 1]?.kind).toBe('playback-retuned');
+    expect(verifyWorkspaceChain(state.history)).toEqual({ ok: true }); // the chain still verifies
+    // the next tick advances by the NEW step (the anchor has moved past
+    // it — five beats of wall time while the 10x step takes one 5s leap)
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 7_000 });
+    expect(viewAtOf(state)).toBe(viewBefore + 5_000);
+    // THE ANCHOR CLAMP (the retuned speed's own hazard): a tick whose
+    // step would PASS the anchor lands AT it and STOPS — paused at
+    // "now", the disclosed step preserved, NEVER the pure machine's
+    // future-inspection error thrown through the reducer (the pre-fix
+    // behavior: 1700000006000 > anchor 1700000002000 -> throw)
+    state = reduceWorkspace(state, { kind: 'playback-tick', at: T0 + 7_000 });
+    expect(state.timeMachine.mode).toBe('playback');              // the clamp is not a mode flip either
+    expect(viewAtOf(state)).toBe(T0 + 7_000);                     // landed AT the anchor — never past it
+    expect(state.timeMachine.playback?.paused).toBe(true);        // stopped there, as a pause would
+    expect(state.timeMachine.playback?.stepMs).toBe(5_000);       // the disclosed speed survives the clamp
+    // and a PAUSED playback retunes without waking (the freeze law holds under the new step)
+    state = reduceWorkspace(state, { kind: 'playback-paused', at: T0 + 7_000 });
+    state = reduceWorkspace(state, { kind: 'playback-retuned', at: T0 + 7_000, stepMs: 50_000 });
+    expect(state.timeMachine.playback?.paused).toBe(true);        // the freeze law holds under the new step
+    expect(viewAtOf(state)).toBe(T0 + 7_000);                     // still frozen at the anchor it stopped at
+  });
 });
 
 // ---------------------------------------------------------------------------

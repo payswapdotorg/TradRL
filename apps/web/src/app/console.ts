@@ -36,7 +36,7 @@ import type { SectionId } from '../core/sections';
 import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
 import { historyFloorOf, openWorkspace, reduceWorkspace, serializeWorkspaceExport, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
-import { TIME_MACHINE_STEP_MS, viewAtOf as viewAtOfTimeMachine } from '../core/timemachine';
+import { isPlaybackSpeedKey, playbackStepMsOf, TIME_MACHINE_STEP_MS, viewAtOf as viewAtOfTimeMachine } from '../core/timemachine';
 import type { WorkspaceScope } from '../core/tenant';
 import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
@@ -642,20 +642,25 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       dispatch({ kind: 'anchor-advanced', at: observed });
     }
     // §4.8 controlled playback: the beat advances armed playback ONE
-    // controlled step — but never past the anchor, and NEVER while
-    // PAUSED (R10, W-25C: the freeze is the pure machine's own law —
+    // controlled step — never past the anchor, and NEVER while PAUSED
+    // (R10, W-25C: the freeze is the pure machine's own law —
     // tickPlayback no-ops on a paused state — and the beat also skips
     // the dispatch so a paused session's history chain carries no
-    // no-op tick entries). A tick beyond the anchor is the pure
-    // machine's typed input error (the view instant may never point
-    // after "now"); the app layer guards the scheduled path so the
-    // beat loop simply STOPS at the anchor instead of spraying
-    // unhandled rejections every beat (the browser would console-error
-    // forever once playback catches up).
+    // no-op tick entries). FW-33-B (Round B blocker 5): a beat whose
+    // step would CROSS the anchor dispatches into the SEAM'S OWN ANCHOR
+    // CLAMP (reduceWorkspace's playback-tick -> stopPlaybackAtAnchor):
+    // playback LANDS at "now" — a final partial step — and stops there,
+    // paused, the honest end state for the faster disclosed speeds
+    // (whose steps cross the remaining span in one beat; the pre-fix
+    // guard left a "playing" playback frozen one step short of "now"
+    // with no disclosed end state). A beat arriving with the view
+    // ALREADY AT the anchor (the zero-span arm) still skips the
+    // dispatch — that tick is the pure machine's typed law, and the
+    // beat loop must not spray unhandled rejections.
     const timeMachine = state.timeMachine;
     if (timeMachine.mode === 'playback' && timeMachine.playback !== null && !timeMachine.playback.paused) {
-      const nextViewAt = timeMachine.playback.fromAt + (timeMachine.playback.ticks + 1) * timeMachine.playback.stepMs;
-      if (nextViewAt <= timeMachine.anchorAt) {
+      const viewAt = timeMachine.playback.fromAt + timeMachine.playback.ticks * timeMachine.playback.stepMs;
+      if (viewAt < timeMachine.anchorAt) {
         dispatch({ kind: 'playback-tick', at: instants.nowMs() });
       }
     }
@@ -791,6 +796,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       projectFilter: '',
       exportVerify: null,
       scrubBounds: null,
+      playbackSpeed: '1x',
     };
     let paletteResults: readonly PaletteEntry[] = [];
     // §4.10's once-per-notice toast guard: the id of the notice the
@@ -915,6 +921,18 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const element = target as FieldEventTarget | null;
       if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
       return element.getAttribute('data-action') === 'project-switch' ? element : null;
+    };
+    /**
+     * FW-33-B (Round B blocker 5) — THE PLAYBACK SPEED'S SELECT: the
+     * delegated change on [data-action=playback-speed] — the committed
+     * choice's live value is one of the disclosed speed keys (the
+     * closed set core/timemachine.ts publishes). Null when the target
+     * is not the select.
+     */
+    const speedTargetOf = (target: unknown): FieldEventTarget | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      return element.getAttribute('data-action') === 'playback-speed' ? element : null;
     };
     /**
      * MI-D7 (S5's ask — the in-UI chain verify): THE EXPORT-VERIFY FILE
@@ -1431,6 +1449,27 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         return;
       }
+      // FW-33-B (Round B blocker 5) — THE DISCLOSED SPEED'S COMMIT: the
+      // chrome records the chosen key (the NEXT arm steps at it) and an
+      // ARMED playback retunes NOW: the machine's playback-retuned event
+      // re-arms it at its CURRENT view instant with the new step (no
+      // view jump, the paused flag preserved — the pure transition's own
+      // law). A disarmed machine never receives the event (retuning a
+      // disarmed machine is the machine's own typed error).
+      const speedSelect = speedTargetOf(event.target);
+      if (speedSelect !== null) {
+        const chosen = typeof speedSelect.value === 'string' ? speedSelect.value : '';
+        if (isPlaybackSpeedKey(chosen)) {
+          view = { ...view, playbackSpeed: chosen };
+          const machine = state.timeMachine;
+          if (machine.mode === 'playback' && machine.playback !== null) {
+            dispatch({ kind: 'playback-retuned', at: instants.nowMs(), stepMs: playbackStepMsOf(chosen) }); // renders via onState
+          } else {
+            render(); // chrome-only change — the select's own face + the honest caption
+          }
+        }
+        return;
+      }
       // THE SCRUBBER'S COMMIT (the J5 wiring): the `change` event — the
       // drag's release, or a keyboard arrow's commit — moves the view
       // instant to the scrubbed position (an explicit instant: the
@@ -1657,7 +1696,23 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           } else if (timeMachine.mode === 'playback' && timeMachine.playback !== null && timeMachine.playback.paused) {
             dispatch({ kind: 'playback-resumed', at: instants.nowMs() }); // renders via onState
           } else {
-            dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt: state.openedAt, stepMs: TIME_MACHINE_STEP_MS });
+            // FW-33-B (Round B blocker 5) — THE NEVER-BELOW-THE-FLOOR ARM:
+            // the pre-fix arm was ALWAYS state.openedAt; when every record
+            // on hand arrived AFTER the session opened (a fresh session
+            // whose first read lands seconds later), the history-derived
+            // slider floor (min(historyFloorOf, anchor) — what the scrubber
+            // renders) sat ABOVE openedAt, so the armed playback's instant
+            // rendered BELOW the slider floor: the readout showed an
+            // instant the slider could not express (the ~5-personas'
+            // residual). The arm now clamps to the SAME floor the slider
+            // renders — max(openedAt, the derived floor), capped at the
+            // anchor — so the playback instant is always inside the range
+            // from the first tick. The step rides the DISCLOSED SPEED
+            // select's committed key (1x = the pre-FW-33-B 500ms step).
+            const anchor = state.timeMachine.anchorAt;
+            const floor = Math.min(historyFloorOf(state).floorAt, anchor);
+            const fromAt = Math.min(Math.max(state.openedAt, floor), anchor);
+            dispatch({ kind: 'playback-start', at: instants.nowMs(), fromAt, stepMs: playbackStepMsOf(view.playbackSpeed) });
           }
         }
         // §4.8: the Time Machine mode select + playback stepping (pure dispatches —
@@ -1697,7 +1752,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             const nextViewAt = timeMachine.playback.fromAt + (timeMachine.playback.ticks + 1) * timeMachine.playback.stepMs;
             if (nextViewAt <= timeMachine.anchorAt) dispatch({ kind: 'playback-step-forward', at: instants.nowMs() });
           } else if (timeMachine.mode === 'playback' && timeMachine.playback !== null) {
-            dispatch({ kind: 'playback-tick', at: instants.nowMs() }); // playing: the manual nudge stays a tick
+            // playing: the manual nudge stays a tick — guarded exactly
+            // like the beat loop (FW-33-B): with room below the anchor
+            // the seam clamps a crossing step (playback lands at "now"
+            // and stops, paused); at the anchor there is nothing to
+            // advance (the zero-span arm's tick is the pure machine's
+            // typed law — the click path never throws).
+            const currentViewAt = timeMachine.playback.fromAt + timeMachine.playback.ticks * timeMachine.playback.stepMs;
+            if (currentViewAt < timeMachine.anchorAt) dispatch({ kind: 'playback-tick', at: instants.nowMs() });
           } else {
             // FW-32-B: step the SELECTED instant forward one disclosed step, clamped at the anchor (at the anchor — live — it stays live)
             const selected = viewAtOfTimeMachine(timeMachine);

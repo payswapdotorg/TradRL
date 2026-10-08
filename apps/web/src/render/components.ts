@@ -313,7 +313,25 @@ export function accordionRow(props: AccordionRowProps): VNode {
   ]);
 }
 
-/** The right-side sheet's props (§4.5a). */
+/**
+ * The right-side sheet's props (§4.5a).
+ *
+ * FW-33-B (Round B blocker 2): `lead` and `footer` are the two INSIDE-
+ * THE-DIALOG slots. The pre-fix render placed the job sheet's PROPOSE
+ * affordance (and its evidence capsule) as SIBLINGS AFTER the
+ * `aside.sheet` — below the fold at page-left, where the fixed
+ * `button.sheet-backdrop` (z-index 40, inset 0) covered them: a mouse
+ * click at the affordance's center hit the backdrop (elementFromPoint)
+ * and closed the sheet; only Tab + Enter reached the button (7/9
+ * personas' finding on the flagship flow). The law this pins: content
+ * that belongs to the open record rides INSIDE the dialog surface —
+ * `lead` renders at the TOP of the sheet body (visible without
+ * scrolling when the sheet opens; the flagship action never hides
+ * below the first fold), `footer` at its END (supplementary
+ * provenance detail, inside the scrollable dialog the backdrop never
+ * covers). The backdrop covers ONLY outside the dialog, exactly as
+ * before.
+ */
 export interface SheetProps {
   /** The sheet's semantic id (data-sheet; e.g. "job:job-1"). */
   readonly sheetId: string;
@@ -323,13 +341,19 @@ export interface SheetProps {
   readonly subtitle?: string;
   /** The definition sections (STATUS / METRICS / IDENTITY / ADVANCED). */
   readonly details: readonly DefinitionSection[];
+  /** FW-33-B: nodes rendered INSIDE the dialog, at the TOP of the sheet body (above the definition grid) — the flagship action slot. */
+  readonly lead?: readonly VNode[];
+  /** FW-33-B: nodes rendered INSIDE the dialog, at the END of the sheet body (below the definition grid) — the provenance slot. */
+  readonly footer?: readonly VNode[];
 }
 
 /**
  * The right-side sheet (§4.5a): max-width 28rem, slides in, backdrop,
  * the app layer traps focus while open (Esc + backdrop + the close
  * button all close). Rendered only in the open state — the slide is
- * the CSS transition on insertion.
+ * the CSS transition on insertion. FW-33-B: the lead/footer slots
+ * render inside the dialog surface (never siblings the backdrop
+ * covers) — see SheetProps.
  */
 export function detailSheet(props: SheetProps): VNode[] {
   return [
@@ -342,7 +366,11 @@ export function detailSheet(props: SheetProps): VNode[] {
         ]),
         v('button', { class: 'icon-button', 'data-action': 'sheet-close', type: 'button', 'aria-label': 'Close details' }, [icon([P('M6 6l12 12M18 6 6 18')], 'ci ci-16', '2')]),
       ]),
-      v('div', { class: 'sheet-body' }, definitionGrid(props.details)),
+      v('div', { class: 'sheet-body' }, [
+        ...(props.lead === undefined ? [] : props.lead),
+        ...definitionGrid(props.details),
+        ...(props.footer === undefined ? [] : props.footer),
+      ]),
     ]),
   ];
 }

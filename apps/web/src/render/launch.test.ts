@@ -18,6 +18,7 @@ import { LAUNCH_STEPS } from '../core/launch';
 import { capsuleFromOutcome } from '../core/evidence';
 import type { OutcomeRecord } from '../api/contracts';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
+import { formatHorizonInstant } from '../core/launch-form';
 import { renderConsoleModel } from './model';
 import { defaultShellView, type ShellView } from './shell';
 import { serializeVNode } from './vtree';
@@ -90,8 +91,18 @@ describe('the launch wizard (§4.11 — the primary flow\'s full field set)', ()
     // the execution mode is the closed-vocabulary SELECT (three options)
     const world = render(launchAt('world'), { accountView: 'section' });
     expect(world).toContain('<select class="field-input field-select"');
-    expect((world.match(/<option value=/g) ?? []).length).toBe(3);
+    // FW-33-B: scope the count to the execution-mode select's OWN options —
+    // the TM bar's speed select (also on this page) carries three more.
+    const modeSelect = /<select class="field-input field-select"[\s\S]*?<\/select>/.exec(world);
+    if (modeSelect === null) throw new Error('the execution-mode select is missing');
+    expect((modeSelect[0].match(/<option value=/g) ?? []).length).toBe(3);
     expect(world).toContain('<option value="simulation" selected="selected">');
+    // FW-33-B (Round B blocker 3): the horizon inputs are datetime-local
+    // controls carrying the UTC datetime grammar — never a raw epoch integer.
+    expect(world).toContain('type="datetime-local"');
+    expect(world).toContain(`value="${formatHorizonInstant(T0)}"`);
+    expect(world).not.toContain(`type="number" value="${T0}"`);
+    expect(world).toContain('UTC date and time'); // the hint discloses the timezone
   });
 
   it('the review step renders the full summary + the two-step confirm (never a bare confirm())', () => {
@@ -122,7 +133,7 @@ describe('the launch wizard (§4.11 — the primary flow\'s full field set)', ()
     expect(bytes).not.toContain(`<dt>Horizon</dt><dd>${T0}`);
     // an unparseable pair renders verbatim (the review gate owns validation; the line invents nothing)
     const broken: WorkspaceState = { ...launchAt('review'), launch: { ...launchAt('review').launch, draft: { ...draft(), horizon: { ...draft().horizon, startsAt: T0, endsAt: T0 - 1 } } } };
-    expect(render(broken, { accountView: 'section' })).toContain(`<dt>Horizon</dt><dd>${T0} -&gt; ${T0 - 1}</dd>`);
+    expect(render(broken, { accountView: 'section' })).toContain(`<dt>Horizon</dt><dd>${formatHorizonInstant(T0)} -&gt; ${formatHorizonInstant(T0 - 1)}</dd>`);
   });
 
   it('the REVIEW GATE: an invalid draft renders its problems (never the arm button); the valid draft arms', () => {

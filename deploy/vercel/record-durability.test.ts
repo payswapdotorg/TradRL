@@ -307,6 +307,10 @@ describe('deploy/vercel — FW-33-A: the promoted decision persists (the fresh-i
       const direct = storesOver(providers.fetchLike);
       const storedOutcomes = await direct.outcomeLearning.queryOutcomes({ tenant: TENANT, project: 'prj-fw33a-fold' }, { at: HYDRATION_AT, retention: null });
       expect(storedOutcomes.ok).toBe(true);
+      // FW-33-B (pre-existing, fixed en route): the narrowing the .value
+      // access below needs — the file's own idiom; FW-33-A shipped this
+      // line missing (a type error on main, caught by this wave's gate).
+      if (!storedOutcomes.ok) return;
       expect((storedOutcomes.value as readonly { outcomeId: string }[]).some((row) => row.outcomeId === decision.outcomeId)).toBe(true);
 
       // THE FRESH INSTANCE (the reload-equivalent: a new serverless

@@ -231,6 +231,86 @@ export function firstBadConstraintEntry(value: string): { readonly index: number
 export const EXECUTION_MODES: readonly ExecutionMode[] = ['simulation', 'shadow', 'live'];
 
 // ---------------------------------------------------------------------------
+// The horizon datetime grammar (FW-33-B, Round B blocker 3).
+// ---------------------------------------------------------------------------
+
+/**
+ * THE HORIZON INPUT GRAMMAR (FW-33-B, Round B blocker 3 — S5's finding:
+ * "ISO dates parse to 0; a CFO must hand-compute epoch milliseconds").
+ * The wizard's horizon inputs are `datetime-local` controls: their value
+ * grammar is `YYYY-MM-DD` / `YYYY-MM-DDTHH:mm` / `YYYY-MM-DDTHH:mm:ss`,
+ * interpreted as UTC (the console's whole instant discipline is UTC —
+ * the review line, the readouts, the availability projections; the
+ * input's hint says so). A bare integer string (epoch milliseconds)
+ * still parses — the seeded drafts and every pre-FW-33-B edit round-
+ * trip unchanged. Purity: no Date parsing (no clock, no timezone
+ * reads) — the components map through Date.UTC directly.
+ */
+
+/** The datetime-local grammar (date-only, minute or second precision — the browser's own value shapes). */
+const HORIZON_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/;
+
+/** True when the day-of-month/month pair is a real calendar date (Feb 30 is not). */
+function isRealCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12) return false;
+  if (day < 1) return false;
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const lengths: readonly number[] = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const length = lengths[month - 1] ?? 0;
+  return day <= length;
+}
+
+/** The seconds component of a parsed horizon match (absent = 0). */
+function secondOfMatch(match: RegExpMatchArray): number {
+  const raw = match[6];
+  return raw === undefined ? 0 : Number(raw);
+}
+
+/**
+ * Parse one horizon input's string to epoch milliseconds; null when it
+ * is neither the datetime grammar nor a bare epoch-ms integer. Pure and
+ * total — never throws, never reads a clock.
+ */
+export function parseHorizonInstant(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return null;
+  const asInteger = Number(trimmed);
+  if (Number.isInteger(asInteger)) return asInteger; // the epoch-ms form (seeds, pre-FW-33-B edits)
+  const match = HORIZON_DATETIME_PATTERN.exec(trimmed);
+  if (match === null) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4] ?? '0');
+  const minute = Number(match[5] ?? '0');
+  const second = secondOfMatch(match);
+  if (year < 1000) return null; // Date.UTC remaps 0-99 to 1900+year — a silently-wrong instant, never absorbed
+  if (!isRealCalendarDate(year, month, day)) return null;
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  return Date.UTC(year, month - 1, day, hour, minute, second);
+}
+
+/** The two-digit zero-padded form of one calendar component. */
+function pad2(value: number): string {
+  return value < 10 ? `0${value}` : String(value);
+}
+
+/**
+ * Format epoch milliseconds as the datetime-local grammar at SECOND
+ * precision, UTC (`2026-01-15T09:30:00` — the input's own value shape,
+ * so a seeded draft renders as a real date the professional can read
+ * and edit, never a 13-digit epoch integer). SECOND precision is the
+ * lossless choice: a minute-truncated form value would round-trip a
+ * :20-seeded instant to :00 and the review line would render an
+ * instant that was never chosen — the exactness law wins over a
+ * cleaner-looking picker.
+ */
+export function formatHorizonInstant(at: number): string {
+  const date = new Date(at);
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}T${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())}`;
+}
+
+// ---------------------------------------------------------------------------
 // draft <-> form values.
 // ---------------------------------------------------------------------------
 
@@ -243,8 +323,8 @@ export function launchFieldValue(draft: LaunchDraft, field: LaunchFieldName): st
   if (field === 'markets') return formatListValue(draft.markets);
   if (field === 'venues') return formatListValue(draft.venues);
   if (field === 'dataSources') return formatListValue(draft.dataSources);
-  if (field === 'horizonStartsAt') return String(draft.horizon.startsAt);
-  if (field === 'horizonEndsAt') return String(draft.horizon.endsAt);
+  if (field === 'horizonStartsAt') return formatHorizonInstant(draft.horizon.startsAt);
+  if (field === 'horizonEndsAt') return formatHorizonInstant(draft.horizon.endsAt);
   if (field === 'executionMode') return draft.executionMode;
   if (field === 'preferences') return formatListValue(draft.preferences.map(formatPreference));
   return formatListValue(draft.constraints.map(formatConstraint));
@@ -294,11 +374,17 @@ export function launchFormValues(draft: LaunchDraft, pending: Readonly<Record<st
 
 /**
  * Apply one field's new string to a draft. An UNPARSEABLE value (a
- * non-integer horizon, a malformed preference/constraint list) is NOT
- * absorbed: the returned draft keeps the field's prior value and the
- * raw string stays pending in the form layer (the render keeps showing
- * it via the merge, the validation explains it, and the review gate
- * blocks on it — nothing is silently dropped or fabricated).
+ * horizon the datetime grammar rejects, a malformed preference/
+ * constraint list) is NOT absorbed: the returned draft keeps the
+ * field's prior value and the raw string stays pending in the form
+ * layer (the render keeps showing it via the merge, the validation
+ * explains it, and the review gate blocks on it — nothing is silently
+ * dropped or fabricated).
+ *
+ * FW-33-B (Round B blocker 3): the horizon fields parse the
+ * datetime-local grammar (UTC) — `2026-01-15T09:30` is a first-class
+ * value now, never a hand-computed epoch integer; a bare epoch-ms
+ * integer still absorbs (the seeded drafts' round-trip).
  */
 export function editLaunchField(draft: LaunchDraft, field: LaunchFieldName, value: string): LaunchDraft {
   const text = value.trim();
@@ -310,13 +396,13 @@ export function editLaunchField(draft: LaunchDraft, field: LaunchFieldName, valu
   if (field === 'venues') return { ...draft, venues: parseListValue(value) };
   if (field === 'dataSources') return { ...draft, dataSources: parseListValue(value) };
   if (field === 'horizonStartsAt') {
-    const parsed = Number(text);
-    if (!Number.isInteger(parsed)) return draft;
+    const parsed = parseHorizonInstant(text);
+    if (parsed === null) return draft;
     return { ...draft, horizon: { ...draft.horizon, startsAt: parsed } };
   }
   if (field === 'horizonEndsAt') {
-    const parsed = Number(text);
-    if (!Number.isInteger(parsed)) return draft;
+    const parsed = parseHorizonInstant(text);
+    if (parsed === null) return draft;
     return { ...draft, horizon: { ...draft.horizon, endsAt: parsed } };
   }
   if (field === 'executionMode') {
@@ -336,16 +422,17 @@ export function editLaunchField(draft: LaunchDraft, field: LaunchFieldName, valu
 /**
  * Whether an edit CAN be absorbed into the draft (the flush's test):
  * text fields absorb verbatim (their validation is the message, never
- * a parse); lists always parse; the horizon/mode/preferences/
- * constraints grammars absorb only when they parse. An unabsorbed
- * edit stays pending in the app layer's buffer — still rendered via
- * the merge, still explained by the validation, still gating review.
+ * a parse); lists always parse; the horizon datetime/epoch grammars,
+ * the mode and the preferences/constraints grammars absorb only when
+ * they parse. An unabsorbed edit stays pending in the app layer's
+ * buffer — still rendered via the merge, still explained by the
+ * validation, still gating review.
  */
 export function absorbedEdit(field: LaunchFieldName, value: string): boolean {
   if (field === 'name' || field === 'objective') return true;
   if (field === 'capitalBudget' || field === 'riskBudget') return true;
   if (field === 'markets' || field === 'venues' || field === 'dataSources') return true;
-  if (field === 'horizonStartsAt' || field === 'horizonEndsAt') return Number.isInteger(Number(value.trim()));
+  if (field === 'horizonStartsAt' || field === 'horizonEndsAt') return parseHorizonInstant(value) !== null;
   if (field === 'executionMode') return (EXECUTION_MODES as readonly string[]).includes(value.trim());
   if (field === 'preferences') return parsePreferencesValue(value) !== null;
   return parseConstraintsValue(value) !== null;
@@ -365,9 +452,15 @@ export function launchFieldValidation(values: LaunchFormValues, field: LaunchFie
   if (field === 'venues') return parseListValue(values.venues).length === 0 ? 'List at least one venue.' : '';
   if (field === 'dataSources') return parseListValue(values.dataSources).length === 0 ? 'List at least one data source.' : '';
   if (field === 'horizonStartsAt' || field === 'horizonEndsAt') {
-    const starts = Number(values.horizonStartsAt.trim());
-    const ends = Number(values.horizonEndsAt.trim());
-    if (!Number.isInteger(starts) || !Number.isInteger(ends)) return 'Enter the horizon instants as epoch milliseconds.';
+    // FW-33-B (Round B blocker 3): the horizon message names the
+    // datetime grammar (UTC) — never "epoch milliseconds", never a
+    // bare 0 (S5's finding: "ISO dates parse to 0; a CFO must
+    // hand-compute epoch milliseconds"). The epoch-ms form stays legal
+    // (the seeded drafts) but the TEACHING form is the date-and-time
+    // one the input renders.
+    const starts = parseHorizonInstant(values.horizonStartsAt);
+    const ends = parseHorizonInstant(values.horizonEndsAt);
+    if (starts === null || ends === null) return 'Enter the horizon as a UTC date and time, e.g. 2026-01-15T09:30:00 (epoch milliseconds also parse).';
     if (starts >= ends) return 'The horizon must end after it starts.';
     return '';
   }

@@ -37,6 +37,7 @@ import {
   NOTICE_ICONS,
   NOTICE_SENTENCES,
   notificationBell,
+  playbackSpeedCaptionOf,
   projectionNoticeOf,
   refLabelOf,
   reviewStep,
@@ -213,6 +214,27 @@ describe('flow §4.8: the Time Machine control bar', () => {
     expect(bytes).toContain(`<output class="tm-readout" aria-label="Selected view instant">${formatInstantUtc(T - 60_000)}</output>`);
     expect(bytes).toContain(projectionNoticeOf('t-minus'));
     expect(bytes).toContain('data-tm-mode="t-minus"');
+  });
+
+  it('FW-33-B (Round B blocker 5): the disclosed playback SPEED select renders — 1x / 10x / 100x, the chosen key selected, the HONEST caption beside it (what playback does at that step)', () => {
+    const bytes = render(bar); // no speed passed -> the 1x default (back-compat)
+    expect(bytes).toContain('data-action="playback-speed"');
+    expect(bytes).toContain('aria-label="Playback speed"');
+    expect(bytes).toContain('<option value="1x" selected="selected">1x</option>');
+    expect(bytes).toContain('<option value="10x">10x</option>');
+    expect(bytes).toContain('<option value="100x">100x</option>');
+    expect(bytes.match(/<option value=/g)?.length).toBe(3);
+    // the honest caption: the step per beat + the two laws that never change with speed (L4 + the anchor ceiling)
+    expect(bytes).toContain(playbackSpeedCaptionOf(500));
+    expect(bytes).toContain('data-tm-speed="1x"');
+    expect(playbackSpeedCaptionOf(500)).toContain('500ms per scheduler beat');
+    expect(playbackSpeedCaptionOf(500)).toContain('only what was knowable then');
+    expect(playbackSpeedCaptionOf(500)).toContain('never past now');
+    // the chosen key's OWN step rides the caption + the selected option
+    const fast = render(timeMachineControls({ mode: 'playback', viewAt: T - 5_000, range: { floorAt: T, anchorAt: T, derived: 'session' }, playing: true, progress: 0.5, speed: '100x' }));
+    expect(fast).toContain('<option value="100x" selected="selected">100x</option>');
+    expect(fast).toContain(playbackSpeedCaptionOf(50_000));
+    expect(fast).toContain('data-tm-speed="100x"');
   });
 
   it('every mode carries its own projection state notice', () => {

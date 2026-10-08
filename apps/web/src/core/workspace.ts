@@ -72,9 +72,11 @@ import {
   liveTimeMachine,
   pausePlayback,
   resumePlayback,
+  retunePlayback,
   setTimestamp,
   setTMinus,
   startPlayback,
+  stopPlaybackAtAnchor,
   stepBackPlayback,
   stepForwardPlayback,
   tickPlayback,
@@ -233,6 +235,7 @@ export type WorkspaceEvent =
   | { readonly kind: 'playback-resumed'; readonly at: number }
   | { readonly kind: 'playback-step-back'; readonly at: number }
   | { readonly kind: 'playback-step-forward'; readonly at: number }
+  | { readonly kind: 'playback-retuned'; readonly at: number; readonly stepMs: number }
   | { readonly kind: 'notice-read'; readonly at: number; readonly noticeId: string }
   | { readonly kind: 'notices-read-all'; readonly at: number }
   | { readonly kind: 'degraded-read'; readonly at: number; readonly route: string; readonly family: string; readonly message: string }
@@ -563,7 +566,35 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       return { ...withHistory, timeMachine: startPlayback(advanceAnchor(withHistory.timeMachine, event.at), event.fromAt, event.stepMs) };
 
   } else if (selector === 'playback-tick') {
-      return { ...withHistory, timeMachine: tickPlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
+      // FW-33-B (Round B blocker 5) — THE SEAM'S OWN ANCHOR CLAMP: the
+      // pure machine's tick keeps its typed law (a view instant may
+      // never point after the anchor — core/timemachine.ts), but the
+      // EVENT SEAM must be total for every dispatch path: the manual
+      // Step nudge while PLAYING dispatches a tick unguarded, and a
+      // RETUNED playback (a faster disclosed speed) crosses the
+      // remaining span in one step — pre-FW-33-B that tick was the
+      // typed future-inspection error thrown through the reducer (an
+      // unhandled error on the user's own click path; the Lead-triaged
+      // failure: the view instant 1700000006000 > anchor
+      // 1700000002000). A tick whose step would CROSS the anchor now
+      // CLAMPS AT IT (the machine's stopPlaybackAtAnchor): playback
+      // lands at "now" — a final partial step — and STOPS, paused,
+      // never a throw. The boundary keeps the machine's own law: a
+      // tick arriving with the view ALREADY AT the anchor (the
+      // zero-span arm) is still the typed error (W-17a's pinned
+      // ceiling — the app layer's beat skips that dispatch). A PAUSED
+      // playback's tick no-ops first (the freeze law), and a disarmed
+      // machine's tick is still the typed input error.
+      const machine = advanceAnchor(withHistory.timeMachine, event.at);
+      const playback = machine.playback;
+      if (machine.mode === 'playback' && playback !== null && !playback.paused) {
+        const viewAt = playback.fromAt + playback.ticks * playback.stepMs;
+        const nextViewAt = playback.fromAt + (playback.ticks + 1) * playback.stepMs;
+        if (viewAt < machine.anchorAt && nextViewAt > machine.anchorAt) {
+          return { ...withHistory, timeMachine: stopPlaybackAtAnchor(machine) };
+        }
+      }
+      return { ...withHistory, timeMachine: tickPlayback(machine) };
 
   } else if (selector === 'playback-paused') {
       // THE PAUSE (R10, W-25C): the playback control's second face —
@@ -602,6 +633,16 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       // user's explicit step still moves the view one controlled step
       // FORWARD, staying paused (a manual step is not a resume).
       return { ...withHistory, timeMachine: stepForwardPlayback(advanceAnchor(withHistory.timeMachine, event.at)) };
+
+  } else if (selector === 'playback-retuned') {
+      // FW-33-B (Round B blocker 5) — THE DISCLOSED SPEED'S COMMITTED
+      // CHANGE: the armed playback re-arms at its CURRENT view instant
+      // with the new step (no view jump, the paused flag preserved —
+      // core/timemachine.ts's retunePlayback owns the law). A
+      // disarmed machine never receives this event (the app layer's
+      // change handler dispatches it only while playback is armed;
+      // the speed of a disarmed machine is the NEXT arm's step).
+      return { ...withHistory, timeMachine: retunePlayback(advanceAnchor(withHistory.timeMachine, event.at), event.stepMs) };
 
   } else if (selector === 'notice-read') {
       return { ...withHistory, inbox: markNoticeRead(withHistory.inbox, event.noticeId) };
