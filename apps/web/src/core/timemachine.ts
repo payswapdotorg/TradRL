@@ -29,6 +29,19 @@
 /** The four Time Machine modes (UX.md's three controls + the live default). */
 export type TimeMachineMode = 'live' | 't-minus' | 'timestamp' | 'playback';
 
+/**
+ * FW-32-B (Round A blocker 4) — THE DISCLOSED STEP GRANULARITY: the
+ * one controlled step the Step / Step back controls move the SELECTED
+ * view instant by (inside AND outside playback), and the step a fresh
+ * playback arm ticks at. Disclosed in the controls' own titles (the
+ * D-18 law: the meaning exists before the click) — the pre-fix Step
+ * back outside playback nudged a t-minus OFFSET, which re-anchored
+ * toward now as the live anchor advanced and moved the selected
+ * instant FORWARD (M5's finding: 04:25:04 -> 04:28:58 -> 04:29:05 —
+ * the incident instant lost). One constant, one meaning, stated.
+ */
+export const TIME_MACHINE_STEP_MS = 500;
+
 /** The playback control state. */
 export interface PlaybackState {
   /** The instant playback started from. */

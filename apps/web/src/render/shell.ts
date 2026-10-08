@@ -83,6 +83,16 @@ export interface ShellView {
    * it). Carries the file's name and the counted report.
    */
   readonly exportVerify: { readonly fileName: string; readonly report: ExportVerificationReport } | null;
+  /**
+   * FW-32-B (Round A blocker 4) — THE SCRUB DRAG PIN: while a scrubber
+   * drag is in flight (the app layer buffered an input position), the
+   * bounds the drag started under are PINNED here so the beat
+   * re-projection re-renders the SAME range (the anchor advances every
+   * beat — without the pin the min/max re-anchor continuously
+   * mid-drag, L4/M5's finding). Null when no drag is in flight; set at
+   * the drag's first buffered input, cleared at the change-commit.
+   */
+  readonly scrubBounds: { readonly min: number; readonly max: number } | null;
 }
 
 /** A reference to the record a detail sheet shows (§4.5a). */
@@ -108,7 +118,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null, scrubBounds: null };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */
@@ -624,7 +634,9 @@ export function renderAppShell(
     // .shell-content too, and both froze at step one).
     ...(view.onboarding === null ? [] : [onboardingPanel(view.onboarding)]),
     // §4.10 the toast (top-right, ~5s auto-dismiss owned by the app layer)
-    ...(view.toast === null ? [] : [toastRecord(view.toast.kind as 'failed_evaluation', view.toast.title, view.toast.sentence)]),
+    // FW-32-B (b3): the toast slot carries the eight notice kinds AND the
+    // export-download confirmation (same lifecycle, same surface).
+    ...(view.toast === null ? [] : [toastRecord(view.toast.kind, view.toast.title, view.toast.sentence)]),
     ...content.sheet,
   ]);
 }

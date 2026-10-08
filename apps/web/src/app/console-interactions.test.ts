@@ -58,7 +58,7 @@ import type { LaunchDraft } from '../core/launch';
 import { toCreateProjectInput } from '../core/launch';
 import type { GatewaySubmissionRecord, JobRecord, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
 import { capsuleFromJob, capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
-import { verifyWorkspaceExport, viewAtOf } from '../core/workspace';
+import { historyFloorOf, verifyWorkspaceExport, viewAtOf } from '../core/workspace';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -3114,7 +3114,7 @@ describe('executed boot: D-9 (W-28) — the result->job lineage leg (the Evidenc
     const payload = elementsOf(rig.root).find((element) => element.hasClass('capsule-payload') && element.getAttribute('data-capsule-open') === researchCapsule.capsuleId);
     if (payload === undefined) throw new Error('the opened job capsule rendered no inline payload');
     const payloadTexts = elementsOf(payload).map((element) => textOf(element)).join(' ');
-    expect(payloadTexts).toContain('refs: job:job:57d1815d');            // the capsule references its job (the leg L2 asked for)
+    expect(payloadTexts).toContain('refs: job:57d1815d');            // the capsule references its job (the leg L2 asked for) — FW-32-B (b5): the ref joins ONCE, never the doubled 'job:job:' prefix
     expect(payloadTexts).toContain('deliverable: release-candidate');   // the result payload's own facts
     expect(payloadTexts).toContain('spec-id: spec-demo-director');
     expect(payloadTexts).toContain('read from /v1/jobs/:jobId');        // the provenance line's route
@@ -3323,24 +3323,36 @@ describe('executed boot: MI-D9 — Step back / Step while paused', () => {
     expect(viewAtOf(rig.handle.state())).toBe(frozenAt - 500);     // back forward one step
   });
 
-  it('Step back keeps its documented T-x meaning OUTSIDE playback: the offset grows by one step (the tooltip\'s own words) — and the playback arm keeps the floor (no jump before the arm instant)', async () => {
+  it('FW-32-B (Round A blocker 4): OUTSIDE playback, Step back steps the SELECTED INSTANT one disclosed step as an EXPLICIT timestamp — never the t-minus offset nudge that re-anchored toward now (M5: the incident instant moved FORWARD on every click); with no records on hand the step is unbounded (the session fallback is taught, never enforced)', async () => {
     const scheduler = new ScriptedScheduler();
     let nowMs = T0;
     const instants: InstantSource = { nowMs: () => (nowMs += 100) };
     const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scheduler, instants });
     nowMs = T0 + 60_000;
     rig.handle.dispatch({ kind: 'view-live', at: instants.nowMs() });
-    // T-x: Step back grows the offset (the pre-existing, documented behavior).
-    // NOTE: every dispatched event ADVANCES the anchor to its injected
-    // instant (the rig's source steps +100 per read), so the anchor is
-    // recomputed AFTER each click — never assumed stale.
+    // T-x: Step back used to grow the OFFSET (tMinusMs + 500) — and
+    // because the anchor advances every beat, the re-anchored view moved
+    // FORWARD on every click (M5's finding: 04:25:04 -> 04:28:58 ->
+    // 04:29:05, the selected incident instant lost). Now it steps the
+    // SELECTED instant: an explicit timestamp exactly 500ms earlier —
+    // and with NO records on hand (this rig: every read degrades) there
+    // is no history floor to enforce, so the step carries the pre-fix
+    // T-x depth (as deep as the user wants; the honest empty view).
     clickAction(rig, 'tm-mode-t-minus'); // arms T-60_000
     let anchorNow = rig.handle.state().timeMachine.anchorAt;
-    expect(viewAtOf(rig.handle.state())).toBe(anchorNow - 60_000);
+    const selected = viewAtOf(rig.handle.state());
+    expect(selected).toBe(anchorNow - 60_000);
     clickAction(rig, 'playback-step-back');
     anchorNow = rig.handle.state().timeMachine.anchorAt;
-    expect(rig.handle.state().timeMachine.mode).toBe('t-minus');   // stays T-x
-    expect(viewAtOf(rig.handle.state())).toBe(anchorNow - 60_500); // the offset grew by one 500ms step
+    expect(rig.handle.state().timeMachine.mode).toBe('timestamp');          // the stepped instant is EXPLICIT now (never a re-anchoring offset)
+    expect(viewAtOf(rig.handle.state())).toBe(selected - 500);              // the selected instant moved BACK exactly one disclosed step
+    expect(viewAtOf(rig.handle.state())).toBeLessThan(selected);            // strictly back — never forward, never re-anchored toward now
+    // a second Step back steps back again (repeatable, never drifting)
+    clickAction(rig, 'playback-step-back');
+    expect(viewAtOf(rig.handle.state())).toBe(selected - 1_000);
+    // Step FORWARD steps the selected instant forward one step, clamped at the anchor (never past "now")
+    clickAction(rig, 'playback-step');
+    expect(viewAtOf(rig.handle.state())).toBe(selected - 500);
 
     // the playback floor: arm, tick once, pause, step back TWICE — the second no-ops at the arm instant (never before it, never a throw)
     clickAction(rig, 'tm-mode-playback');
@@ -3353,6 +3365,52 @@ describe('executed boot: MI-D9 — Step back / Step while paused', () => {
     expect(viewAtOf(rig.handle.state())).toBe(armed.fromAt);       // stepped back to the arm instant
     clickAction(rig, 'playback-step-back');
     expect(viewAtOf(rig.handle.state())).toBe(armed.fromAt);       // the floor holds — no throw, no jump
+  });
+
+  it('FW-32-B (Round A blocker 4): with the project\\u2019s own history on record, Step back clamps at the RECORD-DERIVED floor (never before the project\\u2019s earliest event) — and the scrubber\\u2019s range spans that history (never the session start)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, demoEvidenceTransport(), 'prj-a');
+    // The demo fixture's records: the project created at T0, the earliest
+    // job submitted T0+100 — the fold derives the floor at T0 (the
+    // project's own beginning), far below the session window (opened
+    // around T0+1000).
+    const state = rig.handle.state();
+    expect(historyFloorOf(state)).toEqual({ floorAt: T0, derived: 'records' });
+    // The scrubber's range anchors to that history: min = T0 (NOT the
+    // session open instant), max = the live anchor, with the honest
+    // derivation note rendered beside it.
+    const scrubber = findByData(rig.root, 'data-action', 'tm-scrub');
+    if (scrubber === null) throw new Error('the Time Machine renders no scrubber');
+    expect(scrubber.getAttribute('min')).toBe(String(T0));
+    expect(Number(scrubber.getAttribute('max'))).toBeGreaterThanOrEqual(state.openedAt);
+    const rangeNote = elementsOf(rig.root).find((element) => element.hasClass('tm-range-note'));
+    if (rangeNote === undefined) throw new Error('the range note is missing');
+    expect(textOf(rangeNote)).toContain("project's own event history");
+    expect(textOf(rangeNote)).toContain(formatInstantUtc(T0));
+    expect(textOf(rangeNote)).toContain('never a fabricated instant');
+    // THE PRE-SESSION HISTORY IS REACHABLE: a scrub commit BELOW the
+    // session start clamps at the record floor, never at openedAt — the
+    // auditor's incident review survives every load/reload.
+    const before = state.openedAt;
+    expect(scrubber.getAttribute('min')).toBe(String(T0));
+    scrubber.value = String(T0 + 120); // a pre-session instant (the 03:16:38 refusal class)
+    rig.doc.fire('input', { target: scrubber });
+    rig.doc.fire('change', { target: scrubber });
+    expect(rig.handle.state().timeMachine.mode).toBe('timestamp');
+    expect(viewAtOf(rig.handle.state())).toBe(T0 + 120);            // committed as the explicit view instant
+    expect(viewAtOf(rig.handle.state())).toBeLessThan(before);      // below the session start — reachable at last
+    // THE STEPS: a step back from a view above the floor clamps at the
+    // record-derived floor (never before the project's own beginning).
+    clickAction(rig, 'tm-mode-timestamp'); // anchor - 60_000 (deep past, below the floor — free to step)
+    const deep = viewAtOf(rig.handle.state());
+    expect(deep).toBeLessThan(T0);
+    clickAction(rig, 'playback-step-back');
+    expect(viewAtOf(rig.handle.state())).toBe(deep - 500);          // a view already below the floor steps freely (never forward)
+    // from ABOVE the floor, the clamp holds at exactly the record floor
+    rig.handle.dispatch({ kind: 'view-timestamp', at: rig.handle.state().timeMachine.anchorAt, timestamp: T0 + 300 });
+    clickAction(rig, 'playback-step-back');
+    expect(viewAtOf(rig.handle.state())).toBe(T0);                  // clamped at the project's own beginning — one step would have passed T0-200
+    clickAction(rig, 'playback-step-back');
+    expect(viewAtOf(rig.handle.state())).toBe(T0);                  // and holds there (never before the history)
   });
 
   it('Step OUTSIDE playback is a safe no-op (the control belongs to playback — the pre-fix wiring dispatched a playback-tick that threw the typed "not armed" error at the user)', async () => {

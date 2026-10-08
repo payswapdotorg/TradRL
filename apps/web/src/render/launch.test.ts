@@ -17,6 +17,7 @@ import { openWorkspace, reduceAll, type WorkspaceEvent, type WorkspaceState } fr
 import { LAUNCH_STEPS } from '../core/launch';
 import { capsuleFromOutcome } from '../core/evidence';
 import type { OutcomeRecord } from '../api/contracts';
+import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { renderConsoleModel } from './model';
 import { defaultShellView, type ShellView } from './shell';
 import { serializeVNode } from './vtree';
@@ -109,6 +110,19 @@ describe('the launch wizard (§4.11 — the primary flow\'s full field set)', ()
     expect(armed).toContain('Are you sure? Launch this organization?');
     expect(armed).toContain('data-action="confirm-cancel-launch"');
     expect(armed).toContain('data-action="confirm-launch"');
+  });
+
+  it('FW-32-B (b4): the review renders the horizon HUMAN-READABLE — the console\'s own formatInstantUtc + formatDurationMs discipline, never raw epoch ms (L1/M1/L3/M5\'s finding)', () => {
+    const bytes = render(launchAt('review'), { accountView: 'section' });
+    // the fixture's horizon: T0 -> T0 + one day — the review line names both
+    // instants in the mono UTC form and the span in the duration form (the ->
+    // is escaped in the serialized text nodes)
+    expect(bytes).toContain(`<dt>Horizon</dt><dd>${formatInstantUtc(T0)} -&gt; ${formatInstantUtc(T0 + 86_400_000)} (${formatDurationMs(86_400_000)})</dd>`);
+    // ...and the raw epoch ms NEVER renders at review (the pre-fix line was `${T0} -> ${T0 + 86_400_000}`)
+    expect(bytes).not.toContain(`<dt>Horizon</dt><dd>${T0}`);
+    // an unparseable pair renders verbatim (the review gate owns validation; the line invents nothing)
+    const broken: WorkspaceState = { ...launchAt('review'), launch: { ...launchAt('review').launch, draft: { ...draft(), horizon: { ...draft().horizon, startsAt: T0, endsAt: T0 - 1 } } } };
+    expect(render(broken, { accountView: 'section' })).toContain(`<dt>Horizon</dt><dd>${T0} -&gt; ${T0 - 1}</dd>`);
   });
 
   it('the REVIEW GATE: an invalid draft renders its problems (never the arm button); the valid draft arms', () => {

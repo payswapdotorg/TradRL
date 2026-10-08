@@ -1101,6 +1101,99 @@ export function verifyWorkspaceExportReport(doc: unknown): ExportVerificationRep
 }
 
 /**
+ * FW-32-B (Round A blocker 4) — THE SCRUBBER'S HISTORY ANCHOR: the
+ * earliest event/record instant the current scope's own history
+ * carries, derived HONESTLY from the records the workspace state
+ * already holds (never a fabricated instant). The pre-fix scrubber
+ * floored at `openedAt` — the SESSION's start — so on every
+ * load/reload the project's pre-session event history (the auditor's
+ * incident review: a 03:16:38 risk_limits refusal observed
+ * post-reload; the whole 2024-07-03 blotter) fell BELOW the floor and
+ * was unreachable, no matter how far the user dragged.
+ *
+ * THE HONEST-DERIVATION LAW: the floor is the MINIMUM instant over
+ * the records on hand — the scope's own project/goal/constraint-set
+ * creations, the org snapshots' observation instants, every job's
+ * submission AND completion, the outcomes'/post-mortems'/knowledge
+ * entries' asOf, the gateway submissions' routed/refused instants.
+ * Each of those instants is a fact ON RECORD (L20 — rendered, never
+ * recomputed); nothing is invented and nothing outside the record set
+ * is consulted. When the state holds NO records with instants (a
+ * fresh boot before the first read lands, the launchpad), the fold
+ * yields `derived: 'session'` and the caller keeps the pre-fix floor
+ * (the session open instant) WITH the teaching note — the current
+ * behavior stands, stated.
+ */
+export interface HistoryFloor {
+  /** The derived floor instant (epoch ms) — meaningful only together with its derivation. */
+  readonly floorAt: number;
+  /**
+   * 'records' — derived from the scope's own event history (the
+   * honest-derivation law above). 'session' — no records on hand; the
+   * value is the caller's fallback (the session open instant), never
+   * presented as a record-derived instant.
+   */
+  readonly derived: 'records' | 'session';
+}
+
+/**
+ * The minimum over a candidate list, skipping absent entries (null /
+ * undefined) — the fold's own accumulator (a missing record never
+ * contributes a floor; an empty fold is the session fallback).
+ */
+function foldEarliest(current: number | null, next: number | null): number | null {
+  if (next === null || next === undefined || !Number.isFinite(next) || !Number.isInteger(next)) return current;
+  if (current === null) return next;
+  return next < current ? next : current;
+}
+
+/**
+ * FW-32-B: the scrubber floor for a workspace state — the earliest
+ * event/record instant among the records the state holds. PURE: the
+ * same state always derives the same floor (determinism, like every
+ * fold here). Returns the fold's minimum with `derived: 'records'`,
+ * or `null` when the state carries no instants at all (the caller
+ * renders its fallback with the teaching note — never a fabricated
+ * instant).
+ */
+export function earliestRecordInstantOf(state: WorkspaceState): number | null {
+  let earliest: number | null = null;
+  if (state.project !== null) earliest = foldEarliest(earliest, state.project.createdAt);
+  if (state.goal !== null) earliest = foldEarliest(earliest, state.goal.createdAt);
+  if (state.constraintSet !== null) earliest = foldEarliest(earliest, state.constraintSet.createdAt);
+  for (const snapshot of state.orgSnapshots) earliest = foldEarliest(earliest, snapshot.at);
+  for (const job of state.jobs) {
+    earliest = foldEarliest(earliest, job.submittedAt);
+    if (job.completedAt !== undefined && job.completedAt !== null) earliest = foldEarliest(earliest, job.completedAt);
+  }
+  for (const outcome of state.outcomes) earliest = foldEarliest(earliest, outcome.asOf);
+  for (const postMortem of state.postMortems) earliest = foldEarliest(earliest, postMortem.asOf);
+  for (const knowledge of state.knowledge) earliest = foldEarliest(earliest, knowledge.record.asOf);
+  for (const submission of state.submissions) {
+    // The gateway's own verdict instant — routed or refused (the incident
+    // review's target: the refusal the auditor is here to reach).
+    earliest = foldEarliest(earliest, submission.kind === 'routed' ? submission.routedAt : submission.refusedAt);
+  }
+  return earliest;
+}
+
+/**
+ * FW-32-B: the scrubber's range anchor for a state — the resolved
+ * floor (record-derived when the fold found one; the session open
+ * instant otherwise, disclosed as such). The render and the app's
+ * commit clamp both consume THIS one fold — one derivation, never a
+ * second definition (the single-source-of-truth law the trust set
+ * rides on).
+ */
+export function historyFloorOf(state: WorkspaceState): HistoryFloor {
+  const earliest = earliestRecordInstantOf(state);
+  if (earliest === null) {
+    return { floorAt: state.openedAt, derived: 'session' };
+  }
+  return { floorAt: earliest, derived: 'records' };
+}
+
+/**
  * Verify an exported document's chain end to end from the file alone:
  * the format and chain descriptors must carry the published v2
  * algorithm and genesis, every event's digest must recompute from its
