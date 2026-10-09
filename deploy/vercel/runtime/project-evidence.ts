@@ -22,23 +22,66 @@
 // the project's numbers:
 //
 //   - THREE BLOTTER ROWS — two ROUTED fills (the desk's entry + its
-//     trim) and ONE honest PRE-TRADE-RISK REFUSAL quoting bound vs
-//     observed from the project's OWN declared limits (a limit.max
-//     constraint of its constraint set when it has one, else a limit.max
-//     success criterion of its goal, else its declared risk budget);
+//     early trim) and ONE honest PRE-TRADE-RISK REFUSAL. Since FW-36-A
+//     (Round E register E-2) the refusal is DERIVED FROM THE USER'S OWN
+//     DECLARED CONSTRAINTS with reconcilable cumulative arithmetic — see
+//     THE HONEST GATE below;
 //   - the NAMED deciding bodies — the project's own desk
 //     (`desk:<projectId>-execution`, mirroring the compiled
 //     organization `org:compiled-<projectId>`) and the platform's
 //     pre-trade risk gate (`gate:pre-trade-risk`) — NEVER "unknown"
 //     (MI-D10 folds in here);
 //   - the SEVEN named pre-trade risk checks on every routed row (the
-//     same closed list the demo blotter carries);
+//     same closed list the demo blotter carries) — with the `limits`
+//     check COMPUTED since FW-36-A (never a fixed stamp);
 //   - audit-grade rationale PROSE on every row referencing the
 //     project's ACTUAL goal numbers (its capital budget, its risk
-//     budget, and its declared max-drawdown bound when it has one);
+//     budget, and its declared max-drawdown bound when it has one) —
+//     with every budget relation COMPUTED before it is asserted
+//     (FW-36-A: the "inside the declared capital budget" sentence is
+//     emitted only when the projected book is inside the bound);
 //   - ONE OUTCOME RECORD (an adverse-gap realization with expected vs
 //     realized and a tolerance) + ONE POST-MORTEM carrying a
 //     confidence-rated hypothesis attached to that outcome.
+//
+// THE HONEST GATE (FW-36-A, Round E register E-2 — the "manufactured
+// evidence" class): before FW-36-A the derived stream STAMPED
+// `limits: pass` on every fill regardless of the mandate's declared
+// caps (Round E watched fills land at 1.92x..180x the declared bound
+// with the pass stamp), and the one refusal quoted an OBSERVED value
+// fabricated from the bound itself (bound x 1.2 — reconciling to
+// neither the order line nor the cumulative book: M2's "observed
+// 300000000" over an order line of 3B and a book of 1.875B). The gate
+// now evaluates EVERY declared constraint of the project's own
+// constraint set at EACH candidate order, WHERE DERIVABLE from data the
+// composition itself holds:
+//   - notional/budget subjects (book.notional, capital.budget, generic
+//     notional) — the PROJECTED BOOK: prior cumulative notional + the
+//     candidate's own notional (exact decimals, itemized on the record
+//     so the arithmetic reconciles by inspection);
+//   - per-order notional subjects (order.notional, trade.notional) —
+//     the candidate order's OWN notional;
+//   - realized-cumulative subjects (risk.budget, risk.maxDrawdown) —
+//     the session outcome chain's realized cumulative, WHERE THE
+//     CHAIN PROVIDES ONE at the gate instant (L4: before the session's
+//     outcome realizes, these are honestly NOT GATE-EVALUABLE — never
+//     silently passed);
+//   - every other subject (position/exposure/turnover/returns/costs —
+//     no such store exists on any backing) — honestly NOT
+//     GATE-EVALUABLE, reported on the record's `limitsEvaluation`
+//     surface with the teaching note (what IS gate-evaluable today, and
+//     the accepted constraint domains).
+// `limits` is stamped `pass` ONLY on true passes; a blocking breach
+// REFUSES the row with the TRUE observed value (itemized: prior
+// cumulative + candidate = projected); the desk SIZES ITS OWN ORDERS
+// inside the mandate's declared caps (the entry at <= 50% of the
+// tightest declared notional/budget bound, the entry+trim book at
+// <= 75%), and its concentration attempt — an order for the mandate's
+// FULL declared capacity — is the honest demonstration of the gate
+// binding against the project's OWN declared constraint. A mandate so
+// tight that no positive order fits inside it honestly executes
+// NOTHING: the envelope gate answers `null` (the same law as the
+// zero-budget desk).
 //
 // HONESTY DISCIPLINE (non-negotiable — UX-DESIGN §7 anti-deception):
 // this is SIMULATED substance and stays disclosed as such. The records
@@ -76,7 +119,8 @@
 //
 // Spec anchors: R38 (evidence discipline), R45 (provenance), L4
 // (point-in-time), L8 (the gateway alone decides), L12 (scope), L20
-// (render, never re-decide), UX-DESIGN §7; wave1-report MI-D2 + MI-D10.
+// (render, never re-decide), UX-DESIGN §7; wave1-report MI-D2 + MI-D10;
+// phase2-roundE-report §3 E-2 + §6.2 (FW-36-A).
 
 import {
   canonicalJson,
@@ -157,6 +201,34 @@ function compareDecimals(a: string, b: string): -1 | 0 | 1 | null {
   return difference.startsWith('-') ? -1 : 1;
 }
 
+/** Exact addition (a + b) of two canonical decimal strings (never a float; null on a malformed input). */
+function addDecimals(a: string, b: string): string | null {
+  const left = parseExactDecimal(a);
+  const right = parseExactDecimal(b);
+  if (left === null || right === null) return null;
+  const scale = Math.max(left.scale, right.scale);
+  const lift = (value: ExactDecimal): bigint => {
+    const byTen = 10n ** BigInt(scale - value.scale);
+    return (value.negative ? -value.digits : value.digits) * byTen;
+  };
+  const sum = lift(left) + lift(right);
+  return formatExactDecimal({ negative: sum < 0n, digits: sum < 0n ? -sum : sum, scale });
+}
+
+/** The SIZING DIVISION (FW-36-A): the largest canonical decimal with AT MOST 6 fraction digits that is <= a / b, for a >= 0 and b > 0 (never a float, never a non-terminating decimal; null when malformed or the inputs are not both non-negative/positive as required). */
+function divideDecimalsFloor(a: string, b: string): string | null {
+  const left = parseExactDecimal(a);
+  const right = parseExactDecimal(b);
+  if (left === null || right === null) return null;
+  if (left.negative || right.negative) return null;
+  if (right.digits === 0n) return null;
+  const scale = Math.max(left.scale, right.scale);
+  const leftLifted = left.digits * 10n ** BigInt(scale - left.scale);
+  const rightLifted = right.digits * 10n ** BigInt(scale - right.scale);
+  const quotient = (leftLifted * 1_000_000n) / rightLifted;
+  return formatExactDecimal({ negative: false, digits: quotient, scale: 6 });
+}
+
 /** A canonical decimal string that is strictly positive (the budget/quantity/price law). */
 function isPositiveDecimal(value: string): boolean {
   const parsed = parseExactDecimal(value);
@@ -223,6 +295,39 @@ export interface ProjectEvidenceRef {
 }
 
 /**
+ * ONE DECLARED CONSTRAINT'S GATE EVALUATION at one candidate order
+ * (FW-36-A, Round E register E-2 — the truth surface). Every verdict
+ * carries its own arithmetic (`arithmetic`) so bound-vs-observed
+ * reconciles BY INSPECTION; a constraint the gate cannot evaluate is
+ * reported `not_gate_evaluable` with the teaching note — NEVER silently
+ * passed.
+ */
+export interface LimitsCheckEvaluation {
+  /** The declared constraint's own id (traceable to the mandate's constraint set). */
+  readonly constraintId: string;
+  /** The declared domain (observation | state | action | outcome — cited verbatim). */
+  readonly domain: string;
+  /** The declared subject (cited verbatim). */
+  readonly subject: string;
+  /** The declared severity (cited verbatim). */
+  readonly severity: string;
+  /** The declared predicate (cited verbatim — kind + bound/value). */
+  readonly predicate: { readonly kind: string; readonly bound?: number; readonly value?: string };
+  /** The observation class the gate derived the verdict from (none when not derivable). */
+  readonly basis: 'projected_book_notional' | 'order_notional' | 'realized_cumulative' | 'none';
+  /** True when the gate derived a verdict; false when the constraint is honestly not gate-evaluable. */
+  readonly derivable: boolean;
+  /** The TRUE observed value the verdict compared (null when not derivable — never a fabricated number). */
+  readonly observed: string | null;
+  /** The itemized arithmetic behind the observed value (reconciles by inspection). */
+  readonly arithmetic: string | null;
+  /** The verdict: pass only on a true pass; breach on a true breach; not_gate_evaluable when the gate cannot derive one. */
+  readonly verdict: 'pass' | 'breach' | 'not_gate_evaluable';
+  /** The honest teaching: WHY a verdict is not derivable, and what IS gate-evaluable today. */
+  readonly note: string;
+}
+
+/**
  * ONE DERIVED BLOTTER ROW: the boundary's own GatewaySubmissionRecord
  * shape (routed | refused — the guard passes on every row) PLUS the
  * ADDITIVE demo-substance fields (the same field names the W-8 demo
@@ -238,6 +343,8 @@ export type ProjectBlotterRow = GatewaySubmissionRecord & {
   readonly decisionRationale?: string;
   readonly riskChecks?: readonly ProjectRiskCheck[];
   readonly evidence?: readonly ProjectEvidenceRef[];
+  /** THE GATE'S OWN EVALUATION of every declared constraint at THIS candidate order (FW-36-A — the truth surface; additive). */
+  readonly limitsEvaluation?: readonly LimitsCheckEvaluation[];
 };
 
 /** One derived evidence stream: the blotter rows + the outcome + its post-mortem. */
@@ -264,6 +371,8 @@ export interface EnrichedOutcomeRecord extends OutcomeRecordMirror {
   readonly decisionRationale?: string;
   /** The pre-trade risk checks the gateway recorded (dimension + outcome, verbatim — L20). */
   readonly riskChecks?: readonly ProjectRiskCheck[];
+  /** The gate's own evaluation of every declared constraint at the decision's order (FW-36-A — additive). */
+  readonly limitsEvaluation?: readonly LimitsCheckEvaluation[];
 }
 
 /** The pre-trade risk-check pass list every routed row carries (the demo blotter's own closed list — the 7-check pattern). */
@@ -292,118 +401,210 @@ const FEE_RATE = '0.0000005';
 const EXPECTED_OF_NOTIONAL = '0.001';
 const ADVERSE_FRACTION = '0.25';
 const TOLERANCE_OF_EXPECTED = '0.1';
-const REFUSAL_BREACH_FACTOR = '1.2';
-const RISK_BUDGET_BREACH_FACTOR = '2.2';
+/**
+ * FW-36-A (E-2): the desk's SIZING SPACES inside the mandate's own
+ * declared caps — the entry at <= ENTRY_SPACE_OF_BOUND of the tightest
+ * declared notional/budget bound, the entry+trim book at <=
+ * BOOK_SPACE_OF_BOUND, so every routed fill's `limits: pass` stamp is
+ * TRUE (the pre-fix stream stamped pass over fills at up to 180x the
+ * declared bound).
+ */
+const ENTRY_SPACE_OF_BOUND = '0.5';
+const BOOK_SPACE_OF_BOUND = '0.75';
 
 /** A deterministic content-addressed id over the envelope + a story tag ('xgs:'/'out:'/… prefixes are the boundary's own grammar). */
 function idOf(prefix: string, story: string, envelope: ProjectEvidenceEnvelope): string {
   return `${prefix}:${fnv1a32Hex(canonicalJson([story, envelope.tenant, envelope.project, envelope.goal.id, envelope.constraintSet.id, envelope.world.horizon.startsAt, envelope.world.horizon.endsAt] as never))}`;
 }
 
-/** Read one `limit.max` predicate's POSITIVE numeric bound with its canonical decimal text (number or canonical decimal string; null when absent, non-positive, or non-canonical). */
-function canonicalLimitBoundOf(predicate: unknown): { readonly bound: number; readonly text: string } | null {
-  if (typeof predicate !== 'object' || predicate === null) return null;
-  const record = predicate as { readonly kind?: unknown; readonly bound?: unknown };
-  if (record.kind !== 'limit.max') return null;
-  let bound: number | null = null;
-  if (typeof record.bound === 'number' && Number.isFinite(record.bound)) bound = record.bound;
-  else if (typeof record.bound === 'string' && CANONICAL_DECIMAL_PATTERN.test(record.bound) && Number.isFinite(Number(record.bound))) bound = Number(record.bound);
-  if (bound === null || bound <= 0) return null;
-  const text = String(bound);
-  return CANONICAL_DECIMAL_PATTERN.test(text) ? { bound, text } : null;
+// ---------------------------------------------------------------------------
+// THE HONEST GATE (FW-36-A, Round E register E-2) — the declared
+// constraints evaluated at each candidate order, WHERE DERIVABLE
+// ---------------------------------------------------------------------------
+
+/** The gate-evaluable observation classes (mirroring risk-utilization's own metric classification — one law, two surfaces). */
+export type GateSubjectClass = 'book_notional' | 'order_notional' | 'risk_consumption' | 'drawdown' | 'not_gate_evaluable';
+
+/** Classify one declared subject by what the gate can observe for it at fill time. */
+export function gateSubjectClassOf(subject: string): GateSubjectClass {
+  if (subject.includes('notional')) {
+    return subject.includes('order') || subject.includes('trade') ? 'order_notional' : 'book_notional';
+  }
+  if (subject.includes('capital') && subject.includes('budget')) return 'book_notional';
+  if (subject.includes('risk') && subject.includes('budget')) return 'risk_consumption';
+  if (subject.includes('drawdown')) return 'drawdown';
+  return 'not_gate_evaluable';
 }
 
-/**
- * THE REFUSAL QUOTE — the project's OWN declared limit the derived
- * refusal breaches, with the observed value derived exactly from it:
- *   1. the first `limit.max` constraint of the project's constraint set
- *      with a POSITIVE numeric bound (a state-domain constraint first —
- *      a position/exposure cap is the canonical pre-trade refusal);
- *   2. else the first `limit.max` success criterion of the project's
- *      own goal (e.g. its declared max-drawdown ceiling);
- *   3. else its declared risk budget (the `k-risk-budget` equals
- *      constraint every console launch appends, else the world's risk
- *      budget) — the doubled position's projected budget consumption.
- * Every branch quotes the project's actual record (its id, domain,
- * subject, severity and predicate); only the observed value is derived
- * (bound x 1.2 / budget x 2.2, exact decimals).
- */
-interface RefusalQuote {
+/** One declared constraint as the gate reads it (the record's own fields + its POSITIVE numeric bound). */
+export interface GateConstraint {
   readonly constraintId: string;
   readonly domain: string;
   readonly subject: string;
   readonly severity: string;
   readonly predicate: { readonly kind: string; readonly bound?: number; readonly value?: string };
-  readonly boundText: string;
-  readonly observed: string;
+  /** The bound's canonical decimal text (already the equals value for budget declarations); null when the predicate carries no positive numeric bound. */
+  readonly boundText: string | null;
 }
 
-function refusalQuoteOf(envelope: ProjectEvidenceEnvelope, riskBudget: string): RefusalQuote | null {
-  const constraints = Array.isArray(envelope.constraintSet.constraints) ? envelope.constraintSet.constraints : [];
-  // Branch 1 — the project's own limit.max constraints (a state-domain
-  // constraint first: a position/exposure cap is the canonical pre-trade
-  // refusal); the FIRST one whose bound carries a canonical decimal text.
-  const limitConstraints = constraints
-    .map((constraint) => ({ constraint, bound: canonicalLimitBoundOf(constraint.predicate) }))
-    .filter((entry) => entry.bound !== null);
-  const stateFirst = limitConstraints.find((entry) => entry.constraint.domain === 'state') ?? limitConstraints[0];
-  if (stateFirst !== undefined && stateFirst.bound !== null) {
-    const { bound, text } = stateFirst.bound;
-    const observed = multiplyDecimals(text, REFUSAL_BREACH_FACTOR);
-    if (observed === null) return null;
-    return {
-      constraintId: stateFirst.constraint.id,
-      domain: stateFirst.constraint.domain,
-      subject: stateFirst.constraint.subject,
-      severity: stateFirst.constraint.severity,
-      predicate: { kind: 'limit.max', bound },
-      boundText: text,
-      observed,
-    };
+/** Read the constraint set's declared constraints as gate inputs (a malformed row is skipped, never a crash — R46). */
+export function gateConstraintsOf(constraintSet: ConstraintSetStatement): readonly GateConstraint[] {
+  const constraints = Array.isArray(constraintSet.constraints) ? constraintSet.constraints : [];
+  const gateConstraints: GateConstraint[] = [];
+  for (const constraint of constraints) {
+    if (typeof constraint !== 'object' || constraint === null) continue;
+    const record = constraint as { readonly id?: unknown; readonly domain?: unknown; readonly subject?: unknown; readonly severity?: unknown; readonly predicate?: unknown };
+    if (typeof record.id !== 'string' || record.id.length === 0) continue;
+    if (typeof record.subject !== 'string' || record.subject.length === 0) continue;
+    if (typeof record.severity !== 'string' || record.severity.length === 0) continue;
+    const predicate = record.predicate;
+    if (typeof predicate !== 'object' || predicate === null) continue;
+    const predicateRecord = predicate as { readonly kind?: unknown; readonly bound?: unknown; readonly value?: unknown };
+    if (typeof predicateRecord.kind !== 'string' || predicateRecord.kind.length === 0) continue;
+    let bound: number | null = null;
+    if (typeof predicateRecord.bound === 'number' && Number.isFinite(predicateRecord.bound)) bound = predicateRecord.bound;
+    else if (typeof predicateRecord.bound === 'string' && CANONICAL_DECIMAL_PATTERN.test(predicateRecord.bound) && Number.isFinite(Number(predicateRecord.bound))) bound = Number(predicateRecord.bound);
+    else if (typeof predicateRecord.value === 'number' && Number.isFinite(predicateRecord.value)) bound = predicateRecord.value;
+    else if (typeof predicateRecord.value === 'string' && CANONICAL_DECIMAL_PATTERN.test(predicateRecord.value) && Number.isFinite(Number(predicateRecord.value))) bound = Number(predicateRecord.value);
+    const positive = bound !== null && bound > 0 ? bound : null;
+    const predicateEcho: { readonly kind: string; readonly bound?: number; readonly value?: string } = typeof predicateRecord.value === 'string'
+      ? { kind: predicateRecord.kind, value: predicateRecord.value, ...(positive === null ? {} : { bound: positive }) }
+      : { kind: predicateRecord.kind, ...(positive === null ? {} : { bound: positive }) };
+    gateConstraints.push({
+      constraintId: record.id,
+      domain: typeof record.domain === 'string' && record.domain.length > 0 ? record.domain : 'outcome',
+      subject: record.subject,
+      severity: record.severity,
+      predicate: predicateEcho,
+      boundText: positive === null ? null : formatExactDecimal(parseExactDecimal(String(positive)) as ExactDecimal),
+    });
   }
-  // Branch 2 — the project's own limit.max success criteria (e.g. its
-  // declared max-drawdown ceiling).
-  const criteria = envelope.goal.successCriteria && Array.isArray(envelope.goal.successCriteria.criteria) ? envelope.goal.successCriteria.criteria : [];
-  const limitCriterion = criteria
-    .map((criterion) => ({ criterion, bound: canonicalLimitBoundOf(criterion.predicate) }))
-    .find((entry) => entry.bound !== null);
-  if (limitCriterion !== undefined && limitCriterion.bound !== null) {
-    const { bound, text } = limitCriterion.bound;
-    const observed = multiplyDecimals(text, REFUSAL_BREACH_FACTOR);
-    if (observed === null) return null;
-    return {
-      constraintId: limitCriterion.criterion.id,
-      domain: 'outcome',
-      subject: limitCriterion.criterion.metric,
-      severity: 'blocking',
-      predicate: { kind: 'limit.max', bound },
-      boundText: text,
-      observed,
-    };
+  return Object.freeze(gateConstraints);
+}
+
+/** The candidate-order context the gate evaluates against (exact decimals throughout). */
+export interface GateCandidateContext {
+  /** The cumulative notional of the book BEFORE this candidate (the fills already on the blotter). */
+  readonly priorBookNotional: string;
+  /** The candidate order's own notional (quantity x price, exact). */
+  readonly candidateNotional: string;
+  /** The session outcome chain's realized cumulative at the gate instant, when the chain provides one (null = the chain provides nothing yet — L4 point-in-time). */
+  readonly realizedCumulative: string | null;
+}
+
+/** THE TEACHING NOTE for a subject the gate cannot evaluate (the loud, honest rejection — E-2's runtime-surface half). */
+const NOT_EVALUABLE_SUBJECT_NOTE = 'not gate-evaluable at fill time: the gateway holds no observation for this subject on any backing (no position, turnover, returns or cost store exists — the standing risk-utilization read reports the same honestly-unknown class). Gate-evaluable subjects today are the notional/budget subjects (book.notional, capital.budget, order.notional — the projected cumulative book including the candidate order, or the order\'s own notional) and the realized-cumulative subjects (risk.budget, risk.maxDrawdown — the session outcome chain\'s realized cumulative, where the chain provides one); the constraint grammar\'s accepted domains are observation | state | action | outcome, and the gate reads the outcome-scoped forms';
+
+/** THE TEACHING NOTE for a realized-cumulative subject before the outcome chain provides a record (L4 point-in-time). */
+const NOT_EVALUABLE_YET_NOTE = 'not gate-evaluable at this instant: the session outcome chain provides no realized record yet (L4 point-in-time — the desk\'s outcome realizes after the entry fills); the constraint becomes gate-evaluable once a realized record exists, and the gate never silently passes it before then';
+
+/**
+ * Evaluate ONE declared constraint at ONE candidate order (pure, exact,
+ * never a throw — the verdict carries its own arithmetic). The bound is
+ * the constraint's own declared number (the `equals` value for budget
+ * declarations — a budget bound); the observed value is derived from the
+ * gate's own data (the projected book, the order's notional, or the
+ * outcome chain's realized cumulative) — NEVER fabricated from the bound
+ * (the pre-FW-36-A defect: observed = bound x 1.2).
+ */
+export function evaluateConstraintAtGate(constraint: GateConstraint, context: GateCandidateContext): LimitsCheckEvaluation {
+  const subjectClass = gateSubjectClassOf(constraint.subject);
+  const base = { constraintId: constraint.constraintId, domain: constraint.domain, subject: constraint.subject, severity: constraint.severity, predicate: constraint.predicate };
+  if (constraint.boundText === null) {
+    // The declaration carries no positive numeric bound — a limit without
+    // a number is not a limit the gate can compare (R5's own law),
+    // honestly reported.
+    return deepFreeze({
+      ...base,
+      basis: 'none',
+      derivable: false,
+      observed: null,
+      arithmetic: null,
+      verdict: 'not_gate_evaluable',
+      note: 'not gate-evaluable at fill time: the declared predicate carries no positive numeric bound (a limit without a number is not a limit the gate can compare)',
+    });
   }
-  // Branch 3 — the declared risk budget (the equals constraint every
-  // console launch appends, else the world's risk budget): the doubled
-  // position's projected budget consumption. The bound text is the
-  // NORMALIZED budget (the console renders the predicate's numeric bound
-  // — the prose and the rendered line stay consistent).
-  const budgetConstraint = constraints.find((constraint) => constraint.subject === 'risk.budget' && constraint.predicate !== null && typeof constraint.predicate === 'object');
-  const budgetRaw = typeof budgetConstraint?.predicate === 'object' && budgetConstraint !== null
-    && typeof (budgetConstraint.predicate as { readonly value?: unknown }).value === 'string'
-    && isPositiveDecimal((budgetConstraint.predicate as { readonly value: string }).value)
-      ? (budgetConstraint.predicate as { readonly value: string }).value
-      : riskBudget;
-  const budgetText = formatExactDecimal(parseExactDecimal(budgetRaw) as ExactDecimal);
-  const observed = multiplyDecimals(budgetText, RISK_BUDGET_BREACH_FACTOR);
-  if (observed === null || !isPositiveDecimal(budgetText)) return null;
-  return {
-    constraintId: budgetConstraint?.id ?? 'k-risk-budget',
-    domain: 'outcome',
-    subject: 'risk.budget',
-    severity: 'blocking',
-    predicate: { kind: 'equals', value: budgetRaw, bound: Number(budgetText) },
-    boundText: budgetText,
-    observed,
-  };
+  const bound = constraint.boundText;
+  if (subjectClass === 'book_notional') {
+    const projected = addDecimals(context.priorBookNotional, context.candidateNotional);
+    if (projected === null) {
+      return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the projected book could not be derived (malformed notional inputs — never a fabricated comparison)' });
+    }
+    const comparison = compareDecimals(projected, bound);
+    const breach = comparison === null ? false : constraint.predicate.kind === 'limit.min' ? comparison === -1 : comparison === 1;
+    return deepFreeze({
+      ...base,
+      basis: 'projected_book_notional',
+      derivable: true,
+      observed: projected,
+      arithmetic: `prior cumulative book ${context.priorBookNotional} + candidate order ${context.candidateNotional} = projected book ${projected} (exact decimals)`,
+      verdict: breach ? 'breach' : 'pass',
+      note: breach
+        ? `the projected cumulative book ${projected} stands past the declared ${constraint.predicate.kind} bound ${bound} — the gate refuses the candidate rather than stamp pass over a breach`
+        : `the projected cumulative book ${projected} is inside the declared ${constraint.predicate.kind} bound ${bound}`,
+    });
+  }
+  if (subjectClass === 'order_notional') {
+    const comparison = compareDecimals(context.candidateNotional, bound);
+    const breach = comparison === null ? false : constraint.predicate.kind === 'limit.min' ? comparison === -1 : comparison === 1;
+    return deepFreeze({
+      ...base,
+      basis: 'order_notional',
+      derivable: true,
+      observed: context.candidateNotional,
+      arithmetic: `the candidate order's own notional ${context.candidateNotional} (quantity x price)`,
+      verdict: breach ? 'breach' : 'pass',
+      note: breach
+        ? `the candidate order's own notional ${context.candidateNotional} stands past the declared ${constraint.predicate.kind} bound ${bound} — the gate refuses the candidate`
+        : `the candidate order's own notional ${context.candidateNotional} is inside the declared ${constraint.predicate.kind} bound ${bound}`,
+    });
+  }
+  if (subjectClass === 'risk_consumption' || subjectClass === 'drawdown') {
+    if (context.realizedCumulative === null) {
+      return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: NOT_EVALUABLE_YET_NOTE });
+    }
+    // The consumption/drawdown observation: the realized cumulative's
+    // LOSS MAGNITUDE (the negative part — gains do not consume a budget).
+    const realized = parseExactDecimal(context.realizedCumulative);
+    if (realized === null) {
+      return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the realized cumulative is not a canonical decimal (never a fabricated comparison)' });
+    }
+    const consumption = realized.negative ? formatExactDecimal({ negative: false, digits: realized.digits, scale: realized.scale }) : '0';
+    const comparison = compareDecimals(consumption, bound);
+    const breach = comparison === null ? false : constraint.predicate.kind === 'limit.min' ? comparison === -1 : comparison === 1;
+    return deepFreeze({
+      ...base,
+      basis: 'realized_cumulative',
+      derivable: true,
+      observed: consumption,
+      arithmetic: `the session outcome chain's realized cumulative ${context.realizedCumulative} (loss magnitude ${consumption})`,
+      verdict: breach ? 'breach' : 'pass',
+      note: breach
+        ? `the realized cumulative's loss magnitude ${consumption} stands past the declared ${constraint.predicate.kind} bound ${bound} — the gate refuses the candidate (the units are the declaration's own: the observed is the outcome chain's realized amount, the bound is the declared number, and the itemization shows both)`
+        : `the realized cumulative's loss magnitude ${consumption} is inside the declared ${constraint.predicate.kind} bound ${bound}`,
+    });
+  }
+  return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: NOT_EVALUABLE_SUBJECT_NOTE });
+}
+
+/** The pre-trade check list with the COMPUTED limits verdict (the same closed 7-dimension list — the limits dimension never a fixed stamp again). */
+function preTradeChecksOf(limitsOutcome: 'pass' | 'advisory_breach' | 'refused'): readonly ProjectRiskCheck[] {
+  return deepFreeze([
+    { dimension: 'kill_switch', outcome: 'pass' },
+    { dimension: 'identity', outcome: 'pass' },
+    { dimension: 'authorization', outcome: 'pass' },
+    { dimension: 'limits', outcome: limitsOutcome },
+    { dimension: 'venue_permissions', outcome: 'pass' },
+    { dimension: 'rate_limits', outcome: 'pass' },
+    { dimension: 'credentials', outcome: 'pass' },
+  ]);
+}
+
+/** The limits dimension's honest outcome over a full evaluation list: pass only when every derivable check passed; advisory_breach when only advisory ones breached; refused when a blocking one did. */
+function limitsOutcomeOf(evaluations: readonly LimitsCheckEvaluation[]): 'pass' | 'advisory_breach' | 'refused' {
+  if (evaluations.some((evaluation) => evaluation.verdict === 'breach' && evaluation.severity === 'blocking')) return 'refused';
+  if (evaluations.some((evaluation) => evaluation.verdict === 'breach')) return 'advisory_breach';
+  return 'pass';
 }
 
 /**
