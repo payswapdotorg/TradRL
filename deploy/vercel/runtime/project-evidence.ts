@@ -417,6 +417,24 @@ function idOf(prefix: string, story: string, envelope: ProjectEvidenceEnvelope):
   return `${prefix}:${fnv1a32Hex(canonicalJson([story, envelope.tenant, envelope.project, envelope.goal.id, envelope.constraintSet.id, envelope.world.horizon.startsAt, envelope.world.horizon.endsAt] as never))}`;
 }
 
+/**
+ * One declared predicate's canonical bound citation (the limit.max prose
+ * law, unchanged since W-8): the POSITIVE numeric bound as the canonical
+ * decimal text. Null when the predicate is not a limit.max with a
+ * positive numeric bound (never a fabricated citation).
+ */
+function canonicalLimitBoundOf(predicate: unknown): { readonly bound: number; readonly text: string } | null {
+  if (typeof predicate !== 'object' || predicate === null) return null;
+  const record = predicate as { readonly kind?: unknown; readonly bound?: unknown };
+  if (record.kind !== 'limit.max') return null;
+  let bound: number | null = null;
+  if (typeof record.bound === 'number' && Number.isFinite(record.bound)) bound = record.bound;
+  else if (typeof record.bound === 'string' && CANONICAL_DECIMAL_PATTERN.test(record.bound) && Number.isFinite(Number(record.bound))) bound = Number(record.bound);
+  if (bound === null || bound <= 0) return null;
+  const text = String(bound);
+  return CANONICAL_DECIMAL_PATTERN.test(text) ? { bound, text } : null;
+}
+
 // ---------------------------------------------------------------------------
 // THE HONEST GATE (FW-36-A, Round E register E-2) — the declared
 // constraints evaluated at each candidate order, WHERE DERIVABLE
@@ -605,6 +623,134 @@ function limitsOutcomeOf(evaluations: readonly LimitsCheckEvaluation[]): 'pass' 
   if (evaluations.some((evaluation) => evaluation.verdict === 'breach' && evaluation.severity === 'blocking')) return 'refused';
   if (evaluations.some((evaluation) => evaluation.verdict === 'breach')) return 'advisory_breach';
   return 'pass';
+}
+
+// ---------------------------------------------------------------------------
+// THE CONCENTRATION REFUSAL QUOTE (FW-36-A, Round E register E-2.1/E-2.2 —
+// the honest demonstration of the gate binding against the project's OWN
+// declared constraint)
+// ---------------------------------------------------------------------------
+
+/** The derived refusal's quote: the constraint cited + the TRUE projected book at the concentration attempt. */
+export interface ProjectRefusalQuote {
+  readonly constraintId: string;
+  readonly domain: string;
+  readonly subject: string;
+  readonly severity: string;
+  readonly predicate: { readonly kind: string; readonly bound?: number; readonly value?: string };
+  /** The TRUE observed value at the refused candidate: the projected cumulative book (prior fills + the candidate), itemized on the record so the arithmetic reconciles by inspection. */
+  readonly observed: string;
+  /** The bound's canonical decimal text (the citation the prose and the rendered line share). */
+  readonly boundText: string;
+  /** The concentration attempt's own notional (the mandate's FULL declared capacity — the refused order's actual size). */
+  readonly candidateNotional: string;
+  /** The cumulative book BEFORE the candidate (the entry + trim fills already on the blotter). */
+  readonly priorBookNotional: string;
+  /** The candidate's exact-decimal quantity at the entry price (what the refused row's own order echoes). */
+  readonly candidateQuantity: string;
+}
+
+/**
+ * Derive the honest refusal quote for the stream's ONE demonstration
+ * refusal (FW-36-A, E-2): the concentration attempt is an order for the
+ * mandate's FULL declared capacity, and the gate refuses it against the
+ * project's OWN declared constraint with the TRUE projected book —
+ * `prior cumulative + candidate = projected` — never a value fabricated
+ * from the bound (the pre-fix defect: observed = bound x 1.2, which
+ * reconciled to NEITHER the order line NOR the cumulative book).
+ *
+ * The bound's source, in honesty order:
+ *   1. the TIGHTEST declared blocking `limit.max` over a gate-observable
+ *      book-notional subject (the user's own constraint — the whole point);
+ *   2. else the mandate's own declared budget bound (the constraint set's
+ *      capital/risk budget `equals` declaration when one exists — cited
+ *      verbatim, its own id/domain/severity);
+ *   3. else the launch world's own declared capital budget (the console
+ *      launch spec's own field — a real user-declared record, never an
+ *      invented constraint);
+ *   4. else `null` — a mandate with no gate-observable bound cannot
+ *      honestly demonstrate the gate (the stream answers the honest
+ *      emptiness, the envelope gate's own law).
+ */
+function refusalQuoteOf(envelope: ProjectEvidenceEnvelope, riskBudget: string): ProjectRefusalQuote | null {
+  // The same entry/trim economics the caller derives (pure recomputation —
+  // the prior book the gate projects against).
+  const capital = envelope.world.capitalBudget;
+  const entryPrice = multiplyDecimals(capital, ENTRY_PRICE_OF_CAPITAL);
+  const entryQty = multiplyDecimals(riskBudget, ENTRY_QTY_OF_RISK);
+  if (entryPrice === null || entryQty === null || !isPositiveDecimal(entryPrice) || !isPositiveDecimal(entryQty)) return null;
+  const entryNotional = multiplyDecimals(entryQty, entryPrice);
+  const trimPrice = multiplyDecimals(capital, TRIM_PRICE_OF_CAPITAL);
+  const trimQty = multiplyDecimals(riskBudget, TRIM_QTY_OF_RISK);
+  if (entryNotional === null || trimPrice === null || trimQty === null) return null;
+  const trimNotional = multiplyDecimals(trimQty, trimPrice);
+  if (trimNotional === null || !isPositiveDecimal(trimNotional)) return null;
+  const priorBookNotional = addDecimals(entryNotional, trimNotional);
+  if (priorBookNotional === null || !isPositiveDecimal(priorBookNotional)) return null;
+
+  // The bound's source (the honesty order above).
+  const gate = gateConstraintsOf(envelope.constraintSet);
+  let pick: GateConstraint | null = null;
+  let pickBound: string | null = null;
+  for (const constraint of gate) {
+    if (constraint.boundText === null) continue;
+    if (constraint.severity !== 'blocking') continue; // only a blocking bound refuses a candidate
+    if (constraint.predicate.kind !== 'limit.max') continue; // only a max bound refuses a too-large book
+    if (gateSubjectClassOf(constraint.subject) !== 'book_notional') continue; // only a gate-OBSERVABLE subject (E-2.1's own law)
+    const bound = constraint.boundText;
+    if (pickBound === null || (compareDecimals(bound, pickBound) ?? 1) === -1) {
+      pick = constraint;
+      pickBound = bound;
+    }
+  }
+  if (pick === null) {
+    // Branch 2 — the mandate's own declared budget bound (the constraint
+    // set's capital/risk budget `equals` declaration, cited verbatim).
+    const budgetConstraint = gate.find((constraint) => (constraint.subject.includes('capital') || constraint.subject.includes('risk')) && constraint.subject.includes('budget') && constraint.boundText !== null) ?? null;
+    if (budgetConstraint !== null && budgetConstraint.boundText !== null) {
+      pick = budgetConstraint;
+      pickBound = budgetConstraint.boundText;
+    }
+  }
+  if (pick === null) {
+    // Branch 3 — the launch world's own declared capital budget (a real
+    // user-declared record; the citation names the constraint set it
+    // belongs to, never an invented constraint id).
+    const worldBudget = parseExactDecimal(envelope.world.capitalBudget);
+    if (worldBudget === null || !isPositiveDecimal(envelope.world.capitalBudget)) return null;
+    pick = {
+      constraintId: `${envelope.constraintSet.id}:capital-budget`,
+      domain: 'outcome',
+      subject: 'capital.budget',
+      severity: 'blocking',
+      predicate: { kind: 'limit.max', bound: Number(formatExactDecimal(worldBudget)) },
+      boundText: formatExactDecimal(worldBudget),
+    };
+    pickBound = pick.boundText;
+  }
+  if (pick === null || pickBound === null) return null; // Branch 4 — no gate-observable bound: the honest emptiness
+
+  // The concentration attempt: the mandate's FULL declared capacity at the
+  // entry price — the candidate the gate projects. The TRUE observed value
+  // is the projected book: prior cumulative + candidate (reconciles by
+  // inspection; NEVER a function of the bound alone).
+  const candidateNotional = pickBound;
+  const projected = addDecimals(priorBookNotional, candidateNotional);
+  if (projected === null || !isPositiveDecimal(projected)) return null;
+  const candidateQuantity = divideDecimalsFloor(candidateNotional, entryPrice);
+  if (candidateQuantity === null || !isPositiveDecimal(candidateQuantity)) return null; // a mandate so tight no positive order fits — the envelope gate's own law
+  return {
+    constraintId: pick.constraintId,
+    domain: pick.domain,
+    subject: pick.subject,
+    severity: pick.severity,
+    predicate: pick.predicate,
+    observed: projected,
+    boundText: pickBound,
+    candidateNotional,
+    priorBookNotional,
+    candidateQuantity,
+  };
 }
 
 /**
@@ -804,7 +950,11 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
         venueId: venue,
         side: 'buy',
         kind: 'limit',
-        quantity: multiplyDecimals(entryQty, '2') ?? entryQty,
+        // FW-36-A (E-2): the concentration attempt's OWN size — the
+        // mandate's full declared capacity at the entry price. The row's
+        // order echo therefore reconciles with the refusal's itemized
+        // arithmetic (prior cumulative + this candidate = projected book).
+        quantity: quote.candidateQuantity,
         price: entryPrice,
         timeInForce: 'gtc',
         createdAt: new Date(refusedAt).toISOString(),

@@ -79,7 +79,8 @@ import { buildDurableActivation, type DurableActivation } from './durable-world'
 import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import type { NeonStoreDeps } from '../../adapters/neon/stores';
-import { DEMO_PROJECT_ID, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableProjectEvidenceOf, isDemoSeedJob, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
+import { DEMO_PROJECT_ID, demoDeliverableSourceOf, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableDeliverableSourceOf, durableProjectEvidenceOf, isDemoSeedJob, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
+import { emptyDeliverableSource } from './deliverable';
 import { createPromotionRegistry, outcomeLearningWithPromotedDecisions, type PromotionRegistry } from './job-promote';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization, VerifyInternalAuthorization } from './routes';
 import type { DemoSessionWorld } from './session-routes';
@@ -552,6 +553,13 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
             durable,
             storeDeps: durableStores,
             seed: { tenant, developerToken: token, internalToken },
+            // FW-36-A (E-1): the durable tick's research completions compose
+            // their release candidates from the seam's own hydrated goal sets
+            // + the promotion registry; a degraded/unbuilt evidence source
+            // (the seam built but its goal reads are degraded) degrades to the
+            // EMPTY source — the composer's honest statements, never a
+            // fabricated number.
+            deliverables: durableEvidenceSource === null ? emptyDeliverableSource : durableDeliverableSourceOf(tenant, durableEvidenceSource, promotions),
             at: () => Date.now(),
           });
       // THE W-26C DURABLE DEMO-SUBSTANCE READS (R4): the same folds the
@@ -585,7 +593,13 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions };
   }
   const seed = seedDemoWorld(construction.service, { tenant, developerToken: token, internalToken }, Date.now());
-  const machinery: DemoMachineryContext = { ports: demoPorts, tenant, developerToken: token, internalToken: internalToken as string };
+  // FW-36-A (E-1): the demo arm's deliverable source — the W-25B goal-set
+  // capture + the W-28 world capture + the promotion registry, keyed on the
+  // credential tenant (L12 by construction). The DEMO project's own mandate
+  // is its seeded goal set (the seed's create rode the same route, so the
+  // capture holds it); its observed world is the seeded blotter's own
+  // instruments (world-less by design since W-28).
+  const machinery: DemoMachineryContext = { ports: demoPorts, deliverables: demoDeliverableSourceOf(tenant, demoPorts, promotions), tenant, developerToken: token, internalToken: internalToken as string };
   // THE DEMO SESSION WORLD (FW-MI-A, MI-D1): the per-instance ownership
   // map + the records read. The map is host-owned composition state (the
   // router records into it the moment a session-scoped create succeeds);

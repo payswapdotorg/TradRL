@@ -755,9 +755,20 @@ describe('deploy/vercel — the W-26B activation: the launch journey under durab
       await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
       const complete = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/jobs/${kickoffJob.jobId}`, headers: BEARER }));
       expect(complete.status).toBe(200);
-      const finished = (complete.body as { data: { status: string; result: { kind: string; specId: string; project: string } } }).data;
+      const finished = (complete.body as { data: { status: string; result: { kind: string; specId: string; project: string; summary: string; lineage: { promotedDecision: string | null; statement: string }; disclosure: string } } }).data;
       expect(finished.status).toBe('complete');
-      expect(finished.result).toEqual({ kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'prj-j3-launch' });
+      // FW-36-A (Round E register E-1): the completion's release candidate is
+      // the COMPOSED deliverable — additive on the stub's preserved shape,
+      // with the composed summary + honest lineage + SIMULATED disclosure.
+      // This launch (a research spec that is not a console-launch spec) has
+      // no captured world: the summary's world sentence is the honest
+      // no-launch-world statement naming THIS project, never the old stub.
+      expect(finished.result.kind).toBe('release-candidate');
+      expect(finished.result.specId).toBe('spec-launch-director'); // the per-project launch director
+      expect(finished.result.project).toBe('prj-j3-launch');
+      expect(finished.result.summary).toContain('no launch world on record for prj-j3-launch');
+      expect(finished.result.lineage.promotedDecision).toBeNull(); // pending promotion — the honest composition-instant truth
+      expect(finished.result.disclosure).toContain('SIMULATED');
 
       // The whole launch PERSISTED (D-5): the registry row + goal set exist.
       const direct = storesOver(providers.fetchLike);
@@ -1401,9 +1412,15 @@ describe('deploy/vercel — the W-27 durable jobs surface (D-7)', () => {
       if (!second.ok) return;
       const coldDetail = await drive(second, streamingRequest({ method: 'GET', url: `/v1/jobs/${encodeURIComponent(jobId)}`, headers: BEARER }));
       expect(coldDetail.status).toBe(200);
-      const coldRecord = (coldDetail.body as { data: { status: string; result: { kind: string; specId: string; project: string } } }).data;
+      const coldRecord = (coldDetail.body as { data: { status: string; result: { kind: string; specId: string; project: string; summary: string } } }).data;
       expect(coldRecord.status).toBe('complete');
-      expect(coldRecord.result).toEqual({ kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'prj-durable-jobs-b' });
+      // FW-36-A (E-1): the durable completion is the composed deliverable —
+      // byte-identically rehydrated by the cold start (the frozen truth of
+      // the completion instant; the additive shape never a schema change).
+      expect(coldRecord.result.kind).toBe('release-candidate');
+      expect(coldRecord.result.specId).toBe('spec-launch-director');
+      expect(coldRecord.result.project).toBe('prj-durable-jobs-b');
+      expect(coldRecord.result.summary).toContain('no launch world on record for prj-durable-jobs-b');
       // And the machinery tick does NOT re-transition the terminal durable
       // job (the async pattern's own legality machine — a terminal record
       // never re-opens; the write-through lane stays quiet).

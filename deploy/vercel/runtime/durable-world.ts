@@ -124,6 +124,7 @@ import {
   seedDemoWorld,
 } from './demo';
 import { HYDRATION_AT, type DurableBackingHandle } from './durable';
+import type { DeliverableSource } from './deliverable';
 import { NeonFirmMemoryStore, NeonOutcomeLearningStore, type NeonStoreDeps, type TenantKnowledgeRow, type TenantScopedRecordRow } from '../../adapters/neon/stores';
 
 // ---------------------------------------------------------------------------
@@ -150,6 +151,15 @@ export interface DurableActivationInput {
   readonly storeDeps: NeonStoreDeps;
   /** The seed inputs (the composition's credential values). */
   readonly seed: DurableWorldSeedInput;
+  /**
+   * THE DELIVERABLE SOURCE (FW-36-A, Round E register E-1): the research
+   * completion's composed release-candidate reads the project's captured
+   * mandate + observed world + composition-time promotion through this (the
+   * seam's own hydrated surfaces, composed by compose.ts). A composition
+   * with nothing on record passes `emptyDeliverableSource` — the composer
+   * degrades to its honest statements (THE HONESTY LAW, R46).
+   */
+  readonly deliverables: DeliverableSource;
   /** The boot-instant source (the host MAY read the wall clock — compose.ts's own law). */
   readonly at: () => number;
 }
@@ -664,8 +674,11 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
           void healStaleDurableState(at); // best-effort by construction — never a rejection
         }
         // The context's control plane is the seam's HYDRATED port — the
-        // compile pass's projectsOf read works unchanged (R2's law).
-        demoMachineryTick(service, { ports: { controlPlane: durable.ports.controlPlane }, tenant: seed.tenant, developerToken: seed.developerToken, internalToken }, at);
+        // compile pass's projectsOf read works unchanged (R2's law). Since
+        // FW-36-A the same context carries the DELIVERABLE SOURCE (E-1):
+        // every research job the tick completes composes its release
+        // candidate from the project's own captured records.
+        demoMachineryTick(service, { ports: { controlPlane: durable.ports.controlPlane }, deliverables: input.deliverables, tenant: seed.tenant, developerToken: seed.developerToken, internalToken }, at);
       };
 
   return { tick, ensureBootWorld };

@@ -162,6 +162,32 @@ function horizonTextOf(goal: GoalStatement): string {
   return `${new Date(horizon.startsAt).toISOString()} to ${new Date(horizon.endsAt).toISOString()}${label}`;
 }
 
+/**
+ * THE COMPOSITION'S DELIVERABLE SOURCE (structural — both backings implement
+ * it over their own captured surfaces, the demoProjectEvidenceOf /
+ * durableProjectEvidenceOf precedent): the demo arm reads the W-25B goal-set
+ * capture + the W-28 world capture; the durable arm reads the seam's hydrated
+ * goal set (the same surfaces DurableEvidenceSource serves). Structural so a
+ * backing may pass lighter readers in tests, and NULLABLE on every read — a
+ * project with nothing on record composes its HONEST degraded statements
+ * (never a fabricated number).
+ */
+export interface DeliverableSource {
+  /** The project's captured mandate (goal + constraint set + launch world), null when nothing is on record at this host. */
+  readonly mandateOf: (project: string) => DeliverableMandate | null;
+  /** The markets/venues the world actually served, null when nothing is on record. */
+  readonly observedOf: (project: string) => DeliverableObservedState | null;
+  /** The promoted decision a job's deliverable led to, when one exists at composition time (else null — the honest pending statement). */
+  readonly promotionOf: (jobId: string) => DeliverablePromotion | null;
+}
+
+/** The honest degraded source (nothing on record anywhere) — every composition degrades to its honest statements, never a crash (R46). */
+export const emptyDeliverableSource: DeliverableSource = deepFreeze({
+  mandateOf: () => null,
+  observedOf: () => null,
+  promotionOf: () => null,
+});
+
 // ---------------------------------------------------------------------------
 // THE COMPOSER (pure, deterministic, never a throw)
 // ---------------------------------------------------------------------------

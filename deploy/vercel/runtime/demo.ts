@@ -137,6 +137,12 @@ import {
   type TimestampMs,
 } from '../../../services/api/src/index';
 import { deriveProjectEvidence, type ProjectEvidenceSeed } from './project-evidence';
+import {
+  composeResearchDeliverableResult,
+  emptyDeliverableSource,
+  type DeliverableObservedState,
+  type DeliverableSource,
+} from './deliverable';
 
 // ---------------------------------------------------------------------------
 // The demo seed constants (fixed, deterministic, tenant-scoped at seed time)
@@ -750,6 +756,94 @@ export function demoProjectEvidenceOf(ports: DemoEvidencePorts, tenant: string, 
   const organizationRef = organizationRefOfProject(ports.controlPlane, tenant, project);
   if (organizationRef === null) return null; // not compiled — a draft desk has no trading history
   return deriveProjectEvidence({ tenant, project, goal: goalSet.goal, constraintSet: goalSet.constraintSet, world, organizationRef });
+}
+
+// ---------------------------------------------------------------------------
+// THE DELIVERABLE SOURCE (FW-36-A, Round E register E-1 — the research
+// deliverable composition's inputs, over each backing's own captured
+// surfaces; the demoProjectEvidenceOf/durableProjectEvidenceOf precedent)
+// ---------------------------------------------------------------------------
+
+/** The demo scope's own observed world state: the SEEDED blotter's instruments + venues (never a fabricated world record). */
+function demoSeededObservedState(): DeliverableObservedState {
+  const markets: string[] = [];
+  const venues: string[] = [];
+  for (const row of demoSubmissionBlotter()) {
+    const order = row.order; // optional on the enriched shape — the refused row's echo is present, a bare record's may not be
+    if (order === undefined) continue;
+    if (!markets.includes(order.instrumentId)) markets.push(order.instrumentId);
+    if (!venues.includes(order.venueId)) venues.push(order.venueId);
+  }
+  return deepFreeze({ markets: Object.freeze(markets), venues: Object.freeze(venues) });
+}
+
+/** The promotion-reader the deliverable sources share (structural — the composition's PromotionRegistry satisfies it; never imported here). */
+interface DeliverablePromotionReader {
+  readonly decisionOfJob: (tenant: string, jobId: string) => { readonly outcomeId: string } | null;
+}
+
+/**
+ * THE DEMO ARM'S DELIVERABLE SOURCE (FW-36-A E-1): the W-25B goal-set capture
+ * (goal + constraint set, verbatim) + the W-28 world capture + the promotion
+ * registry, keyed on the AUTHORIZED tenant (L12 — a foreign tenant's capture
+ * never exists at this composition to begin with). The DEMO project's world
+ * is world-less BY DESIGN (W-28's own law) — its observed state is the seeded
+ * blotter's own instruments, and its mandate is the demo seed's own captured
+ * goal set (the seed's create rode the same route, so the capture holds it).
+ * Every read is nullable — nothing on record composes the HONEST degraded
+ * statements, never a fabricated number (THE HONESTY LAW).
+ */
+export function demoDeliverableSourceOf(
+  tenant: string,
+  ports: DemoEvidencePorts,
+  promotions: DeliverablePromotionReader | null,
+): DeliverableSource {
+  return {
+    mandateOf(project) {
+      const goalSet = ports.controlPlane.goalSets.get(`${tenant}/${project}`);
+      if (goalSet === undefined) return null; // nothing captured — the composer's honest "no goal statement on record"
+      const world = ports.jobSubmission.worlds.get(`${tenant}/${project}`) ?? null; // the DEMO project stays world-less by design
+      return { goal: goalSet.goal, constraintSet: goalSet.constraintSet, world };
+    },
+    observedOf(project) {
+      if (project === DEMO_PROJECT_ID) return demoSeededObservedState();
+      const world = ports.jobSubmission.worlds.get(`${tenant}/${project}`);
+      return world === undefined ? null : { markets: world.markets, venues: world.venues };
+    },
+    promotionOf(jobId) {
+      const decision = promotions === null ? null : promotions.decisionOfJob(tenant, jobId);
+      return decision === null ? null : { outcomeId: decision.outcomeId };
+    },
+  };
+}
+
+/**
+ * THE DURABLE ARM'S DELIVERABLE SOURCE (FW-36-A E-1): the same law over the
+ * W-25D seam's own hydrated surfaces (DurableEvidenceSource.goalSetOf — goal
+ * + constraint set + the rehydrated W-28 world, already tenant-scoped by the
+ * seam's construction) + the promotion registry. The DEMO project's observed
+ * state is the same seeded blotter (the boot world writes those rows durably).
+ */
+export function durableDeliverableSourceOf(
+  tenant: string,
+  source: DurableEvidenceSource,
+  promotions: DeliverablePromotionReader | null,
+): DeliverableSource {
+  return {
+    mandateOf(project) {
+      const goalSet = source.goalSetOf(project);
+      return goalSet === null ? null : { goal: goalSet.goal, constraintSet: goalSet.constraintSet, world: goalSet.world };
+    },
+    observedOf(project) {
+      if (project === DEMO_PROJECT_ID) return demoSeededObservedState();
+      const world = source.goalSetOf(project)?.world ?? null;
+      return world === null ? null : { markets: world.markets, venues: world.venues };
+    },
+    promotionOf(jobId) {
+      const decision = promotions === null ? null : promotions.decisionOfJob(tenant, jobId);
+      return decision === null ? null : { outcomeId: decision.outcomeId };
+    },
+  };
 }
 
 /** The organization ref of one project of one tenant (null when unbound, unknown, or the listing fails — R46). */
@@ -1451,6 +1545,16 @@ export interface DemoMachineryContext {
    * DemoPorts (a structural superset).
    */
   readonly ports: { readonly controlPlane: ControlPlanePort };
+  /**
+   * THE DELIVERABLE SOURCE (FW-36-A, Round E register E-1): the research
+   * completion's composed release-candidate reads the project's captured
+   * mandate + observed world + composition-time promotion through this —
+   * the backing's own captured surfaces (the demo arm's W-25B/W-28 captures;
+   * the durable arm's hydrated goal sets). Required, never optional: a
+   * composition with nothing on record passes `emptyDeliverableSource` and
+   * the composer degrades to its honest statements (THE HONESTY LAW).
+   */
+  readonly deliverables: DeliverableSource;
   /** The credential tenant (L12 — the compile pass serves ONLY this tenant's projects). */
   readonly tenant: string;
   /** The public-plane developer token (the organization bind route). */
@@ -1536,7 +1640,10 @@ function compileOrganizations(service: ApiService, context: DemoMachineryContext
  * host-injected request instant. Research jobs complete with a
  * release-candidate result record (the console's release-candidate notice
  * + evidence surfaces); learning jobs complete with a plain training
- * summary.
+ * summary. Since FW-36-A (Round E register E-1) the release candidate is
+ * COMPOSED from the project's own records (runtime/deliverable.ts) — the
+ * mandate's declared actuals + the observed world + the honest lineage +
+ * the SIMULATED disclosure — never the fixed pre-FW-36-A stub sentence.
  */
 export function demoMachineryTick(service: ApiService, context: DemoMachineryContext, at: number): void {
   compileOrganizations(service, context, at);
@@ -1566,8 +1673,22 @@ export function demoMachineryTick(service: ApiService, context: DemoMachineryCon
             jobId: job.jobId,
             status: 'complete',
             at: transitionAt,
+            // FW-36-A (E-1): the research deliverable is COMPOSED from the
+            // project's own captured records (every number verbatim-traceable;
+            // two different mandates produce observably different text —
+            // THE HONESTY LAW), additive on the stub's preserved shape
+            // (kind/specId/version/project — the promotion route reads them).
+            // Pure + never a throw: a missing record degrades to its honest
+            // statement (R46); the transition's own legality machine stays
+            // the arbiter of everything else.
             result: job.kind === 'research'
-              ? { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: job.project }
+              ? composeResearchDeliverableResult({
+                  project: job.project,
+                  director: job.project === DEMO_PROJECT_ID ? 'spec-demo-director' : 'spec-launch-director',
+                  mandate: context.deliverables.mandateOf(job.project),
+                  observed: context.deliverables.observedOf(job.project),
+                  promotion: context.deliverables.promotionOf(job.jobId),
+                })
               : { kind: 'training-summary', epochs: 3, project: job.project },
           }
         : { jobId: job.jobId, status: 'running', at: transitionAt },
