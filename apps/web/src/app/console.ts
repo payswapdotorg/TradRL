@@ -23,7 +23,6 @@
 
 import type { ApiTransport, FetchLike } from '../api/transport';
 import { createFetchTransport } from '../api/transport';
-import type { ProjectRecord } from '../api/contracts';
 import { createConsoleClient, type ConsoleClient } from '../api/client';
 import type { ApiConsoleError } from '../api/errors';
 import type { LaunchDraft, LaunchIds, StandaloneResearchInput } from '../core/launch';
@@ -40,11 +39,12 @@ import { historyFloorOf, openWorkspace, reduceWorkspace, verifyWorkspaceExportRe
 import { isPlaybackSpeedKey, parsePlaybackCustomSpeed, playbackCustomStepMsOf, playbackStepMsOf, TIME_MACHINE_STEP_MS, viewAtOf as viewAtOfTimeMachine } from '../core/timemachine';
 import { runWorkspaceExport } from '../core/export-flow';
 import type { WorkspaceScope } from '../core/tenant';
-import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
+import { DEMO_PROJECT_ID, isLaunchpadScope, LAUNCHPAD_PROJECT_ID, sessionOwnDesksOf } from '../core/tenant';
+import type { OversightDeskRead } from '../core/oversight';
 import type { ThemeName, ThemeStorage } from '../core/theme';
 import { persistTheme } from '../core/theme';
 import { isShellTarget } from '../core/nav';
-import { capsuleRefOf, paletteIndex, paletteOverlay, projectRefOf, rankPalette, sessionDesksForPalette, type DesksOf, type PaletteEntry } from '../core/palette';
+import { capsuleRefOf, paletteIndex, paletteOverlay, projectRefOf, rankPalette, type PaletteEntry } from '../core/palette';
 import {
   NOTICE_READ_STORAGE_KEY,
   noticeReadKey,
@@ -530,6 +530,49 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           }
         }
       });
+      // FW-37-B (Round F register F-2 — the consolidated oversight
+      // surface): THE OVERSIGHT READ CADENCE. One bundle per SESSION-OWN
+      // desk (core/tenant.ts's sessionOwnDesksOf — the session's own
+      // launched projects plus the shared demo desk; another session's
+      // desks NEVER enter, the L12 workspace boundary the switcher and
+      // the palette ride since this same wave), each collected through
+      // the SAME frozen routes every section rides (the standing
+      // risk-utilization read, the execution blotter, the decision
+      // stream) and dispatched as the cross-desk `oversight-read` event
+      // the fold renders. Degrades SILENTLY per desk, exactly like the
+      // goal/utilization reads: a desk without records on the host is
+      // the host's answer (the fold renders the honest "no read on
+      // record" row — never a fabricated number, never a degradation
+      // note for a route the host never promised that desk).
+      for (const desk of sessionOwnDesksOf(state.projectDirectory, DEMO_PROJECT_ID)) {
+        const deskId = desk.id;
+        try {
+          let utilization: Awaited<ReturnType<ConsoleClient['risk']['utilization']>> | null = null;
+          try {
+            utilization = await client.risk.utilization(deskId);
+          } catch {
+            utilization = null; // the host's honest answer for this desk — the fold names the absence
+          }
+          let submissions: readonly (Awaited<ReturnType<ConsoleClient['execution']['submissions']>>['items'][number])[] = [];
+          try {
+            submissions = [...(await client.execution.submissions(deskId)).items];
+          } catch {
+            submissions = [];
+          }
+          let decisions: readonly (Awaited<ReturnType<ConsoleClient['outcomes']['query']>>['items'][number])[] = [];
+          try {
+            decisions = [...(await client.outcomes.query({ project: deskId, at: instants.nowMs() })).items];
+          } catch {
+            decisions = [];
+          }
+          const bundle: OversightDeskRead = { projectId: deskId, utilization, submissions, decisions, readAt: instants.nowMs() };
+          dispatch({ kind: 'oversight-read', at: instants.nowMs(), read: bundle });
+        } catch {
+          // a desk whose bundle could not compose at all keeps its prior
+          // bundle (or its honest absence) — the oversight surface degrades
+          // per desk, never crashes the bundle.
+        }
+      }
       const projectId = bundleScope;
       if (projectId === LAUNCHPAD_PROJECT_ID) return;
       // THE BUNDLE'S OWN ORG-REF CAPTURE (D-7, W-27 — the org-status
@@ -900,7 +943,6 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       playbackSpeed: sessionPosture.timeMachine.speed,
       playbackCustomSpeed: sessionPosture.timeMachine.freeSpeed,
       playbackCustomSpeedError: null,
-      showAllDesks: false,
     };
     let paletteResults: readonly PaletteEntry[] = [];
     // §4.10's once-per-notice toast guard: the id of the notice the
@@ -1352,13 +1394,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     /** The evidence capsules for the palette (the Evidence section's own fold). */
     const capsulesForPalette = capsuleFromOutcomeList;
 
-    /** FW-34-B (§3.8 — the shared-tenant wall): the whole-workspace desk listing (the all-desks disclosure's expanded state — every desk in the directory, other sessions' included). */
-    const allDesksForPalette: DesksOf = (workspace: WorkspaceState): readonly ProjectRecord[] => workspace.projectDirectory;
-
-    /** The palette's live results for the current query (§4.14; D4's 100% coverage). FW-34-B (§3.8): the desks the index rides are the SESSION'S OWN by default (core/palette.ts's own law) — the WHOLE directory only while the all-desks disclosure is expanded (view.showAllDesks, the one expander governing the switcher and the palette both). */
+    /** The palette's live results for the current query (§4.14; D4's 100% coverage). FW-37-B (Round F register F-3 — the institutional disqualifier): the desks the index rides are the SESSION'S OWN, ALWAYS — computed INSIDE core/palette.ts with no widening parameter (the FW-34-B "all desks" override is removed at the module level; a wall a caller can widen is not a wall). The Round F evidence (L1 and L3 each switched into another session's desk and read its full blotter; M1: "157 other desks"; L3: "199 other desks") ruled the explicit-disclosure design insufficient — foreign sessions' desks never appear by name in the switcher or the palette (the L12 workspace boundary, now hard). */
     const refreshPalette = (): void => {
       if (view.palette === null) { paletteResults = []; return; }
-      paletteResults = rankPalette(paletteIndex(state, capsulesForPalette, view.showAllDesks ? allDesksForPalette : sessionDesksForPalette), view.palette.query);
+      paletteResults = rankPalette(paletteIndex(state, capsulesForPalette), view.palette.query);
     };
 
     onState((next: WorkspaceState) => {
@@ -1990,7 +2029,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             }
             refreshPalette();
           }
-          if (id === 'home' || id === 'inbox' || id === 'settings') {
+          // FW-37-B (F-2): 'oversight' is a non-section landing target
+          // exactly like home/inbox/settings (the workspace-level
+          // consolidated multi-desk view — the Overview group's second
+          // target; the selected section is untouched by it).
+          if (id === 'home' || id === 'oversight' || id === 'inbox' || id === 'settings') {
             view = { ...view, accountView: id, drawerOpen: false };
             render();
             if (openedSheet !== null) focusSheetStart();
@@ -2218,40 +2261,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             render();
           }
         }
-        // FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): THE
-        // SWITCHER'S EXPLICIT ALL-DESKS EXPANDER. The default listing is
-        // the session's own desks; the expander — rendered only when other
-        // sessions' desks exist in this shared workspace — discloses them
-        // BY COUNT and swaps the listing to the WHOLE registry (the
-        // FW-31-B durable win: every desk stays reachable, one explicit
-        // disclosure away, never a silent wall). The toggle is
-        // chrome-only state (never a dispatch); the focus lands back on
-        // the fresh expander so a keyboard journey can toggle it again.
-        if (kind === 'switcher-all-desks') {
-          view = { ...view, showAllDesks: !view.showAllDesks };
-          refreshPalette(); // the same expander governs the palette's desk listing
-          render();
-          if (document.querySelectorAll !== undefined) {
-            for (const candidate of document.querySelectorAll('[data-action="switcher-all-desks"]')) {
-              (candidate as { focus(): void }).focus();
-              break;
-            }
-          }
-        }
-        // FW-34-B (§3.8): the palette empty state's OWN all-desks action —
-        // a query that matched nothing of the session's own but DID match
-        // other sessions' desks discloses them inline; the explicit
-        // include-all expansion re-ranks the SAME query over the whole
-        // registry (never a silent wall), and the focus returns to the
-        // palette input (the keyboard journey continues where it was).
-        if (kind === 'palette-all-desks') {
-          if (!view.showAllDesks) {
-            view = { ...view, showAllDesks: true };
-            refreshPalette();
-            render();
-            focusPaletteInput();
-          }
-        }
+        // FW-37-B (Round F register F-3): the FW-34-B 'switcher-all-desks'
+        // and 'palette-all-desks' expanders are REMOVED — the switcher and
+        // the palette list ONLY this session's own desks (+ the shared demo
+        // project), with NO path back to the whole registry. The Round F
+        // evidence ruled the explicit-disclosure design insufficient (L1/L3
+        // each switched into another session's desk and read its full
+        // blotter); the workspace state still carries the whole durable
+        // registry (FW-31-B's win stays — it is just no longer REACHABLE
+        // from the switcher or the palette).
         // FW-34-B (Round C register §3.1) — THE WIZARD'S BACKDROP = THE
         // MOUSE DISMISSAL (L3: the restart-summoned wizard was an
         // a11y-invisible blocker that native mouse clicks could not
@@ -2637,7 +2655,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: jumpTo }); // renders via onState
           }
           if (selected.target !== null) {
-            if (selected.target === 'home' || selected.target === 'inbox' || selected.target === 'settings') {
+            if (selected.target === 'home' || selected.target === 'oversight' || selected.target === 'inbox' || selected.target === 'settings') {
               view = { ...view, accountView: selected.target };
             } else {
               view = { ...view, accountView: 'section' };

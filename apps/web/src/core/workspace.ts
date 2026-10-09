@@ -56,7 +56,8 @@ import type {
   ServedKnowledge,
 } from '../api/contracts';
 import { DEFAULT_SECTION, isSectionId, type SectionId } from './sections';
-import { assertProjectScope, isWorkspaceScope, type WorkspaceScope } from './tenant';
+import { assertProjectScope, assertTenantScope, isWorkspaceScope, type WorkspaceScope } from './tenant';
+import type { OversightDeskRead } from './oversight';
 import { canonicalJson, sha256Hex, sha256Of } from './digest';
 import {
   capsuleFromKnowledge,
@@ -170,6 +171,19 @@ export interface WorkspaceState {
   readonly riskUtilization: RiskUtilizationRead | null;
   /** The tenant's project directory (R6c, W-22): every project the credential can read — the scope switcher's list. Cross-project by design (the workspace stays ONE project's world; this is the directory you may switch that world to). */
   readonly projectDirectory: readonly ProjectRecord[];
+  /**
+   * FW-37-B (Round F register F-2 — the consolidated oversight surface):
+   * the per-desk oversight read bundles (ONE per session-own desk — the
+   * standing utilization read + the blotter + the decision stream, read
+   * through the same frozen routes every section rides). Cross-project
+   * by design, exactly like projectDirectory (the workspace stays ONE
+   * project's world; this is the multi-desk monitor's own data plane,
+   * gated at ingest by the tenant law and folded ONLY over the
+   * session-own listing — see core/oversight.ts). A project switch does
+   * NOT reset it (a switch changes the workspace's world, never the
+   * other desks' standing reads).
+   */
+  readonly oversight: readonly OversightDeskRead[];
   readonly timeMachine: TimeMachineState;
   readonly inbox: InboxState;
   readonly degraded: readonly DegradationNote[];
@@ -198,6 +212,7 @@ export function openWorkspace(scope: WorkspaceScope, at: number): WorkspaceState
     submissions: [],
     riskUtilization: null,
     projectDirectory: [],
+    oversight: [],
     timeMachine: liveTimeMachine(at),
     inbox: emptyInbox(),
     degraded: [],
@@ -224,6 +239,7 @@ export type WorkspaceEvent =
   | { readonly kind: 'risk-utilization-loaded'; readonly at: number; readonly read: RiskUtilizationRead }
   | { readonly kind: 'outcome-recorded'; readonly at: number; readonly outcome: OutcomeRecord }
   | { readonly kind: 'projects-listed'; readonly at: number; readonly records: readonly ProjectRecord[] }
+  | { readonly kind: 'oversight-read'; readonly at: number; readonly read: OversightDeskRead }
   | { readonly kind: 'section-selected'; readonly at: number; readonly section: SectionId }
   | { readonly kind: 'view-live'; readonly at: number }
   | { readonly kind: 'view-tminus'; readonly at: number; readonly tMinusMs: number }
@@ -529,6 +545,31 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       // records (a switch goes through project-adopted, which resets
       // every record first).
       return { ...withHistory, projectDirectory: Object.freeze([...event.records]) };
+  } else if (selector === 'oversight-read') {
+      // FW-37-B (F-2): ONE DESK'S OVERSIGHT BUNDLE enters the state.
+      // The ingest gates, the law this state's every record rides:
+      //   - the bundle is per-DESK (cross-project by design, exactly
+      //     like projects-listed — no project-scope assert: the bundle
+      //     is the MULTI-desk monitor's own data plane);
+      //   - L12: every decision record carries its own tenant — a
+      //     foreign tenant's record is the typed CrossTenantRenderError
+      //     BEFORE it can reach a render path;
+      //   - the bundle's utilization read, when present, must be its OWN
+      //     desk's (a crossed read never enters — the same
+      //     own-project law risk-utilization-loaded rides).
+      // The merge is per-desk replace-by-projectId (a re-read refreshes
+      // the desk's bundle; the fold renders the latest on record).
+      if (event.read.projectId.length === 0) {
+        throw new Error('reduceWorkspace: oversight-read requires the desk\'s own project id');
+      }
+      if (event.read.utilization !== null && event.read.utilization.projectId !== event.read.projectId) {
+        throw new Error(`reduceWorkspace: oversight-read requires the utilization read's own project scope (got ${JSON.stringify(event.read.utilization.projectId)}, the bundle is for ${JSON.stringify(event.read.projectId)})`);
+      }
+      for (const decision of event.read.decisions) {
+        assertTenantScope(withHistory.scope, { tenantId: decision.tenant });
+      }
+      const others = withHistory.oversight.filter((existing) => existing.projectId !== event.read.projectId);
+      return { ...withHistory, oversight: [...others, event.read] };
   } else if (selector === 'section-selected') {
       if (!isSectionId(event.section)) throw new Error(`reduceWorkspace: ${JSON.stringify(event.section)} is not a workspace section`);
       return { ...withHistory, selectedSection: event.section };
@@ -658,7 +699,26 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       const notes = [...withHistory.degraded, { route: event.route, family: event.family, message: event.message, at: event.at }];
       return { ...withHistory, degraded: Object.freeze(notes.slice(-DEGRADED_RETENTION)), connection: 'degraded' };
   } else if (selector === 'launch-draft-started') {
-      return { ...withHistory, launch: { ...withHistory.launch, phase: 'draft', draft: event.draft, step: 'goal', error: null } };
+      // FW-37-B (Round F register F-5 — the post-switch launch no-op,
+      // 5/9 personas): a NEW draft is a FRESH flow. The pre-fix arm
+      // kept the CONCLUDED launch's own scope binding (projectId /
+      // jobId / progress) and only flipped phase+draft — correct on the
+      // desk that just launched (projectId === scope, the wizard
+      // renders), but after a project SWITCH the render layer's
+      // launchOfScope guard (model.ts, D-15: the slice renders only
+      // within its OWN scope) saw a FOREIGN projectId and folded the
+      // slice to the quiet initial state — the state machine had
+      // accepted the draft (phase 'draft') while the wizard rendered
+      // NOWHERE and the launch panel kept its idle card: "Start the
+      // primary flow" silently no-oped until a full reload (M1's 8
+      // attempts; reload fixes it because a fresh boot's slice carries
+      // projectId null). The arm now resets the slice exactly like a
+      // fresh flow: the new draft is pre-project (projectId null — the
+      // same shape a blank boot starts from, and the same reset
+      // 'launch-reset' performs), so an open draft renders on every
+      // desk (the scope-independent law D-15 already states) and the
+      // handler, the state and the render agree on every path.
+      return { ...withHistory, launch: { phase: 'draft', draft: event.draft, step: 'goal', projectId: null, jobId: null, progress: [], error: null } };
 
   } else if (selector === 'launch-draft-edited') {
       return { ...withHistory, launch: { ...withHistory.launch, draft: event.draft } };

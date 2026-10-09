@@ -34,8 +34,8 @@ import { v, type VNode } from './vtree';
 export interface ShellView {
   /** The active theme (charter §1: light default, dark alternate). */
   readonly theme: ThemeName;
-  /** The non-section landing target: home, inbox or settings ('section' = the workspace's selected section). */
-  readonly accountView: 'home' | 'inbox' | 'settings' | 'section';
+  /** The non-section landing target: home, oversight, inbox or settings ('section' = the workspace's selected section). */
+  readonly accountView: 'home' | 'oversight' | 'inbox' | 'settings' | 'section';
   /** The API endpoint the console talks to (shown in Settings + the connection popover). */
   readonly endpoint: string;
   /** True when the console runs on a fake/demo adapter (the SIMULATED environment badge + section badge). */
@@ -115,16 +115,6 @@ export interface ShellView {
   readonly playbackCustomSpeed: string;
   /** FW-34-B: the free speed's named refusal (null when the committed text is valid or empty) — rendered inline beside the control, never a silent clamp. */
   readonly playbackCustomSpeedError: string | null;
-  /**
-   * FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): the
-   * project switcher's DEFAULT listing is the session's OWN desks (the
-   * demo project + the session-owned registry rows). This flag holds
-   * the explicit "all desks in this workspace" disclosure state — false
-   * (the hygienic default) until the user expands it; the registry
-   * itself stays whole in the workspace state (the durable win — every
-   * desk stays reachable, one explicit disclosure away).
-   */
-  readonly showAllDesks: boolean;
 }
 
 /** A reference to the record a detail sheet shows (§4.5a). */
@@ -150,7 +140,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null, scrubBounds: null, playbackSpeed: '1x', playbackCustomSpeed: '', playbackCustomSpeedError: null, showAllDesks: false };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null, scrubBounds: null, playbackSpeed: '1x', playbackCustomSpeed: '', playbackCustomSpeedError: null };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */
@@ -223,6 +213,10 @@ const C = (cx: string, cy: string, r: string): VNode => v('circle', { cx, cy, r 
 /** The nav glyph of every target (simple, calm, geometric — the ShareNet line language). */
 function navGlyphOf(target: ShellTarget): VNode {
   if (target === 'home') return icon([P('M4 11 12 4l8 7v9h-5.5v-6h-5v6H4Z')]);
+  // FW-37-B (F-2): the oversight glyph — a monitor over three desks
+  // (the consolidated multi-desk view; the layered-rows mark reads as
+  // "many rows under one view" in the shell's own line language).
+  if (target === 'oversight') return icon([v('rect', { x: '3.5', y: '5', width: '17', height: '11', rx: '2.5' }, []), P('M8 8.75h5.5'), P('M8 12h8'), P('M9 19h6'), P('M12 16.25V19')]);
   if (target === 'goal') return icon([C('12', '12', '8.25'), C('12', '12', '4'), v('circle', { cx: '12', cy: '12', r: '0.9', fill: 'currentColor', stroke: 'none' }, [])]);
   if (target === 'organization') return icon([C('6.5', '7', '2.6'), C('17.5', '7', '2.6'), C('12', '17', '2.6'), P('M8.7 8.6 10.9 14.7M15.3 8.6 13.1 14.7M9.1 7h5.8')]);
   if (target === 'market-world') return icon([C('12', '12', '8.25'), P('M3.75 12h16.5M12 3.75c3.8 3.6 3.8 12.9 0 16.5-3.8-3.6-3.8-12.9 0-16.5Z')]);
@@ -394,16 +388,23 @@ function settingsRow(title: string, description: string, body: readonly VNode[])
  */
 export function switcherOptions(state: WorkspaceState, view: ShellView): readonly ProjectRecord[] {
   // FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): the
-  // DEFAULT listing is the session's OWN desks — the records the
-  // session-scoped listing marks 'session-owned', plus every UNMARKED
-  // row (a backing that predates the marker — the honest fallback that
-  // keeps the switcher full, never silently empty) and the shared demo
-  // project (every session's teaching desk). The workspace's WHOLE
-  // registry stays ONE EXPLICIT DISCLOSURE AWAY (view.showAllDesks —
-  // the "all desks in this workspace" expander in the row below): the
-  // durable registry was the FW-31-B win, and it stays reachable —
-  // the default view is hygienic, not blind.
-  const listing = view.showAllDesks ? state.projectDirectory : sessionOwnDesksOf(state, DEMO_PROJECT_ID);
+  // listing is the session's OWN desks — the records the session-scoped
+  // listing marks 'session-owned', plus every UNMARKED row (a backing
+  // that predates the marker — the honest fallback that keeps the
+  // switcher full, never silently empty) and the shared demo project
+  // (every session's teaching desk).
+  //
+  // FW-37-B (Round F register F-3 — the institutional disqualifier): THE
+  // WALL IS NOW HARD. The FW-34-B "all desks in this workspace" expander
+  // is REMOVED: the Round F evidence (M1: "157 other desks"; L3: "199
+  // other desks"; L1 and L3 each switched into another session's desk and
+  // read its full blotter — L3 read a 49,999,992-notional fill) ruled the
+  // explicit-disclosure design insufficient. Other sessions' desks never
+  // appear by name in the switcher — no expansion path, no count, no
+  // reachability (the durable registry itself stays whole in the
+  // workspace state, FW-31-B's win; it is simply no longer reachable
+  // from this surface).
+  const listing = sessionOwnDesksOf(state, DEMO_PROJECT_ID);
   const filter = view.projectFilter.trim().toLowerCase();
   if (filter.length === 0) return listing;
   return listing.filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), filter) >= 0);
@@ -428,25 +429,13 @@ export function sessionOwnDesksOf(state: WorkspaceState, demoProjectId: string):
 
 /**
  * FW-34-B (§3.8): the desks the DEFAULT listing hides — OTHER console
- * sessions' desks in this shared workspace (core/tenant.ts's own fold —
- * the explicit disclosure's own count).
+ * sessions' desks in this shared workspace (core/tenant.ts's own fold).
+ * FW-37-B (Round F register F-3): no longer RENDERED anywhere (the
+ * switcher and the palette are the session's own desks only, hard) —
+ * kept as the honest fold the workspace census pins consume.
  */
 export function otherSessionsDesksOf(state: WorkspaceState, demoProjectId: string): readonly ProjectRecord[] {
   return otherSessionsDesksOfDirectory(state.projectDirectory, demoProjectId);
-}
-
-/**
- * FW-34-B (§3.8): other sessions' desks matching the LIVE palette query
- * (the palette empty state's own disclosure count — 0 when the listing is
- * already expanded or the query is empty, where the full list shows).
- */
-function hiddenDeskMatchesOf(state: WorkspaceState, view: ShellView): number {
-  if (view.showAllDesks || view.palette === null) return 0;
-  const query = view.palette.query.trim().toLowerCase();
-  if (query.length === 0) return 0;
-  return otherSessionsDesksOf(state, DEMO_PROJECT_ID)
-    .filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), query) >= 0)
-    .length;
 }
 
 /**
@@ -458,15 +447,14 @@ function hiddenDeskMatchesOf(state: WorkspaceState, view: ShellView): number {
 export function switcherCountLine(state: WorkspaceState, view: ShellView): string | null {
   const trimmed = view.projectFilter.trim();
   if (trimmed.length === 0) return null;
-  const listing = view.showAllDesks ? state.projectDirectory : sessionOwnDesksOf(state, DEMO_PROJECT_ID);
+  const listing = sessionOwnDesksOf(state, DEMO_PROJECT_ID);
   const matches = switcherOptions(state, view).length;
-  if (matches === 0 && !view.showAllDesks) {
-    const hidden = otherSessionsDesksOf(state, DEMO_PROJECT_ID).filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), trimmed.toLowerCase()) >= 0).length;
-    return hidden > 0
-      ? `No desk of yours matches “${trimmed}” — ${hidden} other desk${hidden === 1 ? '' : 's'} in this workspace do. Expand “all desks in this workspace” below to search them.`
-      : `No project matches “${trimmed}” — clear the filter to see all ${listing.length}.`;
+  if (matches === 0) {
+    // FW-37-B (F-3): no expansion hint, ever — the listing is the session's
+    // own desks only, and a no-match filter says exactly that (a foreign
+    // session's desk never appears by name here, never by invitation).
+    return `No project matches “${trimmed}” — clear the filter to see all ${listing.length}.`;
   }
-  if (matches === 0) return `No project matches “${trimmed}” — clear the filter to see all ${listing.length}.`;
   return `${matches} of ${listing.length} projects match “${trimmed}”.`;
 }
 
@@ -576,23 +564,15 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
       ...(switcherCountLine(state, view) === null
         ? []
         : [v('p', { class: 'card-note', 'data-project-filter-count': 'true' }, [switcherCountLine(state, view) as string])]),
-      // FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): THE
-      // EXPLICIT "ALL DESKS" DISCLOSURE. The default listing is THIS
-      // session's own desks; other sessions' desks in this shared
-      // workspace stay ONE EXPLICIT EXPANDER AWAY (never a silent wall,
-      // never lost — the FW-31-B durable registry stays whole in the
-      // workspace state). The expander states its own counts both ways:
-      // collapsed names the hidden count; expanded states what is
-      // showing and offers the way back.
-      ...(otherSessionsDesksOf(state, DEMO_PROJECT_ID).length === 0 ? [] : [v('button', {
-        class: 'empty-action switcher-all-desks',
-        'data-action': 'switcher-all-desks',
-        'data-all-desks': view.showAllDesks ? 'expanded' : 'collapsed',
-        type: 'button',
-        'aria-expanded': view.showAllDesks ? 'true' : 'false',
-      }, [view.showAllDesks
-        ? `Showing all ${state.projectDirectory.length} desks in this workspace (yours and other sessions\u2019) — back to my desks`
-        : `${otherSessionsDesksOf(state, DEMO_PROJECT_ID).length} other desks in this workspace belong to other sessions — show all desks`])]),
+      // FW-37-B (Round F register F-3 — the institutional disqualifier):
+      // the FW-34-B "all desks in this workspace" expander is REMOVED. The
+      // listing above is the session's own desks + the shared demo project,
+      // FULL STOP — the Round F evidence (L1/L3 each switched into another
+      // session's desk and read its full blotter; M1: "157 other desks";
+      // L3: "199 other desks") ruled the one-expander-away design
+      // insufficient. The workspace state keeps the whole durable registry
+      // (FW-31-B's win) — it is simply no longer reachable from the
+      // switcher or the palette.
     ]),
     // THE PRICING DISCLOSURE (W-19, the S5 CFO finding — "zero pricing
     // information" was a stated adoption blocker; QuantConnect's only
@@ -756,8 +736,10 @@ export function renderAppShell(
         ...(content.launch === null ? [] : [content.launch]),
       ]),
     ]),
-    // §4.14 the palette overlay (the app layer owns keys + Enter)
-    ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: scopedUnreadCount(state), hiddenDeskMatches: hiddenDeskMatchesOf(state, view), allDesks: view.showAllDesks })]),
+    // §4.14 the palette overlay (the app layer owns keys + Enter).
+    // FW-37-B (F-3): no hidden-desks disclosure, no all-desks option —
+    // the palette's desk group is the session's own desks only.
+    ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: scopedUnreadCount(state) })]),
     // §4.13 the onboarding wizard — THE ONE COPY: the fixed-position
     // modal overlay directly under the shell root (render/model.ts
     // renders the main content normally behind it; it never renders

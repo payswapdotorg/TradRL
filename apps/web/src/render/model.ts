@@ -52,10 +52,15 @@ import type { SectionId } from '../core/sections';
 import { scopedInbox, unreadCount, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, historyFloorOf, type WorkspaceState } from '../core/workspace';
+import { parseInstantUtc } from '../core/format';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
 import type { WatchEvent } from '../core/watch';
 import { timelineBucketsOf, formatTimeUtc, type TimelineEntry } from '../core/timeline';
 import { activeTargetOf, defaultShellView, heroPanel, renderAppShell, settingsPanel, type SheetRef, type ShellView } from './shell';
+// FW-37-B (Round F register F-2): the consolidated multi-desk oversight
+// panel — its own render module (the payload-budget extraction pattern;
+// the twelve UX.md sections' own panels stay untouched in this file).
+import { oversightPanel } from './oversight';
 // The onboarding wizard's only render is renderAppShell's §4.13 modal
 // overlay (render/shell.ts) — this model never imports it (the W-10b
 // double-render fix: one wizard, one copy, one place).
@@ -1308,6 +1313,72 @@ function marketWorldPanel(state: WorkspaceState, viewAt: number): VNode {
   ]);
 }
 
+/** One gate-evaluation row the served blotter carries (the additive limitsEvaluation field — the boundary's own truth surface, read structurally like the refusal payload). */
+interface LimitsEvaluationRow {
+  readonly constraintId: string;
+  readonly verdict: string;
+  readonly basis: string;
+  readonly observed: string | null;
+  readonly note: string;
+}
+
+/** Read one submission record's additive limitsEvaluation rows (never a throw — a malformed row is skipped). */
+function limitsEvaluationsOfSubmission(submission: GatewaySubmissionRecord): readonly LimitsEvaluationRow[] {
+  const rows = (submission as { readonly limitsEvaluation?: unknown }).limitsEvaluation;
+  if (!Array.isArray(rows)) return [];
+  const out: LimitsEvaluationRow[] = [];
+  for (const row of rows) {
+    if (typeof row !== 'object' || row === null) continue;
+    const record = row as { readonly constraintId?: unknown; readonly verdict?: unknown; readonly basis?: unknown; readonly observed?: unknown; readonly note?: unknown };
+    if (typeof record.constraintId !== 'string' || typeof record.verdict !== 'string' || typeof record.note !== 'string') continue;
+    out.push({
+      constraintId: record.constraintId,
+      verdict: record.verdict,
+      basis: typeof record.basis === 'string' ? record.basis : 'none',
+      observed: record.observed === null || record.observed === undefined ? null : String(record.observed),
+      note: record.note,
+    });
+  }
+  return out;
+}
+
+/** The latest gate-evaluation row per constraint across the served blotter (the most recent evaluation of each declared constraint the gateway actually decided). */
+function latestLimitsEvaluationsOf(submissions: readonly GatewaySubmissionRecord[]): readonly LimitsEvaluationRow[] {
+  // NOTE (the no-build loader's erasable subset): the Map's generic
+  // arguments are INFERRED, never spelled — a `new Map<string, X>()`
+  // expression-position generic is outside the erasable subset (the
+  // loader's own law; generics ride declarations only).
+  const latest = new Map();
+  for (const submission of submissions) {
+    for (const row of limitsEvaluationsOfSubmission(submission)) {
+      latest.set(row.constraintId, row); // the blotter's own order — the last row wins
+    }
+  }
+  return [...latest.values()];
+}
+
+/**
+ * FW-37-B (Round F register F-1, UI half): THE HONEST ENFORCEMENT
+ * SENTENCE — what the Risk card says about which classes bind. When the
+ * boundary's own limitsEvaluation rows are on file, the sentence states
+ * the TRUE split (the binding verdicts and the taught-not-enforced
+ * classes, by name); when none are on file it names the gate-evaluable
+ * subjects honestly and points at the gate evaluation card — NEVER the
+ * pre-fix blanket "enforced at the pre-trade gate" overclaim (S3/M3/L3's
+ * reproduction: the export's own verdicts contradicted the card).
+ */
+function riskEnforcementSentenceOf(state: WorkspaceState): string {
+  const evaluations = latestLimitsEvaluationsOf(state.submissions);
+  if (evaluations.length === 0) {
+    return 'Which of these bind at the pre-trade gate is stated by the boundary\u2019s own evaluations, not by this list: the notional/budget subjects (book.notional, capital.budget, order.notional) and the realized-cumulative subjects (risk.budget, risk.maxDrawdown) bind where derivable; every other class is taught, not enforced. The boundary\u2019s per-constraint verdicts render below once the blotter serves them.';
+  }
+  const binding = evaluations.filter((row) => row.verdict !== 'not_gate_evaluable').map((row) => row.constraintId);
+  const taught = evaluations.filter((row) => row.verdict === 'not_gate_evaluable').map((row) => row.constraintId);
+  const bindingText = binding.length === 0 ? 'none evaluated as binding on file' : binding.join(', ');
+  const taughtText = taught.length === 0 ? 'none on file' : taught.join(', ');
+  return `Per the boundary\u2019s own evaluations on file: binding at the gate — ${bindingText}; taught, not enforced (not gate-evaluable) — ${taughtText}. The constraint grammar\u2019s accepted domains are observation | state | action | outcome; scope the same bound at the OUTCOME domain and the gate reads it.`;
+}
+
 /** The per-section panel — the selected section's projection at the view instant. */
 function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = defaultShellView(state)): VNode {
   const scope = state.scope;
@@ -1523,6 +1594,35 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           // surface showed 'outcome.capital.budget equals' with the
           // 300,000,000 served by the record but never rendered.
           ...state.constraintSet.constraints.map((constraint) => factRow(`${constraint.severity} ${constraint.id}`, `${constraint.domain}.${constraint.subject} ${predicatePhraseOf(constraint.predicate)}`)),
+          // FW-37-B (Round F register F-1, UI half — the Risk cards'
+          // overclaim): the constraint list alone reads as "all of this
+          // is enforced at the pre-trade gate" — while the export's own
+          // limitsEvaluation stamps not_gate_evaluable on the classes
+          // that do not bind (S3/M3/L3 confirmed). The TRUE per-class
+          // verdicts now render from the boundary's own evaluation
+          // rows (the served blotter's additive limitsEvaluation), and
+          // when no evaluation is on file the card says exactly that
+          // — never the blanket enforcement claim.
+          v('p', { class: 'hint', 'data-risk-enforcement': 'true' }, [riskEnforcementSentenceOf(state)]),
+        ]));
+      }
+      // FW-37-B (F-1 UI half): THE GATE EVALUATION CARD — the boundary's
+      // own per-constraint verdicts (pass / breach / not_gate_evaluable),
+      // each with its observation basis and the accepted-domains teaching
+      // (the note the boundary serves verbatim — previously export-only,
+      // invisible in the UI; the E-2 teaching is now IN the product).
+      const evaluations = latestLimitsEvaluationsOf(state.submissions);
+      if (evaluations.length > 0) {
+        rows.push(v('div', { class: 'card', 'data-risk-evaluations': 'true' }, [
+          v('div', { class: 'card-title' }, ['Gate evaluation (per constraint, the boundary\u2019s own verdicts)']),
+          ...evaluations.map((row) => v('div', { class: 'decision-block', 'data-gate-evaluation': row.constraintId }, [
+            v('div', { class: 'stream-checks' }, [
+              v('span', { class: 'stream-label' }, [`${row.constraintId} · ${row.basis}`]),
+              statusPill(row.verdict === 'pass' ? 'live' : row.verdict === 'breach' ? 'warn' : 'idle', row.verdict, 'check-pill'),
+            ]),
+            ...(row.observed === null ? [] : [factRow('observed', row.observed)]),
+            v('p', { class: 'hint' }, [row.note]),
+          ])),
         ]));
       }
       // FW-32-A (Round A blocker 1 — the ONLY losing dimension,
@@ -1559,10 +1659,28 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           v('p', { class: 'hint' }, [`Standing read as of ${utilization.asOf} — the current instant, not projected to the view instant (point-in-time risk is not computable from the records on file).`]),
         ]));
         rows.push(v('div', { class: 'card', 'data-risk-utilization': 'breaches' }, [
-          v('div', { class: 'card-title' }, [`Active breaches (${utilization.activeBreaches.length})`]),
+          // FW-37-B (Round F register F-6 — M2 found, M3 reproduced): the
+          // L4 law at the breaches panel. The pre-fix panel rendered
+          // EVERY refusal on file at ANY Time Machine instant — a refusal
+          // observed in the FUTURE of a scrubbed instant leaked into the
+          // past view (Research/Decisions/Execution project correctly;
+          // Risk did not). The breach rows now project by their OWN
+          // observed instant (`at` — the boundary's ISO stamp, parsed by
+          // the pure parseInstantUtc): a breach renders at a past instant
+          // only when it was observed BY that instant; an unparseable
+          // instant is excluded (the L4-conservative choice). The standing
+          // BOUNDS above keep their own current-instant law (the asOf
+          // note) — point-in-time utilization is not computable, and the
+          // panel never fakes it.
+          v('div', { class: 'card-title' }, [`Active breaches (${utilization.activeBreaches.filter((breach) => { const observedAt = parseInstantUtc(breach.at); return observedAt !== null && observedAt <= viewAt; }).length} at this view instant)`]),
           ...(utilization.activeBreaches.length === 0
             ? [v('p', { class: 'card-note' }, ['No refusal is on file for this project — nothing stands in breach.'])]
-            : utilization.activeBreaches.map((breach) => v('div', { class: 'decision-block', 'data-risk-breach': breach.submissionId }, [
+            : utilization.activeBreaches
+                .filter((breach) => {
+                  const observedAt = parseInstantUtc(breach.at);
+                  return observedAt !== null && observedAt <= viewAt;
+                })
+                .map((breach) => v('div', { class: 'decision-block', 'data-risk-breach': breach.submissionId }, [
                 v('div', { class: 'stream-checks' }, [
                   v('span', { class: 'stream-label' }, [breach.submissionId]),
                   statusPill('warn', breach.kind === 'risk_limits_refusal' ? 'risk-limits refusal' : `refused · ${breach.stage}`, 'check-pill'),
@@ -1578,17 +1696,36 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
                   // template-literal interpolation.
                   const violationPredicate: { readonly kind?: unknown } = violation.predicate as { readonly kind?: unknown };
                   const violationKind = typeof violationPredicate?.kind === 'string' ? violationPredicate.kind : 'predicate';
-                  return factRow(`violation ${violation.constraintId}`, `${violation.subject} ${violationKind} bound vs observed ${violation.observed}`);
+                  // FW-37-B (Round F register F-7 — S3's CIO-confusing
+                  // card): the violation's "observed" is the REFUSED
+                  // candidate's own projection (the pre-trade arithmetic
+                  // the gate refused — e.g. a projected book of 184,859.99
+                  // against an actual book of 4,860). It is now labeled
+                  // unmistakably as the PROJECTION, and the STANDING book
+                  // on file (the matching bound's own current) renders
+                  // beside it — the breach card can no longer read as a
+                  // false standing breach.
+                  const standing = utilization.bounds.find((bound) => bound.constraintId === violation.constraintId);
+                  return v('div', { class: 'decision-block' }, [
+                    factRow(`violation ${violation.constraintId}`, `${violation.subject} ${violationKind} bound vs projected ${violation.observed} (the refused candidate's own projection — what the gate refused, not the standing book)`),
+                    ...(standing === undefined || standing.current === null ? [] : [factRow('standing book on file', `${formatNumberGrouped(standing.current)} · ${standing.status} (the standing utilization row above)`)]),
+                  ]);
                 })),
                 ...(breach.rationale === undefined ? [] : [v('p', { class: 'card-note decision-rationale' }, [breach.rationale])]),
               ]))),
+          ...(utilization.activeBreaches.some((breach) => {
+            const observedAt = parseInstantUtc(breach.at);
+            return observedAt === null || observedAt > viewAt;
+          })
+            ? [v('p', { class: 'hint', 'data-risk-breach-projection': 'true' }, [`${utilization.activeBreaches.filter((breach) => { const observedAt = parseInstantUtc(breach.at); return observedAt === null || observedAt > viewAt; }).length} standing breach${utilization.activeBreaches.filter((breach) => { const observedAt = parseInstantUtc(breach.at); return observedAt === null || observedAt > viewAt; }).length === 1 ? '' : 'es'} observed after (or unparseable against) this view instant — not shown here (L4).`])]
+            : []),
           v('p', { class: 'hint', 'data-risk-disclosure': 'true' }, [utilization.disclosure]),
         ]));
       } else if (state.constraintSet !== null) {
         // The honest pre-read absence: the bounds are declared and enforced
         // (the gate's refusals carry receipts), but no standing read is on
         // record for this scope — a teaching note, never a fabricated meter.
-        rows.push(v('p', { class: 'hint', 'data-risk-utilization': 'absent' }, ['No standing utilization read is on record for this scope — the declared bounds above are enforced at the pre-trade gate; the utilization read serves when the host route answers this project.']));
+        rows.push(v('p', { class: 'hint', 'data-risk-utilization': 'absent' }, ['No standing utilization read is on record for this scope — the declared bounds above are taught here exactly as the boundary enforces them (see the enforcement note); the utilization read serves when the host route answers this project.']));
       }
       const riskPolicies: Map<string, string> = new Map();
       for (const outcome of projectToView(state.outcomes, viewAt, availabilityOfOutcome)) {
@@ -1864,10 +2001,16 @@ export function renderConsoleModel(state: WorkspaceState, at: number, view: Shel
       ? homePanel(state, viewAt)
       : activeTarget === 'inbox'
         ? inboxPanel(state, viewAt)
-        : activeTarget === 'settings'
-          ? settingsPanel(state, view)
-          : sectionPanel(state, viewAt, view);
-    const launch = activeTarget === 'inbox' || activeTarget === 'settings' ? null : launchPanel(state, view);
+        : activeTarget === 'oversight'
+          ? oversightPanel(state, viewAt, view)
+          : activeTarget === 'settings'
+            ? settingsPanel(state, view)
+            : sectionPanel(state, viewAt, view);
+    // FW-37-B (F-2): the oversight view carries NO launch panel — it is
+    // the workspace-level monitor (cross-desk), not a desk's own working
+    // surface; the primary flow starts from Home or any section, exactly
+    // as before.
+    const launch = activeTarget === 'inbox' || activeTarget === 'settings' || activeTarget === 'oversight' ? null : launchPanel(state, view);
     return renderAppShell(state, at, view, activeTarget, {
       timeMachine: timeMachineBar(state, viewAt, view),
       main,

@@ -3,8 +3,10 @@
 // Laws pinned here:
 //   - the four charter groups, in charter order, with their exact
 //     labels (Overview / Workspace / Evidence / Account);
-//   - ALL FIFTEEN targets, in navigation order (D1: one-click
-//     reachability — the complete list is the law);
+//   - ALL SIXTEEN targets, in navigation order (D1: one-click
+//     reachability — the complete list is the law; FW-37-B added
+//     'oversight' to the Overview group — the consolidated multi-desk
+//     view, Round F register F-2);
 //   - the twelve workspace sections keep UX.md's own order inside the
 //     Workspace and Evidence groups;
 //   - every target carries a title and a §3 one-sentence subtitle.
@@ -25,36 +27,39 @@ describe('nav: the four charter groups, in order', () => {
     ]);
   });
 
-  it('the Evidence group is Evidence, Outcomes, Lessons; Account is Inbox, Settings; Overview is Home', () => {
-    expect(NAV_GROUPS.find((group) => group.label === 'Overview')?.targets).toEqual(['home']);
+  it('the Evidence group is Evidence, Outcomes, Lessons; Account is Inbox, Settings; Overview is Home + Oversight (FW-37-B)', () => {
+    expect(NAV_GROUPS.find((group) => group.label === 'Overview')?.targets).toEqual(['home', 'oversight']); // FW-37-B (F-2): the consolidated multi-desk view
     expect(NAV_GROUPS.find((group) => group.label === 'Evidence')?.targets).toEqual(['evidence', 'outcomes', 'lessons']);
     expect(NAV_GROUPS.find((group) => group.label === 'Account')?.targets).toEqual(['inbox', 'settings']);
   });
 });
 
-describe('nav: the fifteen targets (D1 one-click reachability)', () => {
-  it('all fifteen targets, in navigation order (the groups partition them — nothing repeats)', () => {
+describe('nav: the sixteen targets (D1 one-click reachability)', () => {
+  it('all sixteen targets, in navigation order (the groups partition them — nothing repeats)', () => {
     expect(SHELL_TARGETS).toEqual([
       'home',
+      'oversight',
       ...WORKSPACE_SECTIONS,
       'inbox',
       'settings',
     ]);
-    expect(SHELL_TARGETS.length).toBe(15);
+    expect(SHELL_TARGETS.length).toBe(16);
   });
 
   it('every target is unique', () => {
     expect(new Set(SHELL_TARGETS).size).toBe(SHELL_TARGETS.length);
   });
 
-  it('the target guards accept exactly the fifteen targets', () => {
+  it('the target guards accept exactly the sixteen targets', () => {
     for (const target of SHELL_TARGETS) expect(isShellTarget(target)).toBe(true);
     expect(isShellTarget('home')).toBe(true);
+    expect(isShellTarget('oversight')).toBe(true); // FW-37-B (F-2)
     expect(isShellTarget('dashboard')).toBe(false);
     expect(isShellTarget('')).toBe(false);
     expect(isShellTarget(null)).toBe(false);
     expect(isSectionTarget('goal')).toBe(true);
     expect(isSectionTarget('home')).toBe(false);
+    expect(isSectionTarget('oversight')).toBe(false); // a landing target, never a workspace section
     expect(isSectionTarget('inbox')).toBe(false);
   });
 });
