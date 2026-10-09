@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { JobRecord, OutcomeRecord } from '../api/contracts';
-import { openWorkspace } from './workspace';
+import { openWorkspace, reduceWorkspace } from './workspace';
 import { composeVerifiedExport, dispatchExportDownload, ExportCompositionError, type DownloadAnchor, type DownloadSurface } from './export-download';
 
 const T0 = 1_700_000_000_000;
@@ -35,14 +35,19 @@ function outcomeRecord(): OutcomeRecord {
   } as unknown as OutcomeRecord;
 }
 
-/** A workspace state carrying one job + one outcome. */
+/**
+ * A workspace state carrying one job + one outcome AND a live events
+ * history (one dispatched event — the receipt's sealed-event count is
+ * real, never the zero of a history-less fixture).
+ */
 function stateWithHistory(): ReturnType<typeof openWorkspace> {
   const state = openWorkspace({ tenantId: 'tenant-a', projectId: 'prj-a' }, T0);
-  return {
+  const withJobs = {
     ...state,
     jobs: [jobRecord()],
     outcomes: [outcomeRecord()],
   };
+  return reduceWorkspace(withJobs, { kind: 'connection-changed', at: T0 + 40, status: 'connected' });
 }
 
 /** One recorded anchor (the click/removal counts a surface's behavior). */

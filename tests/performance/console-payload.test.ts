@@ -89,9 +89,26 @@ describe('the console boot payload budgets (the no-build console\'s boot transfe
   //   3.4 KiB) — the extraction pattern the budget exists to encourage; the
   //   remainder is interaction-layer wiring (the one delegated resolver) that
   //   has no pure home. The byte total stays under its own budget untouched.
+  // Re-recorded (FW-36-B, 2026-10-09): 44 files, 936,552 bytes total (914.6
+  //   KiB). BOTH budgets were CONSCIOUSLY raised per this file's own protocol
+  //   — total 896 -> 960 KiB, single-file 160 -> 176 KiB — after the wave's
+  //   own comment-compression pass reclaimed what it could (~6 KiB across the
+  //   wave's blocks, the FW-35-B discipline): FW-36-B (the Round E register's
+  //   product wave — the export receipt seam + the dual-home storage + the
+  //   recovery card + the wizard click-through, the live-form submit read,
+  //   the first-paint loading markers, the constraint-vocabulary disclosure,
+  //   the palette footer disclosure, the lessons citation reach) added two
+  //   NEW core modules (src/core/export-download.ts, src/core/dual-storage.ts
+  //   — the extraction pattern again) plus ~5.5 KiB of interaction-layer
+  //   wiring to src/app/console.ts (163.8 -> 173.7 KiB, a wave whose six
+  //   items each carry app-layer wiring with no pure home). The alternative
+  //   — stripping the wave's root-cause disclosures to fit the old budgets —
+  //   would trade this gate for the repo's documentation law; the raise is
+  //   the protocol's answer, recorded here. The next single-file crossing is
+  //   ~2.3 KiB of headroom away — budget from the start.
   const FILE_COUNT_BUDGET = 64; // each source is one boot fetch — the fetch count stays bounded
-  const TOTAL_BYTES_BUDGET = 896 * 1024; // 896 KiB — the whole boot transfer (raised from 768 KiB at FW-33-B — see the note above)
-  const LARGEST_FILE_BUDGET = 160 * 1024; // 160 KiB — one fetch + one strip pass (raised from 128 KiB at FW-34-B — see the note above)
+  const TOTAL_BYTES_BUDGET = 960 * 1024; // 960 KiB — the whole boot transfer (raised from 896 KiB at FW-36-B — see the note above)
+  const LARGEST_FILE_BUDGET = 176 * 1024; // 176 KiB — one fetch + one strip pass (raised from 160 KiB at FW-36-B — see the note above)
 
   it('the payload is the copy spec\'s set on the real tree: index.html + non-test sources, NO test sources, the loader\'s critical path present', () => {
     const { files, bytes } = consolePayload();

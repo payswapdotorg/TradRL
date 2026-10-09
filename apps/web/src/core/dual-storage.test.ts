@@ -31,7 +31,10 @@ class MapStorage implements SeamStorage {
 /** A document-like cookie writer (the browser's document.cookie assignment semantics, jar-parsed). */
 class CookieDocument implements CookieWriter {
   cookie = '';
+  /** Every assignment the seam issued (the browser CONSUMES these — the jar reads back name=value only). */
+  readonly assignments: string[] = [];
   setCookie(assignment: string): void {
+    this.assignments.push(assignment);
     const separator = assignment.indexOf('=');
     const name = assignment.slice(0, separator);
     const value = assignment.slice(separator + 1, assignment.indexOf(';'));
@@ -51,7 +54,9 @@ describe('FW-36-B (Round E register §3.2): the dual-home storage seam', () => {
     expect((cookie as SeamStorage).getItem('tradrl_theme')).toBe('dark');
     expect(JSON.parse((cookie as SeamStorage).getItem('tradrl_console_posture') ?? '{}')).toEqual({ onboarded: true, note: 'a; b "c" d' });
     // the write carries the long-lived shape (Max-Age + path + SameSite)
-    expect(documentLike.cookie).toContain('tradrl_theme=dark; Max-Age=315360000; Path=/; SameSite=Lax');
+    // — the browser CONSUMES the assignment; the jar reads back
+    // name=value only, so the pin reads the recorded assignment.
+    expect(documentLike.assignments.some((assignment) => assignment === 'tradrl_theme=dark; Max-Age=315360000; Path=/; SameSite=Lax')).toBe(true);
     // an unknown key reads null; a document without the cookie seam yields NO home
     expect((cookie as SeamStorage).getItem('absent')).toBeNull();
     expect(cookieStorageOf({} as CookieWriter)).toBeNull();

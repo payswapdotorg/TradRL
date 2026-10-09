@@ -126,29 +126,27 @@ export interface ShellView {
    */
   readonly showAllDesks: boolean;
   /**
-   * FW-36-B (Round E register §3.6 — first-paint transients, the warm
-   * path too): true while a read bundle for the CURRENT scope is in
-   * flight (boot + every scope adoption). The Home stat tiles render
-   * the loading skeleton and the unread surfaces render '…' while a
-   * FRESH workspace hydrates — never a misleading zero/'Not compiled'
-   * window that reads like record loss.
+   * FW-36-B (§3.6 — first-paint transients): true while a read bundle
+   * for the CURRENT scope is in flight (boot + every adoption). The
+   * Home tiles render the loading skeleton and the unread surfaces
+   * render '…' while a FRESH workspace hydrates — never a misleading
+   * zero/'Not compiled' window that reads like record loss.
    */
   readonly hydrating: boolean;
   /**
-   * FW-36-B (Round E register §3.2 — total restart recovery): true when
-   * this boot found NO client posture (a first-run browser, or one
-   * whose web-storage state was discarded by the restart — the
+   * FW-36-B (§3.2): true when this boot found NO client posture (a first
+   * run, or a restart that discarded the web-storage state — the
    * personas' measured path). Home renders the ONE-GESTURE recovery
-   * card for exactly this browser: the returning desk picker.
+   * card (the returning desk picker) for exactly this browser.
    */
   readonly returningCandidate: boolean;
   /** The recovery card's live filter text (FW-36-B §3.2 — narrows the desk picker by fuzzy name/id). */
   readonly recoveryFilter: string;
   /**
    * FW-36-B (§3.2 — the session-desks membership arm): the desks THIS
-   * browser adopted (the posture record's claimedDesks, most-recent
-   * first). The switcher's and the palette's DEFAULT listing folds
-   * them in beside the host's own session-owned rows.
+   * browser adopted (the posture's claimedDesks, most-recent first) —
+   * the switcher's and palette's DEFAULT listing folds them in beside
+   * the host's own session-owned rows.
    */
   readonly claimedDesks: readonly string[];
 }

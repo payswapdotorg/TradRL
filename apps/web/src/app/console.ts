@@ -37,7 +37,7 @@ import type { SectionId } from '../core/sections';
 import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
 import { historyFloorOf, openWorkspace, reduceWorkspace, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
-import { composeVerifiedExport, dispatchExportDownload, ExportCompositionError, type DownloadAnchor } from '../core/export-download';
+import { composeVerifiedExport, dispatchExportDownload, downloadSurfaceOf, ExportCompositionError } from '../core/export-download';
 import { isPlaybackSpeedKey, parsePlaybackCustomSpeed, playbackCustomStepMsOf, playbackStepMsOf, TIME_MACHINE_STEP_MS, viewAtOf as viewAtOfTimeMachine } from '../core/timemachine';
 import type { WorkspaceScope } from '../core/tenant';
 import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
@@ -177,6 +177,9 @@ export interface PendingPress {
 /** The delegated-click listener's minimal event shape. */
 export interface DelegatedClickEvent {
   readonly target: ClickTarget | null;
+  /** FW-36-B (§3.2): a real pointer click's coordinates (the wizard-overlay click-through resolves the element UNDER the overlay at the point; absent on synthetic/keyboard activations). */
+  readonly clientX?: number;
+  readonly clientY?: number;
 }
 
 /** A delegated key event (the drawer's Esc close + focus trap). */
@@ -228,6 +231,8 @@ export interface MountDocument {
   readonly head?: Element | null;
   /** Optional: the document's root element (the browser binding provides it). D-6d (W-25C): the html element's `data-theme` is synced to the active theme at every paint — tokens.css keys the html background on it, so a stale attribute flashes the wrong color on overscroll. */
   readonly documentElement?: Element | null;
+  /** Optional: the hit-test stack at a viewport point (the browser binding provides it). FW-36-B (§3.2): the wizard-overlay CLICK-THROUGH resolves the element under the dimmed overlay at the click's own coordinates. */
+  elementsFromPoint?(x: number, y: number): Element[];
 }
 
 /** The launchpad project id — the workspace's pre-launch scope placeholder (core/tenant.ts owns the constant; re-exported for the existing imports). */
@@ -336,12 +341,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // write-through is one with the record's — the legacy key keeps its
     // own write inside persistPosture).
     if (state.scope.projectId !== scopeBefore && state.scope.projectId !== LAUNCHPAD_PROJECT_ID) {
-      // FW-36-B (§3.2 — the session-desks membership arm): every adoption
-      // CLAIMS the desk for this browser (the posture record's own list,
-      // most-recent-first) — the switcher's and the palette's default
-      // listing folds the claim in, so a browser that re-adopted its desk
-      // after a storage discard keeps it in its OWN listing, never behind
-      // the other-sessions wall.
+      // FW-36-B (§3.2): every adoption CLAIMS the desk for this browser
+      // (the posture's claimedDesks list, most-recent-first) — the
+      // switcher's/palette's default listing folds the claim in, so a
+      // browser that re-adopted its desk after a storage discard keeps
+      // it in its OWN listing, never behind the other-sessions wall.
       sessionPosture = { ...sessionPosture, scopeProjectId: state.scope.projectId, claimedDesks: claimDesk(sessionPosture.claimedDesks, state.scope.projectId) };
       if (options.scopeStorage !== undefined) {
         persistScopeProject(options.scopeStorage, state.scope.projectId);
@@ -435,11 +439,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     dispatch(event);
   }
 
-  // FW-36-B (Round E register §3.6 — first-paint transients): the count
-  // of read bundles in flight for the CURRENT scope (boot + every scope
-  // adoption's refetch). While one is in flight the Home tiles render the
-  // loading skeleton and the unread surfaces render '…' — never a
-  // misleading zero/'Not compiled' window that reads like record loss.
+  // FW-36-B (§3.6 — first-paint transients): read bundles in flight for
+  // the CURRENT scope (boot + every adoption's refetch). While one is in
+  // flight the Home tiles render the loading skeleton and the unread
+  // surfaces render '…' — never a misleading zero/'Not compiled' window.
   let readsInFlight = 0;
 
   async function refresh(): Promise<void> {
@@ -918,14 +921,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       playbackCustomSpeed: sessionPosture.timeMachine.freeSpeed,
       playbackCustomSpeedError: null,
       showAllDesks: false,
-      // FW-36-B (Round E register §3.2 — total restart recovery): the
-      // RETURNING-CANDIDATE flag is captured ONCE at mount — true exactly
-      // when this boot found NO client posture (a first-run browser, or
-      // one whose web-storage state was discarded by the restart — the
-      // personas' measured path). Home's ONE-GESTURE recovery card rides
-      // it; the claims arm renders the browser's adopted desks in its own
-      // default listing. hydrating is computed per render from the boot's
-      // reads-in-flight count.
+      // FW-36-B (§3.2): the RETURNING-CANDIDATE flag, captured ONCE at
+      // mount — true exactly when this boot found NO client posture (a
+      // first run, or a restart that discarded the web-storage state —
+      // the personas' measured path). Home's ONE-GESTURE recovery card
+      // rides it; hydrating is computed per render from readsInFlight.
       hydrating: false,
       returningCandidate: !(sessionPosture.onboarded || (options.onboardingStorage !== undefined && isOnboarded(readStoredOnboarding(options.onboardingStorage)))),
       recoveryFilter: '',
@@ -1411,10 +1411,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     };
 
     onState((next: WorkspaceState) => {
-      // FW-36-B (§3.2 — the membership + recovery arms' view sync): the
-      // posture's claimed desks and the recovery card's dismissal follow
-      // every dispatch — an adopted desk claims + the card stands down
-      // the moment the user is back on a desk of their own.
+      // FW-36-B (§3.2): the claimed desks + the recovery card's dismissal
+      // follow every dispatch — an adopted desk claims and the card
+      // stands down the moment the user is back on a desk of their own.
       if (view.claimedDesks !== sessionPosture.claimedDesks || (view.returningCandidate && sessionPosture.claimedDesks.length > 0)) {
         view = { ...view, claimedDesks: sessionPosture.claimedDesks, ...(sessionPosture.claimedDesks.length > 0 ? { returningCandidate: false } : {}) };
       }
@@ -1628,10 +1627,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         return;
       }
-      // FW-36-B (§3.2 — the recovery card's filter): the returning
-      // browser's desk picker narrows live by fuzzy name/id — buffer
-      // ONLY, never a dispatch (the card's desks render from the
-      // directory, the filter is chrome state).
+      // FW-36-B (§3.2): the recovery card's filter narrows live by
+      // fuzzy name/id — buffer ONLY, never a dispatch (chrome state).
       const recoveryFilterQuery = recoveryFilterQueryOf(event.target);
       if (recoveryFilterQuery !== null) {
         if (view.recoveryFilter !== recoveryFilterQuery) {
@@ -1971,7 +1968,57 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      * beat) — and cancels the browser's own click synthesis, so the action
      * fires EXACTLY once, on the element the user actually sees.
      */
-    const interactionAt = (rawTarget: ClickTarget | null): void => {
+    /**
+     * FW-36-B (§3.2): the topmost element at a viewport point that is
+     * NOT the wizard overlay (or inside it) — the click-through's
+     * hit-test. Null when the document seam provides no hit-testing or
+     * nothing sits under the overlay (the plain dismissal answers).
+     */
+    const elementUnderWizardAt = (x: number, y: number): ClickTarget | null => {
+      const hitTest = document.elementsFromPoint;
+      if (hitTest === undefined) return null;
+      try {
+        for (const candidate of hitTest.call(document, x, y)) {
+          if (candidate.closest?.('.onboarding') !== null && candidate.closest?.('.onboarding') !== undefined) continue;
+          return candidate as ClickTarget;
+        }
+      } catch {
+        // a hit-test that refuses degrades to the plain dismissal
+      }
+      return null;
+    };
+    const interactionAt = (rawTargetArg: ClickTarget | null, point: { readonly clientX: number; readonly clientY: number } | null = null): void => {
+      let rawTarget = rawTargetArg;
+      // FW-36-B (§3.2, the ≤1-gesture law): THE DIMMED WIZARD BACKDROP IS
+      // CLICK-THROUGH for a real pointer click. The overlay is fixed
+      // inset:0 z-80 — it COVERS the page, so a returning browser's first
+      // click on its own desk (the recovery card) lands on the OVERLAY,
+      // not the card (M3/L3/S5 measured the wizard "modal-blocking": the
+      // FW-35-B acting-past law could never fire — the click never
+      // resolved past the overlay). The click resolves THROUGH it: the
+      // wizard dismisses (same synchronous persistence as the backdrop
+      // branch) and the element UNDER the overlay at the click's own
+      // coordinates becomes the target — one click acts. A press inside
+      // the card keeps the wizard's own affordances; a click resolving to
+      // nothing interactive dismisses alone (the plain backdrop law).
+      if (point !== null && view.onboarding !== null) {
+        const pressed = rawTarget?.closest?.('[data-action]');
+        const pressedOverlay = pressed !== null && pressed !== undefined && pressed.getAttribute('data-action') === 'onboarding-backdrop';
+        const insideCard = rawTarget?.closest?.('.onboarding-card') !== null && rawTarget?.closest?.('.onboarding-card') !== undefined;
+        if (pressedOverlay && !insideCard) {
+          view = { ...view, accountView: 'home', onboarding: null };
+          sessionPosture = { ...sessionPosture, onboarded: true };
+          writeSessionPosture();
+          if (options.onboardingStorage !== undefined) persistOnboarding(options.onboardingStorage);
+          const underlying = elementUnderWizardAt(point.clientX, point.clientY);
+          if (underlying === null) {
+            render();
+            focusMainContent();
+            return;
+          }
+          rawTarget = underlying; // the click's intent resolves through the overlay
+        }
+      }
       let target = rawTarget?.closest?.('[data-target]');
       let navResolved = target !== null && target !== undefined && target.tagName === 'BUTTON' && target.getAttribute('data-target') !== null && isShellTarget(target.getAttribute('data-target') as string);
       let action = rawTarget?.closest?.('[data-action]');
@@ -2366,38 +2413,30 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           render();
           focusOnboardingStart(); // the dialog's own entry point (the keyboard journey starts inside the modal)
         }
-        // §5 D7 the data export — the R9 v2 chain export (W-21 seam:
-        // the button emits the verified composition — the real sha-256
-        // event chain, capsules, decisions and read state; core owns the
-        // bytes).
+        // §5 D7 the data export — the R9 v2 chain export (W-21 seam: the
+        // button emits the verified composition; core owns the bytes).
         if (kind === 'export-workspace') {
-          // FW-36-B (Round E register §3.1 — S5's flow: 5 clicks, no
-          // file, a false "Export downloaded" toast): THE TOAST IS A
-          // RECEIPT, NEVER A WISH. The composition is verified through
-          // the SAME file-alone rules the Settings verifier rides before
-          // any claim; the anchor is clicked IN-TREE (appended, clicked,
-          // removed — a detached anchor's click is the class a hardened
-          // context silently declines); and the success toast fires ONLY
-          // on a DISPATCHED download, carrying the byte count + the
-          // sealed event count so the claim is checkable against the
-          // landed file. A composition that cannot verify, or a surface
-          // that never receives the click, surfaces the honest failure.
+          // FW-36-B (§3.1 — S5's flow: 5 clicks, no file, a false "Export
+          // downloaded" toast): THE TOAST IS A RECEIPT, NEVER A WISH. The
+          // composition verifies through the same file-alone rules the
+          // Settings verifier rides; the anchor dispatches IN-TREE; the
+          // success toast fires ONLY on a dispatched download, carrying
+          // the byte + sealed-event counts so the claim is checkable
+          // against the landed file. A composition that cannot verify, or
+          // a surface that never receives the click, surfaces the honest
+          // failure — never a success claim.
           const fileName = `tradrl-workspace-${state.scope.projectId}.json`;
           try {
             const composed = composeVerifiedExport(state);
-            const downloadSurface = {
-              createElement: (tag: string): DownloadAnchor => document.createElement(tag) as unknown as DownloadAnchor,
-              appendChild: (node: DownloadAnchor): unknown => (root as Element & { appendChild?(child: unknown): unknown }).appendChild?.(node),
-            };
-            const dispatched = dispatchExportDownload(downloadSurface, fileName, composed.bytes);
+            const dispatched = dispatchExportDownload(downloadSurfaceOf(document, root), fileName, composed.bytes);
             if (!dispatched) {
               throw new ExportCompositionError('this browser surface never received the download click');
             }
             // FW-32-B (b3): the download CONFIRMATION toast — now the
-            // receipt (the exact byte count + the sealed event count of
-            // the bytes handed to the browser), on the W-15b-r lifecycle
-            // (the same surface + token-checked ~5s auto-dismiss the
-            // notice toast rides, with the manual close it carries).
+            // receipt (the exact byte + sealed-event counts of the bytes
+            // handed to the browser), on the W-15b-r lifecycle (the same
+            // surface + token-checked ~5s auto-dismiss the notice toast
+            // rides, with the manual close it carries).
             const shown = { kind: 'export-download', title: 'Export downloaded', sentence: `${fileName} — ${composed.bytes.length} bytes, ${composed.eventCount} sealed events. Verify it any time in Settings: "Verify an export file".` };
             view = { ...view, toast: shown };
             render();
@@ -2415,8 +2454,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           } catch (error) {
             // THE HONEST FAILURE (FW-35-A + FW-36-B): the export either
             // failed its own verification or never reached the download
-            // surface — the user learns it HERE, on the toast surface,
-            // with nothing downloaded and nothing claimed. The ~8s
+            // surface — nothing downloaded, nothing claimed; the ~8s
             // auto-dismiss gives the sentence time to read.
             const message = error instanceof ExportCompositionError ? error.message : (error as Error)?.message ?? String(error);
             const shown = { kind: 'export-failed', title: 'Export failed', sentence: `The workspace export could not be composed (${message}). Nothing was downloaded — refresh the page and try again; if it persists, report this as a defect.` };
@@ -2508,14 +2546,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             render();
             return;
           }
-          // FW-36-B (Round E register §3.3 — S1's demo-scope no-op, 3
-          // attempts, "registers nothing"): THE CLICK READS THE LIVE FORM
-          // TOO. The edits buffer fills from input events, and an event
+          // FW-36-B (§3.3 — S1's demo-scope no-op, 3 attempts, "registers
+          // nothing"): THE CLICK READS THE LIVE FORM TOO. An input event
           // that raced a beat re-projection dies on the detached node —
           // the submit then validated an EMPTY buffer while the form
           // showed the user's text (the silent no-op class). The live
-          // DOM values win over the buffer — the submit always reads
-          // what the user can see.
+          // DOM values win over the buffer — the submit reads what the
+          // user can see.
           let edits: Readonly<Record<string, string>> = { ...form.edits };
           if (document.querySelectorAll !== undefined) {
             for (const candidate of document.querySelectorAll('[data-research-field]')) {
@@ -2566,9 +2603,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
               } else {
                 // FW-36-B (§3.3): the mid-flight scope move is NOT a
                 // silent close — the job REGISTERED (the host accepted
-                // it); the honest notice names where it landed and how
-                // to get there. A submit always registers or surfaces
-                // an honest error, never a nothing.
+                // it); the honest notice names where it landed. A submit
+                // always registers or surfaces an honest error.
                 view = { ...view, researchSubmit: { edits, error: `Submitted — the job registered with ${projectId}, but the workspace switched to ${state.scope.projectId} before it landed. Switch back to ${projectId} (Settings → Project) to see it.` } };
               }
               render();
@@ -2584,13 +2620,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           })();
           return;
         }
-        // FW-36-B (Round E register §3.2 — total restart recovery): THE
-        // ONE-GESTURE DESK RE-ADOPTION. The recovery card's desk button
-        // rides the SAME user-initiated project-adopted the switcher and
-        // the palette jumps ride — the beat refetches the adopted desk's
-        // whole world, the posture's scope + claimedDesks write through,
-        // and this very click dismisses the wizard under the FW-35-B
-        // acting-past law (the recovery gesture count: ONE).
+        // FW-36-B (§3.2): THE ONE-GESTURE DESK RE-ADOPTION. The recovery
+        // card's desk button rides the SAME user-initiated project-adopted
+        // the switcher and the palette jumps ride — the beat refetches
+        // the adopted desk's whole world, the posture's scope +
+        // claimedDesks write through, and this very click dismisses the
+        // wizard under the FW-35-B acting-past law (the gesture count:
+        // ONE).
         if (kind === 'recovery-adopt-desk') {
           const adoptProjectId = action.getAttribute('data-desk-adopt');
           if (adoptProjectId !== null && adoptProjectId.length > 0 && adoptProjectId !== state.scope.projectId) {
@@ -2680,9 +2716,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     };
 
     // The delegated click: the composed target runs the ONE resolver.
+    // FW-36-B (§3.2): a REAL pointer click carries its coordinates — the
+    // wizard-overlay click-through rides them (a synthetic/keyboard
+    // activation carries none and never click-resolves).
     document.addEventListener('click', (event) => {
       pointerDown = false; // the click concludes the press
-      interactionAt(event.target);
+      const point = typeof event.clientX === 'number' && typeof event.clientY === 'number' && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+        ? { clientX: event.clientX, clientY: event.clientY }
+        : null;
+      interactionAt(event.target, point);
     });
 
     // The keyboard contract: Esc closes the palette, the sheet, then the drawer;

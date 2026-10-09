@@ -350,13 +350,11 @@ export function paletteOverlay(options: {
   /** FW-34-B §3.8: true when the listing already includes every desk in the workspace (the expanded state — the disclosure hides itself). */
   readonly allDesks?: boolean;
   /**
-   * FW-36-B (Round E register §3.9 — the palette disclosure regression,
-   * L1+L3): the TOTAL count of other sessions' desks hidden from this
-   * session-scoped listing (0 = none / already expanded). The Round D
-   * disclosure lived only in the empty state — a query that MATCHED own
-   * desks rendered other sessions' matching desks with no marker at
-   * all. The footer now carries the counted "other sessions' — not
-   * yours" line + the include-all action on EVERY state, empty or not.
+   * FW-36-B (§3.9 — the palette disclosure regression, L1+L3): the
+   * TOTAL count of other sessions' desks hidden from this listing (0 =
+   * none/expanded). The Round D disclosure lived only in the empty
+   * state; the footer now carries the counted "other sessions' — not
+   * yours" line + the include-all action on EVERY state.
    */
   readonly hiddenDesksTotal?: number;
 }): VNode {
@@ -406,10 +404,10 @@ export function paletteOverlay(options: {
         v('span', {}, ['↑ ↓ navigate']),
         v('span', {}, ['Enter open']),
         v('span', {}, ['Esc close']),
-        // FW-36-B (§3.9 — the restored disclosure): the counted
-        // other-sessions line + the include-all action ride the footer on
-        // EVERY listing state (the empty state keeps its own richer
-        // copy); hidden = 0 or the expanded listing renders neither.
+        // FW-36-B (§3.9): the counted other-sessions line + the
+        // include-all action ride the footer on EVERY listing state
+        // (the empty state keeps its own richer copy); hidden = 0 or
+        // the expanded listing renders neither.
         ...((options.allDesks === true || (options.hiddenDesksTotal ?? 0) <= 0)
           ? []
           : [

@@ -506,10 +506,9 @@ export function notificationBell(unread: number, target = 'inbox', unreadPending
     class: `nav-item bell${unread > 0 ? ' has-unread' : ''}`,
     'data-target': target,
     type: 'button',
-    // FW-36-B (Round E register §3.6 — the first-paint transient): while
-    // a read bundle is in flight and no notice has landed yet, the bell
-    // states LOADING — never a 'no unread notices' flash that reads like
-    // a lost inbox (M3's reload finding).
+    // FW-36-B (§3.6 — the first-paint transient): while a read bundle
+    // is in flight and no notice has landed, the bell states LOADING —
+    // never a 'no unread notices' flash that reads like a lost inbox.
     'aria-label': unreadPending ? 'Inbox — notices loading' : unread > 0 ? `Inbox — ${unread} unread notice${unread === 1 ? '' : 's'}` : 'Inbox — no unread notices',
     ...(unreadPending ? { 'data-unread-pending': 'true' } : {}),
   }, [

@@ -4,40 +4,31 @@
 // THE LAW: the export toast is a RECEIPT, not a wish. S5's Round E flow
 // measured five consecutive Export clicks that produced NO file while
 // the toast claimed "Export downloaded" — the pre-FW-36-B handler
-// composed the document, called anchor.click() on a DETACHED anchor,
-// and toasted success unconditionally: the composition guard (FW-35-A)
-// closed the THROWN-composition class, but a download the browser
-// declines (a hardened context, a missing click surface) still claimed
-// success. This module owns the honest half of the click:
-//
+// clicked a DETACHED anchor and toasted success unconditionally: the
+// FW-35-A guard closed the THROWN-composition class, but a download the
+// browser declines (a hardened context, a missing click surface) still
+// claimed success. This module owns the honest half of the click:
 //   - COMPOSE + SELF-CHECK: the document composes through the same
-//     deterministic fold (core/workspace.ts), then VERIFIES through the
-//     SAME file-alone verifier the Settings surface rides
-//     (verifyWorkspaceExportReport) — a composition that cannot verify
-//     is refused LOUDLY (the honest failure toast carries the reason),
-//     never served as a receipt. The receipt's numbers (bytes, sealed
-//     events) are measured from the exact bytes handed to the browser.
-//   - DISPATCH: the anchor is APPENDED to the document tree before the
-//     click and removed after (the standard programmatic-download
-//     recipe — a detached anchor's click is the class a hardened
-//     context can silently decline), and the click's DISPATCH is the
-//     success precondition: an anchor with no click surface (the test
-//     seam's degraded element, a foreign embedding) reports dispatched:
-//     false and the caller surfaces the honest failure — a success
-//     toast NEVER fires without the browser receiving the download.
-//
-// The honest limit, disclosed: a browser that ACCEPTS the click but
-// writes no file (an OS-level download failure, a full disk) is
-// unobservable from the page — the receipt's byte count and event
-// count are the user's checkable claim against whatever landed
-// ("412,331 bytes, 328 sealed events"), and the Settings verifier
-// re-proves the file itself any time.
-//
-// This module is PURE + seamed: every DOM/URL capability is INJECTED
-// (the anchor factory, the append/remove surface, the object-URL
-// binder), so the tests pin the receipt law without a browser.
+//     fold (core/workspace.ts), then VERIFIES through the SAME
+//     file-alone verifier the Settings surface rides — a composition
+//     that cannot verify is refused LOUDLY (ExportCompositionError, the
+//     honest failure toast carries the reason), never a receipt. The
+//     receipt's numbers (bytes, sealed events) are measured from the
+//     exact bytes handed to the browser.
+//   - DISPATCH: the anchor is APPENDED IN-TREE before the click and
+//     removed after (a detached anchor's click is the class a hardened
+//     context silently declines), and the click's DISPATCH is the
+//     success precondition: an anchor with no click surface reports
+//     dispatched:false — the caller's honest-failure path, never a
+//     success claim.
+// The honest limit: a browser that accepts the click but writes no
+// file (OS-level failure) is unobservable from the page — the
+// receipt's counts are the user's checkable claim against whatever
+// landed, and the Settings verifier re-proves the file any time.
+// PURE + seamed: every DOM capability is INJECTED, so the tests pin
+// the receipt law without a browser.
 
-import { composeWorkspaceExport, serializeWorkspaceExport, verifyWorkspaceExportReport, type WorkspaceState } from './workspace';
+import { serializeWorkspaceExport, verifyWorkspaceExportReport, type WorkspaceState } from './workspace';
 
 /** The download anchor's minimal surface (an <a> element, structurally). */
 export interface DownloadAnchor {
@@ -77,7 +68,15 @@ export class ExportCompositionError extends Error {
  * rides — never a receipt for bytes the console's own verifier refuses.
  */
 export function composeVerifiedExport(state: WorkspaceState): { readonly bytes: string; readonly eventCount: number } {
-  const bytes = serializeWorkspaceExport(state);
+  let bytes: string;
+  try {
+    // ANY fold failure (the chain-of-thought firewall, a future
+    // composition defect — the FW-35-A class) is wrapped as the honest
+    // failure the toast carries, never an escape from this seam.
+    bytes = serializeWorkspaceExport(state);
+  } catch (error) {
+    throw new ExportCompositionError(`the export document could not be composed (${error instanceof Error ? error.message : String(error)})`);
+  }
   if (bytes.trim().length === 0) {
     throw new ExportCompositionError('the composed export document is empty');
   }
@@ -91,7 +90,11 @@ export function composeVerifiedExport(state: WorkspaceState): { readonly bytes: 
   if (!report.ok) {
     throw new ExportCompositionError(`the composed export document failed its own verification (${report.reason ?? 'unknown reason'})`);
   }
-  return { bytes, eventCount: composeWorkspaceExport(state).chain.entryCount };
+  // the receipt's sealed-event count is the manifest's own events
+  // count — read from the exact bytes handed to the browser (one fold,
+  // no second composition).
+  const manifest = (document as { manifest: { counts: { events: number } } }).manifest;
+  return { bytes, eventCount: manifest.counts.events };
 }
 
 /**
@@ -137,4 +140,16 @@ export function exportWorkspaceDownload(state: WorkspaceState, surface: Download
   const { bytes, eventCount } = composeVerifiedExport(state);
   const dispatched = dispatchExportDownload(surface, fileName, bytes);
   return { fileName, byteLength: bytes.length, eventCount, dispatched };
+}
+
+/**
+ * The live-tree download surface of a mounted console (the app layer's
+ * binding): anchors come from the document's own factory and append
+ * best-effort into the mount root — the in-tree dispatch seam.
+ */
+export function downloadSurfaceOf(documentLike: { createElement(tag: string): unknown }, root: Element): DownloadSurface {
+  return {
+    createElement: (tag: string): DownloadAnchor => documentLike.createElement(tag) as unknown as DownloadAnchor,
+    appendChild: (node: DownloadAnchor): unknown => (root as Element & { appendChild?(child: unknown): unknown }).appendChild?.(node),
+  };
 }

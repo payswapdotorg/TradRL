@@ -4,45 +4,29 @@
 // THE ROOT CAUSE THIS MODULE CLOSES (measured, not guessed): the
 // personas' "full browser restart (profile intact)" is the eval
 // harness's browser-session close/reopen — a path that DISCARDS the
-// session's whole web-storage state (localStorage AND cookies; the
-// persistent desktop profile's on-disk LocalStorage carries the
-// operator's origins, never the console's) while the host-level
-// artifacts (downloads, the profile directory) survive, which is
-// exactly why every filer measured reload SURVIVING and restart
-// resetting all four posture arms at once — no write race can lose a
-// theme chosen minutes earlier; the STORE itself was discarded. The
-// FW-34-B/FW-35-B restart tests re-boot against the SAME injected
-// storage map (a storage-KEEPING restart), so they pin the surviving
-// path while the harness's actual restart resets.
+// session's whole web-storage state (localStorage AND cookies —
+// re-measured this wave: both read EMPTY after close/reopen) while the
+// host-level artifacts survive, which is exactly why every filer
+// measured reload SURVIVING and restart resetting all four posture
+// arms at once — no write race can lose a theme chosen minutes
+// earlier; the STORE itself was discarded. The FW-34-B/FW-35-B restart
+// tests re-boot against the SAME injected storage map (a
+// storage-KEEPING restart), so they pin the surviving path while the
+// harness's actual restart resets.
 //
-// THE HONEST ANSWER within the browser's own reach: the posture's
-// client homes are DOUBLED — every write lands in BOTH localStorage
-// (the primary, unchanged) AND a long-lived same-origin cookie (the
-// secondary), and every read prefers the primary and falls back to the
-// secondary. A restart that keeps EITHER home restores every arm:
-// the wizard's dismissal, the scope pointer, the Time Machine posture,
-// the theme, the notice read-marks, and — through the session id's own
-// dual home — the SESSION-DESKS MEMBERSHIP (the re-adopted session id
-// is the host's own ownership marker, so the switcher and the palette
-// list the browser's own desks again, no 90-desk wall).
-//
-// THE HONEST LIMIT, disclosed: a restart that discards BOTH homes (the
-// harness's close/reopen; a wiped profile) is a new browser identity by
-// construction — nothing client-side survives to re-identify it. For
-// that path the product answers with the ONE-GESTURE RECOVERY CARD
-// (render/model.ts — the returning-browser desk picker) plus the
-// FW-35-B acting-past wizard dismissal, and the posture record's
-// claimedDesks arm keeps the re-adopted desk in this browser's own
-// listing from then on.
-//
-// Cookie shape: one name/value pair per storage key, URL-encoded
-// (cookie values cannot carry ';' or whitespace raw), Max-Age ~10
-// years, SameSite=Lax, path=/ — plain UI state in the browser trust
-// zone (spec/SECURITY.md), the same class the localStorage keys hold;
-// no credentials, no record content. A value too large for a cookie
-// (~4KB per pair) simply skips the secondary home (the primary keeps
-// its write; the degrade is honest and silent-by-law like every
-// storage refusal).
+// THE HONEST ANSWER: the posture's client homes are DOUBLED — every
+// write lands in BOTH localStorage (the primary) AND a long-lived
+// same-origin cookie (the secondary, Max-Age ~10y, SameSite=Lax,
+// path=/, URL-encoded, ~4KB per pair cap — plain UI state in the
+// browser trust zone, no credentials); every read prefers the primary
+// and falls back. A restart that keeps EITHER home restores every arm
+// (wizard dismissal, scope pointer, TM posture, theme, read-marks and
+// — through the session id's own dual home — the SESSION-DESKS
+// MEMBERSHIP). A restart that discards BOTH is the disclosed honest
+// limit (a new browser identity by construction): the ONE-GESTURE
+// RECOVERY CARD (render/model.ts) + the acting-past wizard dismissal
+// answer it, and the posture's claimedDesks arm keeps the re-adopted
+// desk in this browser's own listing from then on.
 
 /** The minimal storage seam both homes implement (the console's own shape). */
 export interface SeamStorage {
@@ -102,7 +86,10 @@ export function cookieStorageOf(documentLike: CookieWriter): SeamStorage | null 
   const write = (assignment: string): void => {
     const setter = documentLike.setCookie;
     if (typeof setter === 'function') {
-      setter(assignment);
+      // INVOKED THROUGH .call WITH THE DOCUMENT AS THE RECEIVER — the
+      // seam's own law: an extracted method loses its `this` (the rig's
+      // jar bookkeeping and any object-shaped cookie seam read `this`).
+      setter.call(documentLike, assignment);
       return;
     }
     // the browser's own seam: the assignment IS the write

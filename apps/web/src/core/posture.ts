@@ -61,16 +61,16 @@
 // manual recoveries where Round D's filers paid three to five.
 //
 // FW-36-B (Round E register §3.2) — THE DIVERGENCE'S OWN ROOT CAUSE,
-// MEASURED: L4's "profile intact" restart still reset 4/4 arms while
-// the tests pass because the two paths restart DIFFERENT THINGS. The
-// tests re-boot against the SAME injected storage map — a
-// storage-KEEPING restart. The eval harness's browser restart (the
-// session's close/reopen) discards the session's whole web-storage
-// state — localStorage AND cookies — while the host-level artifacts
-// (downloads, the profile directory) survive, which is exactly the
-// filers' split: reload (same browser store) survives everything;
-// restart (a discarded store) resets every arm AT ONCE including the
-// minutes-old theme. The product's answer on the app side is layered:
+// MEASURED (re-measured this wave on the live harness): L4's "profile
+// intact" restart still reset 4/4 arms while the tests pass because
+// the two paths restart DIFFERENT THINGS. The tests re-boot against
+// the SAME injected storage map — a storage-KEEPING restart. The eval
+// harness's browser restart (the session's close/reopen) discards the
+// session's whole web-storage state — localStorage AND cookies (both
+// read EMPTY after close/reopen) — while host-level artifacts survive,
+// which is exactly the filers' split: reload (same store) survives
+// everything; restart (a discarded store) resets every arm AT ONCE
+// including the minutes-old theme. The app-side answer is layered:
 // (1) the DUAL HOME (core/dual-storage.ts — every posture write also
 // lands in a long-lived same-origin cookie; a restart that keeps
 // EITHER home restores every arm, the session-desks membership

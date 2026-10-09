@@ -706,7 +706,7 @@ function outcomePostMortemCard(scope: WorkspaceScope, postMortem: PostMortemReco
   ]);
 }
 
-/** Render one knowledge entry. D-18 (W-29 wave 2): the card leads with ONE human sentence — the claim in words + the confidence (L2's finding: the lessons rendered as raw field tuples; the Inbox's plain-English copy is the shape to follow) — with the full typed record beneath it. FW-35-B (Round D register §3.5 — S2: "Lessons omits the originating outcome id; must recognize the pmr id across sections"): the card CITES its originating outcome ids (and the post-mortem ids it distilled) — the provenance the record itself carries, rendered where the lesson lives. FW-36-B (Round E register §3.10 — S2's reach gap: the FW-35-B fix did not reach HIS surface): a record whose provenance carries the post-mortem refs but NOT the outcome refs resolves the originating outcomes THROUGH the post-mortem records on hand (the pmr's own subject.outcomeRecordRef — the record's own lineage chain: lesson <- post-mortem <- outcome), so the citation reaches the Outcomes row id on every provenance shape. */
+/** Render one knowledge entry. D-18 (W-29 wave 2): the card leads with ONE human sentence — the claim in words + the confidence (L2's finding: the lessons rendered as raw field tuples; the Inbox's plain-English copy is the shape to follow) — with the full typed record beneath it. FW-35-B (§3.5 — S2: "Lessons omits the originating outcome id"): the card CITES its originating outcome ids (and the post-mortem ids it distilled) — the record's own provenance, rendered where the lesson lives. FW-36-B (§3.10 — S2's reach gap: the FW-35-B fix did not reach HIS surface): a record whose provenance carries post-mortem refs but NOT outcome refs resolves the originating outcomes THROUGH the post-mortem records on hand (the pmr's own subject.outcomeRecordRef — the lineage chain lesson <- post-mortem <- outcome), so the citation reaches the Outcomes row id on every provenance shape. */
 function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt: number, postMortems: readonly PostMortemRecord[]): VNode {
   assertProjectScope(scope, knowledge.record);
   visibleAt(knowledge, availabilityOfKnowledge(knowledge), viewAt, knowledge.record.knowledgeId);
@@ -955,22 +955,16 @@ export function homeFresh(state: WorkspaceState): boolean {
 }
 
 /**
- * FW-36-B (Round E register §3.2 — total restart recovery): THE
- * ONE-GESTURE RECOVERY CARD. A browser with NO client posture (a
- * first run, or a restart that discarded the web-storage state — the
- * personas' measured path: the wizard re-summoned, the scope reverted,
- * the own desk behind the other-sessions wall, the theme reverted;
- * 3-7 recovery gestures) gets ONE card on Home: every desk in this
- * workspace stays reachable, and if one of them is yours, ONE click
- * reopens it (the adoption rides the same project-adopted the switcher
- * does; the click itself dismisses the wizard under the FW-35-B
- * acting-past law, and the posture's claimedDesks arm keeps the
- * re-adopted desk in this browser's own default listing from then
- * on). The copy is honest for BOTH readers: a first-run browser is
- * told the demo desk + the launch wizard are its path; a wiped
- * browser is told what the wipe cost (theme + read marks lived in
- * this browser's storage). Renders only when other sessions' desks
- * exist to offer (a solo workspace renders nothing).
+ * FW-36-B (§3.2 — total restart recovery): THE ONE-GESTURE RECOVERY
+ * CARD. A browser with NO client posture (a first run, or a restart that
+ * discarded the web-storage state — the personas' measured path: wizard
+ * re-summoned, scope reverted, own desk behind the other-sessions wall;
+ * 3-7 gestures) gets ONE card on Home: every desk stays reachable, and
+ * ONE click reopens yours (the same project-adopted the switcher rides;
+ * the click dismisses the wizard under the acting-past/click-through
+ * law, and claimedDesks keeps the re-adopted desk in this browser's own
+ * listing from then on). The copy is honest for BOTH readers (first run
+ * vs. cleared browser); renders only when other sessions' desks exist.
  */
 function recoveryCard(state: WorkspaceState, view: ShellView): VNode | null {
   const hidden = otherSessionsDesksOf(state, DEMO_PROJECT_ID, view.claimedDesks);
@@ -1041,15 +1035,13 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
       ? v('p', { class: 'hero-note', 'data-hero-launch': launch.phase }, ['A launch is in progress — details below.'])
       : v('button', { class: 'hero-cta', 'data-action': 'launch-start', type: 'button' }, ['Describe your goal']);
   const hero = heroPanel(heroCta);
-  // FW-36-B (Round E register §3.6 — first-paint transients, the warm
-  // path too): the loading skeleton renders while a read bundle for
-  // THIS scope is in flight (the boot, every scope adoption) and the
-  // workspace is still fresh — the pre-fix window rendered zeros and
-  // 'Not compiled yet' for ~2s (cold) and again on every warm switch,
-  // the exact perception-of-record-loss class M1/S1/M3 filed. The
+  // FW-36-B (§3.6 — first-paint transients, the warm path too): the
+  // loading skeleton renders while a read bundle for THIS scope is in
+  // flight (boot + every adoption) and the workspace is still fresh — the
+  // pre-fix window rendered zeros/'Not compiled yet' for ~2s (cold + warm
+  // switches — the perception-of-record-loss class M1/S1/M3 filed). The
   // OFFLINE gate stays FIRST: an unreachable API with nothing known
-  // renders its ErrorState even while reads are still in flight (the
-  // J9 law — a failed read is never a loading state).
+  // renders its ErrorState even while reads are in flight (the J9 law).
   if (state.connection === 'offline' && fresh) {
     const latest = state.degraded.length === 0 ? undefined : state.degraded[state.degraded.length - 1];
     return v('section', { class: 'panel home', 'data-section': 'home' }, [
@@ -1075,9 +1067,9 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
   const unread = unreadCount(scopedNotices);
   const running = jobs.filter((job) => job.status === 'running').length;
   const snapshot = snapshots.length > 0 ? snapshots[0] : null;
-  // FW-36-B (§3.6): the unread tile states LOADING while a read bundle
-  // is in flight and no notice has landed — never a '0' that reads like
-  // a cleared inbox (the bell renders the same marker; the
+  // FW-36-B (§3.6): the unread tile states LOADING while a read bundle is
+  // in flight and no notice has landed — never a '0' that reads like a
+  // cleared inbox (the bell renders the same marker; the
   // triple-agreement law holds at the marker too).
   const unreadPending = view.hydrating && scopedNotices.notices.length === 0;
   const tiles = statGrid([
@@ -1113,9 +1105,9 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
     hero,
     tiles,
     organization,
-    // FW-36-B (§3.2 — total restart recovery): the one-gesture
-    // returning-browser desk picker (null when there is nothing to
-    // offer or this browser carries its posture).
+    // FW-36-B (§3.2): the one-gesture returning-browser desk picker
+    // (null when there is nothing to offer or this browser carries its
+    // posture).
     ...(recoveryCard(state, view) === null ? [] : [recoveryCard(state, view) as VNode]),
     v('div', { class: 'home-block' }, [v('h2', { class: 'section-heading' }, ['Recent activity']), activity]),
   ]);

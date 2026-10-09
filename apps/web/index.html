@@ -37,11 +37,17 @@
     wrong color; tokens.css keys the html background on this
     attribute) and, once parsed, on the app root. Runs before the
     stylesheets and the no-build loader; degrades to light silently.
+    FW-36-B: the theme's DUAL HOME — when localStorage carries nothing
+    (a restart that discarded it), the long-lived same-origin cookie
+    home answers (core/dual-storage.ts writes both; the boot re-reads
+    the same seam, so pre-paint and app agree).
   -->
   <script>
     (function () {
       try {
-        var theme = localStorage.getItem('tradrl_theme') === 'dark' ? 'dark' : 'light';
+        var theme = 'light';
+        if (localStorage.getItem('tradrl_theme') === 'dark') theme = 'dark';
+        else if (/(?:^|;\s*)tradrl_theme=dark(?:;|$)/.test(document.cookie)) theme = 'dark';
         document.documentElement.setAttribute('data-theme', theme);
       } catch (error) {
         document.documentElement.setAttribute('data-theme', 'light');
