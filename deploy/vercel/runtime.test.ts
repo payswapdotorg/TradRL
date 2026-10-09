@@ -1639,15 +1639,33 @@ describe('deploy/vercel — the launched-desk evidence stream (FW-MI-B: MI-D2 + 
       expect(row.fill.notional).toBe(expected);
     }
     expect(routedRows[0]!.fill.notional).toBe('48000'); // 0.8 x 60000 — sized inside the declared budgets
-    // THE HONEST REFUSAL quotes bound vs observed from the desk's OWN constraint (c-1, limit.max 0.2 -> observed 0.24).
+    // THE HONEST REFUSAL (FW-36-A, E-2): quotes the mandate's OWN declared
+    // capital-budget bound (equals 500000.00) with the TRUE projected book —
+    // the order line + the prior fills reconcile by inspection. The pre-fix
+    // behavior (the c-1 drawdown ceiling quoted with observed = bound x 1.2,
+    // a FABRICATED number reconciling to neither the order line nor the
+    // book) is gone; the drawdown bound itself is now gate-evaluated as a
+    // DERIVED fraction of the declared capital (12 / 500000 vs 0.2 — inside).
     expect(refusedRow.refusal.stage).toBe('risk_limits');
     const quoted = refusedRow.refusal.refusals[0]!;
-    expect(quoted.constraintId).toBe('c-1');
-    expect(quoted.subject).toBe('risk.maxDrawdown');
-    expect(quoted.predicate.bound).toBe(0.2);
-    expect(quoted.observed).toBe('0.24');
-    expect(refusedRow.decisionRationale).toContain('0.2');
-    expect(refusedRow.decisionRationale).toContain('0.24');
+    expect(quoted.constraintId).toBe('k-capital-budget');
+    expect(quoted.subject).toBe('capital.budget');
+    expect(quoted.predicate.kind).toBe('equals');
+    expect(quoted.predicate.value).toBe('500000.00');
+    // prior cumulative book 60000 + the candidate's own order line 8.333333 x 60000 = 499999.98, exact.
+    expect(quoted.observed).toBe('559999.98');
+    expect(refusedRow.order.quantity).toBe('8.333333');
+    expect(refusedRow.order.price).toBe('60000');
+    expect(refusedRow.decisionRationale).toContain('500000');
+    expect(refusedRow.decisionRationale).toContain('559999.98');
+    // The row carries the gate's OWN evaluation of every declared constraint
+    // at the concentration candidate — the drawdown ceiling evaluated as the
+    // DERIVED fraction of the declared capital, itemized.
+    const drawdownEvaluation = (refusedRow as { limitsEvaluation?: readonly { constraintId: string; verdict: string; observed: string | null; arithmetic: string | null }[] }).limitsEvaluation?.find((row) => row.constraintId === 'c-1');
+    expect(drawdownEvaluation?.verdict).toBe('pass');
+    expect(drawdownEvaluation?.observed).toBe('0.000024'); // 12 / 500000 — derived, never fabricated
+    expect(drawdownEvaluation?.arithmetic).toContain('12');
+    expect(drawdownEvaluation?.arithmetic).toContain('500000');
     // THE AUDIT PROSE cites the desk's actual goal numbers (its budgets, verbatim).
     expect(routedRows[0]!.decisionRationale).toContain('500000.00');
     expect(routedRows[0]!.decisionRationale).toContain('40000.00');

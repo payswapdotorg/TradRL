@@ -307,20 +307,28 @@ describe('deploy/vercel — the standing risk-utilization read, a launched desk 
     expect(data.projectId).toBe('prj-desk-risk');
     expect(data.bounds.map((bound) => bound.constraintId)).toEqual(['c-1', 'k-capital-budget', 'k-risk-budget']);
 
-    // c-1 (the desk's OWN drawdown ceiling): the derived refusal QUOTED it
-    // (observed 0.24 vs the declared 0.2) — an OBSERVED drawdown breach
-    // beats the no-equity-curve unknown (the observation is data).
+    // c-1 (the desk's OWN drawdown ceiling): honestly UNKNOWN on the
+    // standing surface (FW-36-A: the derived refusal no longer QUOTES it —
+    // no equity curve exists on any backing, and no gate observation cites
+    // it; the bound is enforced at the pre-trade gate as the DERIVED
+    // fraction of the declared capital, visible on the blotter's own
+    // limitsEvaluation surface — the pre-fix 0.24 was bound x 1.2, a
+    // FABRICATED number reconciling to neither the order line nor the book).
     const [drawdown, capital, riskBudget] = data.bounds;
-    expect(drawdown).toMatchObject({ metric: 'risk.maxDrawdown', boundMax: '0.2', severity: 'blocking', current: 0.24, status: 'breach' });
-    expect(drawdown!.source).toContain('risk-limits refusal');
+    expect(drawdown).toMatchObject({ metric: 'risk.maxDrawdown', boundMax: '0.2', severity: 'blocking', current: null, status: 'unknown' });
+    expect(drawdown!.source).toContain('no equity curve');
 
-    // The capital budget: the derived entry + trim fills (48000 + 12000
-    // gross notional) against the desk's OWN declared 500000.00 (the
-    // predicate's own decimal text, verbatim).
-    expect(capital).toMatchObject({ metric: 'capital.budget', boundMax: '500000.00', severity: 'blocking', current: 60000, status: 'ok' });
+    // The capital budget: the derived refusal QUOTED it (FW-36-A — the
+    // concentration attempt's TRUE projected book 559999.98 vs the desk's
+    // OWN declared 500000.00) — an OBSERVED breach beats the fills-based
+    // utilization (the most recent observation is data).
+    expect(capital).toMatchObject({ metric: 'capital.budget', boundMax: '500000.00', severity: 'blocking', current: 559999.98, status: 'breach' });
+    expect(capital!.source).toContain('risk-limits refusal');
 
     // The risk budget: the derived adverse-gap outcome's realized loss
-    // (net -12 -> consumption 12) against the desk's OWN declared 40000.00.
+    // (net -12 -> consumption 12) against the desk's OWN declared 40000.00
+    // (PRECEDENCE 2 — no refusal observation cites the risk budget; the
+    // FW-36-A gate projects the BOOK against book-class bounds only).
     expect(riskBudget).toMatchObject({ metric: 'risk.budget', boundMax: '40000.00', severity: 'blocking', current: 12, status: 'ok' });
     expect(riskBudget!.source).toContain('1 outcome record(s)');
 
@@ -330,7 +338,7 @@ describe('deploy/vercel — the standing risk-utilization read, a launched desk 
     expect(breach.kind).toBe('risk_limits_refusal');
     expect(breach.decisionBody).toBe('gate:pre-trade-risk');
     expect(breach.violations).toEqual([
-      { constraintId: 'c-1', domain: 'outcome', subject: 'risk.maxDrawdown', severity: 'blocking', predicate: { kind: 'limit.max', bound: 0.2 }, observed: '0.24' },
+      { constraintId: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', severity: 'blocking', predicate: { kind: 'equals', value: '500000.00', bound: 500000 }, observed: '559999.98' },
     ]);
   });
 

@@ -498,6 +498,14 @@ export interface GateCandidateContext {
   readonly candidateNotional: string;
   /** The session outcome chain's realized cumulative at the gate instant, when the chain provides one (null = the chain provides nothing yet — L4 point-in-time). */
   readonly realizedCumulative: string | null;
+  /**
+   * The desk's own DECLARED capital budget (the launch world's own field) —
+   * the base the drawdown FRACTION is derived against (the maxDrawdown
+   * convention is fraction-scale: 0.2 = 20% of capital). Null when the
+   * caller holds no declared capital (the fraction is then honestly
+   * not derivable — never fabricated).
+   */
+  readonly declaredCapital: string | null;
 }
 
 /**
@@ -580,18 +588,49 @@ export function evaluateConstraintAtGate(constraint: GateConstraint, context: Ga
       return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the realized cumulative is not a canonical decimal (never a fabricated comparison)' });
     }
     const consumption = realized.negative ? formatExactDecimal({ negative: false, digits: realized.digits, scale: realized.scale }) : '0';
-    const comparison = compareDecimals(consumption, bound);
+    if (subjectClass === 'risk_consumption') {
+      // The risk.budget convention: an ABSOLUTE amount (the console launch's
+      // own equals declarations are dollar-scale) — the loss magnitude vs
+      // the bound, directly (dollars vs dollars, unit-coherent).
+      const comparison = compareDecimals(consumption, bound);
+      const breach = comparison === null ? false : constraint.predicate.kind === 'limit.min' ? comparison === -1 : comparison === 1;
+      return deepFreeze({
+        ...base,
+        basis: 'realized_cumulative',
+        derivable: true,
+        observed: consumption,
+        arithmetic: `the session outcome chain's realized cumulative ${context.realizedCumulative} (loss magnitude ${consumption})`,
+        verdict: breach ? 'breach' : 'pass',
+        note: breach
+          ? `the realized cumulative's loss magnitude ${consumption} stands past the declared ${constraint.predicate.kind} bound ${bound} — the gate refuses the candidate (the units are the declaration's own: the observed is the outcome chain's realized amount, the bound is the declared number, and the itemization shows both)`
+          : `the realized cumulative's loss magnitude ${consumption} is inside the declared ${constraint.predicate.kind} bound ${bound}`,
+      });
+    }
+    // The maxDrawdown convention: a FRACTION of the desk's own declared
+    // capital (the grammar's own fixtures are fraction-scale — 0.2 = 20%).
+    // The fraction is DERIVED from records the gate holds (the chain's
+    // realized loss / the launch world's declared capital), itemized so the
+    // arithmetic reconciles — never a mark-to-market fabrication (the
+    // standing read's own law: no equity curve exists on any backing).
+    if (context.declaredCapital === null || !isPositiveDecimal(context.declaredCapital)) {
+      return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the drawdown fraction cannot be derived without the desk\'s declared capital base (the launch world\'s own capital budget — absent here); the gate never fabricates a mark-to-market series (the standing risk-utilization read reports the same honestly-unknown class)' });
+    }
+    const fraction = divideDecimalsFloor(consumption, context.declaredCapital);
+    if (fraction === null) {
+      return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the drawdown fraction could not be derived exactly (never a fabricated comparison)' });
+    }
+    const comparison = compareDecimals(fraction, bound);
     const breach = comparison === null ? false : constraint.predicate.kind === 'limit.min' ? comparison === -1 : comparison === 1;
     return deepFreeze({
       ...base,
       basis: 'realized_cumulative',
       derivable: true,
-      observed: consumption,
-      arithmetic: `the session outcome chain's realized cumulative ${context.realizedCumulative} (loss magnitude ${consumption})`,
+      observed: fraction,
+      arithmetic: `the realized cumulative's loss magnitude ${consumption} / the declared capital ${context.declaredCapital} = the drawdown fraction ${fraction} (the maxDrawdown convention is fraction-scale — the bound and the derived fraction share the unit)`,
       verdict: breach ? 'breach' : 'pass',
       note: breach
-        ? `the realized cumulative's loss magnitude ${consumption} stands past the declared ${constraint.predicate.kind} bound ${bound} — the gate refuses the candidate (the units are the declaration's own: the observed is the outcome chain's realized amount, the bound is the declared number, and the itemization shows both)`
-        : `the realized cumulative's loss magnitude ${consumption} is inside the declared ${constraint.predicate.kind} bound ${bound}`,
+        ? `the derived drawdown fraction ${fraction} stands past the declared ${constraint.predicate.kind} bound ${bound} (loss ${consumption} of the declared capital ${context.declaredCapital}) — the gate refuses the candidate`
+        : `the derived drawdown fraction ${fraction} is inside the declared ${constraint.predicate.kind} bound ${bound} (loss ${consumption} of the declared capital ${context.declaredCapital})`,
     });
   }
   return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: NOT_EVALUABLE_SUBJECT_NOTE });
@@ -690,9 +729,13 @@ function refusalQuoteOf(envelope: ProjectEvidenceEnvelope, priorBookNotional: st
     }
   }
   if (pick === null) {
-    // Branch 2 — the mandate's own declared budget bound (the constraint
-    // set's capital/risk budget `equals` declaration, cited verbatim).
-    const budgetConstraint = gate.find((constraint) => (constraint.subject.includes('capital') || constraint.subject.includes('risk')) && constraint.subject.includes('budget') && constraint.boundText !== null) ?? null;
+    // Branch 2 — the mandate's own declared BOOK-CLASS budget bound (a
+    // capital/budget `equals` declaration, cited verbatim). A risk.budget
+    // declaration is deliberately NOT pickable here: it is a
+    // realized-consumption bound, not a book bound — a notional-sized
+    // concentration attempt is projected against the BOOK, so the cited
+    // bound must be of the book class (unit-coherent).
+    const budgetConstraint = gate.find((constraint) => constraint.boundText !== null && constraint.subject.includes('budget') && gateSubjectClassOf(constraint.subject) === 'book_notional') ?? null;
     if (budgetConstraint !== null && budgetConstraint.boundText !== null) {
       pick = budgetConstraint;
       pickBound = budgetConstraint.boundText;
@@ -869,13 +912,13 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
   // honestly not-gate-evaluable AT the entry, and evaluated from the
   // chain's realized cumulative at the later gates.
   const entryEvaluations: readonly LimitsCheckEvaluation[] = gateConstraints.map(
-    (constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: '0', candidateNotional: entryNotional, realizedCumulative: null }),
+    (constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: '0', candidateNotional: entryNotional, realizedCumulative: null, declaredCapital: capital }),
   );
   const entryLimits = limitsOutcomeOf(entryEvaluations);
   if (entryLimits === 'refused') return null; // the gate refuses the very first order — the desk honestly executes nothing (the zero-budget law)
   const trimEvaluations: readonly LimitsCheckEvaluation[] | null = trimOmitted
     ? null
-    : gateConstraints.map((constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: entryNotional, candidateNotional: trimNotional as string, realizedCumulative: realized }));
+    : gateConstraints.map((constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: entryNotional, candidateNotional: trimNotional as string, realizedCumulative: realized, declaredCapital: capital }));
   const trimLimits = trimEvaluations === null ? null : limitsOutcomeOf(trimEvaluations);
   const trimRefused = trimLimits === 'refused';
   const trimBlockingBreach = trimEvaluations?.find((evaluation) => evaluation.verdict === 'breach' && evaluation.severity === 'blocking') ?? null;
@@ -891,7 +934,7 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
   const quote = refusalQuoteOf(envelope, actualBookNotional, entryPrice);
   if (quote === null) return null;
   const concentrationEvaluations: readonly LimitsCheckEvaluation[] = gateConstraints.map(
-    (constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: actualBookNotional, candidateNotional: quote.candidateNotional, realizedCumulative: realized }),
+    (constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: actualBookNotional, candidateNotional: quote.candidateNotional, realizedCumulative: realized, declaredCapital: capital }),
   );
 
   // The instants (the goal's own createdAt — the launch instant — with
@@ -941,7 +984,7 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
     clientOrderId: `ord-${envelope.project}-0002`,
     instrumentId: marketTwo,
     venueId: venue,
-    side: 'sell',
+    side: 'sell' as const,
     kind: 'limit',
     quantity: trimQty as string,
     price: trimPrice,
