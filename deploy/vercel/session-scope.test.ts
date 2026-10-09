@@ -184,7 +184,14 @@ describe('deploy/vercel — FW-MI-A: the session-scope routes over the DEMO back
     const ownGoal = await drive(composed, streamingRequest({ url: '/v1/projects/prj-session-a-1/goal?project=prj-session-a-1', headers: sessionHeaders(SESSION_A) }));
     expect(ownGoal.status).toBe(200); // the demo goal route serves the create's captured goal set
     const goalBundle = ownGoal.body.data as { goal: unknown; constraintSet: unknown };
-    expect(goalBundle.goal).toEqual(validCreateProjectRequest(TENANT, 'prj-session-a-1').goal); // the launch's OWN goal statement, served back to its owner
+    // FW-38-A (G-1) pin update: the launch's OWN goal statement serves back
+    // to its owner — every field verbatim EXCEPT the horizon label, which is
+    // the SPAN-DERIVED fact of the record's own bounds ('90 days' for the
+    // fixture's exactly-90-day span; the input's 'Q3 evaluation window'
+    // annotation is not trusted off the wire — the pre-fix pin asserted the
+    // create input verbatim).
+    const sessionGoal = validCreateProjectRequest(TENANT, 'prj-session-a-1').goal as { readonly horizon: { readonly startsAt: number; readonly endsAt: number; readonly label: string } };
+    expect(goalBundle.goal).toEqual({ ...sessionGoal, horizon: { ...sessionGoal.horizon, label: '90 days' } });
   });
 
   it('UNOWNED projects (a headerless create — the boot world\'s seed, a direct SDK create) are visible to NO session', async () => {

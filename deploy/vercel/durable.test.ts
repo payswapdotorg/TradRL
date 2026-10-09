@@ -119,6 +119,30 @@ function createProjectBody(projectId: string, at = T0): Record<string, unknown> 
   return { id: projectId, name: `the ${projectId} desk`, executionMode: 'simulation', goal: validGoal(TENANT), constraintSet: validConstraintSet(TENANT), at };
 }
 
+/**
+ * FW-38-A (Round G register G-1 — the goal-capture seam): the goal record the
+ * seams now serve — the create input's own goal EXCEPT the horizon label,
+ * which is the SPAN-DERIVED fact of the record's bounds (the fixture's span
+ * is exactly 90 days; the input's free-text 'Q3 evaluation window' annotation
+ * is NOT trusted off the wire — the same law FW-37-A applied to the launch
+ * world's label). Every assertion that pinned the create input verbatim now
+ * pins the derived-label record: the goal is BORN at the capture seam with
+ * the computed label, so the stored row, the live overlay, the goal routes,
+ * the risk fold, the evidence source and the deliverable source all carry it.
+ */
+function derivedGoalOf(tenant = TENANT): Record<string, unknown> {
+  const goal = validGoal(tenant);
+  const horizon = goal.horizon as { readonly startsAt: number; readonly endsAt: number; readonly label: string };
+  return { ...goal, horizon: { ...horizon, label: '90 days' } };
+}
+
+/** The demo seed's goal with the SPAN-DERIVED label (the seed's span is exactly 180 days — G-1's one-law-every-record). */
+function derivedDemoGoalOf(tenant = TENANT): Record<string, unknown> {
+  const goal = demoGoalStatement(tenant) as unknown as Record<string, unknown>;
+  const horizon = goal.horizon as { readonly startsAt: number; readonly endsAt: number; readonly label: string };
+  return { ...goal, horizon: { ...horizon, label: '180 days' } };
+}
+
 /** An outage-controllable fetch (the R46 lever — up/down without rebuilding the fleet). */
 function outageFetch(inner: FetchLike): { readonly fetchLike: FetchLike; setOutage(down: boolean): void } {
   let down = false;
@@ -223,7 +247,7 @@ describe('deploy/vercel — the durable seam: the cold-start survival (D-5)', ()
     const goalSet = await direct.project.goalSetOf(TENANT, 'prj-durable-desk-a');
     expect(goalSet.ok).toBe(true);
     if (goalSet.ok && goalSet.value !== null) {
-      expect(goalSet.value.goal).toEqual(validGoal(TENANT));
+      expect(goalSet.value.goal).toEqual(derivedGoalOf()); // FW-38-A (G-1): the STORED durable row is born with the span-derived label at the capture seam
       expect(goalSet.value.constraintSet).toEqual(validConstraintSet(TENANT));
     }
     const events = await direct.project.projectEventsOf(TENANT, 'prj-durable-desk-a');
@@ -249,7 +273,7 @@ describe('deploy/vercel — the durable seam: the cold-start survival (D-5)', ()
     const goalRead = second.durable!.goalOf('prj-durable-desk-a');
     expect(goalRead.ok).toBe(true);
     if (goalRead.ok && goalRead.value !== null) {
-      expect(goalRead.value.goal).toEqual(validGoal(TENANT)); // the goal records ride the create-project input
+      expect(goalRead.value.goal).toEqual(derivedGoalOf()); // the goal records ride the create-project input, with the span-derived label (G-1)
       expect(goalRead.value.constraintSet).toEqual(validConstraintSet(TENANT));
     }
     // The rehydrated instance keeps writing through: a pause survives too.
@@ -293,14 +317,14 @@ describe('deploy/vercel — the durable seam: the cold-start survival (D-5)', ()
     const goal = await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/projects/prj-durable-desk-b/goal', headers: BEARER }));
     expect(goal.status).toBe(200);
     const goalBody = (goal.body as { data: { goal: unknown; constraintSet: unknown } }).data;
-    expect(goalBody.goal).toEqual(validGoal(TENANT));
+    expect(goalBody.goal).toEqual(derivedGoalOf()); // FW-38-A (G-1): the served goal carries the span-derived label
     expect(goalBody.constraintSet).toEqual(validConstraintSet(TENANT));
     // The demo project's OWN goal serves too (the seeded records persisted
     // at create time and rehydrated — the same content the demo route serves).
     const demoGoal = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/projects/${DEMO_PROJECT_ID}/goal`, headers: BEARER }));
     expect(demoGoal.status).toBe(200);
     const demoGoalBody = (demoGoal.body as { data: { goal: unknown; constraintSet: unknown } }).data;
-    expect(demoGoalBody.goal).toEqual(demoGoalStatement(TENANT));
+    expect(demoGoalBody.goal).toEqual(derivedDemoGoalOf()); // FW-38-A (G-1): the demo seed's goal serves the span-derived label ('180 days') under durable — one law, every record
     expect(demoGoalBody.constraintSet).toEqual(demoConstraintSet(TENANT));
   });
 });
@@ -555,7 +579,7 @@ describe('deploy/vercel — the durable seam: the goal read route', () => {
     const goal = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/projects/prj-goal-route/goal', headers: BEARER }));
     expect(goal.status).toBe(200);
     const goalBody = (goal.body as { data: { goal: unknown; constraintSet: unknown } }).data;
-    expect(goalBody.goal).toEqual(validGoal(TENANT));
+    expect(goalBody.goal).toEqual(derivedGoalOf()); // FW-38-A (G-1): the served goal carries the span-derived label (the input's annotation is not trusted off the wire)
     expect(goalBody.constraintSet).toEqual(validConstraintSet(TENANT));
 
     const unknown = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/projects/prj-unknown/goal', headers: BEARER }));
@@ -641,7 +665,7 @@ describe('deploy/vercel — the durable seam: the launch world capture (D-8, W-2
     const goalSet = await direct.project.goalSetOf(TENANT, 'prj-world-desk');
     expect(goalSet.ok).toBe(true);
     if (goalSet.ok && goalSet.value !== null) {
-      expect(goalSet.value.goal).toEqual(validGoal(TENANT));
+      expect(goalSet.value.goal).toEqual(derivedGoalOf()); // FW-38-A (G-1): the stored row is born with the derived label at the capture seam
       expect(goalSet.value.constraintSet).toEqual(validConstraintSet(TENANT));
       expect(goalSet.value.world).toEqual(extractedWorld()); // the captured world, merged into the same row
     }
@@ -650,7 +674,7 @@ describe('deploy/vercel — the durable seam: the launch world capture (D-8, W-2
     const goal = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-desk/goal', headers: BEARER }));
     expect(goal.status).toBe(200);
     const goalBody = (goal.body as { data: { goal: unknown; constraintSet: unknown; world?: unknown } }).data;
-    expect(goalBody.goal).toEqual(validGoal(TENANT));
+    expect(goalBody.goal).toEqual(derivedGoalOf()); // FW-38-A (G-1): the served goal carries the span-derived label
     expect(goalBody.constraintSet).toEqual(validConstraintSet(TENANT));
     expect(goalBody.world).toEqual(extractedWorld());
 
@@ -828,7 +852,10 @@ describe('deploy/vercel — the W-26B activation: the demo world under durable (
     // hydrated records), the org binding, the org status (the seed's report).
     const goal = await drive(first, streamingRequest({ method: 'GET', url: `/v1/projects/${DEMO_PROJECT_ID}/goal`, headers: BEARER }));
     expect(goal.status).toBe(200);
-    expect((goal.body as { data: { goal: unknown; constraintSet: unknown } }).data).toEqual({ goal: demoGoalStatement(TENANT), constraintSet: demoConstraintSet(TENANT) });
+    // FW-38-A (G-1) pin update: the demo goal serves with the SPAN-DERIVED
+    // label ('180 days' for the seed's exactly-180-day span) — the same law
+    // every goal record serves; the seed's other fields stay byte-identical.
+    expect((goal.body as { data: { goal: unknown; constraintSet: unknown } }).data).toEqual({ goal: derivedDemoGoalOf(), constraintSet: demoConstraintSet(TENANT) });
     const one = await drive(first, streamingRequest({ method: 'GET', url: `/v1/projects/${DEMO_PROJECT_ID}`, headers: BEARER }));
     expect(((one.body as { data: { lifecycle: { organizationRef: string | null } } }).data).lifecycle.organizationRef).toBe(DEMO_ORGANIZATION_REF);
     const orgStatus = await drive(first, streamingRequest({ method: 'GET', url: `/v1/organizations/${DEMO_ORGANIZATION_REF}/status?project=${encodeURIComponent(DEMO_PROJECT_ID)}`, headers: BEARER }));
@@ -1484,7 +1511,7 @@ describe('deploy/vercel — FW-MI-A: the durable session scope (the ownership st
     expect(goalSet.ok).toBe(true);
     if (!goalSet.ok) return;
     expect(goalSet.value?.ownerSession).toBe(SESSION_A); // THE STAMP
-    expect(goalSet.value?.goal).toEqual(validGoal(TENANT)); // the create's own records, unchanged
+    expect(goalSet.value?.goal).toEqual(derivedGoalOf()); // the create's own records (the span-derived label — G-1), otherwise unchanged
 
     // the COLD instance: session A still sees its desk (the durable ownership — the session's own projects hydrate for the session view)
     const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
@@ -1556,7 +1583,7 @@ describe('deploy/vercel — FW-MI-A: the durable session scope (the ownership st
     const ownGoal = await drive(instanceB, streamingRequest({ url: '/v1/projects/prj-session-a-1/goal?project=prj-session-a-1', headers: sessionHeaders(SESSION_A) }));
     expect(ownGoal.status).toBe(200);
     const goalBundle = ownGoal.body.data as { goal: unknown; constraintSet: unknown; ownerSession?: unknown };
-    expect(goalBundle.goal).toEqual(validGoal(TENANT)); // the launch's own goal, served fresh
+    expect(goalBundle.goal).toEqual(derivedGoalOf()); // the launch's own goal, served fresh (the span-derived label — G-1)
     expect(goalBundle.constraintSet).toEqual(validConstraintSet(TENANT));
     expect(goalBundle.ownerSession).toBeUndefined(); // the ownership field is host-side only — never in the console's read
   });
@@ -2027,5 +2054,47 @@ describe('deploy/vercel — W-30: the boot-projection round-trip law (PROD-504)'
     // THE LAW: the count is CONSTANT w.r.t. project count, and small.
     expect(counts[0]).toBe(counts[1]);
     expect(counts[0]).toBeLessThanOrEqual(12);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-38-A (Round G register G-1 — the serve-side healing half): a goal-set
+// row persisted BEFORE this wave (carrying the console wizard's stale 'one
+// day' annotation on a multi-day horizon) serves the SAME span-derived label
+// as a fresh capture — one law, every record.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-38-A (G-1): a pre-wave persisted goal row heals at the goal-read seam', () => {
+  it('a row stored with the wizard\'s stale \'one day\' label on a 45-day span serves \'45 days\' through goalOf (and the goal route) — the annotation never crosses to any consumer', async () => {
+    const providers = fakeProviders();
+    const direct = storesOver(providers.fetchLike);
+    // A PRE-WAVE row: the wizard stamps 'one day' and never updates it when
+    // the horizon end moves — stored exactly as the pre-wave capture would.
+    const staleGoal = { ...(validGoal(TENANT) as Record<string, unknown>), horizon: { startsAt: T0, endsAt: T0 + 45 * 86_400_000, label: 'one day' } };
+    const record = { id: 'prj-g1-prewave', tenantId: TENANT, name: 'the pre-wave desk', executionMode: 'simulation', lifecycle: { projectId: 'prj-g1-prewave', status: 'draft', acceptanceCriteriaId: 'ac:x', organizationRef: null }, lineage: { projectId: 'prj-g1-prewave', goal: { goalId: 'goal-tenant-durable', version: 1 }, constraintSet: { id: 'cs-tenant-durable', version: 1 } }, createdAt: T0, updatedAt: T0 };
+    expect((await direct.project.putProjectRecord(TENANT, record)).ok).toBe(true);
+    expect((await direct.project.putGoalSet(TENANT, 'prj-g1-prewave', { goal: staleGoal, constraintSet: validConstraintSet(TENANT) })).ok).toBe(true);
+
+    // The STORED row still carries the stale annotation (the durable truth is
+    // never rewritten by a read) — the SEAM derives it at serve.
+    const stored = await direct.project.goalSetOf(TENANT, 'prj-g1-prewave');
+    expect(stored.ok).toBe(true);
+    if (!stored.ok || stored.value === null) return; // the row was written above — a miss here is a harness defect, never the seam's
+    expect((stored.value.goal as { readonly horizon: { readonly label: string } }).horizon.label).toBe('one day');
+
+    const deployment = composeInstance(durableSource(), providers.fetchLike);
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+    await deployment.durable!.settled();
+    const healed = deployment.durable!.goalOf('prj-g1-prewave');
+    expect(healed.ok).toBe(true);
+    if (!healed.ok || healed.value === null) return; // the projection hydrated the row above — the narrowed read is the assertion's own subject
+    expect((healed.value.goal as { readonly horizon: { readonly label: string } }).horizon.label).toBe('45 days'); // HEALED at the seam — the same label a fresh capture would serve
+
+    // ...and the goal ROUTE serves the healed label to the console (the Goal card's own read).
+    const goal = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/projects/prj-g1-prewave/goal', headers: BEARER }));
+    expect(goal.status).toBe(200);
+    const goalBody = (goal.body as { data: { goal: { readonly horizon: { readonly label: string } } } }).data;
+    expect(goalBody.goal.horizon.label).toBe('45 days');
   });
 });

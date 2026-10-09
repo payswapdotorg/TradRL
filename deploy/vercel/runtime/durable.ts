@@ -154,7 +154,7 @@ import type {
 } from '../../../services/api/src/index';
 import { canonicalJson, isJobRecord } from '../../../services/api/src/index';
 import { fakeJobSubmission } from '../../../services/api/src/fixtures';
-import { DEMO_PROJECT_ID, demoSeedJobPrimingLatch, launchWorldOfSpec, OUTCOME_DURABLE_LANE_FIELD, type OutcomeDurableWriteLane, type OutcomeLearningPortWithDurableLane } from './demo';
+import { DEMO_PROJECT_ID, demoSeedJobPrimingLatch, launchWorldOfSpec, withDerivedGoalHorizonLabel, OUTCOME_DURABLE_LANE_FIELD, type OutcomeDurableWriteLane, type OutcomeLearningPortWithDurableLane } from './demo';
 import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, ownerSessionOf, type GoalSetRecord, type NeonStoreDeps, type SessionProjectRow } from '../../adapters/neon/stores';
 import { executeNeonStatement, type NeonConfig } from '../../adapters/neon/client';
 import { NEON_DDL_RECORDS } from '../../adapters/neon/schema';
@@ -1058,19 +1058,31 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
       const guard = requireReady();
       if (guard !== null || current === null) return guard ?? { ok: false, error: degraded() };
       if (input.tenantId !== deps.tenant) return { ok: false, error: crossTenant() };
+      // FW-38-A (Round G register G-1 — the goal-capture seam): the goal
+      // record is BORN here with the SPAN-DERIVED horizon label
+      // (withDerivedGoalHorizonLabel) — the create input's free-text
+      // annotation is NOT trusted off the wire (the console wizard's draft
+      // stamps its 'one day' default and never updates it when the horizon
+      // end moves, so 30/45/60/90-day spans served "horizon label: one day"
+      // on the Goal card and in the export's goal record while the same
+      // launch's deliverable said "(span 90 days)" — 9/9 Round G personas).
+      // The derived goal is the ONE truth the seam carries: the inner
+      // control-plane call, the live overlay, and the durable row all hold
+      // the same record (never a capture that disagrees with its store).
+      const goal = withDerivedGoalHorizonLabel(input.goal as GoalStatement);
       const result = adapt(() => current!.controlPlane.createProject({
         id: input.id as never,
         tenantId: input.tenantId as never,
         name: input.name,
         executionMode: input.executionMode as never,
-        goal: input.goal as GoalStatement,
+        goal,
         constraintSet: input.constraintSet as ConstraintSetStatement,
         at: input.at as never,
       }));
       if (!result.ok) return result;
       const record = result.value;
       const projectId = input.id as string;
-      const goalSet: GoalSetRecord = { goal: input.goal, constraintSet: input.constraintSet };
+      const goalSet: GoalSetRecord = { goal, constraintSet: input.constraintSet };
       // The live goal-set overlay (the projection's map, extended by this
       // create — the host goal read serves it immediately; a failed drain's
       // re-projection rebuilds the map from the durable truth, wiping any
@@ -1421,7 +1433,15 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
         : { code: 'durable_projection_pending', message: 'the durable projection is in flight; the goal read degrades (R46)' };
       return { ok: false, error: degradedFailure };
     }
-    return { ok: true, value: liveGoalSets.get(projectId) ?? null };
+    // FW-38-A (G-1 — the serve-side healing half): a goal-set row persisted
+    // BEFORE this wave (carrying the console's stale 'one day' annotation on
+    // a multi-day horizon) serves the SAME span-derived label as a fresh
+    // capture — one law, every record, never a contradictory annotation on
+    // the wire. Every durable consumer of the goal statement (the goal
+    // routes, the risk-utilization fold, the evidence source, the deliverable
+    // source) reads through this seam, so they all serve the derived label.
+    const record = liveGoalSets.get(projectId) ?? null;
+    return record === null ? { ok: true, value: null } : { ok: true, value: { ...record, goal: withDerivedGoalHorizonLabel(record.goal) } };
   }
 
   // -------------------------------------------------------------------------

@@ -1178,7 +1178,16 @@ describe("deploy/vercel — the launched-scope goal route (D-4, W-25B: the demo 
     for (const key of Object.keys(written.headers)) expect(key.toLowerCase()).not.toContain('access-control');
     const body = JSON.parse(written.payload as string) as { requestId: string; data: { goal: unknown; constraintSet: unknown } };
     expect(body.requestId).toBe(written.headers['x-request-id']);
-    expect(body.data.goal).toEqual(request.goal); // ITS OWN goal — the create input verbatim (the drafted objective, criteria, evaluation)
+    // FW-38-A (G-1) pin update: the served goal is the create input's own
+    // record EXCEPT the horizon label — the label is the SPAN-DERIVED fact of
+    // the record's own bounds ('90 days' for the fixture's exactly-90-day
+    // span), never the wire's free-text annotation ('the launch window'),
+    // the same law FW-37-A applied to the launch world. The pre-fix pin
+    // asserted the input verbatim — the law the Round G register (G-1, 9/9
+    // personas) falsified: the wizard's stale 'one day' annotation rode
+    // multi-day horizons into the Goal card and the export's goal record.
+    const draftedGoal = request.goal as { readonly horizon: { readonly startsAt: number; readonly endsAt: number; readonly label: string } };
+    expect(body.data.goal).toEqual({ ...draftedGoal, horizon: { ...draftedGoal.horizon, label: '90 days' } }); // ITS OWN goal — objective, criteria, evaluation verbatim; the label computed from the span
     expect(body.data.constraintSet).toEqual(request.constraintSet); // ITS OWN constraint set (the drafted numeric bounds + the budget constraints)
   });
 
@@ -1198,11 +1207,19 @@ describe("deploy/vercel — the launched-scope goal route (D-4, W-25B: the demo 
     }), response);
     expect(captured().status).toBe(200);
     const body = JSON.parse(captured().payload as string) as { data: unknown };
-    expect(body.data).toEqual({ goal: demoGoalStatement(tenant), constraintSet: demoConstraintSet(tenant) }); // byte-identical to the pre-W-25B serve
-    // And the demo seed's own create rode the same port: its captured records ARE the seeded exports (the capture's completeness pin).
+    // FW-38-A (G-1) pin update: the seed's goal serves with the SPAN-DERIVED
+    // horizon label ('180 days' for the demo seed's exactly-180-day span) —
+    // the same law every goal record serves (the authored 'the demo
+    // evaluation window' annotation named the window; the derived label is
+    // the computed fact of the bounds, so the Goal card's label reconciles
+    // with the dates beside it by arithmetic). The pre-fix pin asserted the
+    // seed verbatim; the record's OTHER fields stay byte-identical.
+    const seededGoal = demoGoalStatement(tenant);
+    expect(body.data).toEqual({ goal: { ...seededGoal, horizon: { ...seededGoal.horizon, label: '180 days' } }, constraintSet: demoConstraintSet(tenant) });
+    // And the demo seed's own create rode the same port: its captured records ARE the seeded exports with the derived label (the capture's completeness pin, the G-1 law at the capture seam).
     expect(composed.demo).not.toBeNull();
     if (composed.demo === null) return;
-    expect(demoGoalSetOf(composed.demo.ports, tenant, DEMO_PROJECT_ID)).toEqual({ tenant, project: DEMO_PROJECT_ID, goal: demoGoalStatement(tenant), constraintSet: demoConstraintSet(tenant) });
+    expect(demoGoalSetOf(composed.demo.ports, tenant, DEMO_PROJECT_ID)).toEqual({ tenant, project: DEMO_PROJECT_ID, goal: { ...seededGoal, horizon: { ...seededGoal.horizon, label: '180 days' } }, constraintSet: demoConstraintSet(tenant) });
   });
 
   it('a project with no goal on record answers the typed not-found (unchanged); a REFUSED create leaves nothing — a duplicate-id create never overwrites the first goal', async () => {
@@ -1480,7 +1497,12 @@ describe('deploy/vercel — the launched world capture, demo arm (D-8, W-28: eve
     await handleDeploymentRequest(composed, streamingRequest({ method: 'GET', url: '/v1/projects/prj-world-demo/goal', headers: bearer }), response);
     expect(captured().status).toBe(200);
     const body = JSON.parse(captured().payload as string) as { data: { goal: unknown; constraintSet: unknown; world?: unknown } };
-    expect(body.data.goal).toEqual(createRequest(tenant, 'prj-world-demo', 'the world story objective').goal);
+    // FW-38-A (G-1) pin update: the goal serves with the SPAN-DERIVED label
+    // ('90 days' for the fixture's exactly-90-day span) — the input's
+    // free-text annotation is not trusted off the wire; every other field
+    // verbatim (the pre-fix pin asserted the create input verbatim).
+    const worldStoryGoal = createRequest(tenant, 'prj-world-demo', 'the world story objective').goal as { readonly horizon: { readonly startsAt: number; readonly endsAt: number; readonly label: string } };
+    expect(body.data.goal).toEqual({ ...worldStoryGoal, horizon: { ...worldStoryGoal.horizon, label: '90 days' } });
     expect(body.data.world).toEqual(extractedWorld()); // the captured world, served back
 
     // The capture itself (the fold): the authorized tenant's own, per project.

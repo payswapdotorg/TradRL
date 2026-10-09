@@ -834,6 +834,12 @@ export function durableDeliverableSourceOf(
       const goalSet = source.goalSetOf(project);
       return goalSet === null ? null : { goal: goalSet.goal, constraintSet: goalSet.constraintSet, world: goalSet.world };
     },
+    // FW-38-A (G-6): the DEGRADED/ABSENT distinction rides the deliverable
+    // source — a degraded seam goal read (the projection in flight or dirty)
+    // is NEVER an honest "no goal on record", so the tick must not compose
+    // the honest-absence text from it (the job waits one tick; the
+    // projection's own settled() law lands it).
+    ...(source.goalSetDegradedOf === undefined ? {} : { mandateDegradedOf: (project: string) => source.goalSetDegradedOf!(project) }),
     observedOf(project) {
       if (project === DEMO_PROJECT_ID) return demoSeededObservedState();
       const world = source.goalSetOf(project)?.world ?? null;
@@ -868,6 +874,17 @@ function organizationRefOfProject(controlPlane: ControlPlanePort, tenant: string
 export interface DurableEvidenceSource {
   /** The durable goal set of one project (null when absent or degraded). */
   goalSetOf(project: string): { readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; readonly world: LaunchWorldRecord | null } | null;
+  /**
+   * FW-38-A (Round G register G-6): the goal-set read's DEGRADED state,
+   * distinct from absent — true when the seam's goal read is currently the
+   * typed degraded state (the projection in flight or dirty), in which
+   * case the deliverable source's mandate read is NOT an honest absence and
+   * the machinery tick must not compose from it (the composition must read
+   * the CURRENT project's goal record — never the honest-absence text while
+   * a goal exists behind the degraded read). Optional + additive: a source
+   * that never degrades (the demo arm's per-instance capture) omits it.
+   */
+  readonly goalSetDegradedOf?: (project: string) => boolean;
   /** The organization ref of one project of one tenant (null when unbound, unknown or degraded). */
   organizationRefOf(tenant: string, project: string): string | null;
 }
@@ -1122,6 +1139,38 @@ export function withDerivedHorizonLabel(world: LaunchWorldRecord): LaunchWorldRe
 }
 
 /**
+ * Re-derive ONE GOAL STATEMENT's horizon label from its own bounds (FW-38-A,
+ * Round G register G-1 — the goal-capture seam, F-4's completion): FW-37-A
+ * fixed the horizon label at the deliverable + launchWorld seams, but the
+ * GOAL record is born at the CREATE-PROJECT capture with the console
+ * wizard's free-text annotation trusted off the wire — and the wizard's
+ * draft stamps its default label ('one day') and never updates it when the
+ * horizon end moves, so 30/45/60/90-day spans served "horizon label: one
+ * day" on the Goal card and in the export's goal record (9/9 Round G
+ * personas) while the SAME launch's deliverable said "(span 90 days)". The
+ * same span-derived law now applies to the goal statement: the label is a
+ * COMPUTED FACT of the record's own bounds (horizonSpanLabel), never a
+ * free-text annotation trusted off the wire — applied at the CAPTURE seams
+ * (demoControlPlane.createProject + the durable control-plane port's
+ * createProject, so the record is BORN right) and at the goal-read seams
+ * (so a row persisted BEFORE this wave serves the same derived label as a
+ * fresh capture — one law, every record, never a contradictory annotation
+ * on the wire). Pure + structural: a malformed horizon answers the record
+ * unchanged (R46 — the create-project parser's own guard already kept such
+ * a row off the wire).
+ */
+export function withDerivedGoalHorizonLabel<T>(goal: T): T {
+  if (!isRecord(goal)) return goal; // not a record-shaped goal — the value passes through unchanged (R46)
+  const horizon = (goal as { readonly horizon?: unknown }).horizon as { readonly startsAt?: unknown; readonly endsAt?: unknown } | null | undefined;
+  if (horizon === null || horizon === undefined || typeof horizon !== 'object') return goal;
+  if (typeof horizon.startsAt !== 'number' || !Number.isFinite(horizon.startsAt)) return goal;
+  if (typeof horizon.endsAt !== 'number' || !Number.isFinite(horizon.endsAt)) return goal;
+  // The generic pass-through keeps the caller's own record type (the branded
+  // TimestampMs bounds are the SAME numbers — the brand is compile-time only).
+  return deepFreeze({ ...goal, horizon: { startsAt: horizon.startsAt, endsAt: horizon.endsAt, label: horizonSpanLabel(horizon.startsAt, horizon.endsAt) } }) as T;
+}
+
+/**
  * Guard: a structurally valid launch world record (D-8, W-28). The goal
  * route re-validates a DURABLE-decoded world with this before serving it —
  * a pre-W-28 or malformed payload never crosses to the console (the route
@@ -1194,7 +1243,12 @@ export interface DemoGoalSetRecording {
   readonly tenant: string;
   /** The project the goal set belongs to (the create input's own id). */
   readonly project: string;
-  /** The create-project input's goal statement, verbatim. */
+  /**
+   * The create-project input's goal statement — verbatim EXCEPT the horizon
+   * label, which is the SPAN-DERIVED one (FW-38-A, G-1:
+   * withDerivedGoalHorizonLabel — the free-text annotation is not trusted
+   * off the wire, the same law FW-37-A applied to the launch world).
+   */
   readonly goal: GoalStatement;
   /** The create-project input's constraint set, verbatim. */
   readonly constraintSet: ConstraintSetStatement;
@@ -1231,7 +1285,12 @@ export function demoControlPlane(): ReturnType<typeof fakeControlPlane> & { read
         goalSets.set(`${input.tenantId as string}/${input.id as string}`, {
           tenant: input.tenantId as string,
           project: input.id as string,
-          goal: input.goal as GoalStatement,
+          // FW-38-A (G-1): the retained goal is born with the SPAN-DERIVED
+          // horizon label (withDerivedGoalHorizonLabel) — the create input's
+          // free-text annotation is NOT trusted off the wire (the wizard's
+          // draft stamps 'one day' and never updates it; the demo seed's own
+          // create rides the same law).
+          goal: withDerivedGoalHorizonLabel(input.goal as GoalStatement),
           constraintSet: input.constraintSet as ConstraintSetStatement,
         });
       }
@@ -1719,6 +1778,23 @@ export function demoMachineryTick(service: ApiService, context: DemoMachineryCon
     if (age >= DEMO_JOB_COMPLETE_AFTER_MS) status = 'complete';
     else if (age >= DEMO_JOB_RUNNING_AFTER_MS) status = 'running';
     if (status === null) continue;
+    // FW-38-A (Round G register G-6 — the switch-path composition miss, S2's
+    // seq-555 record): a research job whose mandate read is DEGRADED (the
+    // durable projection in flight or dirty — the goal EXISTS behind the
+    // read) must NOT complete this tick. The pre-fix law flattened the
+    // degraded read into an absent mandate, so a kickoff deliverable composed
+    // "a capital budget of not declared ... across the horizon no goal on
+    // record ... under no declared constraints" while the Goal surface
+    // carried the full mandate — an immutable chain record of a composition
+    // that never read the project's own goal. The job stays non-terminal
+    // (honest: the completion transition simply has not fired) and the next
+    // tick — the router's settled() law lands the projection first —
+    // composes the REAL mandate. An ABSENT mandate (the read is ready and
+    // nothing is on record) is the honest pre-fix case and composes exactly
+    // as before (THE HONESTY LAW).
+    if (status === 'complete' && job.kind === 'research' && context.deliverables.mandateDegradedOf !== undefined && context.deliverables.mandateDegradedOf(job.project)) {
+      continue;
+    }
     // FW-31-B: the DEMO project's seeded jobs complete at their OWN
     // deterministic instant (the fixed submission instant + the schedule),
     // so the completed record — completedAt included — is byte-identical on
