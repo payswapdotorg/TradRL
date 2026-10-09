@@ -289,3 +289,43 @@ governance passed. **Deployed + verified live:** production dpl_8RmSWER2petN59my
 READY @ main 30c4e9b (shell 200; api authn-first 401). Carried forward: E-3 mandate fidelity,
 E-5 the oversight surface, E-6 ingestion, E-7 pricing (commercial), E-10's remaining polish.
 Next: Round F re-measurement (same instrument) on the fixed origin.
+
+## Round F — the competitive-adoption re-measurement on the FW-36 origin (2026-10-09, appended post-cut)
+
+**Round F (same instrument as Round E: 9 professionals — 3 small / 3 mid / 3 large — x 51
+projects = 13 deep full-lifecycle + 38 fast throughput, fresh first-time sessions, UI-only
+law, Bloomberg/TradingView/QuantConnect fact-sheet comparator, honest counts).** Origin:
+production main @ 30c4e9b (FW-36-A/B). 51/51 projects completed, 209/209 sub-tasks,
+23 friction events; dispatch restructured to <=2-concurrent waves after a first
+3-parallel attempt died to the sandbox OOM killer (0 rows lost). Full evidence:
+`docs/release/ROUND-F-REPORT.md` (ledger 51 rows + survey 9 lines on the operator volume).
+
+**Main-interface adoption: 0 yes / 2 leaning / 7 no (no movement); would-pilot 9/9;
+decision 0 switch / 3 undecided / 6 stay.** The four FW-36 fixes held live:
+**E-1 8/9 pass** (mandate actuals verbatim, 5 mandates = 5 distinct texts; residual:
+a provenance receipt, not research), **E-2 3 pass / 6 partial** (the capital-budget
+class binds with exact itemized projected-book arithmetic 9/9; position/concentration/
+turnover taught-not-enforced with export-only teaching and Risk-card overclaim),
+**E-8 9/9 pass** (row-level SIMULATED everywhere, 0 missing export records),
+**E-9 9/9 pass** (all nine personas re-verified the export chain from the file alone —
+four wrote their own verifiers from the published canonicalRule). Fast-project median
+92s -> 51s. Scorecard: TradRL wins 6/10 dimensions (export 5.00, auditability 4.78,
+agent_org_model 4.11 vs competitors' 1.11-3.11), ties 2, loses risk_tooling (the
+constraint-class gap) and pricing_fit (E-7 unpublished).
+
+**Register F-1..F-12 (precise evidence in the report):** F-1 constraint-class
+enforcement gap + UI overclaim (6/9 partials); F-2 no consolidated multi-desk oversight
+(every multi-desk persona's #1); F-3 tenancy — other sessions' desks listed + cross-session
+blotter reads (first-hand x3), the export-bleed variant challenged x3 (unreproduced);
+F-4 horizon "(one day)" label (8/9); F-5 post-switch launch no-op (5/9); F-6 the Risk
+panel's L4 leak (a future refusal at a past instant; found + independently reproduced);
+F-7 the standing breach card shows the refused candidate's projected book, not the actual;
+F-8 single-constraint refusal citation; F-9 restart posture half-true (theme/onboarding/
+scope/switcher-membership reset); F-10 mandate-blind desk behavior; F-11 the closed
+research world (even research Notes never reach the event chain); F-12 the deliverable
+composes no derived statistics from its own records.
+
+**Next: FW-37-A (the honesty wave — F-1 full-class enforcement + UI truth alignment,
+F-4, F-5, F-6, F-7) + FW-37-B (the oversight wave — F-2 the consolidated surface,
+F-3 first half: unlist foreign desks + a targeted bleed reproduction); Round G
+re-measures on the FW-37 origin.** Carried: F-9/F-10/F-11/F-12, E-7 (business), W-13.
