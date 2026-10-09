@@ -4860,7 +4860,7 @@ function switchReloadExportTransport(): { readonly transport: ApiTransport; read
     ...enrichedOutcome(),
     outcomeId: 'out:deskb0001', project: 'prj-b',
     decision: { decisionRef: 'xd:deskb0001', intentRef: 'si:deskb0001', disposition: 'filled' },
-    lineage: { ...enrichedOutcome().lineage, shadow: { ...((enrichedOutcome().lineage as Record<string, unknown>).shadow as Record<string, unknown>), project: 'prj-b' } },
+    lineage: { ...(enrichedOutcome().lineage as Record<string, unknown>), shadow: { ...((enrichedOutcome().lineage as Record<string, unknown>).shadow as Record<string, unknown>), project: 'prj-b' } },
   });
   const deskBSubmissions = (): Record<string, unknown>[] => [
     {
@@ -5079,14 +5079,4 @@ describe('executed boot: FW-36-B (E-8, part 4) — the verify file-input keeps i
       else holder.DataTransfer = prior;
     }
   });
-
-  /** The concatenated text of the verify card's whole subtree (the local deepTextOf equivalent). */
-  function deepVerifyTextOf(element: FakeElement): string {
-    const parts: string[] = [];
-    for (const node of element.childNodes) {
-      if (node instanceof FakeText) parts.push(node.text);
-      else parts.push(deepVerifyTextOf(node as FakeElement));
-    }
-    return parts.join('');
-  }
 });
