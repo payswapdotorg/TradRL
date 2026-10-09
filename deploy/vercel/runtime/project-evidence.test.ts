@@ -672,4 +672,72 @@ describe('deploy/vercel — FW-37-A (F-1 + F-8): the full stream — a desk size
     expect(entryPosition?.verdict).toBe('pass'); // the single position is AT the cap, not over
     expect(entryPosition?.observed).toBe('1');
   });
+
+  it('a declared CONCENTRATION fraction bound evaluates at every candidate — the first position is honestly 100% of the projected book (advisory_breach, routed), and the concentration attempt is CITED with the itemized fraction arithmetic (L2\'s declared 0.25)', () => {
+    // L2's declared 0.25 concentration bound, ADVISORY (L2's own severity
+    // class): the entry routes with the honest advisory_breach stamp — the
+    // FIRST position is 100% of the projected book by arithmetic truth
+    // (candidate 6 / projected 6 = 1), never a silent pass — the trim lands
+    // inside (1.5 / 7.5 = 0.2), and the concentration attempt breaches the
+    // fraction bound and is CITED alongside the capital budget (F-8: every
+    // breached bound, each with its own class-true observed value).
+    const seed = deriveProjectEvidence(envelope({
+      constraintSet: {
+        ...launchedConstraintSet(),
+        constraints: [
+          ...launchedConstraintSet().constraints,
+          { id: 'c-5', domain: 'state', subject: 'position.concentration', predicate: { kind: 'limit.max', bound: 0.25 }, severity: 'advisory' },
+        ],
+      } as ConstraintSetStatement,
+    }));
+    expect(seed).not.toBeNull();
+    if (seed === null) return;
+    const routed = seed.submissions.filter((row) => row.kind === 'routed');
+    expect(routed).toHaveLength(2);
+    // The entry's OWN concentration evaluation: the first position IS the
+    // whole projected book — fraction 1 — the honest breach verdict, and the
+    // row's limits stamp is the COMPUTED advisory_breach (an advisory bound
+    // warns, never blocks — the entry still routes).
+    const entryConcentration = (routed[0]?.limitsEvaluation ?? []).find((evaluation) => evaluation.constraintId === 'c-5');
+    expect(entryConcentration?.verdict).toBe('breach');
+    expect(entryConcentration?.observed).toBe('1');
+    expect(entryConcentration?.severity).toBe('advisory'); // derivable — the declared severity stands
+    expect(entryConcentration?.arithmetic).toContain('this candidate\'s own notional 6 / the projected total book 6 (prior 0 + candidate 6) = the concentration fraction 1');
+    const entryLimitsCheck = (routed[0]?.riskChecks ?? []).find((check) => check.dimension === 'limits');
+    expect(entryLimitsCheck?.outcome).toBe('advisory_breach'); // the computed stamp — never a fixed pass
+    // The trim's own evaluation: 1.5 / 7.5 = 0.2 — inside the 0.25 bound, pass.
+    const trimConcentration = (routed[1]?.limitsEvaluation ?? []).find((evaluation) => evaluation.constraintId === 'c-5');
+    expect(trimConcentration?.verdict).toBe('pass');
+    expect(trimConcentration?.observed).toBe('0.2');
+    // The concentration attempt: 9999.9996 / 10007.4996 = 0.99925 — past the
+    // 0.25 bound, CITED with its own class-true observed value.
+    const refusal = seed.submissions.find((row) => row.kind === 'refused');
+    expect(refusal).toBeDefined();
+    if (refusal === undefined || refusal.kind !== 'refused') return;
+    const citations = (refusal.refusal as { readonly refusals: readonly { readonly constraintId: string; readonly subject: string; readonly severity: string; readonly observed: string }[] }).refusals;
+    expect(citations.map((citation) => citation.constraintId)).toEqual(['k-capital-budget', 'c-5']);
+    expect(citations[1]).toMatchObject({ subject: 'position.concentration', severity: 'advisory', observed: '0.99925' });
+    // The prose cites the concentration breach too — itemized per class.
+    expect(refusal.decisionRationale).toContain('0.99925');
+    expect(refusal.decisionRationale).toContain('position.concentration');
+  });
+
+  it('a BLOCKING concentration bound below 1 honestly refuses the FIRST candidate (the first position is 100% of the projected book — fraction 1, the arithmetic truth) — the desk executes nothing (the honest emptiness, never a fabricated pass)', () => {
+    // The class's own edge, stated honestly: a desk's FIRST position is
+    // always the whole projected book, so a blocking fraction bound below 1
+    // refuses every first candidate by arithmetic. The gate neither
+    // special-cases the first position nor fabricates a denominator — the
+    // desk honestly executes nothing (the existing blocking-breach-at-entry
+    // law), and the mandate's own arithmetic is the reason.
+    const seed = deriveProjectEvidence(envelope({
+      constraintSet: {
+        ...launchedConstraintSet(),
+        constraints: [
+          ...launchedConstraintSet().constraints,
+          { id: 'c-5', domain: 'state', subject: 'position.concentration', predicate: { kind: 'limit.max', bound: 0.25 }, severity: 'blocking' },
+        ],
+      } as ConstraintSetStatement,
+    }));
+    expect(seed).toBeNull(); // the gate refuses the very first order — the desk honestly executes nothing
+  });
 });
