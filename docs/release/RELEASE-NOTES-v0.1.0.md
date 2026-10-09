@@ -329,3 +329,42 @@ composes no derived statistics from its own records.
 F-4, F-5, F-6, F-7) + FW-37-B (the oversight wave — F-2 the consolidated surface,
 F-3 first half: unlist foreign desks + a targeted bleed reproduction); Round G
 re-measures on the FW-37 origin.** Carried: F-9/F-10/F-11/F-12, E-7 (business), W-13.
+
+## Round G — the re-measurement on the FW-37 origin: the first headline movement (2026-10-09, appended post-cut)
+
+**Round G (the same 9 professionals as Round F, returning evaluators; 51 projects =
+13 deep + 38 fast; UI-only law; honest counts; two workers recovered by continuation
+after LLM-backend/turn-limit outages — 0 fabricated rows).** Origin: production main
+@ 579ecee (FW-37-A/B). Full evidence: `docs/release/ROUND-G-REPORT.md`.
+
+**Main-interface adoption: 0 yes / 6 LEANING / 3 no (Round F: 0/2/7) — FOUR NO→LEANING
+flips (M1, L1, L2, L3: every persona whose stated disqualifier shipped). Would-pilot
+9/9 (all strengthened).** All five FW-37 fixes verified live 9/9: f1 full-class
+enforcement (both Round F breach cases structurally impossible; L2's rebuilt taxonomy:
+all 5 declared classes BOUND AT GATE, taught-not-enforced none, silent none), f2 the
+oversight surface (delivers the structural ask; defects registered), f3 the tenancy
+wall (4 surfaces; the Round F cross-session blotter read impossible), f5
+launch-after-switch; f4 partial 9/9 (the goal-capture seam residue). e2 gate honesty
+9/9 PASS (was 3 pass/6 partial); e8/e9 9/9 (every chain re-verified from the files
+alone); e1 7 pass/2 partial. Scorecard: risk_tooling 3.33→4.44 (the F-1 fix flipped
+the Round F loss); auditability 5.00 and export 5.00; wins 7/10; pricing_fit 2.56
+remains the lost dimension (E-7).
+
+**Register G-1..G-13 (report §4):** G-2 the standing rows read the refused candidate's
+projection, not the fill-derived book (9 scopes; compliant desks render as breaches at
+38-445× — the top friction, on the escalation row); G-11 restart orphan access (the
+NEW hard deployment blocker: a full browser restart permanently orphans your desks —
+the wall removed the recovery list; durable DATA / ephemeral SESSION / absent
+IDENTITY / orphaned access); G-1 the goal-capture horizon label (9/9); G-3 the
+status pill shows lifecycle "draft"; G-8 dead-desk silence (a blocking constraint that
+prevents entry explains nothing); G-9 the stale empty-blotter taxonomy fallback;
+G-7 the "Next: world" first-click no-op; G-10 the job-sheet backdrop cluster (7
+personas); G-4 TM-scrubbed oversight reads degrade until a switch; G-5 a not-yet-
+observed projection rendered; G-6 the switch-path deliverable composition miss
+(S2, unreproduced twice); G-12 the "as of" semantics; G-13 the degraded-window
+retry. Carried: E-3 (mandate-blind desk — the gate now refuses with full citations),
+E-6 (the closed research world — decisive for M3), E-7 (pricing), F-12.
+
+**Next: FW-38-A the truth wave (G-2/G-3/G-5/G-9/G-12/G-4) + FW-38-B the capture wave
+(G-1/G-6/G-8/G-7/G-10) + the G-11 identity-model design order; Round H re-measures
+on the FW-38 origin.**
