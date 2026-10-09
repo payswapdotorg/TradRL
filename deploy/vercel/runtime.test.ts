@@ -1616,7 +1616,7 @@ describe('deploy/vercel — the launched-desk evidence stream (FW-MI-B: MI-D2 + 
     const rows = (JSON.parse(blotter.captured().payload as string) as { data: { items: readonly Record<string, unknown>[] } }).data.items;
     expect(rows).toHaveLength(3); // 2 routed fills + 1 honest pre-trade-risk refusal
     const routedRows = rows.filter((row) => row.kind === 'routed') as unknown as readonly { kind: string; decisionBody: string; decisionRationale: string; riskChecks: readonly { dimension: string; outcome: string }[]; order: { instrumentId: string; venueId: string; quantity: string; price: string }; fill: { notional: string; fee: string; quantity: string; price: string }; evidence: readonly { kind: string; ref: string }[] }[];
-    const refusedRow = rows.find((row) => row.kind === 'refused') as unknown as { kind: string; decisionBody: string; decisionRationale: string; refusal: { stage: string; refusals: readonly { constraintId: string; subject: string; predicate: { kind: string; bound: number }; observed: string }[] }; order: { instrumentId: string; venueId: string } };
+    const refusedRow = rows.find((row) => row.kind === 'refused') as unknown as { kind: string; decisionBody: string; decisionRationale: string; refusal: { stage: string; refusals: readonly { constraintId: string; subject: string; predicate: { kind: string; value?: string; bound?: number }; observed: string }[] }; order: { instrumentId: string; venueId: string; quantity: string; price: string } };
     expect(routedRows).toHaveLength(2);
     // THE NAMED DECIDING BODIES (MI-D10): the desk's own identity, the platform's named risk gate — never "unknown".
     expect(routedRows.every((row) => row.decisionBody === 'desk:prj-desk-evidence-execution')).toBe(true);

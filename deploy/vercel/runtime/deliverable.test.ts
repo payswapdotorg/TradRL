@@ -23,7 +23,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { validConstraintSet, validCreateProjectRequest, validGoal } from '../../../services/api/src/fixtures';
-import type { ConstraintSetStatement, GoalStatement } from '../../../services/api/src/index';
+import type { ConstraintSetStatement, GoalStatement, TimestampMs } from '../../../services/api/src/index';
 import {
   composeResearchDeliverableResult,
   declaredConstraintFacts,
@@ -50,7 +50,7 @@ function numbersDenseGoal(): GoalStatement {
   return {
     ...(validGoal(TENANT) as unknown as GoalStatement),
     objective: '2418 round trips at a 63% hit rate inside an 8bps cost budget, z-scores above 2, half-life under 4 hours',
-    horizon: { startsAt: AT, endsAt: AT + 30 * 86_400_000, label: 'the dense mandate window' },
+    horizon: { startsAt: AT as TimestampMs, endsAt: (AT + 30 * 86_400_000) as TimestampMs, label: 'the dense mandate window' },
   };
 }
 
@@ -64,7 +64,7 @@ function numbersDenseConstraintSet(): ConstraintSetStatement {
       { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: '50000000.00' }, severity: 'blocking' },
       { id: 'c-2', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.18 }, severity: 'blocking' },
     ],
-  } as ConstraintSetStatement;
+  } as unknown as ConstraintSetStatement;
 }
 
 /** The sparse counter-mandate: one instrument, one declared budget, a different window. */
@@ -72,7 +72,7 @@ function sparseGoal(): GoalStatement {
   return {
     ...(validGoal(TENANT) as unknown as GoalStatement),
     objective: 'Hold the single-instrument band; keep it simple.',
-    horizon: { startsAt: AT + 86_400_000, endsAt: AT + 10 * 86_400_000, label: 'the quiet window' },
+    horizon: { startsAt: (AT + 86_400_000) as TimestampMs, endsAt: (AT + 10 * 86_400_000) as TimestampMs, label: 'the quiet window' },
   };
 }
 
@@ -83,7 +83,7 @@ function sparseConstraintSet(): ConstraintSetStatement {
     constraints: [
       { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: '10000.00' }, severity: 'blocking' },
     ],
-  } as ConstraintSetStatement;
+  } as unknown as ConstraintSetStatement;
 }
 
 const DENSE_WORLD: LaunchWorldRecord = {
