@@ -379,8 +379,8 @@ export function detailSheet(props: SheetProps): VNode[] {
 // §4.6 Timelines.
 // ---------------------------------------------------------------------------
 
-/** One rendered timeline row group (a bucket's rows). */
-export function timelineList(buckets: readonly { label: string; entries: readonly { at: number; title: string; description?: string; slug?: string; severity?: 'info' | 'warn' | 'error' }[] }[]): VNode {
+/** One rendered timeline row group (a bucket's rows). FW-36-B (E-8, part 3): an entry may carry the demo disclosure marker. */
+export function timelineList(buckets: readonly { label: string; entries: readonly { at: number; title: string; description?: string; slug?: string; severity?: 'info' | 'warn' | 'error'; demo?: boolean }[] }[]): VNode {
   let seenFirst = false;
   const severityIcon: Record<'info' | 'warn' | 'error', ComponentIcon> = { info: 'check', warn: 'pulse', error: 'alert' };
   return v('div', { class: 'timeline' }, buckets.map((bucket) => v('section', { class: 'timeline-bucket', 'data-period': bucket.label }, [
@@ -397,6 +397,11 @@ export function timelineList(buckets: readonly { label: string; entries: readonl
             v('span', { class: 'timeline-title' }, [entry.title]),
             ...(entry.description === undefined ? [] : [v('span', { class: 'timeline-desc' }, [entry.description])]),
           ]),
+          // FW-36-B (Round E register E-8, part 3): the entry's own demo
+          // disclosure — a quiet DEMO chip on the row when the entry
+          // derives from the shared demo project (L3's finding: the
+          // copied-out activity read as the user's own world).
+          ...(entry.demo === true ? [v('span', { class: 'demo-flag timeline-demo', 'data-demo': 'true' }, ['DEMO'])] : []),
           chevron('row-chevron timeline-chevron'),
         ]),
         ...(entry.slug === undefined ? [] : [v('div', { class: 'row-details' }, [

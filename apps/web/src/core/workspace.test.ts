@@ -20,6 +20,7 @@ import {
   CHAIN_GENESIS,
   composeWorkspaceExport,
   earliestRecordInstantOf,
+  EXPORT_SIMULATED_FLAG_RULE,
   historyFloorOf,
   openWorkspace,
   reduceAll,
@@ -765,13 +766,16 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
   it('the export carries the EVIDENCE CAPSULES (every source family, the Evidence section\'s own derivations)', () => {
     const state = richState();
     const doc = composeWorkspaceExport(state);
+    // FW-36-B (E-8, part 2): every exported capsule carries the structured
+    // per-record simulated flag (false here — the composition default; the
+    // app layer passes its own environment truth).
     const expected = [
       capsuleFromOutcome(SCOPE, state.outcomes[0] as OutcomeRecord),
       capsuleFromPostMortem(SCOPE, state.postMortems[0] as PostMortemRecord),
       capsuleFromKnowledge(SCOPE, state.knowledge[0] as ServedKnowledge),
       capsuleFromSubmission(SCOPE, state.submissions[0] as GatewaySubmissionRecord),
       capsuleFromSubmission(SCOPE, state.submissions[1] as GatewaySubmissionRecord),
-    ];
+    ].map((capsule) => ({ ...capsule, simulated: false }));
     expect(doc.capsules).toEqual(expected);
     expect(doc.capsules.length).toBe(5); // 1 outcome + 1 post-mortem + 1 knowledge + 2 submissions
     for (const capsule of doc.capsules) {
@@ -795,7 +799,7 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
     const doc = composeWorkspaceExport(withResult);
     expect(doc.capsules.length).toBe(6); // the 5 read-family capsules + the job capsule
     const jobCapsule = capsuleFromJob(SCOPE, resultJob);
-    expect(doc.capsules).toContainEqual(jobCapsule); // the lineage leg: a capsule that references its job
+    expect(doc.capsules).toContainEqual({ ...jobCapsule, simulated: false }); // the lineage leg: a capsule that references its job (FW-36-B: the flag rides every record)
     expect(doc.capsules[5]?.refs).toEqual([{ kind: 'job', ref: 'job-result-1' }]);
     expect(doc.manifest.counts.capsules).toBe(6); // the manifest stays TRUE (self-describing completeness)
     // the fold is IDEMPOTENT under re-reads: the reducer's replace-by-id
@@ -804,15 +808,17 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
     const reRead = reduceWorkspace(withResult, { kind: 'job-updated', at: T0 + 27, job: { ...resultJob } });
     expect(reRead.jobs.filter((job) => job.jobId === 'job-result-1')).toHaveLength(1);
     expect(composeWorkspaceExport(reRead).capsules.length).toBe(6);
-    expect(composeWorkspaceExport(reRead).capsules).toContainEqual(jobCapsule);
+    expect(composeWorkspaceExport(reRead).capsules).toContainEqual({ ...jobCapsule, simulated: false }); // FW-36-B: the flag rides every record
   });
 
   it('the export carries the DECISIONS (the watch records + the gateway\'s own records, exactly as the Decisions section renders)', () => {
     const state = richState();
     const doc = composeWorkspaceExport(state);
-    expect(doc.decisions.watch).toEqual(watchEventsOf(state));
+    // FW-36-B (E-8, part 2): every watch + gateway record carries the
+    // structured per-record simulated flag (the composition default here).
+    expect(doc.decisions.watch).toEqual(watchEventsOf(state).map((event) => ({ ...event, simulated: false })));
     expect(doc.decisions.watch.length).toBe(7); // 2 org instances + 1 job + 1 outcome + 1 post-mortem + 2 submissions
-    expect(doc.decisions.gateway).toEqual(state.submissions);
+    expect(doc.decisions.gateway).toEqual([...state.submissions].map((submission) => ({ ...submission, simulated: false })));
     expect(doc.decisions.gateway.length).toBe(2);
     // every watch record carries a decision (the seven-lens shape the section renders)
     for (const event of doc.decisions.watch) {
@@ -855,6 +861,8 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
     expect(doc.chain.linkRule).toContain('previousChainHead + digest');
     // D-14: richState's chain is single-project — no cross-scope note to disclose
     expect(doc.manifest.chainScopeNote).toBeUndefined();
+    // FW-36-B (E-8, part 2): the manifest carries the published simulated-flag rule
+    expect(doc.manifest.simulatedFlagRule).toBe(EXPORT_SIMULATED_FLAG_RULE);
   });
 
   it('the workspace block carries EVERYTHING but the history (which IS the events chain)', () => {
@@ -885,6 +893,112 @@ describe('workspace: export DETERMINISM (the law extends to the export bytes)', 
     const base = serializeWorkspaceExport(richState());
     const varied = serializeWorkspaceExport(reduceWorkspace(richState(), { kind: 'view-live', at: T0 + 99 }));
     expect(varied).not.toBe(base);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-36-B (Round E register E-8, part 2) — THE STRUCTURED PER-RECORD
+// SIMULATED FLAG. L3's audit: the export's labeling lived only in prose
+// (section badges, disclosure sentences), so any prose-stripping consumer
+// lost the simulated/production boundary entirely. Every record the export
+// composes — each events[] chain entry, each capsules[] record, each
+// decisions.watch and decisions.gateway record — now carries an explicit
+// `simulated: true|false`, placed OUTSIDE the digest input (the published
+// digest rule covers exactly {seq,tenantId,projectId,payload} and stays
+// UNCHANGED), so the chain and every digest verify identically with or
+// without the flag and pre-flag documents verify unchanged. The rule is
+// published in the file itself (EXPORT_SIMULATED_FLAG_RULE, manifest).
+// ---------------------------------------------------------------------------
+
+describe('workspace: FW-36-B — the structured per-record simulated flag (E-8, part 2)', () => {
+  it('simulated=TRUE: every events[] entry, every capsules[] record, every decisions.watch and decisions.gateway record carries an explicit `simulated: true` — and the file verifies END TO END', () => {
+    const state = richState();
+    const doc = composeWorkspaceExport(state, true);
+    expect(doc.events.length).toBeGreaterThan(0);
+    for (const entry of doc.events) {
+      expect(entry.simulated).toBe(true);
+    }
+    for (const capsule of doc.capsules) {
+      expect(capsule.simulated).toBe(true);
+    }
+    for (const event of doc.decisions.watch) {
+      expect(event.simulated).toBe(true);
+    }
+    for (const submission of doc.decisions.gateway) {
+      expect(submission.simulated).toBe(true);
+    }
+    // the flag is environment truth, identical for every record — and it
+    // rides the serialized bytes (the downloaded file carries it)
+    expect(new Set(doc.events.map((entry) => entry.simulated)).size).toBe(1);
+    const parsed = JSON.parse(serializeWorkspaceExport(state, true)) as { events: Array<{ simulated?: boolean }>; capsules: Array<{ simulated?: boolean }> };
+    expect(parsed.events.every((entry) => entry.simulated === true)).toBe(true);
+    expect(parsed.capsules.every((capsule) => capsule.simulated === true)).toBe(true);
+    expect(verifyWorkspaceExport(parsed)).toEqual({ ok: true });
+  });
+
+  it('simulated=FALSE (the live console): every record carries an explicit `false` — never a missing field, never a guess', () => {
+    const doc = composeWorkspaceExport(richState(), false);
+    expect(doc.events.every((entry) => entry.simulated === false)).toBe(true);
+    expect(doc.capsules.every((capsule) => capsule.simulated === false)).toBe(true);
+    expect(doc.decisions.watch.every((event) => event.simulated === false)).toBe(true);
+    expect(doc.decisions.gateway.every((submission) => submission.simulated === false)).toBe(true);
+    expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(richState(), false)))).toEqual({ ok: true });
+  });
+
+  it('THE DIGEST-RULE DECISION, pinned: the flag is NON-DIGESTED — removing it from every entry leaves every digest byte-identical, and the chain verifies unchanged', () => {
+    const state = richState();
+    const flagged = composeWorkspaceExport(state, true);
+    // strip the flag from every entry (the pre-E-8 document's shape)
+    const stripped = {
+      ...flagged,
+      events: flagged.events.map((entry) => {
+        const { simulated: _flag, ...rest } = entry;
+        return rest;
+      }),
+    };
+    // every digest is byte-identical with and without the flag: the digest
+    // covers exactly {seq,tenantId,projectId,payload} — the flag rides as
+    // envelope data beside digest/chainHead, never inside the digest input
+    for (let index = 0; index < flagged.events.length; index += 1) {
+      expect((stripped.events[index] as { digest: string }).digest).toBe(flagged.events[index]?.digest);
+      expect((stripped.events[index] as { chainHead: string }).chainHead).toBe(flagged.events[index]?.chainHead);
+    }
+    expect(stripped.chain.head).toBe(flagged.chain.head);
+    // and both documents verify end to end (pre-flag readers are unaffected)
+    expect(verifyWorkspaceExport(JSON.parse(JSON.stringify(stripped)))).toEqual({ ok: true });
+    expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state, true)))).toEqual({ ok: true });
+  });
+
+  it('the payloads stay THE EXACT EVENTS AS APPLIED (never modified by the flag) — and the export-rebuilt chain agrees with the runtime chain entry for entry', () => {
+    const state = richState();
+    const doc = composeWorkspaceExport(state, true);
+    for (let index = 0; index < state.history.length; index += 1) {
+      const runtime = state.history[index];
+      const exported = doc.events[index];
+      if (runtime === undefined || exported === undefined) throw new Error('fixture: histories must align');
+      expect(exported.payload).toEqual(runtime.payload);
+      expect(exported.digest).toBe(runtime.digest);
+      // the flag is a sibling of the payload, never a field inside it
+      expect((exported.payload as Record<string, unknown>).simulated).toBeUndefined();
+    }
+  });
+
+  it('the published rule rides the manifest verbatim — the reader of the manifest alone knows what every `simulated` field means and where it sits relative to the digest rules', () => {
+    const doc = composeWorkspaceExport(richState(), true);
+    expect(doc.manifest.simulatedFlagRule).toBe(EXPORT_SIMULATED_FLAG_RULE);
+    expect(doc.manifest.simulatedFlagRule).toContain('DELIBERATELY NON-DIGESTED');
+    expect(doc.manifest.simulatedFlagRule).toContain('the format version stays 2');
+    // and it survives the serialized bytes (the downloaded file carries it)
+    const parsed = JSON.parse(serializeWorkspaceExport(richState(), true)) as { manifest: { simulatedFlagRule?: string } };
+    expect(parsed.manifest.simulatedFlagRule).toBe(EXPORT_SIMULATED_FLAG_RULE);
+  });
+
+  it('the flag threads DETERMINISTICALLY: identical (state, simulated) pairs -> byte-identical documents, and a different flag -> different bytes', () => {
+    const first = serializeWorkspaceExport(richState(), true);
+    const second = serializeWorkspaceExport(richState(), true);
+    expect(second).toBe(first);
+    const live = serializeWorkspaceExport(richState(), false);
+    expect(live).not.toBe(first); // the pin is not vacuous
   });
 });
 

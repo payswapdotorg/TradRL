@@ -31,7 +31,7 @@
 import type { CriterionPredicate, GatewayRefusal, GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
 import { withRenderGuard } from '../core/clock';
 import { assertVisible, availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfProject, availabilityOfSubmission, projectToView } from '../core/availability';
-import { assertProjectScope, isLaunchpadScope, type WorkspaceScope } from '../core/tenant';
+import { assertProjectScope, isDemoProject, isLaunchpadScope, type WorkspaceScope } from '../core/tenant';
 import { renderDecimal } from '../core/decimals';
 import { blotterTotalsNoteOf, blotterTotalsOf } from '../core/blotter';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
@@ -259,8 +259,21 @@ export function assertVerdictFaithful(submission: GatewaySubmissionRecord, badge
   }
 }
 
-/** Render one submission's card (verdict from the record; the gate proves faithfulness). THE W-22 SUBSTANCE PASS (R2): the blotter's served rows carry the order leg, the fill economics and the named deciding body — the card renders them (a blotter row without the order id, instrument, side, notional, fee and state proved nothing happened; the M3/L4 finding). */
-function submissionCard(scope: WorkspaceScope, submission: GatewaySubmissionRecord, viewAt: number): VNode {
+/**
+ * Render one submission's card (verdict from the record; the gate proves faithfulness). THE W-22 SUBSTANCE PASS (R2): the blotter's served rows carry the order leg, the fill economics and the named deciding body — the card renders them (a blotter row without the order id, instrument, side, notional, fee and state proved nothing happened; the M3/L4 finding).
+ *
+ * FW-36-B (Round E register E-8, part 1 — the row-level SIMULATED
+ * boundary leak, L3's audit): the card carries a visible SIMULATED tag
+ * on EVERY row (fill AND refusal) when the console runs on the
+ * fake/demo adapter — the established per-section chip pattern (the §3
+ * status badge's own `badge-simulated` class), visually quiet but
+ * present, so a COPIED row ("filled · notional 345600000000 · fee
+ * 172800") never reads as a production fill. The tag mirrors the
+ * environment's own truth (view.simulated — the same flag the section
+ * badge renders); a live console renders no tag, byte-identical to the
+ * pre-fix card.
+ */
+function submissionCard(scope: WorkspaceScope, submission: GatewaySubmissionRecord, viewAt: number, simulated: boolean): VNode {
   visibleAt(submission, availabilityOfSubmission(submission), viewAt, submission.submissionId);
   const badge = submissionVerdictBadgeOf(submission);
   assertVerdictFaithful(submission, badge);
@@ -269,6 +282,7 @@ function submissionCard(scope: WorkspaceScope, submission: GatewaySubmissionReco
   return v('div', { class: `card verdict-${badge.kind}` }, [
     v('div', { class: 'card-title' }, [submission.submissionId]),
     v('span', { class: `badge badge-${badge.kind}` }, [badge.label]),
+    ...(simulated ? [v('span', { class: 'badge badge-simulated', 'data-simulated-tag': 'true', title: 'this row is simulated demo data — the console runs on the demo adapter' }, ['SIMULATED'])] : []),
     factRow('verdict detail', badge.detail),
     ...(order === undefined ? [] : [factRow('order', `${order.clientOrderId} · ${order.instrumentId} ${order.side} ${order.kind} ${order.quantity}${order.price === undefined ? '' : ` @ ${order.price}`}`)]),
     ...(fill === undefined ? [] : [factRow('fill', `${fill.state} · notional ${fill.notional} · fee ${fill.fee}`)]),
@@ -1023,12 +1037,21 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
     ],
   });
   const notices = projectToView(scopedNotices.notices, viewAt, (record) => record.at);
+  // FW-36-B (Round E register E-8, part 3 — the demo-tenant
+  // contamination marking, L3's exact finding): the shared demo
+  // project's notices render on a fresh session's Home UNMARKED (the
+  // export disclosed the 2-project span; the UI did not). When the
+  // workspace scopes to the demo project, EVERY Recent activity entry
+  // derives from it and carries the DEMO chip (the same quiet warn
+  // chip the nav bell now carries — the sidebar env-badge pattern).
+  const demoScope = isDemoProject(state.scope.projectId);
   const entries: TimelineEntry[] = notices.map((record) => ({
     at: record.at,
     title: record.title,
     description: `${record.source.route} ${record.source.ref}`,
     slug: record.kind,
     severity: noticeSeverityOf(record.kind),
+    ...(demoScope ? { demo: true } : {}),
   }));
   const buckets = timelineBucketsOf(entries, viewAt);
   const activity = buckets.length === 0
@@ -1450,7 +1473,11 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           ...watchFeed.map((event) => watchEventRow(scope, event, viewAt, view.openCapsule)),
         ]),
         ...submissions.map((submission) => v('div', { class: 'decision-block' }, [
-          submissionCard(scope, submission, viewAt),
+          // FW-36-B (E-8, part 1): the SIMULATED tag rides EVERY served
+          // submission row here too — the Decisions section renders the
+          // gateway's own records verbatim, and a copied row must never
+          // read as a production verdict on either surface.
+          submissionCard(scope, submission, viewAt, view.simulated),
           capsuleInline(capsuleFromSubmission(scope, submission), viewAt, view.openCapsule),
         ])),
         ...(submissions.length === 0 && watchFeed.length === 0 && decisionOutcomes.length === 0 ? [sectionEmpty('decisions')] : []),
@@ -1479,7 +1506,9 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           ]),
         ]),
         ...submissions.map((submission) => v('div', { class: 'decision-block' }, [
-          submissionCard(scope, submission, viewAt),
+          // FW-36-B (E-8, part 1): every blotter row — fill AND refusal —
+          // carries the visible SIMULATED tag on the demo adapter.
+          submissionCard(scope, submission, viewAt, view.simulated),
           capsuleInline(capsuleFromSubmission(scope, submission), viewAt, view.openCapsule),
         ])),
         ...(submissions.length === 0 ? [sectionEmpty('execution')] : []),

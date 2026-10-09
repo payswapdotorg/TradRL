@@ -1032,6 +1032,26 @@ details.list-row > summary::-webkit-details-marker { display: none; }
   display: grid; place-items: center;
   line-height: 1;
 }
+/* FW-36-B (Round E register E-8, part 3 — the demo-tenant contamination
+   marking): the quiet DEMO chip — the sidebar env-badge's own warn
+   tokens in a row-level size. Rides the nav bell (the unread badge's
+   counts derive from the shared demo project) and the Home Recent
+   activity rows (the notices derive from it). */
+.demo-flag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--tradrl-warn);
+  background: var(--tradrl-warn-soft);
+  color: var(--tradrl-warn-text);
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.nav-item.bell .demo-flag { position: absolute; top: 22px; right: 8px; }
+.timeline-summary .demo-flag { flex: none; align-self: center; margin-left: 4px; }
 .toast-stack { position: fixed; top: 16px; right: 16px; z-index: 60; display: grid; gap: 8px; width: min(92vw, 22rem); }
 .toast {
   display: flex; align-items: flex-start; gap: 10px;

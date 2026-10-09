@@ -22,7 +22,7 @@ import type { ProjectRecord } from '../api/contracts';
 import { scopedInbox, unreadCount } from '../core/notices';
 import type { ThemeName } from '../core/theme';
 import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellTarget } from '../core/nav';
-import { DEMO_PROJECT_ID, isLaunchpadScope, sessionOwnDesksOf as sessionOwnDesksOfDirectory, otherSessionsDesksOf as otherSessionsDesksOfDirectory } from '../core/tenant';
+import { DEMO_PROJECT_ID, isDemoProject, isLaunchpadScope, sessionOwnDesksOf as sessionOwnDesksOfDirectory, otherSessionsDesksOf as otherSessionsDesksOfDirectory } from '../core/tenant';
 import { formatInstantUtc } from '../core/format';
 import type { PlaybackSpeedKey } from '../core/timemachine';
 import { notificationBell, toastRecord } from './flow';
@@ -254,9 +254,9 @@ function refreshMark(): VNode {
   return icon([P('M20 12a8 8 0 1 1-2.34-5.66'), P('M20 4v4.25h-4.25')]);
 }
 
-/** One navigation item (a section item ALSO carries data-section for T042's interaction law; the Inbox item is the §4.10 bell with the unread badge — visible from every page). */
-function navItem(target: ShellTarget, active: boolean, unread: number): VNode {
-  if (target === 'inbox') return notificationBell(unread);
+/** One navigation item (a section item ALSO carries data-section for T042's interaction law; the Inbox item is the §4.10 bell with the unread badge — visible from every page). FW-36-B (E-8, part 3): the bell carries the DEMO chip when the workspace's scope is the shared demo project (the badge's counts derive from it). */
+function navItem(target: ShellTarget, active: boolean, unread: number, demo = false): VNode {
+  if (target === 'inbox') return notificationBell(unread, 'inbox', demo);
   const attrs: Record<string, string> = {
     class: `nav-item${active ? ' active' : ''}`,
     'data-target': target,
@@ -272,11 +272,11 @@ function scopedUnreadCount(state: WorkspaceState): number {
   return unreadCount(scopedInbox(state.inbox, state.scope));
 }
 
-/** The grouped navigation (aria-label="Primary", the four charter groups in order; the bell carries the unread count). */
-function shellNav(activeTarget: ShellTarget, unread: number): VNode {
+/** The grouped navigation (aria-label="Primary", the four charter groups in order; the bell carries the unread count — and, when the scope is the shared demo project, the DEMO disclosure chip). */
+function shellNav(activeTarget: ShellTarget, unread: number, demo = false): VNode {
   return v('nav', { class: 'shell-nav', 'aria-label': 'Primary' }, NAV_GROUPS.map((group) => v('div', { class: 'nav-group', 'data-nav-group': group.label }, [
     v('div', { class: 'nav-group-label' }, [group.label]),
-    ...group.targets.map((target) => navItem(target, target === activeTarget, unread)),
+    ...group.targets.map((target) => navItem(target, target === activeTarget, unread, demo)),
   ])));
 }
 
@@ -731,7 +731,12 @@ export function renderAppShell(
         v('span', { class: 'brand-word' }, ['TradRL']),
       ]),
       paletteAffordance(),
-      shellNav(activeTarget, scopedUnreadCount(state)),
+      // FW-36-B (E-8, part 3): the bell's unread count derives from the
+      // shared demo project whenever the workspace scopes to it (every
+      // fresh session's first world) — the DEMO chip marks the
+      // contaminated surface (L3's finding: the export discloses the
+      // 2-project span; the UI did not).
+      shellNav(activeTarget, scopedUnreadCount(state), isDemoProject(state.scope.projectId)),
       connectionZone(state, view, at),
     ]),
     // §6 J12 (the W-17b fix): the content region is the <main> landmark

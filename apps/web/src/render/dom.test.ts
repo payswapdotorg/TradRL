@@ -257,3 +257,137 @@ describe('dom: findByDataAttribute (the hand walk)', () => {
     expect(findByDataAttribute(container as unknown as Element, 'data-section', 'lessons')).not.toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-36-B (Round E register E-8, part 4) — THE FILE-INPUT SELECTION
+// PRESERVATION. The export-verify file input races the re-render beat: the
+// projector replaces the whole tree every beat, so a staged selection (the
+// user's pick in flight, the automation path's DataTransfer set) died with
+// the outgoing element — the fresh input read files:0 and the face reset to
+// "No file chosen" (L3 needed a DataTransfer workaround by hand; S1/M1 saw
+// the never-attaches variant). The fix is the accordion-preservation class:
+// the outgoing selection is CAPTURED with the open/scroll state (keyed by
+// the input's stable id) and RE-ATTACHED to the fresh projection through a
+// DataTransfer — the only surface a browser allows.
+// ---------------------------------------------------------------------------
+
+describe('dom: FW-36-B (E-8, part 4) — the beat-interaction preservation extends to the file input', () => {
+  /** A minimal DataTransfer stand-in (the browser's own global in production; installed on globalThis by these tests). `items.add` binds to the INSTANCE through the closure — the browser's own binding. */
+  class StubDataTransfer {
+    private readonly filesList: unknown[] = [];
+    readonly items = { add: (file: unknown): unknown => this.filesList.push(file) };
+    get files(): unknown[] {
+      return this.filesList;
+    }
+  }
+
+  /** The file the tests stage (a name + a text read — the verify flow's whole need). */
+  const stagedFile = (name: string): { readonly name: string } => ({ name });
+
+  /** Install the stub DataTransfer global; returns the restore function. */
+  const installDataTransfer = (): (() => void) => {
+    const holder = globalThis as { DataTransfer?: unknown };
+    const prior = holder.DataTransfer;
+    holder.DataTransfer = StubDataTransfer;
+    return () => {
+      if (prior === undefined) delete holder.DataTransfer;
+      else holder.DataTransfer = prior;
+    };
+  };
+
+  /** The Settings tree carrying the verify input (shell.ts's own shape). */
+  const settingsTree = () => v('section', { class: 'panel', 'data-section': 'settings' }, [
+    v('div', { class: 'card settings-row' }, [
+      v('button', { class: 'connection-retry', 'data-action': 'export-workspace', type: 'button' }, ['Export workspace data']),
+      v('label', { class: 'export-verify-label', for: 'export-verify-file' }, [
+        'Verify an export file',
+        v('input', {
+          class: 'export-verify-input',
+          id: 'export-verify-file',
+          type: 'file',
+          accept: 'application/json,.json',
+          'data-action': 'export-verify-file',
+        }, []),
+      ]),
+    ]),
+  ]);
+
+  /** The input of the CURRENT projection (the tree is replaced per mount). */
+  const verifyInputOf = (container: StubElement): StubElement => {
+    const input = (container as unknown as Element);
+    const found = findByDataAttribute(input, 'data-action', 'export-verify-file');
+    if (found === null) throw new Error('the verify input is missing from the projection');
+    return found as unknown as StubElement;
+  };
+
+  it('a selection staged on the outgoing input SURVIVES the beat re-projection — the fresh input carries the same files (the DataTransfer re-attach)', () => {
+    const restore = installDataTransfer();
+    try {
+      const container = new StubElement('div');
+      mountVTree(stubDocument, container as unknown as Element, settingsTree());
+      const outgoing = verifyInputOf(container);
+      (outgoing as unknown as { files: unknown }).files = [stagedFile('tradrl-workspace-prj-a.json')]; // the selection lands (the browser's pick / the automation path)
+      mountVTree(stubDocument, container as unknown as Element, settingsTree()); // the beat re-projects the WHOLE tree
+      const incoming = verifyInputOf(container);
+      expect(incoming).not.toBe(outgoing); // the element WAS replaced (no diffing — the race's precondition)
+      const carried = (incoming as unknown as { files?: { readonly length: number; readonly [index: number]: { readonly name: string } } }).files;
+      expect(carried?.length).toBe(1); // the files:0 class is dead — the fresh input carries the selection
+      expect(carried?.[0]?.name).toBe('tradrl-workspace-prj-a.json');
+    } finally {
+      restore();
+    }
+  });
+
+  it('the identity is the input\'s id (not the structural path): a DIFFERENT element at the same path inherits nothing', () => {
+    const restore = installDataTransfer();
+    try {
+      const container = new StubElement('div');
+      mountVTree(stubDocument, container as unknown as Element, settingsTree());
+      const outgoing = verifyInputOf(container);
+      (outgoing as unknown as { files: unknown }).files = [stagedFile('a.json')];
+      // the next beat replaces the SETTINGS panel with a panel carrying NO verify input
+      mountVTree(stubDocument, container as unknown as Element, v('section', { class: 'panel', 'data-section': 'home' }, []));
+      const projected = findByDataAttribute(container as unknown as Element, 'data-action', 'export-verify-file');
+      expect(projected).toBeNull(); // the control left the projection — nothing resurrects, nothing leaks
+    } finally {
+      restore();
+    }
+  });
+
+  it('an input whose selection was CLEARED (the verify flow\'s own reset, so a re-pick re-fires change) carries nothing over — the clear survives the beat', () => {
+    const restore = installDataTransfer();
+    try {
+      const container = new StubElement('div');
+      mountVTree(stubDocument, container as unknown as Element, settingsTree());
+      const outgoing = verifyInputOf(container);
+      (outgoing as unknown as { files: unknown }).files = [stagedFile('a.json')];
+      mountVTree(stubDocument, container as unknown as Element, settingsTree()); // carried once
+      const cleared = verifyInputOf(container);
+      (cleared as unknown as { files: unknown }).files = []; // the flow clears the value (re-selecting the SAME file must re-fire change)
+      mountVTree(stubDocument, container as unknown as Element, settingsTree());
+      const incoming = verifyInputOf(container);
+      const carried = (incoming as unknown as { files?: { readonly length: number } }).files;
+      expect(carried?.length ?? 0).toBe(0); // never resurrected — the clear is the user's own state
+    } finally {
+      restore();
+    }
+  });
+
+  it('WITHOUT a DataTransfer global (the hardened/stubbed platform) the preservation degrades SILENTLY — never a throw (R46)', () => {
+    const holder = globalThis as { DataTransfer?: unknown };
+    const prior = holder.DataTransfer;
+    delete holder.DataTransfer;
+    try {
+      const container = new StubElement('div');
+      mountVTree(stubDocument, container as unknown as Element, settingsTree());
+      const outgoing = verifyInputOf(container);
+      (outgoing as unknown as { files: unknown }).files = [stagedFile('a.json')];
+      expect(() => mountVTree(stubDocument, container as unknown as Element, settingsTree())).not.toThrow();
+      const incoming = verifyInputOf(container);
+      expect(incoming).not.toBe(outgoing); // replaced as always
+      expect((incoming as unknown as { files?: unknown }).files).toBeUndefined(); // simply not carried — the pre-fix behavior, no crash
+    } finally {
+      if (prior !== undefined) holder.DataTransfer = prior;
+    }
+  });
+});

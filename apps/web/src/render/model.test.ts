@@ -1350,3 +1350,112 @@ describe('FW-34-B: the org per-agent mandate/spec drill-down (the snapshot detai
     expect(bytes).toContain('nothing here is invented');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-36-B (Round E register E-8, parts 1 + 3) — THE ROW-LEVEL SIMULATED
+// DISCLOSURE + THE DEMO-TENANT MARKING. L3's audit: "airtight at page/prose
+// level; leaks at the row/number level — exactly where a board-pack number
+// gets copied from" — individual blotter fill rows carried no simulated label
+// (a copied row read bare "filled · notional 345600000000 · fee 172800"), and
+// a fresh session rendered the shared demo project's notices/activity
+// UNMARKED on Home/nav while the export disclosed the 2-project chain span.
+// ---------------------------------------------------------------------------
+
+describe('FW-36-B (E-8, part 1): the per-row SIMULATED tags on every blotter row', () => {
+  /** A routed fill row (the demo blotter's own shape — the exact "copied row" class). */
+  function routedFillRow(id: string, at: number): GatewaySubmissionRecord {
+    return {
+      kind: 'routed', submissionId: id, decisionId: `dec-${id}`, auditId: `aud-${id}`, requestRef: `req-${id}`,
+      venue: 'BROKER-FIX', adapterRef: 'adapter:demo-broker', channelRef: 'chan:demo-main', routedAt: at,
+      order: { clientOrderId: `ord-${id}`, instrumentId: 'BTC-USD', venueId: 'BROKER-FIX', side: 'buy', kind: 'limit', quantity: '1', price: '61000.50', timeInForce: 'gtc', createdAt: new Date(at).toISOString() },
+      fill: { state: 'filled', quantity: '1', price: '61000.50', notional: '345600000000', fee: '172800', filledAt: at },
+    } as GatewaySubmissionRecord;
+  }
+
+  /** A refused row (the honest refusal — the blotter's other row class). */
+  function refusedRow(id: string, at: number): GatewaySubmissionRecord {
+    return {
+      kind: 'refused', submissionId: id, decisionId: null, auditId: `aud-${id}`, refusal: { stage: 'risk_limits', bound: '2', observed: '2.4', constraintId: 'k-position' }, refusedAt: at,
+    } as GatewaySubmissionRecord;
+  }
+
+  /** The blotter state: one fill + one refusal, the Execution section selected. */
+  function blotterState(): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'submission-recorded', at: T0 + 40, submission: routedFillRow('xgs:fill-1', T0 + 30) },
+      { kind: 'submission-recorded', at: T0 + 41, submission: refusedRow('xgs:refused-1', T0 + 31) },
+      { kind: 'section-selected', at: T0 + 50, section: 'execution' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  it('SIMULATED view: EVERY blotter row — fill AND refusal — carries the visible SIMULATED tag (the per-section chip class, per row)', () => {
+    const state = blotterState();
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), simulated: true }));
+    expect(bytes).toContain('xgs:fill-1');
+    expect(bytes).toContain('xgs:refused-1');
+    // the tag rides EVERY row (2 rows, 2 tags) with the section badge's own class
+    expect(bytes.match(/data-simulated-tag="true"/g)?.length).toBe(2);
+    expect(bytes).toContain('class="badge badge-simulated" data-simulated-tag="true"');
+    expect(bytes).toContain('filled · notional 345600000000 · fee 172800'); // the copyable row keeps its substance — now labeled
+  });
+
+  it('the Decisions section\'s served submission rows carry the SAME per-row tag (a copied verdict must never read as production on either surface)', () => {
+    const state = reduceAll(blotterState(), [{ kind: 'section-selected', at: T0 + 55, section: 'decisions' }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), simulated: true }));
+    expect(bytes.match(/data-simulated-tag="true"/g)?.length).toBe(2); // both gateway records, tagged
+  });
+
+  it('a LIVE console (simulated: false) renders NO per-row tag — byte-identical to the pre-fix card (never a fabricated marker)', () => {
+    const state = blotterState();
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), simulated: false }));
+    expect(bytes).not.toContain('data-simulated-tag');
+    expect(bytes).toContain('xgs:fill-1'); // the rows still render with full substance
+    expect(bytes).toContain('filled · notional 345600000000 · fee 172800');
+  });
+});
+
+describe('FW-36-B (E-8, part 3): the DEMO marker on the fresh-session Home activity + the nav bell', () => {
+  /** A workspace scoped to the SHARED DEMO PROJECT (every fresh session's first world) with one folded notice. */
+  function demoScopeState(): WorkspaceState {
+    return reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: 'prj-demo-console' }, T0), [
+      { kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-demo-1', kind: 'research', tenant: 'tenant-a', project: 'prj-demo-console', status: 'failed', submittedAt: T0 + 10 } },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  it('the DEMO-scope Home RECENT ACTIVITY: every entry carries the DEMO chip, and the nav bell carries it too (the badge counts derive from the shared demo project)', () => {
+    const state = demoScopeState();
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
+    expect(bytes).toContain('Recent activity');
+    expect(bytes).toContain('job-demo-1'); // the notice folded and renders
+    // the chip rides the timeline row AND the bell
+    expect(bytes).toContain('data-demo="true"');
+    expect(bytes).toContain('>DEMO<');
+    expect(bytes).toContain('class="demo-flag timeline-demo" data-demo="true"');
+    expect(bytes).toContain('class="demo-flag bell-demo" data-demo="true"');
+    // the bell's aria-label names the source (the a11y tree carries the disclosure)
+    expect(bytes).toContain('aria-label="Inbox — 1 unread notice (the shared demo project)"');
+  });
+
+  it('a NON-demo scope renders NO markers — never a fabricated disclosure (the export disclosed the span; the UI only marks what IS demo)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-own-1', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'failed', submittedAt: T0 + 10 } },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
+    expect(bytes).toContain('job-own-1'); // the notice still renders
+    expect(bytes).not.toContain('data-demo="true"');
+    expect(bytes).toContain('aria-label="Inbox — 1 unread notice"'); // the plain label, no demo clause
+  });
+
+  it('switching INTO the demo scope marks the surfaces; switching back unmarks them (the marker follows the scope, never the session history)', () => {
+    const intoDemo = reduceAll(demoScopeState(), [{ kind: 'project-adopted', at: T0 + 60, projectId: 'prj-demo-console' }]);
+    expect(intoDemo.scope.projectId).toBe('prj-demo-console');
+    const demoBytes = serializeVNode(renderConsoleModel(intoDemo, T0 + 70, { ...defaultShellView(intoDemo), accountView: 'home' }));
+    expect(demoBytes).toContain('data-demo="true"');
+    const back = reduceAll(intoDemo, [{ kind: 'project-adopted', at: T0 + 80, projectId: 'proj-a' }]);
+    const ownBytes = serializeVNode(renderConsoleModel(back, T0 + 90, { ...defaultShellView(back), accountView: 'home' }));
+    expect(ownBytes).not.toContain('data-demo="true"');
+  });
+});

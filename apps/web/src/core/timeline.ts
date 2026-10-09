@@ -24,6 +24,14 @@ export interface TimelineEntry {
   readonly slug?: string;
   /** The severity tint of the icon circle: info (teal) / warn (amber) / error (rose). */
   readonly severity?: 'info' | 'warn' | 'error';
+  /**
+   * FW-36-B (Round E register E-8, part 3 — the demo-tenant contamination
+   * marking): true when this entry derives from the SHARED DEMO PROJECT
+   * (the scope is the teaching desk — every fresh session's first world).
+   * The timeline row then carries the quiet `DEMO` chip. Absent = the
+   * honest non-demo default (no marker, never a fabricated one).
+   */
+  readonly demo?: boolean;
 }
 
 /** One period bucket: a charter label + its entries, latest-first. */

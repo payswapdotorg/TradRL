@@ -380,3 +380,38 @@ describe('shell: the R8 interaction supplement — the nav hit-area laws (W-19, 
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-36-B (Round E register E-8, part 3) — THE NAV BELL'S DEMO MARKER. The
+// shared demo project's notices badge the fresh session's bell unmarked (L3's
+// exact finding: "Inbox — 13 unread notices" read as the user's own world);
+// the bell now carries the quiet DEMO chip whenever the workspace scopes to
+// the teaching desk — the sidebar env-badge's own pattern, extended.
+// ---------------------------------------------------------------------------
+
+describe('shell: FW-36-B (E-8, part 3) — the nav bell DEMO marker', () => {
+  /** A workspace state scoped to the shared demo project (the fresh session's first world). */
+  function demoScopeState(): WorkspaceState {
+    return stateAt([], 'goal');
+  }
+
+  it('the DEMO-scope bell carries the DEMO chip and the aria-label names the shared demo project — the chip is absent on every other scope', () => {
+    const demoScope = { tenantId: 'tenant-a', projectId: 'prj-demo-console' } as const;
+    const demoState = reduceAll(openWorkspace(demoScope, T0), [] as readonly WorkspaceEvent[]);
+    const demoBytes = render(demoState);
+    expect(demoBytes).toContain('class="demo-flag bell-demo" data-demo="true"'); // the chip
+    expect(demoBytes).toContain('>DEMO<');
+    expect(demoBytes).toContain('aria-label="Inbox — no unread notices (the shared demo project)"');
+
+    const ownBytes = render(demoScopeState()); // proj-a — a real desk
+    expect(ownBytes).not.toContain('data-demo="true"');
+    expect(ownBytes).toContain('aria-label="Inbox — no unread notices"');
+  });
+
+  it('the marker rides the composed render (renderConsoleModel), not only the shell helper — the whole console discloses it', () => {
+    const demoScope = { tenantId: 'tenant-a', projectId: 'prj-demo-console' } as const;
+    const demoState = reduceAll(openWorkspace(demoScope, T0), [] as readonly WorkspaceEvent[]);
+    const bytes = serializeVNode(renderConsoleModel(demoState, T0 + 40));
+    expect(bytes).toContain('data-demo="true"');
+  });
+});

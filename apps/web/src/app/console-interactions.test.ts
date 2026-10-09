@@ -4832,3 +4832,261 @@ describe('executed boot: FW-34-B §3.8 — the switcher/palette session desks + 
     expect(findByData(rig.root, 'data-palette-ref', 'project:prj-b')).not.toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-36-B (Round E register E-8 + E-9) — THE DISCLOSURE & EXPORT-INTEGRITY
+// WAVE, executed through the mounted console. E-8: every blotter row carries
+// a visible SIMULATED tag (a copied row never reads as a production fill);
+// fresh-session demo-tenant data is MARKED on Home/nav (the export disclosed
+// the 2-project span; the UI did not); the export carries a STRUCTURED
+// per-record simulated flag (prose-stripping consumers keep the boundary);
+// the verify file-input keeps its selection across the beat. E-9: after a
+// mid-session project switch + reload the export carried 0 capsules / 0
+// decisions / 0 notices with the chain verifying over the empty payload —
+// the export now waits for the current scope's read bundle before composing
+// (never an empty-but-valid file).
+// ---------------------------------------------------------------------------
+
+/** The two-desk read surface for the E-9 rig: BOTH projects serve their OWN full record sets (the demo blotter shape, re-keyed per desk — the export's records must provably be the CURRENT scope's). */
+function switchReloadExportTransport(): { readonly transport: ApiTransport; readonly blotterReads: { readonly projects: string[] } } {
+  const blotterReads = { projects: [] as string[] };
+  const projectOf = (id: string, name: string) => ({
+    id, tenantId: 'tenant-a', name, executionMode: 'simulation',
+    lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:seeded' },
+    lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: `goal-${id}`, version: 1 }, constraintSet: { id: `cs-${id}`, version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  });
+  const deskBOutcome = (): Record<string, unknown> => ({
+    ...enrichedOutcome(),
+    outcomeId: 'out:deskb0001', project: 'prj-b',
+    decision: { decisionRef: 'xd:deskb0001', intentRef: 'si:deskb0001', disposition: 'filled' },
+    lineage: { ...enrichedOutcome().lineage, shadow: { ...((enrichedOutcome().lineage as Record<string, unknown>).shadow as Record<string, unknown>), project: 'prj-b' } },
+  });
+  const deskBSubmissions = (): Record<string, unknown>[] => [
+    {
+      ...(seededSubmissions()[0] as Record<string, unknown>),
+      submissionId: 'xgs:deskb-1', decisionId: 'xd:deskb0001', auditId: 'xga:deskb-1', requestRef: 'gor:deskb-1',
+    },
+    {
+      ...(seededSubmissions()[2] as Record<string, unknown>),
+      submissionId: 'xgs:deskb-3', auditId: 'xga:deskb-3',
+      refusal: { stage: 'risk_limits', refusals: [{ constraintId: 'k-position', domain: 'state', subject: 'position.grossExposure', severity: 'blocking', predicate: { kind: 'limit.max', bound: 2 }, observed: '2.4' }] },
+    },
+  ];
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+  const transport: ApiTransport = async (request) => {
+    const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+    const key = `${request.method} ${path}`;
+    const scopeProject = decodeURIComponent(request.path.split('?project=')[1] ?? (request.body as { project?: string } | undefined)?.project ?? 'prj-a');
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-a', 'Console Test Project'), projectOf('prj-b', 'Desk B')] });
+    if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Console Test Project'));
+    if (key === 'GET /v1/projects/prj-b') return ok(projectOf('prj-b', 'Desk B'));
+    if (path.startsWith('/v1/projects/') && path.endsWith('/goal')) return ok(seededGoalBundle()); // both desks carry the seeded goal
+    if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'POST /v1/outcomes/query') return ok({ items: scopeProject === 'prj-b' ? [deskBOutcome()] : [enrichedOutcome()] });
+    if (key === 'GET /v1/execution/submissions') {
+      blotterReads.projects.push(scopeProject);
+      return ok({ items: scopeProject === 'prj-b' ? deskBSubmissions() : seededSubmissions() });
+    }
+    if (key === 'GET /v1/jobs') return ok({ items: [] });
+    if (key === 'GET /v1/organizations/org:seeded/status') {
+      return ok({ organizationRef: 'org:seeded', tenant: 'tenant-a', project: scopeProject, status: 'active', at: T0, instanceRefs: [] });
+    }
+    return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
+  };
+  return { transport, blotterReads };
+}
+
+describe('executed boot: FW-36-B (E-9) — the export after switch + reload carries the CURRENT scope\'s full record set (never empty-but-valid)', () => {
+  it('switch desks mid-session, RELOAD, export IMMEDIATELY (before any beat): the export waits for the restored scope\'s read bundle and downloads its records — scope-labeled, counted, chain-verified', async () => {
+    const api = switchReloadExportTransport();
+    const scopeStorage = new MapStorage();
+    // SESSION 1: boot on prj-a, then SWITCH to prj-b mid-session (the persona's flow)
+    const first = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    await switchScope(first, 'prj-b');
+    await first.handle.beat(); // the switcher's refetch loads desk B's world (the pre-fix behavior — the switch alone was fine)
+    expect(first.handle.state().scope.projectId).toBe('prj-b');
+    expect(first.handle.state().submissions.length).toBe(2); // desk B's own blotter
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-b'); // the choice persisted (the reload's seed)
+
+    // THE RELOAD: a fresh console on the same browser — the env pin says prj-a, the stored scope (prj-b) wins at the boot bundle's listing read
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    // THE BUG'S WINDOW, pinned: the boot bundle adopted the restored scope; its env-pin reads were dropped; the adopted scope's bundle has NOT run (no beat yet)
+    expect(rig.handle.state().scope.projectId).toBe('prj-b'); // the restored world
+    expect(rig.handle.state().submissions).toEqual([]); // the post-adoption RESET — the pre-fix export composed exactly THIS
+    expect(rig.handle.state().outcomes).toEqual([]);
+    const readsBeforeExport = api.blotterReads.projects.filter((project) => project === 'prj-b').length;
+    expect(readsBeforeExport).toBe(1); // only session 1's beat read desk B so far — the reload's boot bundle never did
+
+    // THE EXPORT, immediately (the persona's click — no beat, no refresh): with the pre-fix code this downloaded 0 capsules / 0 decisions / 0 notices
+    clickNav(rig, 'settings');
+    const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
+    if (exportButton === null) throw new Error('no export-workspace action');
+    click(rig, exportButton);
+    await settle(); // the wait path runs the restored scope's bundle, then composes
+    await settle();
+
+    // the export path ITSELF ran the read bundle for the restored scope
+    expect(api.blotterReads.projects.filter((project) => project === 'prj-b').length).toBeGreaterThan(readsBeforeExport);
+    const anchor = downloadAnchorsOf(rig).slice(-1)[0];
+    if (anchor === undefined) throw new Error('the download anchor is missing — the export never composed');
+    const href = anchor.getAttribute('href') ?? '';
+    const bytes = decodeURIComponent(href.slice('data:application/json;charset=utf-8,'.length));
+    const doc = JSON.parse(bytes) as {
+      scope: { projectId: string };
+      manifest: { counts: Record<string, number> };
+      workspace: { submissions: unknown[]; outcomes: unknown[]; inbox: { notices: unknown[] } };
+      events: Array<{ simulated?: boolean }>;
+      capsules: Array<{ simulated?: boolean }>;
+      decisions: { watch: Array<{ simulated?: boolean }>; gateway: Array<{ simulated?: boolean }> };
+    };
+    // THE CURRENT SCOPE'S FULL RECORD SET — never the empty payload
+    expect(doc.scope.projectId).toBe('prj-b'); // labeled for the restored desk
+    expect(doc.manifest.counts.events).toBeGreaterThan(0); // the chain carries the session's events
+    expect(doc.manifest.counts.capsules).toBeGreaterThan(0); // the outcome + submission capsules of desk B
+    expect(doc.manifest.counts.decisionsWatch).toBeGreaterThan(0);
+    expect(doc.manifest.counts.decisionsGateway).toBe(2); // desk B's own blotter rows
+    expect(doc.manifest.counts.notices).toBeGreaterThan(0); // the folded notices (shadow degradation, safety intervention, organization compiled)
+    expect(doc.workspace.submissions.length).toBe(2); // the records themselves
+    expect(doc.workspace.outcomes.length).toBe(1);
+    expect(doc.workspace.inbox.notices.length).toBeGreaterThan(0);
+    // the chain verifies END TO END over the FULL payload
+    expect(verifyWorkspaceExport(doc)).toEqual({ ok: true });
+    // E-8, part 2 (the app-level pin): every record carries the structured simulated flag — the rig boots on the demo adapter (simulated: true)
+    expect(doc.events.every((entry) => entry.simulated === true)).toBe(true);
+    expect(doc.capsules.every((capsule) => capsule.simulated === true)).toBe(true);
+    expect(doc.decisions.watch.every((event) => event.simulated === true)).toBe(true);
+    expect(doc.decisions.gateway.every((submission) => submission.simulated === true)).toBe(true);
+  });
+
+  it('a CONVERGED scope still exports SYNCHRONOUSLY (the pre-fix path): the click composes and downloads with no wait, no busy flag — the settled world is the honest world', async () => {
+    const api = switchReloadExportTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    expect(rig.handle.state().scope.projectId).toBe('prj-a');
+    expect(rig.handle.state().submissions.length).toBe(3); // the boot bundle already read this scope's world
+    clickNav(rig, 'settings');
+    const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
+    if (exportButton === null) throw new Error('no export-workspace action');
+    click(rig, exportButton);
+    // NO settle: the anchor exists in the SAME tick (the synchronous path — the MI-D7 tests' own contract)
+    const anchor = downloadAnchorsOf(rig).slice(-1)[0];
+    if (anchor === undefined) throw new Error('the synchronous download anchor is missing');
+    const href = anchor.getAttribute('href') ?? '';
+    const doc = JSON.parse(decodeURIComponent(href.slice('data:application/json;charset=utf-8,'.length))) as { manifest: { counts: Record<string, number> }; scope: { projectId: string } };
+    expect(doc.scope.projectId).toBe('prj-a');
+    expect(doc.manifest.counts.decisionsGateway).toBe(3); // the boot scope's full blotter, synchronously
+  });
+});
+
+describe('executed boot: FW-36-B (E-8, part 1) — the per-row SIMULATED tags on the served blotter', () => {
+  it('the Execution section renders EVERY served row (fill AND refusal) with the visible SIMULATED tag — and the Decisions section\'s copies carry it too', async () => {
+    const api = demoSubstanceTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a'); // the rig boots simulated: true (the demo adapter)
+    clickNav(rig, 'execution');
+    const cards = elementsOf(rig.root).filter((element) => element.hasClass('card') && (element.hasClass('verdict-routed') || element.hasClass('verdict-refused')));
+    expect(cards.length).toBe(3); // 2 fills + 1 refusal
+    for (const card of cards) {
+      const tag = elementsOf(card).find((element) => element.getAttribute('data-simulated-tag') === 'true');
+      if (tag === undefined) throw new Error(`the blotter card ${textOf(elementsOf(card)[0] ?? card)} carries no SIMULATED tag`);
+      expect(textOf(tag)).toBe('SIMULATED');
+      expect(tag.hasClass('badge-simulated')); // the section badge's own quiet chip class
+    }
+    // the Decisions section re-renders the gateway's own records — tagged there too
+    clickNav(rig, 'decisions');
+    expect(countByData(rig.root, 'data-simulated-tag', 'true')).toBe(3);
+  });
+});
+
+describe('executed boot: FW-36-B (E-8, part 3) — the fresh-session DEMO markers on Home + the nav bell', () => {
+  it('a session scoped to the SHARED DEMO PROJECT renders the bell\'s unread badge and the Home activity entries with the DEMO chip (the export disclosed the span; now the UI does too)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-demo-console'); // the fresh session's first world — the teaching desk
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-demo-1', kind: 'research', tenant: 'tenant-a', project: 'prj-demo-console', status: 'failed', submittedAt: T0 + 10 } }); // folds a demo-tenant notice
+    // the bell: the badge count derives from the shared demo project — the chip rides it
+    const bell = elementsOf(rig.root).find((element) => element.getAttribute('data-target') === 'inbox' && element.hasClass('bell'));
+    if (bell === undefined) throw new Error('no bell');
+    expect(bell.getAttribute('aria-label')).toContain('1 unread notice (the shared demo project)');
+    const bellChip = elementsOf(bell).find((element) => element.getAttribute('data-demo') === 'true');
+    if (bellChip === undefined) throw new Error('the bell carries no DEMO chip');
+    expect(textOf(bellChip)).toBe('DEMO');
+    // Home's RECENT ACTIVITY: the demo-tenant entries carry the chip on every row
+    clickNav(rig, 'home');
+    const activityRows = elementsOf(rig.root).filter((element) => element.hasClass('timeline-row'));
+    expect(activityRows.length).toBeGreaterThan(0);
+    for (const row of activityRows) {
+      const chip = elementsOf(row).find((element) => element.getAttribute('data-demo') === 'true');
+      if (chip === undefined) throw new Error('a demo-scope activity row carries no DEMO chip');
+      expect(textOf(chip)).toBe('DEMO');
+    }
+  });
+
+  it('a session scoped to its OWN desk renders NO markers (never a fabricated disclosure)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a');
+    rig.handle.dispatch({ kind: 'job-updated', at: T0 + 20, job: FAILED_JOB }); // an OWN-desk notice (prj-a)
+    expect(countByData(rig.root, 'data-demo', 'true')).toBe(0);
+    clickNav(rig, 'home');
+    expect(countByData(rig.root, 'data-demo', 'true')).toBe(0); // still none — the own desk's activity is unmarked
+  });
+});
+
+describe('executed boot: FW-36-B (E-8, part 4) — the verify file-input keeps its selection across the beat (through the real mount)', () => {
+  /** The browser's DataTransfer surface, stubbed for the node harness (the projector re-attaches the staged selection through it). */
+  class StubDataTransfer {
+    private readonly filesList: unknown[] = [];
+    readonly items = { add: (file: unknown): unknown => this.filesList.push(file) };
+    get files(): unknown[] {
+      return this.filesList;
+    }
+  }
+
+  /** The concatenated text of the verify card's whole subtree (the local deepTextOf equivalent). */
+  function deepVerifyTextOf(element: FakeElement): string {
+    const parts: string[] = [];
+    for (const node of element.childNodes) {
+      if (node instanceof FakeText) parts.push(node.text);
+      else parts.push(deepVerifyTextOf(node as FakeElement));
+    }
+    return parts.join('');
+  }
+
+  it('a selection staged on the mounted verify input SURVIVES the next re-projection — the fresh input carries the same file (the files:0 / never-attaches class is dead)', async () => {
+    const holder = globalThis as { DataTransfer?: unknown };
+    const prior = holder.DataTransfer;
+    holder.DataTransfer = StubDataTransfer;
+    try {
+      const rig = await bootRig({ tradrl_onboarded: 'true' });
+      clickNav(rig, 'settings');
+      const input = findByData(rig.root, 'data-action', 'export-verify-file');
+      if (input === null) throw new Error('the verify input is missing');
+      const staged = { name: 'tradrl-workspace-prj-a.json', text: async () => '{}' };
+      (input as FakeElement & { files?: unknown }).files = [staged]; // the pick lands (the browser's file chooser / the automation path's DataTransfer)
+      // THE BEAT: a state change re-projects the whole tree under the input
+      rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 5_000 });
+      const fresh = findByData(rig.root, 'data-action', 'export-verify-file');
+      if (fresh === null) throw new Error('the verify input vanished from the projection');
+      expect(fresh).not.toBe(input); // replaced, as always (no diffing)
+      const carried = (fresh as FakeElement & { files?: { readonly length: number; readonly [index: number]: { readonly name: string } } }).files;
+      expect(carried?.length).toBe(1); // the selection SURVIVED the beat
+      expect(carried?.[0]?.name).toBe('tradrl-workspace-prj-a.json');
+      // and the commit path reads it: a change on the FRESH element verifies the carried file (no DataTransfer workaround needed)
+      rig.doc.fire('change', { target: fresh });
+      await settle();
+      const card = findByData(rig.root, 'data-export-verify', 'broken'); // '{}' is a JSON object but not an export — the honest refusal, not files:0 silence
+      if (card === null) throw new Error('the carried selection never reached the verifier');
+      expect(deepVerifyTextOf(card)).toContain("the document's format is undefined"); // the verifier RAN on the carried file — an honest refusal, never the files:0 silence
+    } finally {
+      if (prior === undefined) delete holder.DataTransfer;
+      else holder.DataTransfer = prior;
+    }
+  });
+
+  /** The concatenated text of the verify card's whole subtree (the local deepTextOf equivalent). */
+  function deepVerifyTextOf(element: FakeElement): string {
+    const parts: string[] = [];
+    for (const node of element.childNodes) {
+      if (node instanceof FakeText) parts.push(node.text);
+      else parts.push(deepVerifyTextOf(node as FakeElement));
+    }
+    return parts.join('');
+  }
+});

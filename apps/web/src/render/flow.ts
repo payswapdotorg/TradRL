@@ -500,17 +500,31 @@ export const NOTICE_SENTENCES: Readonly<Record<NoticeKind, string>> = Object.fre
   safety_intervention: 'A safety gate intervened and stopped a decision.',
 });
 
-/** The bell with the unread-count badge (§4.10) — rendered by the shell on every page. */
-export function notificationBell(unread: number, target = 'inbox'): VNode {
+/**
+ * The bell with the unread-count badge (§4.10) — rendered by the shell on
+ * every page.
+ *
+ * FW-36-B (Round E register E-8, part 3 — the demo-tenant contamination
+ * marking, L3's exact finding): when the badge's counts derive from the
+ * SHARED DEMO PROJECT (the scope is the teaching desk — every fresh
+ * session's first world), the bell carries a quiet `DEMO` chip beside the
+ * badge and the aria-label names the source ("the shared demo project").
+ * The sidebar's own environment badge ("SIMULATED · demo data") is the
+ * established pattern this extends — the chip uses the same warn tokens.
+ */
+export function notificationBell(unread: number, target = 'inbox', demo = false): VNode {
   return v('button', {
     class: `nav-item bell${unread > 0 ? ' has-unread' : ''}`,
     'data-target': target,
     type: 'button',
-    'aria-label': unread > 0 ? `Inbox — ${unread} unread notice${unread === 1 ? '' : 's'}` : 'Inbox — no unread notices',
+    'aria-label': unread > 0
+      ? `Inbox — ${unread} unread notice${unread === 1 ? '' : 's'}${demo ? ' (the shared demo project)' : ''}`
+      : `Inbox — no unread notices${demo ? ' (the shared demo project)' : ''}`,
   }, [
     iconOf('inbox', 'nav-icon'),
     v('span', { class: 'nav-item-label' }, ['Inbox']),
     ...(unread === 0 ? [] : [v('span', { class: 'bell-badge', 'data-unread': String(unread) }, [String(unread)])]),
+    ...(demo ? [v('span', { class: 'demo-flag bell-demo', 'data-demo': 'true' }, ['DEMO'])] : []),
   ]);
 }
 
