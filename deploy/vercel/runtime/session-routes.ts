@@ -137,7 +137,7 @@ import {
 } from '../../../services/api/src/index';
 import type { SessionProjectRow, StoreResult } from '../../adapters/neon/stores';
 import type { StoreFailure } from '../../adapters/shared';
-import { DEMO_PROJECT_ID, isLaunchWorldRecord } from './demo';
+import { DEMO_PROJECT_ID, isLaunchWorldRecord, withDerivedHorizonLabel } from './demo';
 import { matchProjectHydrationPath } from './hydration';
 import { demoRouteError, demoRouteRequestId, demoRouteSuccess, type DemoSubstanceAuthorization, type DemoSubstanceRequest, type VerifyDeveloperAuthorization } from './routes';
 
@@ -427,7 +427,9 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
     return demoRouteSuccess(requestId, deepFreeze({
       goal: goalSet.goal,
       constraintSet: goalSet.constraintSet,
-      ...(isLaunchWorldRecord(goalSet.world) ? { world: goalSet.world } : {}),
+      // FW-37-A (F-4): the served world's horizon label is the SPAN-DERIVED
+      // one — a pre-wave persisted annotation never serves contradictory.
+      ...(isLaunchWorldRecord(goalSet.world) ? { world: withDerivedHorizonLabel(goalSet.world) } : {}),
     }));
   }
 

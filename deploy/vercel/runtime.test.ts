@@ -1430,7 +1430,10 @@ describe('deploy/vercel — the launched world capture, demo arm (D-8, W-28: eve
     return {
       kind: 'console-launch',
       objective: 'Find and keep an edge in momentum.',
-      horizon: { startsAt: 1_700_000_000_000, endsAt: 1_700_002_592_000_000 },
+      // FW-37-A (F-4): the endsAt is a REAL 30-day span (the pre-wave fixture
+      // carried a typo'd 1_700_002_592_000_000 — a 53,806-year span the
+      // never-derived label could hide; the span-derived label exposes it).
+      horizon: { startsAt: 1_700_000_000_000, endsAt: 1_702_592_000_000 },
       capitalBudget: '500000.00',
       riskBudget: '40000.00',
       markets: ['BTC-USD', 'ETH-USD'],
@@ -1441,7 +1444,7 @@ describe('deploy/vercel — the launched world capture, demo arm (D-8, W-28: eve
     };
   }
 
-  /** The extracted world the job port retains (the world fields only). */
+  /** The extracted world the job port retains (the world fields only — FW-37-A/F-4: the horizon label is the SPAN-DERIVED one, computed from the bounds). */
   function extractedWorld(): Record<string, unknown> {
     return {
       markets: ['BTC-USD', 'ETH-USD'],
@@ -1450,7 +1453,7 @@ describe('deploy/vercel — the launched world capture, demo arm (D-8, W-28: eve
       executionMode: 'simulation',
       capitalBudget: '500000.00',
       riskBudget: '40000.00',
-      horizon: { startsAt: 1_700_000_000_000, endsAt: 1_700_002_592_000_000 },
+      horizon: { startsAt: 1_700_000_000_000, endsAt: 1_702_592_000_000, label: '30 days' },
     };
   }
 

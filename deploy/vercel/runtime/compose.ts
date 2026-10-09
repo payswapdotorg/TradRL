@@ -79,7 +79,7 @@ import { buildDurableActivation, type DurableActivation } from './durable-world'
 import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import type { NeonStoreDeps } from '../../adapters/neon/stores';
-import { DEMO_PROJECT_ID, demoDeliverableSourceOf, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableDeliverableSourceOf, durableProjectEvidenceOf, isDemoSeedJob, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
+import { DEMO_PROJECT_ID, demoDeliverableSourceOf, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableDeliverableSourceOf, durableProjectEvidenceOf, isDemoSeedJob, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, withDerivedHorizonLabel, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
 import { emptyDeliverableSource } from './deliverable';
 import { createPromotionRegistry, outcomeLearningWithPromotedDecisions, type PromotionRegistry } from './job-promote';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization, VerifyInternalAuthorization } from './routes';
@@ -392,7 +392,7 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
           return {
             goal: goal as GoalStatement,
             constraintSet: constraintSet as ConstraintSetStatement,
-            world: isLaunchWorldRecord(read.value.world) ? read.value.world : null,
+            world: isLaunchWorldRecord(read.value.world) ? withDerivedHorizonLabel(read.value.world) : null,
           };
         },
         organizationRefOf(tenant, project) {

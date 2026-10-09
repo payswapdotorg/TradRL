@@ -66,7 +66,7 @@ import {
   type ConstraintSetStatement,
   type GoalStatement,
 } from '../../../services/api/src/index';
-import type { LaunchWorldRecord } from './demo';
+import { horizonSpanLabel, type LaunchWorldRecord } from './demo';
 
 // ---------------------------------------------------------------------------
 // The composer's inputs (all explicit — never ambient, never a request value)
@@ -153,13 +153,35 @@ function declaredBudgetOf(facts: readonly DeclaredConstraintFact[], ...words: re
   return match === undefined ? 'not declared' : match.bound;
 }
 
-/** The goal's horizon as a readable, deterministic string (UTC ISO bounds + the optional label — the console's own instant discipline). */
+/**
+ * The goal's horizon as a readable, deterministic string (UTC ISO bounds +
+ * the SPAN-DERIVED label — FW-37-A, Round F register F-4: the label is
+ * COMPUTED from the bounds via horizonSpanLabel, never the record's own
+ * free-text annotation trusted off the wire. The pre-fix defect, 8/9
+ * personas: the console's launch draft stamps its 'one day' default and
+ * never updates it, so 30/45/60/90-day horizons rendered "(one day)" here
+ * while the dates stayed correct — the composed label can never contradict
+ * the span it annotates).
+ */
 function horizonTextOf(goal: GoalStatement): string {
   const horizon = goal.horizon as { readonly startsAt?: unknown; readonly endsAt?: unknown; readonly label?: unknown } | null;
   if (horizon === null || typeof horizon !== 'object') return 'no horizon on record';
   if (typeof horizon.startsAt !== 'number' || !Number.isFinite(horizon.startsAt) || typeof horizon.endsAt !== 'number' || !Number.isFinite(horizon.endsAt)) return 'no horizon on record';
-  const label = typeof horizon.label === 'string' && horizon.label.length > 0 ? ` (${horizon.label})` : '';
-  return `${new Date(horizon.startsAt).toISOString()} to ${new Date(horizon.endsAt).toISOString()}${label}`;
+  return `${new Date(horizon.startsAt).toISOString()} to ${new Date(horizon.endsAt).toISOString()} (span ${horizonSpanLabel(horizon.startsAt, horizon.endsAt)})`;
+}
+
+/**
+ * The goal's horizon with the SPAN-DERIVED label (FW-37-A, F-4): the bounds
+ * verbatim (the goal's own record) + the label COMPUTED from them — the
+ * deliverable's structured horizon field and its summary text can never
+ * disagree, and neither can carry a stale annotation off the launch draft.
+ */
+function horizonWithDerivedLabel(goal: GoalStatement): { readonly startsAt: number; readonly endsAt: number; readonly label: string } {
+  const horizon = goal.horizon as { readonly startsAt?: unknown; readonly endsAt?: unknown } | null;
+  const startsAt = horizon !== null && typeof horizon === 'object' && typeof horizon.startsAt === 'number' && Number.isFinite(horizon.startsAt) ? horizon.startsAt : null;
+  const endsAt = horizon !== null && typeof horizon === 'object' && typeof horizon.endsAt === 'number' && Number.isFinite(horizon.endsAt) ? horizon.endsAt : null;
+  if (startsAt === null || endsAt === null) return { startsAt: 0, endsAt: 0, label: 'no horizon on record' };
+  return { startsAt, endsAt, label: horizonSpanLabel(startsAt, endsAt) };
 }
 
 /**
@@ -252,7 +274,7 @@ export function composeResearchDeliverableResult(input: ResearchDeliverableInput
     riskBudget,
     horizon: mandate === null
       ? Object.freeze({ statement: 'no goal statement on record for this project at this host' })
-      : Object.freeze(mandate.goal.horizon),
+      : Object.freeze(horizonWithDerivedLabel(mandate.goal)),
     constraints: Object.freeze(facts.map((fact) => Object.freeze({ id: fact.id, domain: fact.domain, subject: fact.subject, kind: fact.kind, bound: fact.bound }))),
     lineage: Object.freeze({
       promotedDecision: promotion === null ? null : promotion.outcomeId,

@@ -1065,6 +1065,62 @@ function isNonEmptyStringList(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.length > 0 && value.every((entry) => typeof entry === 'string' && entry.length > 0);
 }
 
+// ---------------------------------------------------------------------------
+// THE HORIZON SPAN LABEL (FW-37-A, Round F register F-4 — the round's most
+// frequent defect, 8/9 personas)
+// ---------------------------------------------------------------------------
+
+/** One UTC day, in epoch milliseconds (the span label's whole-day unit). */
+const SPAN_DAY_MS = 86_400_000;
+
+/**
+ * THE SPAN-DERIVED HORIZON LABEL (FW-37-A, F-4): the human-readable horizon
+ * label COMPUTED from the record's own bounds — never a free-text
+ * annotation trusted off the wire. The pre-fix defect: the console's launch
+ * draft stamps its default label ('one day') and never updates it when the
+ * horizon end moves, so 30/45/60/90-day horizons rendered "(one day)" in
+ * the research deliverable and the export's launchWorld.horizon.label while
+ * the DATES stayed correct (S1's 90-day "2160h 00m 00s" review vs its
+ * "(one day)" deliverable — 8/9 independent Round F confirmations). The
+ * honest label is a COMPUTED FACT of the span: whole-day spans render in
+ * days ('one day', '30 days', '90 days' — the 1-day case was the only
+ * correct pre-fix rendering); any other span renders the wizard review's
+ * own precise hours/minutes/seconds form ('2160h 00m 00s'), so the label
+ * can NEVER contradict the bounds it annotates (reconcilable by
+ * arithmetic — the anti-deception law's own standard).
+ */
+export function horizonSpanLabel(startsAt: number, endsAt: number): string {
+  if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt)) return 'an unverifiable span';
+  const span = endsAt - startsAt;
+  if (span <= 0) return 'an empty span';
+  if (span % SPAN_DAY_MS === 0) {
+    const days = span / SPAN_DAY_MS;
+    return days === 1 ? 'one day' : `${days} days`;
+  }
+  const hours = Math.floor(span / 3_600_000);
+  const minutes = Math.floor((span % 3_600_000) / 60_000);
+  const seconds = Math.floor((span % 60_000) / 1000);
+  return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
+}
+
+/**
+ * Re-derive one captured launch world's horizon label from its own bounds
+ * (FW-37-A, F-4 — the serve-side half): the capture seam derives the label
+ * at extraction (launchWorldOfSpec), and the serve seams re-derive it so a
+ * world persisted BEFORE this wave (a durable row carrying the console's
+ * stale 'one day' annotation) serves the SAME span-derived label as a fresh
+ * capture — one law, every record, never a contradictory annotation on the
+ * wire. Pure + structural: a malformed horizon answers the record
+ * unchanged (R46 — the guard already kept the row off the wire).
+ */
+export function withDerivedHorizonLabel(world: LaunchWorldRecord): LaunchWorldRecord {
+  const horizon = world.horizon as { readonly startsAt?: unknown; readonly endsAt?: unknown } | null;
+  if (horizon === null || typeof horizon !== 'object') return world;
+  if (typeof horizon.startsAt !== 'number' || !Number.isFinite(horizon.startsAt)) return world;
+  if (typeof horizon.endsAt !== 'number' || !Number.isFinite(horizon.endsAt)) return world;
+  return deepFreeze({ ...world, horizon: { startsAt: horizon.startsAt, endsAt: horizon.endsAt, label: horizonSpanLabel(horizon.startsAt, horizon.endsAt) } });
+}
+
 /**
  * Guard: a structurally valid launch world record (D-8, W-28). The goal
  * route re-validates a DURABLE-decoded world with this before serving it —
@@ -1085,6 +1141,13 @@ export function isLaunchWorldRecord(value: unknown): value is LaunchWorldRecord 
  * teaching empty state is correct and must be preserved). The extracted
  * record is a frozen copy — the caller may persist it without aliasing the
  * request's spec object.
+ *
+ * FW-37-A (F-4): the horizon LABEL is derived from the horizon's own
+ * bounds (horizonSpanLabel) — the console's free-text annotation is
+ * deliberately NOT trusted off the wire (the launch draft's stale 'one day'
+ * default rode 30/45/60/90-day horizons into the deliverable and the
+ * export; the bounds are the machine truth, and the label is now a
+ * computed fact of them, so it can never contradict the span it annotates).
  */
 export function launchWorldOfSpec(spec: unknown): LaunchWorldRecord | null {
   if (!isRecord(spec)) return null;
@@ -1105,9 +1168,7 @@ export function launchWorldOfSpec(spec: unknown): LaunchWorldRecord | null {
     executionMode: spec.executionMode,
     capitalBudget: spec.capitalBudget,
     riskBudget: spec.riskBudget,
-    horizon: typeof horizon.label === 'string'
-      ? { startsAt: horizon.startsAt, endsAt: horizon.endsAt, label: horizon.label }
-      : { startsAt: horizon.startsAt, endsAt: horizon.endsAt },
+    horizon: { startsAt: horizon.startsAt, endsAt: horizon.endsAt, label: horizonSpanLabel(horizon.startsAt, horizon.endsAt) },
   });
 }
 
@@ -1233,7 +1294,11 @@ export function demoJobSubmission(): ReturnType<typeof fakeJobSubmission> & { re
  * scope's teaching empty state is CORRECT and preserved by design).
  */
 export function demoWorldOf(ports: DemoPorts, tenant: string, project: string): LaunchWorldRecord | null {
-  return ports.jobSubmission.worlds.get(`${tenant}/${project}`) ?? null;
+  // FW-37-A (F-4): the served world carries the SPAN-DERIVED horizon label
+  // (withDerivedHorizonLabel) — a capture persisted before this wave (or a
+  // test-injected record) serves the same computed label as a fresh capture.
+  const world = ports.jobSubmission.worlds.get(`${tenant}/${project}`) ?? null;
+  return world === null ? null : withDerivedHorizonLabel(world);
 }
 
 /** The demo backing's ports (the REAL fixture fakes — the same objects the composition injects) + the seeded blotter. */

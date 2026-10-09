@@ -33,7 +33,10 @@ import {
   DEMO_PROJECT_ID,
   demoDeliverableSourceOf,
   durableDeliverableSourceOf,
+  horizonSpanLabel,
+  launchWorldOfSpec,
   seedDemoBacking,
+  withDerivedHorizonLabel,
   type DurableEvidenceSource,
   type LaunchWorldRecord,
 } from './demo';
@@ -145,13 +148,24 @@ describe('deploy/vercel — the research deliverable composition (FW-36-A, Round
     expect(denseSummary).toContain('4 declared constraints');
     expect(denseSummary).toContain(new Date(AT).toISOString());
     expect(denseSummary).toContain(new Date(AT + 30 * 86_400_000).toISOString());
-    expect(denseSummary).toContain('the dense mandate window');
+    // FW-37-A (F-4 — 8/9 personas): the horizon label is the SPAN-DERIVED
+    // one ('30 days' for this 30-day mandate), computed from the bounds —
+    // never the goal record's own free-text annotation ('the dense mandate
+    // window'), which the pre-wave composer trusted off the wire (the
+    // production defect: a stale 'one day' default rendered on 30/45/60/90-
+    // day horizons while the dates stayed correct).
+    expect(denseSummary).toContain('(span 30 days)');
+    expect(denseSummary).not.toContain('the dense mandate window');
+    expect(dense.horizon).toEqual({ startsAt: AT, endsAt: AT + 30 * 86_400_000, label: '30 days' }); // the structured field carries the same derived label — text and field can never disagree
     // The SPARSE mandate's own actuals — and each summary carries ONLY its own.
     expect(sparseSummary).toContain('SOL-USD');
     expect(sparseSummary).toContain('okx');
     expect(sparseSummary).toContain('10000.00');
     expect(sparseSummary).toContain('1 declared constraint');
-    expect(sparseSummary).toContain('the quiet window');
+    // FW-37-A (F-4): the sparse mandate's 9-day span (AT+1d -> AT+10d)
+    // renders its own derived label.
+    expect(sparseSummary).toContain('(span 9 days)');
+    expect(sparseSummary).not.toContain('the quiet window');
     expect(sparseSummary).not.toContain('BTC-USD');
     expect(denseSummary).not.toContain('SOL-USD');
     // The objective rides verbatim (the mandate's own words, never paraphrased).
@@ -297,5 +311,110 @@ describe('deploy/vercel — the deliverable sources over each backing\'s own cap
     expect(source.promotionOf('job-any')).toBeNull(); // no registry bound — the honest pending lineage
     // The DEMO project's observed state stays the seeded blotter under durable too.
     expect(source.observedOf(DEMO_PROJECT_ID)?.markets).toContain('BTC-USD');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-37-A (Round F register F-4 — the round's most frequent defect, 8/9
+// personas): the horizon label is COMPUTED from the record's own bounds —
+// never a free-text annotation trusted off the wire (the launch draft's
+// stale 'one day' default rendered on 30/45/60/90-day horizons while the
+// DATES stayed correct; S1's 90-day review showed "2160h 00m 00s" next to
+// its "(one day)" deliverable). Pinned: the label computation itself, the
+// capture seam (launchWorldOfSpec), the serve-side healing of pre-wave
+// persisted worlds, and the deliverable text across the horizons.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-37-A (F-4): the horizon label is the span-derived one, everywhere it renders', () => {
+  /** The wizard's stale default annotation, exactly as the launch draft stamps it. */
+  const STALE_LABEL = 'one day';
+
+  it('WHOLE-DAY SPANS: 1/30/45/60/90 days (the 1-day case was the only correct pre-fix rendering — it stays byte-identical)', () => {
+    expect(horizonSpanLabel(AT, AT + 86_400_000)).toBe('one day');
+    expect(horizonSpanLabel(AT, AT + 30 * 86_400_000)).toBe('30 days');
+    expect(horizonSpanLabel(AT, AT + 45 * 86_400_000)).toBe('45 days');
+    expect(horizonSpanLabel(AT, AT + 60 * 86_400_000)).toBe('60 days');
+    expect(horizonSpanLabel(AT, AT + 90 * 86_400_000)).toBe('90 days');
+  });
+
+  it('SUB-DAY SPANS render the wizard review\'s own precise form (the review S1 read: "2160h 00m 00s" for the 90-day span)', () => {
+    expect(horizonSpanLabel(AT, AT + 90 * 86_400_000 + 3_600_000)).toBe('2161h 00m 00s'); // 90 days + 1h — not a whole-day span
+    expect(horizonSpanLabel(AT, AT + 25 * 3_600_000)).toBe('25h 00m 00s');
+    expect(horizonSpanLabel(AT, AT + 3_600_000 + 61_000)).toBe('1h 01m 01s');
+  });
+
+  it('DEGENERATE SPANS answer the honest labels (never a fabricated duration)', () => {
+    expect(horizonSpanLabel(AT, AT)).toBe('an empty span');
+    expect(horizonSpanLabel(AT, AT - 86_400_000)).toBe('an empty span');
+    expect(horizonSpanLabel(Number.NaN, AT + 86_400_000)).toBe('an unverifiable span');
+  });
+
+  it('THE CAPTURE SEAM derives the label from the bounds — the console\'s stale \'one day\' annotation on a 90-day horizon never crosses (S1\'s case)', () => {
+    const world = launchWorldOfSpec({
+      kind: 'console-launch',
+      markets: ['BTC-USD'],
+      venues: ['BROKER-FIX'],
+      dataSources: ['candle-v1'],
+      executionMode: 'simulation',
+      capitalBudget: '250000',
+      riskBudget: '12500',
+      horizon: { startsAt: AT, endsAt: AT + 90 * 86_400_000, label: STALE_LABEL },
+    });
+    expect(world).not.toBeNull();
+    expect(world?.horizon.startsAt).toBe(AT); // the bounds ride verbatim
+    expect(world?.horizon.endsAt).toBe(AT + 90 * 86_400_000);
+    expect(world?.horizon.label).toBe('90 days'); // the label is COMPUTED from them — the annotation is not trusted off the wire
+    // A spec with no label at all captures the same derived one.
+    const unlabeled = launchWorldOfSpec({
+      kind: 'console-launch',
+      markets: ['BTC-USD'],
+      venues: ['BROKER-FIX'],
+      dataSources: ['candle-v1'],
+      executionMode: 'simulation',
+      capitalBudget: '250000',
+      riskBudget: '12500',
+      horizon: { startsAt: AT, endsAt: AT + 45 * 86_400_000 },
+    });
+    expect(unlabeled?.horizon.label).toBe('45 days');
+  });
+
+  it('THE SERVE-SIDE HEALING: a pre-wave persisted world (the stale annotation aboard) serves the span-derived label — one law, every record', () => {
+    const preWaveWorld: LaunchWorldRecord = {
+      markets: ['BTC-USD'],
+      venues: ['BROKER-FIX'],
+      dataSources: ['candle-v1'],
+      executionMode: 'simulation',
+      capitalBudget: '250000',
+      riskBudget: '12500',
+      horizon: { startsAt: AT, endsAt: AT + 60 * 86_400_000, label: STALE_LABEL },
+    };
+    const healed = withDerivedHorizonLabel(preWaveWorld);
+    expect(healed.horizon.label).toBe('60 days');
+    expect(healed.horizon.startsAt).toBe(AT);
+    expect(healed.horizon.endsAt).toBe(AT + 60 * 86_400_000);
+    expect(healed.markets).toEqual(preWaveWorld.markets); // the rest of the record is untouched
+    // A malformed horizon answers the record unchanged (R46 — never a crash).
+    const malformed = { ...preWaveWorld, horizon: { startsAt: AT } as LaunchWorldRecord['horizon'] };
+    expect(withDerivedHorizonLabel(malformed)).toBe(malformed);
+  });
+
+  it('THE DELIVERABLE renders the span-derived label across the horizons — the summary text and the structured horizon field agree, and the stale annotation never renders', () => {
+    for (const [days, label] of [[1, 'one day'], [30, '30 days'], [45, '45 days'], [60, '60 days'], [90, '90 days']] as const) {
+      // The goal statement carries the launch draft's stale annotation, exactly as production launched it.
+      const goal = { ...numbersDenseGoal(), horizon: { startsAt: AT as TimestampMs, endsAt: (AT + days * 86_400_000) as TimestampMs, label: STALE_LABEL } };
+      const payload = composeResearchDeliverableResult({
+        project: 'prj-f4-horizon',
+        director: 'spec-launch-director',
+        mandate: { goal, constraintSet: numbersDenseConstraintSet(), world: DENSE_WORLD },
+        observed: null,
+        promotion: null,
+      });
+      const summary = payload.summary as string;
+      expect(summary).toContain(`(span ${label})`); // the derived label, computed from the bounds
+      expect(summary).toContain(new Date(AT).toISOString()); // the dates were always correct — they stay
+      expect(summary).toContain(new Date(AT + days * 86_400_000).toISOString());
+      expect(summary).not.toContain('(one day)'); // the stale annotation never renders as the horizon's label
+      expect(payload.horizon).toEqual({ startsAt: AT, endsAt: AT + days * 86_400_000, label }); // the structured field carries the SAME derived label
+    }
   });
 });

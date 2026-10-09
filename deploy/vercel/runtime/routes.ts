@@ -125,7 +125,7 @@ import {
   type ServedKnowledge,
   type TimestampMs,
 } from '../../../services/api/src/index';
-import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, demoWorldOf, isLaunchWorldRecord, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
+import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, demoWorldOf, isLaunchWorldRecord, withDerivedHorizonLabel, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
 import type { DurableBackingHandle, DdlApplyResult, DdlVerifyResult } from './durable';
 import { matchProjectHydrationPath, serveProjectHydrationRoute } from './hydration';
 import { RISK_UTILIZATION_ROUTE_PATH, serveRiskUtilizationRoute } from './risk-utilization';
@@ -625,11 +625,15 @@ export function serveDurableSubstanceRoute(input: DurableSubstanceRouteInput, re
   // hydrates it back) — served as the ADDITIVE `world` field, structurally
   // re-validated (a pre-W-28 or malformed payload never crosses; the
   // console degrades to its teaching empty state, never a fabricated one).
+  // FW-37-A (F-4): the served world's horizon label is the SPAN-DERIVED one
+  // (withDerivedHorizonLabel) — a world persisted before this wave (the
+  // console's stale 'one day' annotation on a multi-day horizon) serves the
+  // same computed label as a fresh capture, never a contradictory one.
   const world = read.value.world;
   return demoRouteSuccess(requestId, deepFreeze({
     goal: read.value.goal,
     constraintSet: read.value.constraintSet,
-    ...(isLaunchWorldRecord(world) ? { world } : {}),
+    ...(isLaunchWorldRecord(world) ? { world: withDerivedHorizonLabel(world) } : {}),
   }));
 }
 

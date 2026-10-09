@@ -309,12 +309,10 @@ export interface LimitsCheckEvaluation {
   readonly domain: string;
   /** The declared subject (cited verbatim). */
   readonly subject: string;
-  /** The declared severity (cited verbatim). */
-  readonly severity: string;
   /** The declared predicate (cited verbatim — kind + bound/value). */
   readonly predicate: { readonly kind: string; readonly bound?: number; readonly value?: string };
   /** The observation class the gate derived the verdict from (none when not derivable). */
-  readonly basis: 'projected_book_notional' | 'order_notional' | 'realized_cumulative' | 'none';
+  readonly basis: 'projected_book_notional' | 'order_notional' | 'realized_cumulative' | 'projected_position_count' | 'projected_concentration' | 'projected_daily_turnover' | 'none';
   /** True when the gate derived a verdict; false when the constraint is honestly not gate-evaluable. */
   readonly derivable: boolean;
   /** The TRUE observed value the verdict compared (null when not derivable — never a fabricated number). */
@@ -323,6 +321,18 @@ export interface LimitsCheckEvaluation {
   readonly arithmetic: string | null;
   /** The verdict: pass only on a true pass; breach on a true breach; not_gate_evaluable when the gate cannot derive one. */
   readonly verdict: 'pass' | 'breach' | 'not_gate_evaluable';
+  /**
+   * The gate's own SEVERITY STAMP (FW-37-A, F-1's severity-alignment law):
+   * 'blocking' ONLY for a bound that actually BINDS at this candidate (a
+   * derivable verdict); a not_gate_evaluable row whose declaration said
+   * blocking stamps 'non-binding' — the row never claims an enforcement
+   * the gate cannot honor (the pre-fix export stamped 'blocking' over
+   * classes that never bound). The declaration's own value rides verbatim
+   * in `declaredSeverity`.
+   */
+  readonly severity: string;
+  /** The DECLARED severity, cited verbatim (the constraint set's own value — traceable). */
+  readonly declaredSeverity: string;
   /** The honest teaching: WHY a verdict is not derivable, and what IS gate-evaluable today. */
   readonly note: string;
 }
@@ -430,11 +440,26 @@ function canonicalLimitBoundOf(predicate: unknown): { readonly bound: number; re
 // ---------------------------------------------------------------------------
 
 /** The gate-evaluable observation classes (mirroring risk-utilization's own metric classification — one law, two surfaces). */
-export type GateSubjectClass = 'book_notional' | 'order_notional' | 'risk_consumption' | 'drawdown' | 'not_gate_evaluable';
+export type GateSubjectClass = 'book_notional' | 'order_notional' | 'risk_consumption' | 'drawdown' | 'position_gross_exposure' | 'position_concentration' | 'daily_turnover' | 'not_gate_evaluable';
 
-/** Classify one declared subject by what the gate can observe for it at fill time (case-insensitive — the grammar's own subjects are camelCase, e.g. risk.maxDrawdown). */
+/**
+ * Classify one declared subject by what the gate can observe for it at fill
+ * time (case-insensitive — the grammar's own subjects are camelCase, e.g.
+ * risk.maxDrawdown). FW-37-A (Round F register F-1, the round's #1 finding):
+ * the position/concentration/turnover classes are now gate-OBSERVABLE —
+ * `position.grossExposure` (and the grammar's bare `position` subject, the
+ * outcome-scoped form several Round F personas declared),
+ * `position.concentration`, and `costs.dailyTurnover` previously fell to
+ * not_gate_evaluable at every candidate while their UI cards claimed
+ * enforcement (L2's cap-1 desk held 2 concurrent positions; L3's 600
+ * turnover bound blew to a 19,200 standing breach) — the classes now bind
+ * at the gate with the same exact-decimal discipline as the book classes.
+ */
 export function gateSubjectClassOf(subject: string): GateSubjectClass {
   const normalized = subject.toLowerCase();
+  if (normalized.includes('concentration')) return 'position_concentration';
+  if (normalized.includes('grossexposure') || normalized.includes('position') || normalized.includes('exposure')) return 'position_gross_exposure';
+  if (normalized.includes('turnover')) return 'daily_turnover';
   if (normalized.includes('notional')) {
     return normalized.includes('order') || normalized.includes('trade') ? 'order_notional' : 'book_notional';
   }
@@ -506,34 +531,72 @@ export interface GateCandidateContext {
    * not derivable — never fabricated).
    */
   readonly declaredCapital: string | null;
+  /**
+   * The count of OPEN POSITIONS before this candidate (the fills already on
+   * the blotter — each routed fill opens one gross position; FW-37-A, F-1).
+   * The position-count class's own observation.
+   */
+  readonly priorPositionCount: number;
+  /**
+   * The cumulative TRADED notional of the candidate's own UTC trading day
+   * BEFORE this candidate (the fills already on the blotter, both sides —
+   * FW-37-A, F-1's turnover class; the declared window defaults to the
+   * trading day, the standing read's own granularity). Null when the caller
+   * cannot compute the day's sum (the class is then honestly not
+   * gate-evaluable at this candidate — never a fabricated figure).
+   */
+  readonly priorTurnoverNotional: string | null;
 }
 
 /**
- * THE TEACHING NOTE for a subject the gate cannot evaluate — E-2.4's runtime-surface half: the LOUD, teaching rejection. It names the gate-evaluable subjects, names the grammar's ACCEPTED domains, states plainly that EXECUTION/TRADE/RISK SCOPING IS NOT YET DECLARABLE (the DSL's vocabulary is closed — a constraint declared under any other domain is rejected as malformed at the boundary, never silently ignored), and points at the outcome-scoped form the gate reads.
+ * THE TEACHING NOTE for a subject the gate cannot evaluate — E-2.4's runtime-surface half: the LOUD, teaching rejection. It names EVERY gate-evaluable subject class (the FW-37-A set: notional/budget, realized-cumulative, position, concentration, turnover), names the grammar's ACCEPTED domains, and states that a constraint declared under any other domain is rejected as malformed at the boundary — never silently ignored.
  */
-const NOT_EVALUABLE_SUBJECT_NOTE = 'not gate-evaluable at fill time: the gateway holds no observation for this subject on any backing (no position, turnover, returns or cost store exists — the standing risk-utilization read reports the same honestly-unknown class). Gate-evaluable subjects today are the notional/budget subjects (book.notional, capital.budget, order.notional — the projected cumulative book including the candidate order, or the order\'s own notional) and the realized-cumulative subjects (risk.budget, risk.maxDrawdown — the session outcome chain\'s realized cumulative, where the chain provides one). The constraint grammar\'s accepted domains are observation | state | action | outcome — EXECUTION/TRADE/RISK SCOPING IS NOT YET DECLARABLE: the DSL\'s vocabulary is closed, and a constraint declared under any other domain is rejected as malformed at the boundary instead of being quietly accepted; scope the SAME bound at the OUTCOME domain instead (the outcome-scoped form, e.g. a book.notional or risk.budget subject) and the gate reads it here';
+const NOT_EVALUABLE_SUBJECT_NOTE = 'not gate-evaluable at fill time: the gateway holds no observation for this subject on any backing (the standing risk-utilization read reports the same honestly-unknown class). Gate-evaluable subjects today are the notional/budget subjects (book.notional, capital.budget, order.notional — the projected cumulative book including the candidate order, or the order\'s own notional), the realized-cumulative subjects (risk.budget, risk.maxDrawdown — the session outcome chain\'s realized cumulative, where the chain provides one), the position-class subjects (position.grossExposure — the projected count of open positions, with the same book\'s projected gross notional itemized alongside), the concentration subject (position.concentration — the candidate\'s own notional share of the projected total book, fraction-scale), and the turnover subject (costs.dailyTurnover — the projected traded notional of the trading day, UTC). The constraint grammar\'s accepted domains are observation | state | action | outcome — the DSL\'s vocabulary is closed, and a constraint declared under any other domain is rejected as malformed at the boundary instead of being quietly accepted; re-scope the SAME bound at one of the gate-observable subjects and the gate reads it here';
 
 /** THE TEACHING NOTE for a realized-cumulative subject before the outcome chain provides a record (L4 point-in-time). */
 const NOT_EVALUABLE_YET_NOTE = 'not gate-evaluable at this instant: the session outcome chain provides no realized record yet (L4 point-in-time — the desk\'s outcome realizes after the entry fills); the constraint becomes gate-evaluable once a realized record exists, and the gate never silently passes it before then';
+
+/** THE TEACHING NOTE for the turnover class when the day's traded-notional sum is not computable at the candidate. */
+const NOT_EVALUABLE_TURNOVER_NOTE = 'not gate-evaluable at fill time: the candidate\'s own trading-day (UTC) traded-notional sum cannot be computed at this candidate (the caller holds no day-scoped fill sum — the standing risk-utilization read\'s turnover row reports the same honestly-unknown class); the gate never fabricates a window figure, and the constraint becomes gate-evaluable where a day-scoped sum exists';
+
+/** THE TEACHING NOTE for the position-count class when the prior open-position count is not computable at the candidate. */
+const NOT_EVALUABLE_POSITION_NOTE = 'not gate-evaluable at fill time: the count of open positions before this candidate cannot be computed at this candidate (the caller holds no open-position count — there is no position store on any backing); the gate never fabricates a count, and the constraint becomes gate-evaluable where the prior fills are countable';
 
 /**
  * Evaluate ONE declared constraint at ONE candidate order (pure, exact,
  * never a throw — the verdict carries its own arithmetic). The bound is
  * the constraint's own declared number (the `equals` value for budget
  * declarations — a budget bound); the observed value is derived from the
- * gate's own data (the projected book, the order's notional, or the
- * outcome chain's realized cumulative) — NEVER fabricated from the bound
- * (the pre-FW-36-A defect: observed = bound x 1.2).
+ * gate's own data (the projected book, the order's notional, the outcome
+ * chain's realized cumulative, the projected open-position count, the
+ * projected concentration fraction, or the trading day's projected
+ * turnover) — NEVER fabricated from the bound (the pre-FW-36-A defect:
+ * observed = bound x 1.2).
+ *
+ * FW-37-A (F-1): the position/concentration/turnover classes evaluate
+ * HONESTLY at every candidate, exactly in the FW-36-A arithmetic style
+ * (prior + candidate = projected, itemized, exact decimals). A class that
+ * is genuinely not computable pre-trade keeps the honest
+ * `not_gate_evaluable` verdict — and its severity stamp is ALIGNED with
+ * the verdict (never 'blocking' for a bound that cannot bind: the row
+ * stamps 'non-binding' when the declaration said blocking, with the
+ * declaration's own value riding verbatim in `declaredSeverity`).
  */
 export function evaluateConstraintAtGate(constraint: GateConstraint, context: GateCandidateContext): LimitsCheckEvaluation {
   const subjectClass = gateSubjectClassOf(constraint.subject);
-  const base = { constraintId: constraint.constraintId, domain: constraint.domain, subject: constraint.subject, severity: constraint.severity, predicate: constraint.predicate };
+  // The severity-alignment law (FW-37-A, F-1): the gate's own stamp says
+  // 'blocking' ONLY for a bound that binds at this candidate. Every
+  // not_gate_evaluable row de-escalates a blocking declaration to
+  // 'non-binding' (the declaration's own value stays verbatim in
+  // declaredSeverity — traceable, never rewritten).
+  const base = { constraintId: constraint.constraintId, domain: constraint.domain, subject: constraint.subject, severity: constraint.severity, declaredSeverity: constraint.severity, predicate: constraint.predicate };
+  const nonBindingBase = { ...base, severity: constraint.severity === 'blocking' ? 'non-binding' : constraint.severity };
   if (constraint.boundText === null) {
     // The declaration carries no positive numeric bound — a limit without
     // a number is not a limit the gate can compare (R5's own law),
     // honestly reported.
     return deepFreeze({
-      ...base,
+      ...nonBindingBase,
       basis: 'none',
       derivable: false,
       observed: null,
@@ -546,7 +609,7 @@ export function evaluateConstraintAtGate(constraint: GateConstraint, context: Ga
   if (subjectClass === 'book_notional') {
     const projected = addDecimals(context.priorBookNotional, context.candidateNotional);
     if (projected === null) {
-      return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the projected book could not be derived (malformed notional inputs — never a fabricated comparison)' });
+      return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the projected book could not be derived (malformed notional inputs — never a fabricated comparison)' });
     }
     const comparison = compareDecimals(projected, bound);
     const breach = comparison === null ? false : constraint.predicate.kind === 'limit.min' ? comparison === -1 : comparison === 1;
@@ -577,15 +640,103 @@ export function evaluateConstraintAtGate(constraint: GateConstraint, context: Ga
         : `the candidate order's own notional ${context.candidateNotional} is inside the declared ${constraint.predicate.kind} bound ${bound}`,
     });
   }
+  if (subjectClass === 'position_gross_exposure') {
+    // FW-37-A (F-1, L2/S3/M3's live stress — a cap-1 desk held 2 concurrent
+    // positions): the position class evaluates at every candidate. The
+    // vocabulary's own unit for a position-class subject is the COUNT of
+    // concurrent open positions (the demo constraint set's own gross-exposure
+    // cap; every Round F launch grammar's position cap) — the verdict binds
+    // on the count projection, and the SAME book's notional projection is
+    // computed and itemized alongside (the other class, taught on the row:
+    // a notional-scale gross-exposure intent is served by the book.notional
+    // class, and the itemization shows both projections so either reading
+    // reconciles by inspection).
+    if (!Number.isSafeInteger(context.priorPositionCount) || context.priorPositionCount < 0) {
+      return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: NOT_EVALUABLE_POSITION_NOTE });
+    }
+    const projectedCountText = String(context.priorPositionCount + 1);
+    const projectedNotional = addDecimals(context.priorBookNotional, context.candidateNotional);
+    const notionalText = projectedNotional === null ? 'not derivable (malformed notional inputs)' : projectedNotional;
+    const comparison = compareDecimals(projectedCountText, bound);
+    const breach = comparison === null ? false : constraint.predicate.kind === 'limit.min' ? comparison === -1 : comparison === 1;
+    return deepFreeze({
+      ...base,
+      basis: 'projected_position_count',
+      derivable: true,
+      observed: projectedCountText,
+      arithmetic: `prior open positions ${context.priorPositionCount} + this candidate's 1 new position = ${projectedCountText} projected open positions (count class — the position vocabulary's declared unit); the same projected book in notional: prior ${context.priorBookNotional} + candidate ${context.candidateNotional} = ${notionalText} (notional class — a notional-scale gross-exposure bound is the book.notional subject's own class)`,
+      verdict: breach ? 'breach' : 'pass',
+      note: breach
+        ? `the projected ${projectedCountText} open positions stand past the declared ${constraint.predicate.kind} bound ${bound} — the gate refuses the candidate (the notional projection ${notionalText} is itemized on the row: the count class is the position vocabulary's declared unit)`
+        : `the projected ${projectedCountText} open positions are inside the declared ${constraint.predicate.kind} bound ${bound} (the same book's notional projection ${notionalText} is itemized — a notional-scale gross-exposure bound binds as the book.notional class)`,
+    });
+  }
+  if (subjectClass === 'position_concentration') {
+    // FW-37-A (F-1, L2's declared 0.25): the concentration class — the
+    // candidate's own notional share of the PROJECTED total book (prior
+    // book + candidate), fraction-scale, exactly in the FW-36-A style.
+    const projectedBook = addDecimals(context.priorBookNotional, context.candidateNotional);
+    if (projectedBook === null || (compareDecimals(projectedBook, '0') ?? -1) !== 1) {
+      return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the projected total book could not be derived as a positive decimal (the concentration fraction has no denominator — never a fabricated comparison)' });
+    }
+    const fraction = divideDecimalsFloor(context.candidateNotional, projectedBook);
+    if (fraction === null) {
+      return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the concentration fraction could not be derived exactly (never a fabricated comparison)' });
+    }
+    const comparison = compareDecimals(fraction, bound);
+    const breach = comparison === null ? false : constraint.predicate.kind === 'limit.min' ? comparison === -1 : comparison === 1;
+    return deepFreeze({
+      ...base,
+      basis: 'projected_concentration',
+      derivable: true,
+      observed: fraction,
+      arithmetic: `this candidate's own notional ${context.candidateNotional} / the projected total book ${projectedBook} (prior ${context.priorBookNotional} + candidate ${context.candidateNotional}) = the concentration fraction ${fraction} (fraction-scale — the bound and the derived fraction share the unit)`,
+      verdict: breach ? 'breach' : 'pass',
+      note: breach
+        ? `the projected concentration fraction ${fraction} stands past the declared ${constraint.predicate.kind} bound ${bound} — the gate refuses the candidate`
+        : `the projected concentration fraction ${fraction} is inside the declared ${constraint.predicate.kind} bound ${bound}`,
+    });
+  }
+  if (subjectClass === 'daily_turnover') {
+    // FW-37-A (F-1, M1/L2/L3's evidence — fills totaling 9,375 past a 500
+    // bound; a 600 bound blown to a 19,200 standing breach): the turnover
+    // class — the cumulative traded notional of the candidate's own UTC
+    // trading day (the declared window's default), prior fills + candidate,
+    // itemized exactly.
+    if (context.priorTurnoverNotional === null) {
+      return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: NOT_EVALUABLE_TURNOVER_NOTE });
+    }
+    const priorTurnover = context.priorTurnoverNotional;
+    if (!CANONICAL_DECIMAL_PATTERN.test(priorTurnover)) {
+      return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the trading-day traded-notional sum is not a canonical decimal (never a fabricated comparison)' });
+    }
+    const projectedTurnover = addDecimals(priorTurnover, context.candidateNotional);
+    if (projectedTurnover === null) {
+      return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the trading day\'s projected turnover could not be derived (malformed notional inputs — never a fabricated comparison)' });
+    }
+    const comparison = compareDecimals(projectedTurnover, bound);
+    const breach = comparison === null ? false : constraint.predicate.kind === 'limit.min' ? comparison === -1 : comparison === 1;
+    return deepFreeze({
+      ...base,
+      basis: 'projected_daily_turnover',
+      derivable: true,
+      observed: projectedTurnover,
+      arithmetic: `the trading day\'s (UTC) traded notional already on record ${priorTurnover} + this candidate\'s own notional ${context.candidateNotional} = the day\'s projected turnover ${projectedTurnover} (the declared window defaults to the trading day — the standing risk-utilization read\'s own granularity)`,
+      verdict: breach ? 'breach' : 'pass',
+      note: breach
+        ? `the trading day\'s projected turnover ${projectedTurnover} stands past the declared ${constraint.predicate.kind} bound ${bound} — the gate refuses the candidate`
+        : `the trading day\'s projected turnover ${projectedTurnover} is inside the declared ${constraint.predicate.kind} bound ${bound}`,
+    });
+  }
   if (subjectClass === 'risk_consumption' || subjectClass === 'drawdown') {
     if (context.realizedCumulative === null) {
-      return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: NOT_EVALUABLE_YET_NOTE });
+      return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: NOT_EVALUABLE_YET_NOTE });
     }
     // The consumption/drawdown observation: the realized cumulative's
     // LOSS MAGNITUDE (the negative part — gains do not consume a budget).
     const realized = parseExactDecimal(context.realizedCumulative);
     if (realized === null) {
-      return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the realized cumulative is not a canonical decimal (never a fabricated comparison)' });
+      return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the realized cumulative is not a canonical decimal (never a fabricated comparison)' });
     }
     const consumption = realized.negative ? formatExactDecimal({ negative: false, digits: realized.digits, scale: realized.scale }) : '0';
     if (subjectClass === 'risk_consumption') {
@@ -613,11 +764,11 @@ export function evaluateConstraintAtGate(constraint: GateConstraint, context: Ga
     // arithmetic reconciles — never a mark-to-market fabrication (the
     // standing read's own law: no equity curve exists on any backing).
     if (context.declaredCapital === null || !isPositiveDecimal(context.declaredCapital)) {
-      return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the drawdown fraction cannot be derived without the desk\'s declared capital base (the launch world\'s own capital budget — absent here); the gate never fabricates a mark-to-market series (the standing risk-utilization read reports the same honestly-unknown class)' });
+      return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the drawdown fraction cannot be derived without the desk\'s declared capital base (the launch world\'s own capital budget — absent here); the gate never fabricates a mark-to-market series (the standing risk-utilization read reports the same honestly-unknown class)' });
     }
     const fraction = divideDecimalsFloor(consumption, context.declaredCapital);
     if (fraction === null) {
-      return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the drawdown fraction could not be derived exactly (never a fabricated comparison)' });
+      return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: 'not gate-evaluable: the drawdown fraction could not be derived exactly (never a fabricated comparison)' });
     }
     const comparison = compareDecimals(fraction, bound);
     const breach = comparison === null ? false : constraint.predicate.kind === 'limit.min' ? comparison === -1 : comparison === 1;
@@ -633,7 +784,14 @@ export function evaluateConstraintAtGate(constraint: GateConstraint, context: Ga
         : `the derived drawdown fraction ${fraction} is inside the declared ${constraint.predicate.kind} bound ${bound} (loss ${consumption} of the declared capital ${context.declaredCapital})`,
     });
   }
-  return deepFreeze({ ...base, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: NOT_EVALUABLE_SUBJECT_NOTE });
+  return deepFreeze({ ...nonBindingBase, basis: 'none', derivable: false, observed: null, arithmetic: null, verdict: 'not_gate_evaluable', note: NOT_EVALUABLE_SUBJECT_NOTE });
+}
+
+/** The declared bound's own text as an evaluation's predicate carries it (the prose citation and the row share it). */
+function constraintBoundTextOf(evaluation: LimitsCheckEvaluation): string {
+  if (typeof evaluation.predicate.bound === 'number' && Number.isFinite(evaluation.predicate.bound)) return String(evaluation.predicate.bound);
+  if (typeof evaluation.predicate.value === 'string' && evaluation.predicate.value.length > 0) return evaluation.predicate.value;
+  return 'unspecified';
 }
 
 /** The pre-trade check list with the COMPUTED limits verdict (the same closed 7-dimension list — the limits dimension never a fixed stamp again). */
@@ -843,16 +1001,41 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
   // The sizing bound: the TIGHTEST gate-observable book bound the mandate
   // declares (every severity — sizing inside an advisory bound is still
   // more honest), plus the launch world's own declared capital budget.
+  // FW-37-A (F-1): the pool now includes the TURNOVER-class limit.max
+  // bounds (notional-scale, unit-coherent with the book bounds — the
+  // desk's fills stay inside the declared day-turnover ceiling too, so the
+  // M1/L2/L3 evidence — fills totaling 9,375 past a 500 bound, a 600
+  // bound blown to a 19,200 standing breach — can no longer occur) and
+  // honors the POSITION-class caps for the trim's room below.
   const gateConstraints = gateConstraintsOf(constraintSet);
   const bookBoundTexts = gateConstraints
     .filter((constraint) => constraint.boundText !== null && gateSubjectClassOf(constraint.subject) === 'book_notional')
     .map((constraint) => constraint.boundText as string);
+  for (const constraint of gateConstraints) {
+    if (constraint.boundText === null) continue;
+    if (constraint.predicate.kind !== 'limit.max') continue; // only a max-side ceiling sizes the day
+    if (gateSubjectClassOf(constraint.subject) !== 'daily_turnover') continue;
+    bookBoundTexts.push(constraint.boundText);
+  }
   bookBoundTexts.push(capital); // the launch spec's own declared capital budget — a real user-declared bound
   const sizingBound = bookBoundTexts.reduce<string | null>(
     (tightest, bound) => tightest === null || (compareDecimals(bound, tightest) ?? 1) === -1 ? bound : tightest,
     null,
   );
   if (sizingBound === null) return null; // no observable book bound — nothing can be sized honestly (R46)
+
+  // FW-37-A (F-1): the TIGHTEST declared position cap (limit.max over a
+  // position-class subject, every severity). The trim is a SECOND
+  // concurrent position — a mandate with no room for it (cap < 2) honestly
+  // OMITS the trim (the desk adds no position it cannot fit inside the
+  // mandate — the existing no-room law, now position-aware).
+  const positionCapTexts = gateConstraints
+    .filter((constraint) => constraint.boundText !== null && constraint.predicate.kind === 'limit.max' && gateSubjectClassOf(constraint.subject) === 'position_gross_exposure')
+    .map((constraint) => constraint.boundText as string);
+  const positionCap = positionCapTexts.reduce<string | null>(
+    (tightest, bound) => tightest === null || (compareDecimals(bound, tightest) ?? 1) === -1 ? bound : tightest,
+    null,
+  );
 
   // The entry: the project's own budget multiplier, capped at the sizing
   // space (<= 50% of the tightest bound at the entry price).
@@ -868,12 +1051,16 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
   // The trim: the project's own multiplier, capped so the entry+trim book
   // stays <= 75% of the tightest bound; a cap of nothing positive honestly
   // OMITS the trim (the desk adds nothing it cannot fit inside the mandate).
+  // FW-37-A (F-1): the trim is a SECOND concurrent position — a declared
+  // position cap with no room for it (cap < 2) omits it the same way.
+  const positionRoomForTrim = positionCap === null || (compareDecimals('2', positionCap) ?? 1) !== 1;
   const trimQtyBase = multiplyDecimals(riskBudget, TRIM_QTY_OF_RISK);
   const bookRoom = subtractDecimals(multiplyDecimals(sizingBound, BOOK_SPACE_OF_BOUND) ?? '0', entryNotional);
   const trimCapQty = bookRoom === null ? null : divideDecimalsFloor(bookRoom, trimPrice);
-  const trimQty = trimQtyBase === null || trimCapQty === null
+  const trimQtyUnroomed = trimQtyBase === null || trimCapQty === null
     ? null
     : (compareDecimals(trimQtyBase, trimCapQty) ?? 1) === 1 ? trimCapQty : trimQtyBase;
+  const trimQty = positionRoomForTrim ? trimQtyUnroomed : null;
   const trimOmitted = trimQty === null || !isPositiveDecimal(trimQty);
   const trimNotional = trimOmitted ? null : multiplyDecimals(trimQty as string, trimPrice);
   if (!trimOmitted && (trimNotional === null || !isPositiveDecimal(trimNotional))) return null;
@@ -902,6 +1089,33 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
     .map((constraint) => canonicalLimitBoundOf(constraint.predicate))
     .find((bound) => bound !== null)?.text ?? null;
 
+  // The instants (the goal's own createdAt — the launch instant — with
+  // the demo seed's own offsets; deterministic, point-in-time stable).
+  // FW-37-A (F-1): the turnover window is the candidate's own UTC trading
+  // day (the standing read's own granularity) — the day-scoped prior sums
+  // are computed HERE, once, from the same instants the rows carry.
+  const t0 = goal.createdAt as TimestampMs;
+  const entryAt = (t0 + 250) as TimestampMs;
+  const trimAt = (t0 + 60_000) as TimestampMs;
+  const refusedAt = (t0 + 120_000) as TimestampMs;
+  if (![t0, entryAt, trimAt, refusedAt, t0 + 500, t0 + 1_000].every((instant) => Number.isSafeInteger(instant) && instant > 0)) return null;
+  const utcDayOf = (at: number): string => new Date(at).toISOString().slice(0, 10);
+  const dayOfEntry = utcDayOf(entryAt);
+  const dayOfTrim = utcDayOf(trimAt);
+  const dayOfRefusal = utcDayOf(refusedAt);
+  const sameDayEntryToTrim = dayOfEntry === dayOfTrim;
+  const trimRoutedDaySum = trimOmitted ? '0' : dayOfTrim === dayOfRefusal ? (trimNotional as string) : '0';
+  const entryRoutedDaySum = dayOfEntry === dayOfRefusal ? entryNotional : '0';
+  // The turnover prior at each candidate: the day-scoped sum of the fills
+  // already on the blotter (each sum names its own day — a fill that landed
+  // on an earlier UTC day never counts against the current day's window).
+  const turnoverPriorAtEntry = '0';
+  const turnoverPriorAtTrim = sameDayEntryToTrim ? entryNotional : '0';
+  const turnoverPriorAtConcentration = addDecimals(entryRoutedDaySum, trimRoutedDaySum) ?? '0';
+  // The open-position count prior at each candidate: every routed fill opens
+  // one gross position (no close event class exists on any backing).
+  const positionsPriorAtConcentration = 1 + (trimOmitted ? 0 : 1);
+
   // THE HONEST GATE AT EVERY CANDIDATE ORDER (FW-36-A, E-2.1/E-2.2):
   // each declared constraint evaluated WHERE DERIVABLE — the TRUE
   // observed value itemized (prior cumulative + candidate = projected) so
@@ -910,15 +1124,17 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
   // passed. The outcome chain provides its realized record only AFTER the
   // entry fills (L4 point-in-time): the realized-cumulative subjects are
   // honestly not-gate-evaluable AT the entry, and evaluated from the
-  // chain's realized cumulative at the later gates.
+  // chain's realized cumulative at the later gates. FW-37-A (F-1): the
+  // position/concentration/turnover classes ride every context too — the
+  // position count and the day-scoped turnover window.
   const entryEvaluations: readonly LimitsCheckEvaluation[] = gateConstraints.map(
-    (constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: '0', candidateNotional: entryNotional, realizedCumulative: null, declaredCapital: capital }),
+    (constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: '0', candidateNotional: entryNotional, realizedCumulative: null, declaredCapital: capital, priorPositionCount: 0, priorTurnoverNotional: turnoverPriorAtEntry }),
   );
   const entryLimits = limitsOutcomeOf(entryEvaluations);
   if (entryLimits === 'refused') return null; // the gate refuses the very first order — the desk honestly executes nothing (the zero-budget law)
   const trimEvaluations: readonly LimitsCheckEvaluation[] | null = trimOmitted
     ? null
-    : gateConstraints.map((constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: entryNotional, candidateNotional: trimNotional as string, realizedCumulative: realized, declaredCapital: capital }));
+    : gateConstraints.map((constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: entryNotional, candidateNotional: trimNotional as string, realizedCumulative: realized, declaredCapital: capital, priorPositionCount: 1, priorTurnoverNotional: turnoverPriorAtTrim }));
   const trimLimits = trimEvaluations === null ? null : limitsOutcomeOf(trimEvaluations);
   const trimRefused = trimLimits === 'refused';
   const trimBlockingBreach = trimEvaluations?.find((evaluation) => evaluation.verdict === 'breach' && evaluation.severity === 'blocking') ?? null;
@@ -934,16 +1150,20 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
   const quote = refusalQuoteOf(envelope, actualBookNotional, entryPrice);
   if (quote === null) return null;
   const concentrationEvaluations: readonly LimitsCheckEvaluation[] = gateConstraints.map(
-    (constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: actualBookNotional, candidateNotional: quote.candidateNotional, realizedCumulative: realized, declaredCapital: capital }),
+    (constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: actualBookNotional, candidateNotional: quote.candidateNotional, realizedCumulative: realized, declaredCapital: capital, priorPositionCount: positionsPriorAtConcentration, priorTurnoverNotional: turnoverPriorAtConcentration }),
   );
-
-  // The instants (the goal's own createdAt — the launch instant — with
-  // the demo seed's own offsets; deterministic, point-in-time stable).
-  const t0 = goal.createdAt as TimestampMs;
-  const entryAt = (t0 + 250) as TimestampMs;
-  const trimAt = (t0 + 60_000) as TimestampMs;
-  const refusedAt = (t0 + 120_000) as TimestampMs;
-  if (![t0, entryAt, trimAt, refusedAt, t0 + 500, t0 + 1_000].every((instant) => Number.isSafeInteger(instant) && instant > 0)) return null;
+  // FW-37-A (F-8, L1's evidence — a candidate breaching BOTH the capital
+  // budget AND the position cap cited only the former): the refusal cites
+  // EVERY breached bound. The primary quote (the tightest book-class bound)
+  // rides first, then every OTHER breached evaluation in declaration order —
+  // each with its own TRUE observed value (the class's own projection) so
+  // every citation reconciles by inspection.
+  const otherBreaches = concentrationEvaluations
+    .filter((evaluation) => evaluation.verdict === 'breach' && evaluation.constraintId !== quote.constraintId && evaluation.observed !== null);
+  const refusalCitations = [
+    { constraintId: quote.constraintId, domain: quote.domain, subject: quote.subject, severity: quote.severity, predicate: quote.predicate, observed: quote.observed },
+    ...otherBreaches.map((evaluation) => ({ constraintId: evaluation.constraintId, domain: evaluation.domain, subject: evaluation.subject, severity: evaluation.declaredSeverity, predicate: evaluation.predicate, observed: evaluation.observed as string })),
+  ];
 
   // The content-addressed ids (identical envelope -> identical ids).
   const sessionId = idOf('shs', 'launch-shadow-session', envelope);
@@ -969,7 +1189,13 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
     : `the pre-trade checks returned limits: ${entryLimits} (the computed verdict — never a fixed stamp)`;
   const entryRationale = `The desk opened the compiled organization ${envelope.organizationRef}'s simulated session with a ${entryQty} ${marketOne} limit buy at ${entryPrice} — the projected book ${entryNotional} ${capitalRelationSentence}; ${riskBudgetSentence}${drawdownText === null ? '' : `, under the declared drawdown ceiling ${drawdownText}`}. ${entryChecksSentence}; the simulated fill is the outcome ${outcomeRef}'s own realization.`;
   const trimRationale = `Trim the session's ${marketTwo} exposure after the adverse gap on the entry: a ${trimQty} limit sell at ${trimPrice} (${trimNotional} notional) cites the declared risk budget ${riskBudget} verbatim. The gateway routed it; the simulated fill landed clean.`;
-  const refusalRationale = `The order was refused at the risk-limits stage: the projected ${quote.subject} ${quote.observed} exceeds the ${quote.severity} ${quote.predicate.kind} bound ${quote.boundText} (constraint ${quote.constraintId} of ${constraintSet.id}) — itemized, the prior cumulative book ${quote.priorBookNotional} + this candidate's own notional ${quote.candidateNotional} = ${quote.observed}, so the arithmetic reconciles by inspection. The desk's request never reached routing — the gate's refusal is the honest half of the blotter.`;
+  // FW-37-A (F-8): the refusal prose cites EVERY breached bound — the
+  // primary quote's itemized arithmetic first (unchanged shape), then each
+  // other breached constraint with its own class-true observed value and
+  // itemization, so a candidate that breaches several bounds cites them all
+  // (L1's case: the 2,000,000 capital budget AND the 2-position cap).
+  const otherBreachSentences = otherBreaches.map((evaluation) => ` The candidate also stood past the ${evaluation.declaredSeverity} ${evaluation.predicate.kind} bound ${constraintBoundTextOf(evaluation)} of ${evaluation.constraintId} (${evaluation.subject}): observed ${evaluation.observed} — itemized, ${evaluation.arithmetic}.`);
+  const refusalRationale = `The order was refused at the risk-limits stage: the projected ${quote.subject} ${quote.observed} exceeds the ${quote.severity} ${quote.predicate.kind} bound ${quote.boundText} (constraint ${quote.constraintId} of ${constraintSet.id}) — itemized, the prior cumulative book ${quote.priorBookNotional} + this candidate's own notional ${quote.candidateNotional} = ${quote.observed}, so the arithmetic reconciles by inspection.${otherBreachSentences.join('')} The desk's request never reached routing — the gate's refusal is the honest half of the blotter.`;
   const outcomeRationale = `The desk approved the ${entryQty} ${marketOne} entry with the projected book ${entryNotional} ${capitalRelationSentence}; ${riskBudgetSentence}. The simulated fill realized ${realized} against the ${expected} expectation (tolerance ${tolerance}) — the adverse gap the post-mortem ${postMortemRef} attributes to the simulated venue lag.`;
   const trimRefusalRationale = trimBlockingBreach === null
     ? 'The trim was refused at the risk-limits stage (the gate\'s computed verdict).'
@@ -1081,16 +1307,11 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
       refusal: {
         stage: 'risk_limits',
         evaluationId: idOf('rev', 'launch-refusal-evaluation', envelope),
-        refusals: [
-          {
-            constraintId: quote.constraintId,
-            domain: quote.domain,
-            subject: quote.subject,
-            severity: quote.severity,
-            predicate: quote.predicate,
-            observed: quote.observed,
-          },
-        ],
+        // FW-37-A (F-8): EVERY breached bound is cited — the primary quote
+        // first, then each other breached constraint with its own TRUE
+        // observed value (the class's own projection, itemized on the
+        // row's limitsEvaluation surface).
+        refusals: refusalCitations,
       },
       refusedAt,
       order: {
