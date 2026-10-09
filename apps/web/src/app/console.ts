@@ -2315,33 +2315,37 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           // failure toast on the same W-15b-r lifecycle — never a
           // silent no-op.
           //
-          // FW-36-B (Round E register E-9 — the empty-export-after-
-          // switch): THE EXPORT NEVER COMPOSES AN UNREAD WORKSPACE.
-          // The composition reads the live state at click time, and
-          // after a mid-session project switch + reload the boot
-          // bundle adopts the stored scope at its directory read (the
-          // env-pin bundle's remaining reads drop through the
-          // dispatchIfCurrent guard) while the adopted scope's own
-          // read bundle only runs on the NEXT beat — a multi-second
-          // window in which the state is the post-adoption RESET
-          // world (0 capsules / 0 decisions / 0 notices) and the
-          // chain still verifies over it (L1's finding: an
-          // empty-but-valid payload). The fix: when the current
-          // scope's read bundle has not COMPLETED yet (the
-          // lastFetchedScope seam), the export RUNS it and waits
-          // (bounded; a mid-await switch simply re-runs for the new
-          // scope — the loop converges on the scope the user is
-          // actually looking at); if it cannot converge, the honest
-          // typed degradation toast names the state and NOTHING is
-          // downloaded — never an empty-but-valid file. A converged
-          // scope composes synchronously (the pre-fix path, byte for
-          // byte).
+          // FW-36-B (E-9 — the empty-export-after-switch): after a
+          // mid-session switch + reload, the boot bundle adopts the stored
+          // scope while the adopted scope's read bundle only runs on the
+          // NEXT beat — a multi-second window in which the state is the
+          // post-adoption RESET world (0 capsules / 0 decisions / 0
+          // notices) and the chain still verifies over it (L1: an
+          // empty-but-valid payload). The fix: when the current scope's
+          // read bundle has not COMPLETED yet (the lastFetchedScope seam),
+          // the export RUNS it and waits (bounded; a mid-await switch
+          // re-runs for the new scope — the loop converges on the scope
+          // the user sees); if it cannot converge, the honest degradation
+          // toast names the state and NOTHING downloads. A converged scope
+          // composes synchronously (the pre-fix path, byte for byte).
+          /** The W-15b-r toast lifecycle (show + token-checked auto-dismiss — the notice toast's own surface, never a new chrome pattern). */
+          const showExportToast = (shown: { readonly kind: string; readonly title: string; readonly sentence: string }, ms: number): void => {
+            view = { ...view, toast: shown };
+            render();
+            if (scheduler !== undefined) {
+              scheduler.schedule(ms, () => {
+                if (view.toast === shown) {
+                  view = { ...view, toast: null };
+                  render();
+                }
+              });
+            }
+          };
           const composeAndDownload = (): void => {
             const fileName = `tradrl-workspace-${state.scope.projectId}.json`;
             try {
-              // E-8, part 2: the STRUCTURED per-record simulated flag —
-              // the boot options' own environment truth (the same flag
-              // the SIMULATED badges render) threads into every
+              // E-8, part 2: the boot options' own environment truth (the
+              // same flag the SIMULATED badges render) threads into every
               // event/capsule/decision record of the file.
               const bytes = serializeWorkspaceExport(state, view.simulated);
               const anchor = document.createElement('a') as Element & { click?(): void };
@@ -2349,45 +2353,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
               anchor.setAttribute('href', blob);
               anchor.setAttribute('download', fileName);
               if (typeof anchor.click === 'function') anchor.click();
-              // FW-32-B (b3 — Round A blocker 5, M1/M5/S5's finding: "no
-              // download toast — had to check the Downloads folder"): the
-              // download CONFIRMATION toast, on the W-15b-r lifecycle — the
-              // same surface + token-checked ~5s auto-dismiss the notice
-              // toast rides (never a new chrome pattern), with the manual
-              // close the toast record already carries.
-              const shown = { kind: 'export-download', title: 'Export downloaded', sentence: `${fileName} — verify it any time in Settings: "Verify an export file".` };
-              view = { ...view, toast: shown };
-              render();
-              if (scheduler !== undefined) {
-                scheduler.schedule(5000, () => {
-                  // Token-checked, exactly like the notice toast: a manual
-                  // close (or a newer toast replacing this one) already
-                  // cleared it — the late tick dismisses nothing else.
-                  if (view.toast === shown) {
-                    view = { ...view, toast: null };
-                    render();
-                  }
-                });
-              }
+              // FW-32-B (b3): the download CONFIRMATION toast (M1/M5's
+              // "no download toast" finding) — ~5s auto-dismiss.
+              showExportToast({ kind: 'export-download', title: 'Export downloaded', sentence: `${fileName} — verify it any time in Settings: "Verify an export file".` }, 5000);
             } catch (error) {
-              // THE HONEST FAILURE (FW-35-A): the export could not be
-              // composed — the user learns it HERE, on the toast surface,
-              // with nothing downloaded and nothing claimed. The ~8s
-              // auto-dismiss gives the sentence time to read (the same
-              // token-checked lifecycle, one deliberate duration for an
-              // error that must be read, not skimmed).
+              // THE HONEST FAILURE (FW-35-A): nothing downloaded, nothing
+              // claimed — the ~8s auto-dismiss gives the sentence time to
+              // be read (an error that must be read, not skimmed).
               const message = (error as Error)?.message ?? String(error);
-              const shown = { kind: 'export-failed', title: 'Export failed', sentence: `The workspace export could not be composed (${message}). Nothing was downloaded — refresh the page and try again; if it persists, report this as a defect.` };
-              view = { ...view, toast: shown };
-              render();
-              if (scheduler !== undefined) {
-                scheduler.schedule(8000, () => {
-                  if (view.toast === shown) {
-                    view = { ...view, toast: null };
-                    render();
-                  }
-                });
-              }
+              showExportToast({ kind: 'export-failed', title: 'Export failed', sentence: `The workspace export could not be composed (${message}). Nothing was downloaded — refresh the page and try again; if it persists, report this as a defect.` }, 8000);
             }
           };
           /** E-9: true when the current scope's read bundle has COMPLETED (the launchpad has nothing to read — always ready). */
@@ -2397,11 +2371,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           } else {
             // THE WAIT PATH (the switch+reload window): run the current
             // scope's bundle, then compose from the world it read — the
-            // busy flag discloses the work in flight on the refresh
-            // affordance. Bounded retries: a scope that keeps moving
-            // under the export (a user switching desks mid-wait) re-runs
-            // for whatever scope lands; three unbundled attempts end in
-            // the honest degradation toast, never an empty file.
+            // busy flag discloses the work in flight. Bounded retries: a
+            // scope that keeps moving under the export re-runs for
+            // whatever scope lands; three unbundled attempts end in the
+            // honest degradation toast, never an empty file.
             void (async () => {
               try {
                 view = { ...view, busy: true };
@@ -2417,33 +2390,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
                 }
                 view = { ...view, busy: false };
                 const stalled = state.scope.projectId;
-                const shown = { kind: 'export-failed', title: 'Export deferred', sentence: `The workspace for ${stalled} has not finished loading — nothing was downloaded. Wait for the sections to render, then export again.` };
-                view = { ...view, toast: shown };
-                render();
-                if (scheduler !== undefined) {
-                  scheduler.schedule(8000, () => {
-                    if (view.toast === shown) {
-                      view = { ...view, toast: null };
-                      render();
-                    }
-                  });
-                }
+                showExportToast({ kind: 'export-failed', title: 'Export deferred', sentence: `The workspace for ${stalled} has not finished loading — nothing was downloaded. Wait for the sections to render, then export again.` }, 8000);
               } catch (error) {
                 // R46: even the wait path never throws at the user — the
                 // same honest failure surface the composition rides.
                 view = { ...view, busy: false };
                 const message = (error as Error)?.message ?? String(error);
-                const shown = { kind: 'export-failed', title: 'Export failed', sentence: `The workspace export could not be composed (${message}). Nothing was downloaded — refresh the page and try again; if it persists, report this as a defect.` };
-                view = { ...view, toast: shown };
-                render();
-                if (scheduler !== undefined) {
-                  scheduler.schedule(8000, () => {
-                    if (view.toast === shown) {
-                      view = { ...view, toast: null };
-                      render();
-                    }
-                  });
-                }
+                showExportToast({ kind: 'export-failed', title: 'Export failed', sentence: `The workspace export could not be composed (${message}). Nothing was downloaded — refresh the page and try again; if it persists, report this as a defect.` }, 8000);
               }
             })();
           }
