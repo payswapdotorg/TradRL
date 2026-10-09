@@ -93,12 +93,12 @@ function populatedWorkspace(): WorkspaceState {
 const capsulesOf = (): readonly EvidenceCapsule[] => [capsule()];
 
 describe('palette: D4 — 100% coverage of navigation + the other entity kinds', () => {
-  it('covers ALL FIFTEEN navigation targets (the charter\'s hard requirement)', () => {
+  it('covers ALL SIXTEEN navigation targets (the charter\'s hard requirement; FW-37-B added Oversight — the palette reaches the consolidated view)', () => {
     const index = paletteIndex(openWorkspace(SCOPE, T0), capsulesOf);
     const nav = index.filter((entry) => entry.kind === 'NAVIGATION');
-    expect(nav.length).toBe(15);
+    expect(nav.length).toBe(16);
     expect(nav.map((entry) => entry.ref)).toEqual([
-      'nav:home', 'nav:goal', 'nav:organization', 'nav:market-world', 'nav:time-machine',
+      'nav:home', 'nav:oversight', 'nav:goal', 'nav:organization', 'nav:market-world', 'nav:time-machine',
       'nav:research', 'nav:experiments', 'nav:decisions', 'nav:execution', 'nav:risk',
       'nav:evidence', 'nav:outcomes', 'nav:lessons', 'nav:inbox', 'nav:settings',
     ]);
@@ -453,14 +453,19 @@ describe('palette: D-16 — the entity-open grammar (project + capsule ref parse
 });
 
 // ---------------------------------------------------------------------------
-// FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): the
-// palette's desk listing defaults to the SESSION'S OWN desks; the whole
-// registry stays one explicit disclosure away (the desksOf override), and
-// the empty state DISCLOSES the hidden matches with its own include-all
-// action — never a silent wall, never a lost desk.
+// FW-34-B (Round C register §3.8 — the shared-tenant wall, M1) →
+// FW-37-B (Round F register F-3 — the institutional disqualifier): the
+// palette's desk listing is the SESSION'S OWN desks, PERIOD. The Round F
+// evidence (L1/L3 each switched into another session's desk and read its
+// full blotter; M1: "157 other desks"; L3: "199 other desks") ruled the
+// FW-34-B explicit-disclosure design (the desksOf whole-registry override
+// + the empty state's include-all action) insufficient — foreign
+// sessions' desks never appear by name in the palette, and the expansion
+// paths are REMOVED. The honest fallback (UNMARKED rows read as the
+// session's own) and the demo project's always-in law are unchanged.
 // ---------------------------------------------------------------------------
 
-describe('FW-34-B: the palette defaults to the session own desks (§3.8)', () => {
+describe('FW-34-B/FW-37-B: the palette lists the session own desks only (§3.8 hardened in F-3)', () => {
   /** A shared-origin directory: the demo project, two own desks (one explicitly marked, one legacy-unmarked), two OTHER sessions' desks. */
   function sharedWorkspace(): WorkspaceState {
     const project = (id: string, name: string, marker?: 'session-owned' | 'tenant-available') => ({
@@ -481,41 +486,26 @@ describe('FW-34-B: the palette defaults to the session own desks (§3.8)', () =>
     ]);
   }
 
-  it('the DEFAULT index carries the session own desks + the demo project — other sessions desks are NOT searchable until disclosed', () => {
+  it('the index carries the session own desks + the demo project — other sessions desks are NOT searchable, full stop (FW-37-B F-3: no disclosure path)', () => {
     const index = paletteIndex(sharedWorkspace(), capsulesOf);
     const refs = index.filter((entry) => entry.kind === 'PROJECT').map((entry) => entry.ref);
     expect(refs).toContain('project:proj-a'); // the current desk
     expect(refs).toContain('project:prj-demo-console'); // the shared teaching desk is ALWAYS in
     expect(refs).toContain('project:prj-own-legacy'); // the unmarked legacy desk reads as the session's own
-    expect(refs).not.toContain('project:prj-s1-desk'); // another session's desk is NOT in the default listing
+    expect(refs).not.toContain('project:prj-s1-desk'); // another session's desk is NOT in the listing
     expect(refs).not.toContain('project:prj-m1-desk');
-    // a query for another session's desk finds NOTHING by default
+    // a query for another session's desk finds NOTHING — and never discloses it existed
     const ranked = rankPalette(index, 'S1 desk');
     expect(ranked.some((entry) => entry.ref === 'project:prj-s1-desk')).toBe(false);
   });
 
-  it('the desksOf override (the all-desks disclosure expanded state) indexes the WHOLE registry — nothing lost, everything reachable', () => {
-    const whole: import('./palette').DesksOf = (state: WorkspaceState) => state.projectDirectory;
-    const index = paletteIndex(sharedWorkspace(), capsulesOf, whole);
-    const refs = index.filter((entry) => entry.kind === 'PROJECT').map((entry) => entry.ref);
-    expect(refs).toContain('project:prj-s1-desk'); // the other session's desk is searchable once disclosed
-    expect(refs).toContain('project:prj-m1-desk');
-    expect(rankPalette(index, 'S1 desk').some((entry) => entry.ref === 'project:prj-s1-desk')).toBe(true);
-  });
-
-  it("the overlay's empty state DISCLOSES the hidden desk matches with its own include-all action (never a silent wall)", () => {
-    const bytes = render(paletteOverlay({ query: 'S1 desk', results: [], selected: 0, unread: 0, hiddenDeskMatches: 1, allDesks: false }));
+  it("the overlay's empty state carries NO all-desks disclosure (FW-37-B F-3: the count and the include-all action are gone)", () => {
+    const bytes = render(paletteOverlay({ query: 'S1 desk', results: [], selected: 0, unread: 0 }));
     expect(bytes).toContain('No matches');
-    expect(bytes).toContain('1 other desk in this workspace'); // the count, named
-    expect(bytes).toContain('data-palette-hidden-desks');
-    expect(bytes).toContain('data-action="palette-all-desks"'); // the explicit include-all action
-    expect(bytes).toContain('Include all desks in this workspace');
-    // once expanded, the disclosure hides itself (the listing already carries everything)
-    const expanded = render(paletteOverlay({ query: 'S1 desk', results: [], selected: 0, unread: 0, hiddenDeskMatches: 0, allDesks: true }));
-    expect(expanded).not.toContain('data-palette-hidden-desks');
-    expect(expanded).not.toContain('palette-all-desks');
-    // a plain no-match (nothing hidden either) renders the classic teaching shape, no disclosure noise
-    const plain = render(paletteOverlay({ query: 'zzz', results: [], selected: 0, unread: 0 }));
-    expect(plain).not.toContain('other desk');
+    expect(bytes).toContain('Nothing matches'); // the classic §4.12 teaching shape
+    expect(bytes).not.toContain('other desk'); // no count, never a name
+    expect(bytes).not.toContain('data-palette-hidden-desks');
+    expect(bytes).not.toContain('data-action="palette-all-desks"'); // the explicit include-all action is REMOVED
+    expect(bytes).not.toContain('Include all desks in this workspace');
   });
 });

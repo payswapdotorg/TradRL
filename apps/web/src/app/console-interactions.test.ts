@@ -1376,7 +1376,7 @@ describe('executed boot: J8 — the command palette query (the dead input wiring
   it('typing in the palette input FILTERS + RANKS the results through the pure machinery (the input event feeds the query)', async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' });
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(15); // the opened state: every navigation target (the offline transport loads no entities)
+    expect(countByClass(rig.root, 'palette-item')).toBe(16); // the opened state: every navigation target (the offline transport loads no entities; FW-37-B added the Oversight target)
 
     typePaletteQuery(rig, 'risk'); // the exact live repro: type anything -> the list must change
     expect(countByClass(rig.root, 'palette-item')).toBe(2); // the subsequence matches survive: risk (the tight run) + experiments (the scattered r-i-s-k)
@@ -1413,7 +1413,7 @@ describe('executed boot: J8 — the command palette query (the dead input wiring
     expect(textOf(clear)).toBe('Clear search');
     expect(clear.getAttribute('data-action')).toBe('palette-clear');
     click(rig, clear);
-    expect(countByClass(rig.root, 'palette-item')).toBe(15); // the full list is back
+    expect(countByClass(rig.root, 'palette-item')).toBe(16); // the full list is back (FW-37-B: sixteen navigation targets)
     const input = findByData(rig.root, 'data-palette-input', 'true');
     if (input === null) throw new Error('the palette input vanished');
     expect(input.getAttribute('value')).toBe('');
@@ -1423,7 +1423,7 @@ describe('executed boot: J8 — the command palette query (the dead input wiring
     const rig = await bootRig({ tradrl_onboarded: 'true' });
     rig.handle.dispatch({ kind: 'outcomes-loaded', at: T0 + 30, records: [outcomeRecord()] }); // the sanctioned write path
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(16); // 15 navigation + the outcome capsule
+    expect(countByClass(rig.root, 'palette-item')).toBe(17); // 16 navigation (FW-37-B: + Oversight) + the outcome capsule
     typePaletteQuery(rig, 'evc:');
     const items = elementsOf(rig.root).filter((element) => element.hasClass('palette-item'));
     expect(items.length).toBe(1);
@@ -2280,7 +2280,13 @@ describe('executed boot: R2 — the execution blotter read (the seeded submissio
     const api = demoSubstanceTransport();
     const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
     expect(api.blotterReads.count).toBeGreaterThan(0); // the read fired (the R2 seam: it never did before)
-    expect(api.blotterReads.projects.every((project) => project === 'prj-a')).toBe(true); // scoped to the workspace project
+    // FW-37-B (F-2): the blotter read now fires for the SESSION-SCOPED bundle
+    // AND the oversight cadence (one read per session-own desk per refresh —
+    // this rig's directory serves prj-a + prj-other, both unmarked = the
+    // session's own under the honest fallback). The pin's intent — no read
+    // ever crosses the tenant/workspace boundary — holds for the union.
+    expect(api.blotterReads.projects.every((project) => project === 'prj-a' || project === 'prj-other')).toBe(true); // session-own desks only
+    expect(api.blotterReads.projects).toContain('prj-a'); // the workspace project's own read fired
     expect(rig.handle.state().submissions.length).toBe(3); // all three seeded rows entered the state (deduped by submissionId)
     expect(rig.handle.state().submissions.map((submission) => submission.submissionId).sort()).toEqual(['xgs:2bae8608', 'xgs:95d66c4e', 'xgs:e8f99935']);
 
@@ -2971,7 +2977,7 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     const api = jobsSeamTransport();
     const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(20); // 15 navigation + the project + the TWO seeded jobs + the TWO cross-project jump entries (D-16: the directory's other desks)
+    expect(countByClass(rig.root, 'palette-item')).toBe(21); // 16 navigation (FW-37-B: + Oversight) + the project + the TWO seeded jobs + the TWO cross-project jump entries (D-16: the directory's other desks)
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(true); // the JOB group renders in the grouped results
 
     // by ID: the exact job the operator typed
@@ -3056,9 +3062,9 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     if (empty === undefined) throw new Error('the Research section renders no empty state');
     expect(elementsOf(rig.root).some((element) => textOf(element) === 'No research jobs at this view instant.')).toBe(true);
 
-    // the palette carries no JOB entries (15 navigation + the project + the two cross-project jump entries — the D-16 directory depth)
+    // the palette carries no JOB entries (16 navigation (FW-37-B: + Oversight) + the project + the two cross-project jump entries — the D-16 directory depth)
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(18);
+    expect(countByClass(rig.root, 'palette-item')).toBe(19);
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(false);
   });
 });
@@ -4788,8 +4794,8 @@ describe('executed boot: FW-34-B §3.9 — the export-verify commit survives the
   });
 });
 
-describe('executed boot: FW-34-B §3.8 — the switcher/palette session desks + the explicit all-desks disclosure', () => {
-  it('the switcher DEFAULTS to the session own desks (the demo project always in); the counted expander discloses the others and swaps the listing BOTH ways', async () => {
+describe('executed boot: FW-34-B §3.8 / FW-37-B F-3 — the switcher/palette session desks (the wall is now HARD: no all-desks path)', () => {
+  it('the switcher lists the session own desks + the demo project ONLY — no expander, no other-session desk by name, no path to the whole registry (Round F F-3: the institutional disqualifier, closed)', async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
     clickNav(rig, 'settings');
     const optionsOf = (): string[] => {
@@ -4798,20 +4804,29 @@ describe('executed boot: FW-34-B §3.8 — the switcher/palette session desks + 
       return select.children.filter((option) => option.tagName === 'OPTION').map((option) => option.getAttribute('value') ?? '');
     };
     expect(optionsOf()).toEqual(['prj-a', 'prj-b', 'prj-demo-console']); // the session own desks + the teaching desk — the other session desk is NOT here
-    const expander = findByData(rig.root, 'data-action', 'switcher-all-desks');
-    if (expander === null) throw new Error('the all-desks expander is missing (other sessions desks exist in this workspace)');
-    expect(textOf(expander)).toContain('1 other desk'); // the counted disclosure
-    expect(expander.getAttribute('aria-expanded')).toBe('false');
-    click(rig, expander); // EXPAND — one explicit disclosure
-    expect(optionsOf()).toEqual(['prj-a', 'prj-b', 'prj-demo-console', 'prj-s1-desk']); // the WHOLE registry (never lost — the FW-31-B win)
-    const expanded = findByData(rig.root, 'data-action', 'switcher-all-desks');
-    expect(expanded?.getAttribute('aria-expanded')).toBe('true');
-    expect(textOf(expanded as FakeElement)).toContain('Showing all 4 desks');
-    click(rig, expanded as FakeElement); // COLLAPSE back — the hygienic default is one click away
-    expect(optionsOf()).toEqual(['prj-a', 'prj-b', 'prj-demo-console']);
+    // FW-37-B (F-3): the FW-34-B counted expander is GONE — the Round F
+    // evidence (L1/L3 each switched into another session's desk and read
+    // its full blotter) ruled the one-expander-away design insufficient.
+    expect(findByData(rig.root, 'data-action', 'switcher-all-desks')).toBeNull(); // no expander, ever
+    // the FILTER never surfaces another session's desk either — a query
+    // naming it finds nothing and invites nothing (the count line is plain)
+    const filter = findByData(rig.root, 'data-project-filter', 'true');
+    if (filter === null) throw new Error('the filter input is missing');
+    (filter as FakeElement).value = 'S1 desk';
+    rig.doc.fire('input', { target: filter });
+    // nothing of the session's own matches — the ONLY option left is the
+    // select's own current-scope mirror (D-15: the value never silently
+    // falls back; it renders disabled, never selectable)
+    expect(optionsOf()).toEqual(['prj-a']);
+    const currentOption = findByData(rig.root, 'data-action', 'project-switch')?.children.find((option) => option.tagName === 'OPTION');
+    expect(currentOption?.getAttribute('disabled')).toBe('disabled');
+    const countLine = findByData(rig.root, 'data-project-filter-count', 'true');
+    if (countLine === null) throw new Error('the no-match count line is missing (never a blank region)');
+    expect(textOf(countLine)).toContain('No project matches');
+    expect(textOf(countLine)).not.toContain('other desk'); // no disclosure of the hidden registry, no invitation
   });
 
-  it('the PALETTE defaults to the session own desks; a query matching ONLY another session desk discloses the count inline, and the include-all action re-ranks the SAME query over the whole registry', async () => {
+  it("the PALETTE lists the session own desks; a query naming another session's desk finds NOTHING and discloses NOTHING (the include-all path is gone)", async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
     clickAction(rig, 'palette-open');
     const typeQuery = (value: string): void => {
@@ -4822,12 +4837,10 @@ describe('executed boot: FW-34-B §3.8 — the switcher/palette session desks + 
     };
     typeQuery('S1 desk'); // another session desk name — NOT in the session own listing
     expect(findByData(rig.root, 'data-palette-empty', 'S1 desk')).not.toBeNull(); // no matches of the session own
-    const disclosure = findByData(rig.root, 'data-palette-hidden-desks', 'true');
-    if (disclosure === null) throw new Error('the hidden-desks disclosure is missing');
-    expect(textOf(disclosure)).toContain('1 other desk'); // the count, named inline
-    clickAction(rig, 'palette-all-desks'); // the explicit include-all
-    expect(findByData(rig.root, 'data-palette-ref', 'project:prj-s1-desk')).not.toBeNull(); // the same query now reaches the other session desk
-    // the session own desks were never lost — they are still searchable in the expanded state
+    expect(findByData(rig.root, 'data-palette-hidden-desks', 'true')).toBeNull(); // FW-37-B (F-3): the count disclosure is GONE
+    expect(findByData(rig.root, 'data-action', 'palette-all-desks')).toBeNull(); // the include-all action is GONE
+    expect(findByData(rig.root, 'data-palette-ref', 'project:prj-s1-desk')).toBeNull(); // the foreign desk is unreachable, full stop
+    // the session own desks are still searchable (the wall never cost the session its own desks)
     typeQuery('Second Own');
     expect(findByData(rig.root, 'data-palette-ref', 'project:prj-b')).not.toBeNull();
   });
@@ -4917,7 +4930,16 @@ describe('executed boot: FW-36-B (E-9) — the export after switch + reload carr
     expect(rig.handle.state().submissions).toEqual([]); // the post-adoption RESET — the pre-fix export composed exactly THIS
     expect(rig.handle.state().outcomes).toEqual([]);
     const readsBeforeExport = api.blotterReads.projects.filter((project) => project === 'prj-b').length;
-    expect(readsBeforeExport).toBe(1); // only session 1's beat read desk B so far — the reload's boot bundle never did
+    // FW-37-B (F-2) RE-BASELINE: the oversight cadence reads EVERY session-own
+    // desk's blotter on EVERY refresh (this rig's directory: prj-a + prj-b,
+    // both unmarked = session-own), and each boot runs the refresh cadence
+    // TWICE (bootConsole's own `void refresh()` + the rig's awaited refresh) —
+    // so prj-b blotter reads arrive from the oversight plane long before any
+    // SESSION-SCOPED bundle runs. The pin's INTENT is unchanged and still
+    // pinned right above: the reload's boot bundle never read desk B's
+    // SESSION world (submissions/outcomes are EMPTY at line above), and the
+    // export path below fires the restored scope's own bundle (> this count).
+    expect(readsBeforeExport).toBeGreaterThanOrEqual(1); // the pre-export world never ran desk B's session bundle (the state asserts above are the proof)
 
     // THE EXPORT, immediately (the persona's click — no beat, no refresh): with the pre-fix code this downloaded 0 capsules / 0 decisions / 0 notices
     clickNav(rig, 'settings');
@@ -5078,5 +5100,292 @@ describe('executed boot: FW-36-B (E-8, part 4) — the verify file-input keeps i
       if (prior === undefined) delete holder.DataTransfer;
       else holder.DataTransfer = prior;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-37-B (Round F register F-5 — 5/9 personas): the post-switch launch
+// no-op, root-caused and pinned. The evidence: "Start the primary flow"
+// silently no-ops after a completed launch + project switch (M1: 8
+// attempts, no error; S2: the button absent from Home after a launch; L3:
+// re-confirmed from demo scope post-switch; a full page reload is the
+// workaround). ROOT CAUSE: reduceWorkspace's launch-draft-started arm kept
+// the CONCLUDED launch's scope binding (launch.projectId) and only flipped
+// phase+draft — the render layer's launchOfScope guard (model.ts, D-15)
+// then folded the foreign-scope slice to the quiet initial state, so the
+// state machine had ACCEPTED the draft while the wizard rendered NOWHERE
+// (the handler reads state.launch raw; the render reads the scope-guarded
+// slice — they disagreed). The fix: the arm resets the slice to a FRESH
+// flow (projectId null — the same shape a blank boot and 'launch-reset'
+// produce), so an open draft renders on every desk and the two layers
+// agree.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-37-B F-5 — the post-switch launch no-op (a second launch works without any reload)', () => {
+  it('launch -> complete -> SWITCH desk -> launch-start OPENS the wizard on the other desk (the pre-fix silent no-op, reproduced then closed)', async () => {
+    const demo = launchDemoTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, demo.transport, '');
+    // the first launch, end to end (the J3 path)
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-review');
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch');
+    await settle();
+    await rig.handle.beat(); // poll 1 -> running
+    await rig.handle.beat(); // poll 2 -> complete
+    expect(rig.handle.state().launch.phase).toBe('launched'); // the concluded launch (its slice bound to the created desk)
+    const launchedDesk = rig.handle.state().launch.projectId;
+    if (launchedDesk === null) throw new Error('the concluded launch carries no project binding');
+
+    // THE SWITCH (the switcher, the persona's move): the workspace moves to the seeded demo desk
+    clickNav(rig, 'settings');
+    const switcher = findByData(rig.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('no switcher');
+    switcher.value = 'prj-a';
+    rig.doc.fire('change', { target: switcher });
+    expect(rig.handle.state().scope.projectId).toBe('prj-a');
+    await rig.handle.beat(); // the scope-change refetch
+
+    // THE PIN: Home's hero CTA is present AND a click OPENS the wizard — no reload, ever
+    clickNav(rig, 'home');
+    const cta = findByData(rig.root, 'data-action', 'launch-start');
+    if (cta === null) throw new Error('the Home hero CTA is absent after the switch (S2\'s variant of the no-op)');
+    click(rig, cta);
+    expect(rig.handle.state().launch.phase).toBe('draft');          // the state machine accepted the draft...
+    expect(findByData(rig.root, 'data-launch-step', 'goal')).not.toBeNull(); // ...and the WIZARD RENDERS (the pre-fix no-op: accepted-but-invisible)
+    expect(findByData(rig.root, 'data-launch-idle', 'true')).toBeNull();     // the idle card is gone (a flow is in progress)
+    expect(findByData(rig.root, 'data-hero-launch', 'draft')).not.toBeNull();// the hero carries the honest resume note
+    // the new draft is a FRESH flow: the pre-project slice (scope-independent — it renders on every desk)
+    expect(rig.handle.state().launch.projectId).toBeNull();
+    expect(rig.handle.state().launch.progress).toEqual([]);
+  });
+
+  it('the second launch COMPLETES on the other desk (the full arc, no reload anywhere)', async () => {
+    // a TWO-LAUNCH transport: each POST /v1/projects creates its own
+    // project and each kickoff job gets its OWN id + per-job poll
+    // progression (the shared launchDemoTransport fixture hardcodes one
+    // job id and one project — the second launch would cross scopes).
+    let creates = 0;
+    const createdProjects: string[] = [];
+    const jobStatus = new Map<string, 'running' | 'complete'>();
+    const polls = new Map<string, number>();
+    const projectOf = (id: string, name: string): Record<string, unknown> => ({
+      id, tenantId: 'tenant-a', name, executionMode: 'simulation',
+      lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+      lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: `goal-${id}`, version: 1 }, constraintSet: { id: `cs-${id}`, version: 1 } },
+      createdAt: T0, updatedAt: T0,
+    });
+    const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-fw37', data } });
+    const transport: ApiTransport = async (request) => {
+      const key = `${request.method} ${request.path.split('?')[0]}`;
+      if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+      if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Console Test Project'));
+      if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+      if (key === 'GET /v1/execution/submissions') return ok({ items: [] });
+      if (key === 'GET /v1/jobs') return ok({ items: [] });
+      if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-a', 'Console Test Project')] });
+      if (key === 'POST /v1/projects') {
+        creates += 1;
+        const body = request.body as { readonly id: string; readonly name: string };
+        createdProjects.push(body.id);
+        return ok(projectOf(body.id, body.name));
+      }
+      if (key === 'POST /v1/jobs/research') {
+        const body = request.body as { readonly projectId: string };
+        const jobId = `job-launch-${creates}`;
+        jobStatus.set(jobId, 'running');
+        return ok({ jobId, kind: 'research', tenant: 'tenant-a', project: body.projectId, status: 'submitted', submittedAt: T0 + 1000 });
+      }
+      if (key.startsWith('GET /v1/jobs/')) {
+        const jobId = key.slice('GET /v1/jobs/'.length);
+        const counted = (polls.get(jobId) ?? 0) + 1;
+        polls.set(jobId, counted);
+        const project = createdProjects[Number(jobId.slice('job-launch-'.length)) - 1] ?? 'prj-a';
+        const status = counted === 1 ? 'running' : 'complete';
+        return ok({ jobId, kind: 'research', tenant: 'tenant-a', project, status, submittedAt: T0 + 1000, ...(status === 'complete' ? { completedAt: T0 + 2000 } : {}) });
+      }
+      return { status: 404, headers: {}, body: { requestId: 'req-fw37', error: { code: 'not_found', message: 'no route', status: 404 } } };
+    };
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, transport, 'prj-a');
+    // FIRST launch, end to end on the demo scope (the created desk is adopted)
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'First desk');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-review');
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch');
+    await settle();
+    await rig.handle.beat(); // poll 1 -> running
+    await rig.handle.beat(); // poll 2 -> complete
+    expect(rig.handle.state().launch.phase).toBe('launched');
+    expect(creates).toBe(1);
+
+    // THE SWITCH back to the demo desk, then the SECOND launch through the real wizard — the pre-fix no-op window
+    clickNav(rig, 'settings');
+    const switcher = findByData(rig.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('no switcher');
+    switcher.value = 'prj-a';
+    rig.doc.fire('change', { target: switcher });
+    await settle();
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    expect(findByData(rig.root, 'data-launch-step', 'goal')).not.toBeNull(); // the wizard OPENED on the other desk (the fix)
+    typeField(rig, 'name', 'Second desk');
+    typeField(rig, 'objective', 'A second desk for the same shop.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '5000.00');
+    typeField(rig, 'riskBudget', '100.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:ETH-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-review');
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch');
+    await settle();
+    expect(creates).toBe(2); // the SECOND create hit the boundary — the flow never stalled
+    expect(rig.handle.state().launch.phase).toBe('launching'); // in flight, no error card, no no-op
+    expect(elementsOf(rig.root).some((element) => element.hasClass('error-card'))).toBe(false);
+    await rig.handle.beat(); // poll 1 -> running
+    expect(rig.handle.state().launch.phase).toBe('launching');
+    await rig.handle.beat(); // poll 2 -> complete
+    expect(rig.handle.state().launch.phase).toBe('launched'); // the second launch COMPLETED — no reload anywhere
+    expect(findByData(rig.root, 'data-launch-phase', 'complete')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-37-B (Round F register F-2 — THE priority): the consolidated
+// multi-desk oversight surface, executed through the mounted console —
+// the read cadence (one bundle per SESSION-OWN desk through the frozen
+// routes), the nav target (the Overview group's second landing target),
+// and the palette's reach (the D4 100% coverage law).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-37-B F-2 — the consolidated multi-desk oversight surface', () => {
+  it('the boot cadence reads ONE bundle per session-own desk (utilization + blotter + decisions) and the Oversight view renders every desk — never another session\'s', async () => {
+    const transport = sharedDesksTransport(); // the directory: prj-a + prj-b (session-owned), the demo desk, prj-s1-desk (ANOTHER session's)
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, transport, 'prj-a');
+    // the oversight plane read every SESSION-OWN desk's bundle...
+    for (const desk of ['prj-a', 'prj-b', 'prj-demo-console']) {
+      expect(rig.handle.state().oversight.some((entry) => entry.projectId === desk)).toBe(true);
+    }
+    // ...and NEVER the other session's desk (the L12 workspace boundary, the F-3 wall)
+    expect(rig.handle.state().oversight.some((entry) => entry.projectId === 'prj-s1-desk')).toBe(false);
+    // the oversight view: the nav item lands there, every session-own desk renders its card
+    clickNav(rig, 'oversight');
+    expect(rig.handle.state().selectedSection).toBe('goal'); // a landing target, never a section selection
+    expect(findByData(rig.root, 'data-oversight-desk', 'prj-a')).not.toBeNull();
+    expect(findByData(rig.root, 'data-oversight-desk', 'prj-b')).not.toBeNull();
+    expect(findByData(rig.root, 'data-oversight-desk', 'prj-demo-console')).not.toBeNull();
+    expect(findByData(rig.root, 'data-oversight-desk', 'prj-s1-desk')).toBeNull(); // never another session's desk
+    expect(findByData(rig.root, 'data-scaffold', 'oversight')).not.toBeNull();     // the scaffold renders (H1 + subtitle + badge)
+    // the per-row SIMULATED tag rides every desk card (the E-8 law at the new surface — the rig boots simulated)
+    expect(countByData(rig.root, 'data-simulated-tag', 'true')).toBe(3);
+    // the launch panel stays AWAY from the oversight view (the cross-desk monitor, not a desk's working surface)
+    expect(findByData(rig.root, 'data-section', 'launch')).toBeNull();
+  });
+
+  it('the palette reaches the Oversight surface (the D4 coverage law — a query finds it, Enter lands there)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickAction(rig, 'palette-open');
+    const typeQuery = (value: string): void => {
+      const input = findByData(rig.root, 'data-palette-input', 'true');
+      if (input === null) throw new Error('the palette input is missing');
+      input.value = value;
+      rig.doc.fire('input', { target: input });
+    };
+    typeQuery('oversight');
+    const item = findByData(rig.root, 'data-palette-ref', 'nav:oversight');
+    if (item === null) throw new Error('the palette carries no Oversight entry');
+    expect(item.getAttribute('data-target')).toBe('oversight');
+    click(rig, item); // the modal selection law: navigates AND closes
+    expect(findByData(rig.root, 'data-scaffold', 'oversight')).not.toBeNull(); // landed
+    expect(findByData(rig.root, 'data-palette-input', 'true')).toBeNull();     // the palette closed
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-37-B (Round F register F-3, second half): the L2 cross-session
+// EXPORT bleed — 372 foreign events in a demo-scope export — challenged
+// by S3/M3/L3 (clean censuses ×3, unreproduced). The TARGETED
+// REPRODUCTION ATTEMPT: the export composition boundary vs the workspace
+// census, pinned. The console's export (core/workspace.ts
+// serializeWorkspaceExport, the E-9 fixed origin) composes the CURRENT
+// SCOPE's records only; the oversight plane (F-2) and the project
+// directory are CROSS-DESK state planes that must never leak into the
+// export's event cohort. The reproduction attempt below drives a
+// session whose directory carries ANOTHER session's desk AND whose
+// oversight plane holds TWO desks' bundles, then exports and censuses
+// every record: each record's project is the CURRENT scope's.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-37-B F-3 — the export composition boundary (the L2 cross-session bleed, targeted reproduction attempt)', () => {
+  it('the export composes ONLY the current scope\'s records — the other session\'s desk and the cross-desk oversight plane never enter the cohort (investigated-unreproduced, boundary pinned)', async () => {
+    const transport = sharedDesksTransport(); // prj-a + prj-b session-owned, the demo desk, prj-s1-desk (ANOTHER session's)
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, transport, 'prj-a');
+    // the oversight plane holds every session-own desk's bundle (cross-desk by design)
+    expect(rig.handle.state().oversight.length).toBe(3);
+    // export from the demo scope (L2's exact scenario: a demo-scope export on a shared origin)
+    const switcher = (() => {
+      clickNav(rig, 'settings');
+      return findByData(rig.root, 'data-action', 'project-switch');
+    })();
+    if (switcher === null) throw new Error('no switcher');
+    switcher.value = 'prj-demo-console';
+    rig.doc.fire('change', { target: switcher });
+    await settle();
+    const exportButton = findByData(rig.root, 'data-action', 'export-workspace');
+    if (exportButton === null) throw new Error('no export-workspace action');
+    click(rig, exportButton);
+    await settle();
+    await settle();
+    const anchor = downloadAnchorsOf(rig).slice(-1)[0];
+    if (anchor === undefined) throw new Error('the export never downloaded');
+    const bytes = decodeURIComponent((anchor.getAttribute('href') ?? '').slice('data:application/json;charset=utf-8,'.length));
+    const parsed = JSON.parse(bytes) as {
+      workspace?: { scope?: { projectId?: string }; oversight?: readonly { projectId?: string }[] };
+      events?: readonly { payload?: { read?: { projectId?: string }; kind?: string } }[];
+      capsules?: readonly unknown[];
+      decisions?: { watch?: readonly unknown[]; gateway?: readonly unknown[] };
+    };
+    // THE CENSUS: the export's own scope label is the demo desk; the events
+    // chain's oversight-read payloads reference ONLY this session's own
+    // desks; the workspace block's oversight plane carries ONLY this
+    // session's own desks — the other session's desk (prj-s1-desk) never
+    // enters anywhere (the exact boundary L2's 372-foreign-events report
+    // would have broken; not reproduced — the correct boundary pinned).
+    expect(parsed.workspace?.scope?.projectId).toBe('prj-demo-console');
+    const sessionOwn = new Set(['prj-a', 'prj-b', 'prj-demo-console']);
+    const cohortProjects = new Set<string>();
+    for (const event of parsed.events ?? []) {
+      const read = event.payload?.read;
+      if (read?.projectId !== undefined) cohortProjects.add(read.projectId);
+    }
+    expect(cohortProjects.has('prj-s1-desk')).toBe(false); // the other session's desk NEVER enters the export's event cohort
+    for (const bundle of parsed.workspace?.oversight ?? []) {
+      if (bundle.projectId !== undefined) cohortProjects.add(bundle.projectId);
+    }
+    expect([...cohortProjects].every((project) => sessionOwn.has(project))).toBe(true); // every oversight-plane desk is the session's own
+    expect((parsed.decisions?.gateway ?? []).length).toBe(0); // no submission rows on this empty-blotter rig — none leak in
+    expect(parsed.events?.length ?? 0).toBeGreaterThan(0); // the export is non-empty (the E-9 law held)
   });
 });

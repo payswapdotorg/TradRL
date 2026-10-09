@@ -51,8 +51,8 @@ function populated(): WorkspaceState {
   ]);
 }
 
-describe('D1 — one-click reachability (every section + Inbox + Settings from ANY section)', () => {
-  it('from EVERY section, all fifteen targets render as clickable nav items in one persistent sidebar', () => {
+describe('D1 — one-click reachability (every section + Oversight + Inbox + Settings from ANY section)', () => {
+  it('from EVERY section, all sixteen targets render as clickable nav items in one persistent sidebar', () => {
     for (const section of WORKSPACE_SECTIONS) {
       const state = reduceAll(populated(), [{ kind: 'section-selected', at: T0 + 50, section }]);
       const bytes = render(state, { accountView: 'section' });
@@ -63,15 +63,19 @@ describe('D1 — one-click reachability (every section + Inbox + Settings from A
     }
   });
 
-  it('the nav groups partition the fifteen targets in charter order', () => {
+  it('the nav groups partition the sixteen targets in charter order (FW-37-B: the Overview group gains Oversight)', () => {
     expect(NAV_GROUPS.map((group) => group.label)).toEqual(['Overview', 'Workspace', 'Evidence', 'Account']);
-    expect(SHELL_TARGETS.length).toBe(15);
+    expect(NAV_GROUPS[0]?.targets).toEqual(['home', 'oversight']); // FW-37-B (F-2): the consolidated multi-desk view is the Overview group's second target
+    expect(SHELL_TARGETS.length).toBe(16);
   });
 });
 
 describe('D2 — above-the-fold orientation (H1 + subtitle + badge on every section)', () => {
   it('EVERY section renders its H1 + charter subtitle + status badge + the Refresh action', () => {
-    const sections = SHELL_TARGETS.filter((target) => target !== 'home');
+    // FW-37-B (F-2): 'oversight' is a NON-SECTION landing target (the
+    // workspace-level consolidated view) — it scaffolds like Inbox and
+    // Settings (an accountView), never a section-selected dispatch.
+    const sections = SHELL_TARGETS.filter((target) => target !== 'home' && target !== 'oversight');
     for (const target of sections) {
       const state = target === 'inbox' || target === 'settings'
         ? populated()
@@ -84,6 +88,11 @@ describe('D2 — above-the-fold orientation (H1 + subtitle + badge on every sect
       expect(bytes, target).toMatch(/class="status-badge badge-(live|simulated|readonly)"/);
       expect(bytes, target).toMatch(/aria-label="Refresh [^"]+"/);
     }
+    // FW-37-B (F-2): the oversight view scaffolds too (its own H1 + subtitle + badge + Refresh).
+    const oversightBytes = render(populated(), { accountView: 'oversight' });
+    expect(oversightBytes).toContain('data-scaffold="oversight"');
+    expect(oversightBytes).toMatch(/<h1 class="page-title">Oversight<\/h1>/);
+    expect(oversightBytes).toContain('Every desk in this workspace, one governed view.');
   });
 });
 

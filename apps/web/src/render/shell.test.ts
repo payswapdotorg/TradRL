@@ -227,7 +227,10 @@ describe('shell: the mobile header + drawer (§2)', () => {
 
 describe('shell: the page scaffold (§3 — every section)', () => {
   it('EVERY workspace section renders H1 + its charter subtitle + status badge + the Refresh action', () => {
-    const sections = SHELL_TARGETS.filter((target) => target !== 'home' && target !== 'inbox' && target !== 'settings');
+    // FW-37-B (F-2): 'oversight' is a NON-SECTION landing target (like
+    // inbox/settings) — it scaffolds through its own accountView, never a
+    // section-selected dispatch; the scaffold itself is pinned below.
+    const sections = SHELL_TARGETS.filter((target) => target !== 'home' && target !== 'oversight' && target !== 'inbox' && target !== 'settings');
     for (const section of sections) {
       const state = stateAt([], section);
       const serialized = render(state, { accountView: 'section' });
