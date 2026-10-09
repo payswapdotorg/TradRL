@@ -89,8 +89,28 @@ describe('the console boot payload budgets (the no-build console\'s boot transfe
   //   3.4 KiB) — the extraction pattern the budget exists to encourage; the
   //   remainder is interaction-layer wiring (the one delegated resolver) that
   //   has no pure home. The byte total stays under its own budget untouched.
+  // Re-recorded (FW-37-B, the oversight wave): 45 files, 951,325 bytes total
+  //   (929.1 of the 1024 KiB budget — 90.7%). The base (main @ 03e1dc2) measured
+  //   43 files / 917,153 bytes = 895.7 of the 896 KiB budget — 99.97%, 351
+  //   bytes of headroom: the FW-35/36 waves consumed nearly all of FW-33-B's
+  //   raise without recording it (their notes recorded only the single-file
+  //   numbers). FW-37-B adds +34,172 bytes, crossing the total budget by
+  //   33,821 bytes, and the byte budget is CONSCIOUSLY raised 896 -> 1024 KiB
+  //   per this file's own protocol. The additions, itemized: the F-2
+  //   consolidated oversight surface rides the EXTRACTION pattern the budget
+  //   exists to encourage — two NEW modules (src/core/oversight.ts 11,043 +
+  //   src/render/oversight.ts 7,322) plus its state plane + the F-5 launch
+  //   root-cause fix in workspace.ts (+3,990); the F-1 UI half + F-6 + F-7
+  //   Risk-section honesty in render/model.ts (+10,070 — in-place edits of the
+  //   EXISTING Risk panel, not a new surface); the oversight read cadence in
+  //   console.ts (+1,608); the pure parseInstantUtc in format.ts (+1,632); the
+  //   nav target (+676). Against them, F-3's hard wall REMOVED the FW-34-B
+  //   all-desks machinery (palette.ts −966, shell.ts −1,111 — the first wave
+  //   to give bytes back). NB: src/app/console.ts now measures 163,488 of the
+  //   163,840-byte (160 KiB) single-file budget — 322 bytes of headroom; the
+  //   next wave that grows it crosses that one too.
   const FILE_COUNT_BUDGET = 64; // each source is one boot fetch — the fetch count stays bounded
-  const TOTAL_BYTES_BUDGET = 896 * 1024; // 896 KiB — the whole boot transfer (raised from 768 KiB at FW-33-B — see the note above)
+  const TOTAL_BYTES_BUDGET = 1024 * 1024; // 1024 KiB — the whole boot transfer (raised from 896 KiB at FW-37-B — see the note above)
   const LARGEST_FILE_BUDGET = 160 * 1024; // 160 KiB — one fetch + one strip pass (raised from 128 KiB at FW-34-B — see the note above)
 
   it('the payload is the copy spec\'s set on the real tree: index.html + non-test sources, NO test sources, the loader\'s critical path present', () => {
