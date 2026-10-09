@@ -336,6 +336,29 @@ describe('deploy/vercel — the per-project evidence seed (MI-D2/MI-D10: the lau
     expect(routedOf(first?.submissions[0])?.routedAt).toBe(LAUNCH_AT + 250);
     expect(first?.outcome.asOf).toBe(LAUNCH_AT + 500);
     expect(first?.postMortem.asOf).toBe(LAUNCH_AT + 1_000);
+    // FW-36-A THE NO-FUTURE LAW (Round E register §3.4 — M5's refusal instant
+    // ~93s AHEAD of the wall clock, worsening round over round): every
+    // derived instant lives INSIDE the launch's own first second, in story
+    // order (entry -> trim -> refusal). The pre-FW-36-A offsets spread the
+    // stream across the desk's first two minutes (trim +60s, refusal +120s),
+    // so a read within that window was served a refusal STAMPED IN THE
+    // FUTURE — Risk counted a breach the L4-gated Execution blotter could not
+    // render yet. The pins: the refusal and the trim are sub-second, ordered
+    // after the entry, and NEVER beyond the launch's first second.
+    const refusedRow = first?.submissions.find((row) => row.kind === 'refused');
+    expect(refusedRow !== undefined && refusedRow.kind === 'refused' ? refusedRow.refusedAt : null).toBe(LAUNCH_AT + 750);
+    expect(routedOf(first?.submissions[1])?.routedAt).toBe(LAUNCH_AT + 500); // the trim
+    const everyDerivedInstant = [
+      routedOf(first?.submissions[0])?.routedAt,
+      routedOf(first?.submissions[1])?.routedAt,
+      refusedRow !== undefined && refusedRow.kind === 'refused' ? refusedRow.refusedAt : null,
+      first?.outcome.asOf,
+      first?.postMortem.asOf,
+    ];
+    expect(everyDerivedInstant.every((instant): instant is number => typeof instant === 'number' && instant > LAUNCH_AT && instant <= LAUNCH_AT + 1_000)).toBe(true);
+    // The story order holds inside the first second: entry -> trim -> refusal.
+    expect((routedOf(first?.submissions[0])?.routedAt ?? 0) < (routedOf(first?.submissions[1])?.routedAt ?? 0)).toBe(true);
+    expect((routedOf(first?.submissions[1])?.routedAt ?? 0) < (refusedRow !== undefined && refusedRow.kind === 'refused' ? refusedRow.refusedAt : 0)).toBe(true);
   });
 
   it('THE GATES: a malformed or zero-budget envelope answers null — nothing is fabricated (the honest pre-fix emptiness, R46)', () => {

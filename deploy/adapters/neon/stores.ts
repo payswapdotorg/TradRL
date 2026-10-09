@@ -419,6 +419,69 @@ export function jobListStatement(tenant: string, project: string): BuiltStatemen
   return { sql: 'SELECT payload FROM tradrl_jobs WHERE tenant = $1 AND project = $2 ORDER BY submitted_at', params: [tenant, project] };
 }
 
+// ---------------------------------------------------------------------------
+// THE CONSOLE-EVENTS STATEMENTS (FW-36-A — the durable events seam of the
+// export's telemetry: the console's workspace events persisted LIKE THE
+// RECORDS so a fresh session's export carries the full project event
+// history, not just the current page's)
+// ---------------------------------------------------------------------------
+
+/**
+ * One console event as the seam appends it: the EXACT payload the console
+ * dispatched (opaque to the seam beyond the structural `kind`/`at` the
+ * route validated) + the payload's own content-addressed id (the
+ * idempotence key) + the event's own instant (the ordering key).
+ */
+export interface ConsoleEventAppend {
+  readonly eventId: string;
+  readonly at: number;
+  readonly event: Record<string, unknown>;
+}
+
+/**
+ * THE CONTENT-ADDRESSED EVENT ID (FW-36-A — the one mint both the append
+ * path and the read path use): the fnv1a32Hex of the payload's canonical
+ * JSON — identical payload, identical id, so a retried append is a no-op
+ * (the ON CONFLICT key) and the read re-derives exactly what the append
+ * wrote (the promotion-id precedent, content-addressed over the record).
+ */
+export function consoleEventIdOf(event: Record<string, unknown>): string {
+  return fnv1a32Hex(canonicalJson(event as unknown as JsonValue));
+}
+
+/**
+ * The console-event append (FW-36-A; tenant = $1 ALWAYS). APPEND-ONLY +
+ * IDEMPOTENT BY CONSTRUCTION: `ON CONFLICT (tenant, event_id) DO NOTHING` —
+ * a retried batch re-inserts nothing (the console re-posts its unconfirmed
+ * batch after a 503 and the durable log stays exactly-once); an event is
+ * NEVER rewritten (a change arrives as a NEW event with its own
+ * content-addressed id — the console's own append-only chain law, mirrored
+ * at the seam).
+ */
+export function consoleEventPutStatement(scopeTenant: string, projectId: string, entry: ConsoleEventAppend): StoreResult<BuiltStatement> {
+  if (!isNonEmptyString(projectId)) return malformed('the console event lacks its project scope');
+  if (!isNonEmptyString(entry.eventId)) return malformed('the console event lacks its content-addressed id');
+  if (!isRecord(entry.event)) return malformed('the console event payload is not an object');
+  if (!Number.isSafeInteger(entry.at) || entry.at <= 0) return malformed('the console event lacks its instant');
+  return {
+    ok: true,
+    value: {
+      sql: 'INSERT INTO tradrl_console_events (tenant, project_id, event_id, at, payload) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tenant, event_id) DO NOTHING',
+      params: [scopeTenant, projectId, entry.eventId, String(entry.at), canonicalJson(entry.event as unknown as JsonValue)],
+    },
+  };
+}
+
+/**
+ * The console-events read (FW-36-A; tenant = $1 ALWAYS): the project's
+ * WHOLE durable event log, in the events' own instant order (the true event
+ * sequence — the order the console's chain re-links them in), ties broken
+ * by the content-addressed id (deterministic).
+ */
+export function consoleEventListStatement(tenant: string, project: string): BuiltStatement {
+  return { sql: 'SELECT payload FROM tradrl_console_events WHERE tenant = $1 AND project_id = $2 ORDER BY at, event_id', params: [tenant, project] };
+}
+
 /** Decode one goal-set row (`{ goal, constraintSet, world? }`); a malformed row is the typed malformed failure. */
 function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
   const payload = row[0];
@@ -897,6 +960,63 @@ export class NeonJobStore {
 
   private note(operation: string, tenant: string, ok: boolean): void {
     this.provenance = { adapter: 'neon', store: 'job-store', operation, tenant, at: this.deps.instants.next(), outcome: ok ? 'ok' : 'degraded' };
+  }
+}
+
+/**
+ * The durable console-events store (FW-36-A — the export seam's events
+ * telemetry, persisted like the records). The put is IDEMPOTENT by the
+ * content-addressed event id (ON CONFLICT DO NOTHING — a retried batch
+ * re-inserts nothing); the read is the FRESH durable truth (never a
+ * projection — the MI-D8 session-listing law), the project's whole
+ * append-only log in the events' own instant order.
+ */
+export class NeonConsoleEventStore {
+  private readonly deps: NeonStoreDeps;
+  private readonly fetchLike: FetchLike;
+  private provenance: AdapterProvenance | null = null;
+
+  constructor(deps: NeonStoreDeps) {
+    this.deps = deps;
+    this.fetchLike = deps.fetchLike ?? defaultFetch();
+  }
+
+  lastProvenance(): AdapterProvenance | null {
+    return this.provenance;
+  }
+
+  /** Append one console event (idempotent by content-addressed id — a retried batch re-inserts nothing). */
+  async putConsoleEvent(scopeTenant: string, projectId: string, entry: ConsoleEventAppend): Promise<StoreResult<{ readonly stored: true }>> {
+    const built = consoleEventPutStatement(scopeTenant, projectId, entry);
+    if (!built.ok) return built;
+    const executed = await executeNeonStatement(this.deps.config, built.value.sql, built.value.params, this.fetchLike);
+    this.note('putConsoleEvent', scopeTenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    return { ok: true, value: { stored: true } };
+  }
+
+  /** The project's whole durable console-event log, the events' own instant order (a malformed payload row is skipped fail-closed — the store never throws). */
+  async consoleEventsOf(tenant: string, project: string): Promise<StoreResult<readonly ConsoleEventAppend[]>> {
+    const built = consoleEventListStatement(tenant, project);
+    const executed = await executeNeonStatement(this.deps.config, built.sql, built.params, this.fetchLike);
+    this.note('consoleEventsOf', tenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    const rows: ConsoleEventAppend[] = [];
+    for (const payload of decodeEnvelopes(executed.value)) {
+      // Each row's payload is the EXACT event the console dispatched; the
+      // id/instant are re-derived from the payload itself (the store's own
+      // columns exist for scoping and ordering only — the payload is the
+      // truth, exactly like every other durable record).
+      if (!isRecord(payload)) continue; // a malformed payload row never crosses (never a throw)
+      const event = payload as Record<string, unknown>;
+      const at = event.at;
+      rows.push({ eventId: consoleEventIdOf(event), at: typeof at === 'number' ? at : 0, event });
+    }
+    return { ok: true, value: Object.freeze(rows) };
+  }
+
+  private note(operation: string, tenant: string, ok: boolean): void {
+    this.provenance = { adapter: 'neon', store: 'console-event-store', operation, tenant, at: this.deps.instants.next(), outcome: ok ? 'ok' : 'degraded' };
   }
 }
 

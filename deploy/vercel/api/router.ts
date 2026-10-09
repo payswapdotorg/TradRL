@@ -50,15 +50,47 @@
 // timeout) lives in deploy/vercel/vercel.json.
 
 import { getDeploymentService, type DeploymentComposition } from '../runtime/compose';
+import { serveConsoleEventsRoute } from '../runtime/console-events';
 import { demoJobsOf } from '../runtime/demo';
 import { serveJobPromoteRoute } from '../runtime/job-promote';
-import { toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
+import { publicPathOf, toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
 import { drainedFailureResponse, serveDemoSubstanceRoute, serveDurableSubstanceRoute, serveRunbookRoute } from '../runtime/routes';
 import { consoleSessionOf, serveSessionScopedRoute } from '../runtime/session-routes';
 import { isProjectId, isTenantId, type ApiRequest, type ApiResponse } from '../../../services/api/src/index';
 
 /** The demo-substance/durable-goal read routes' request serial (per instance — the minted request ids stay unique per invocation). */
 let demoSubstanceSerial = 0;
+
+/**
+ * FW-36-A (Round E register §3.1c — S5's stale export): the request paths
+ * whose reads fold the seam's OUTCOME-LEARNING PORT — the export's own seam
+ * family. POST /v1/outcomes/query is the capsule fold's source (the
+ * export's record blocks); the post-mortems query shares the port; the
+ * standing risk read's budget fold and the hydration read's counts fold the
+ * SAME wrapped chain (the FW-35-A fold-agreement law — every one of these
+ * reads must agree with the others). A request to one of these paths on a
+ * WARM instance whose serving projection predates a promote that confirmed
+ * on ANOTHER instance would serve the STALE projection (the fire-and-forget
+ * heal not having landed yet) — so the durable arm AWAITS the outcome
+ * freshness gate (durable.ensureOutcomeFreshness) BEFORE these paths serve:
+ * the export's read becomes the SAME FRESH seam read the surfaces render
+ * from, no cache, no staleness gap.
+ */
+const OUTCOME_FAMILY_ROUTE_PATHS = deepFreezeSet(['/v1/outcomes/query', '/v1/post-mortems/query', '/v1/risk/utilization']);
+
+/** The outcome-family path test (exact match, or the 4-segment hydration grammar `/v1/projects/:id/hydration`). */
+function isOutcomeFamilyRequest(method: string, path: string): boolean {
+  if (method === 'POST' && OUTCOME_FAMILY_ROUTE_PATHS.has(path)) return true;
+  if (method !== 'GET') return false;
+  if (OUTCOME_FAMILY_ROUTE_PATHS.has(path)) return true;
+  const segments = path.split('/').filter((segment) => segment.length > 0);
+  return segments.length === 4 && segments[0] === 'v1' && segments[1] === 'projects' && segments[3] === 'hydration' && isProjectId(segments[2] as string);
+}
+
+/** A tiny read-only set over the frozen path list (the deepFreeze + Set pattern — never mutated). */
+function deepFreezeSet(values: readonly string[]): ReadonlySet<string> {
+  return Object.freeze(new Set(values)) as ReadonlySet<string>;
+}
 
 /**
  * THE CREATE-STAMP DECODER (FW-MI-A, MI-D1): one successful
@@ -130,6 +162,34 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
       const failure = cause as { readonly code: string; readonly message: string };
       writeDegraded(response, 503, 'unavailable', `the durable boot world failed (${failure.code}): ${failure.message} — the seeded world is unconfirmed; the boundary degrades this request and retries on the next (R46)`);
       return;
+    }
+    // 2c. THE AWAITED OUTCOME FRESHNESS GATE (FW-36-A — Round E register
+    //     §3.1c, S5's stale export: an export ~15s post-promote was missing
+    //     records the surfaces already rendered). The FW-33-A staleness heal
+    //     is fire-and-forget at its bounded interval, so a WARM instance
+    //     whose serving projection predates a promote that confirmed on
+    //     ANOTHER instance serves the STALE projection to the first
+    //     outcome-family request that lands on it — and the console's
+    //     wholesale outcomes re-read (the outcomes-loaded reducer REPLACES
+    //     the set) then DROPS the promoted record from the export folds
+    //     while the promote response's own dispatch had already rendered it
+    //     on the surfaces (the export read and the surface read diverged by
+    //     an unawaited heal). For the export's own seam family (the outcome
+    //     query — the capsule fold's source — plus its port-sharing reads:
+    //     the post-mortems query, the standing risk read, the hydration
+    //     read) the gate is AWAITED BEFORE the request serves: ONE
+    //     tenant-wide outcome read vs the serving projection's membership,
+    //     and on divergence the quiet re-projection runs to completion
+    //     first — the export's read is the SAME FRESH seam read the surfaces
+    //     use, never a stale cache. The gate runs BEFORE the machinery tick
+    //     (the tick's write-through lane would otherwise hold the quiet
+    //     refresh's guards off — a pending lane discards the rebuild; the
+    //     tick's own mutations never touch the outcome tables). Bounded: the
+    //     gate skips on a degraded/pending/dirty seam and never throws (R46
+    //     — the current projection keeps serving; the typed degraded state
+    //     is the seam's own answer on those paths).
+    if (isOutcomeFamilyRequest((request.method ?? 'GET').toUpperCase(), publicPathOf(request.url))) {
+      await deployment.durable.ensureOutcomeFreshness();
     }
     if (deployment.durable.tick !== null) {
       deployment.durable.tick(Date.now());
@@ -277,6 +337,55 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
         }
       }
       writeApiResponse(response, promoteRoute);
+      return;
+    }
+  }
+
+  // 3e. THE DURABLE CONSOLE-EVENTS SEAM ROUTES (FW-36-A, Round E register
+  //     §3.1 — the export seam's last mile, the auditor's question): the
+  //     export's events telemetry, persisted LIKE THE RECORDS.
+  //     POST /v1/projects/:projectId/events — the APPEND: the console's
+  //     workspace-event payloads (the exact events its reducer linked)
+  //     queued onto the seam's pending drain, CONFIRMED before the response
+  //     (the ordering law — a failed write is the typed 503, the idempotent
+  //     retry re-inserts nothing: rows key on the payload's own
+  //     content-addressed id).
+  //     GET /v1/projects/:projectId/events — the READ: the project's WHOLE
+  //     append-only, cross-session event log from the FRESH durable tables
+  //     (never a per-instance projection), so a fresh browser session reads
+  //     the full project event history and its export carries it — the
+  //     events arm and the record blocks finally agree on durability (the
+  //     M3/M5/S5 reset class: 623→123 events across a restart while the
+  //     record blocks survived byte-identical).
+  //     DURABLE-only (the events seam is the DURABLE arm's surface, like the
+  //     runbook): under the DEMO backing (and under port overrides) the
+  //     routes fall through to the boundary's typed not-found — the pre-law,
+  //     byte-identical. Authn FIRST (the W-8 host-route law); the project
+  //     gate reads the durable truth (the fresh session-JOIN read); the
+  //     append's writes drain on THIS path (the promote-route pattern).
+  if (deployment.durable !== null) {
+    const eventsRoute = await serveConsoleEventsRoute(
+      {
+        verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization,
+        durable: deployment.durable,
+      },
+      wrapped.request,
+      demoSubstanceSerial++,
+    );
+    if (eventsRoute !== null) {
+      // THE WRITE-THROUGH DRAIN ON THE HOST-ROUTE PATH (the 3c/3d/4/5b
+      // pattern): the append queues its writes onto the seam's pending
+      // drain; a host-route-served response leaves HERE — the drain runs
+      // first, so the batch is durable TRUTH the moment the console hears
+      // "200" (a failed write replaces the response with the typed 503 —
+      // the caller's idempotent retry heals; the GET path's drain is a
+      // no-op unless the request's own tick queued writes).
+      const drained = await deployment.durable.drain();
+      if (!drained.ok) {
+        writeApiResponse(response, drainedFailureResponse(eventsRoute, drained.error));
+        return;
+      }
+      writeApiResponse(response, eventsRoute);
       return;
     }
   }

@@ -534,13 +534,17 @@ describe('deploy/vercel — the honesty law (the pure read, FW-31-A)', () => {
   it('the turnover window: only the LATEST UTC trading day\'s fills sum (a prior day\'s notional never leaks into today\'s standing figure)', () => {
     const dayOne = Date.UTC(2026, 9, 7, 12, 0, 0); // 2026-10-07
     const dayTwo = Date.UTC(2026, 9, 8, 12, 0, 0); // 2026-10-08
+    // FW-36-A: the read's asOf must be AT/AFTER the newest fill — the
+    // availability gate excludes a fill dated after the read (the pre-fix
+    // fixture read at midnight while the "latest day" fill landed at noon,
+    // a future-dated row the fold can no longer count).
     const read = buildRiskUtilizationRead({
       projectId: 'prj-pure',
       goalSet: goalSetOf([{ id: 'k-turnover', domain: 'action', subject: 'costs.dailyTurnover', predicate: { kind: 'limit.max', bound: 500 }, severity: 'advisory' }]),
       submissions: [routedFillRow('xgs:00000001', '400', dayOne), routedFillRow('xgs:00000002', '150.25', dayTwo)],
       outcomes: null,
       outcomesReadable: false,
-      asOf: '2026-10-08T00:00:00.000Z',
+      asOf: '2026-10-08T13:00:00.000Z',
       backing: 'demo',
     });
     expect(read.bounds[0]).toMatchObject({ current: 150.25, status: 'ok' });
@@ -578,6 +582,96 @@ describe('deploy/vercel — the honesty law (the pure read, FW-31-A)', () => {
     });
     expect(read.bounds[0]).toMatchObject({ current: null, status: 'unknown' });
     expect(read.activeBreaches[0]!.violations![0]!.constraintId).toBe('k-foreign');
+  });
+
+  // -------------------------------------------------------------------------
+  // FW-36-A — THE POINT-IN-TIME AVAILABILITY GATE (Round E register §3.4 +
+  // §3.5: M5's refusal instant ~93s AHEAD of the wall clock — "Risk counts it
+  // before Execution can show it"; L3's standing panel citing future-dated
+  // breach evidence). A record dated after the read's asOf is NOT YET ON FILE
+  // at this read — excluded from every observation, every sum and the
+  // active-breach aggregation (the L4 law, applied to this fold).
+  // -------------------------------------------------------------------------
+
+  it('FW-36-A THE AVAILABILITY GATE: a refusal dated AFTER the read\'s asOf is not yet on file — no standing breach, no active-breach entry, the bound honest for what IS on file (M5\'s exact case: Risk never counts a breach before the wall clock reaches the stamp)', () => {
+    // The wall clock at the read: 2026-10-08T00:02:00Z. The refusal is
+    // stamped 93s AHEAD (00:03:33Z) — M5's measured skew, Round E.
+    const readAt = '2026-10-08T00:02:00.000Z';
+    const refusalAt = Date.parse(readAt) + 93_000;
+    const read = buildRiskUtilizationRead({
+      projectId: 'prj-pure',
+      goalSet: goalSetOf([
+        { id: 'c-pos', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 2 }, severity: 'blocking' },
+        { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: 1000 }, severity: 'blocking' },
+      ]),
+      submissions: [
+        refusedRow('xgs:00000001', refusalAt, { constraintId: 'c-pos', domain: 'state', subject: 'position.grossExposure', severity: 'blocking', predicate: { kind: 'limit.max', bound: 2 }, observed: '2.4' }),
+        routedFillRow('xgs:00000002', '100', Date.parse(readAt) - 60_000), // on file a minute ago
+      ],
+      outcomes: null,
+      outcomesReadable: false,
+      asOf: readAt,
+      backing: 'demo',
+    });
+    // The future-dated refusal is NOT counted: the position bound has no
+    // observation on file (unknown — never the pre-fix breach citing a
+    // record dated after the read), and the active-breach aggregation is
+    // EMPTY (the blotter could not render that row at this instant either).
+    expect(read.bounds[0]).toMatchObject({ constraintId: 'c-pos', current: null, status: 'unknown' });
+    expect(read.activeBreaches).toEqual([]);
+    // The on-file fill still sums (the gate excludes ONLY what is not yet
+    // on file — the standing picture for what IS on file stays exact).
+    expect(read.bounds[1]).toMatchObject({ current: 100, status: 'ok' });
+    // The disclosure names the law (the panel's honesty surface).
+    expect(read.disclosure).toContain('POINT-IN-TIME AVAILABILITY LAW');
+    expect(read.disclosure).toContain('never a projection to any other instant');
+  });
+
+  it('FW-36-A the gate closes exactly at the stamp: the SAME future-dated refusal counts the moment the read\'s asOf reaches it (Risk and Execution agree at every instant — the divergence window is gone)', () => {
+    const refusalAt = Date.UTC(2026, 9, 8, 0, 3, 33);
+    const after = buildRiskUtilizationRead({
+      projectId: 'prj-pure',
+      goalSet: goalSetOf([{ id: 'c-pos', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 2 }, severity: 'blocking' }]),
+      submissions: [refusedRow('xgs:00000001', refusalAt, { constraintId: 'c-pos', domain: 'state', subject: 'position.grossExposure', severity: 'blocking', predicate: { kind: 'limit.max', bound: 2 }, observed: '2.4' })],
+      outcomes: null,
+      outcomesReadable: false,
+      asOf: new Date(refusalAt).toISOString(), // the read AT the stamp
+      backing: 'demo',
+    });
+    expect(after.bounds[0]).toMatchObject({ current: 2.4, status: 'breach' });
+    expect(after.activeBreaches).toHaveLength(1);
+  });
+
+  it('FW-36-A the gate holds for the sums too: a fill dated after the read\'s asOf never enters a turnover or capital sum (and an unparseable asOf disables the gate — R46, the pre-law serve)', () => {
+    const readAt = '2026-10-08T00:00:00.000Z';
+    const read = buildRiskUtilizationRead({
+      projectId: 'prj-pure',
+      goalSet: goalSetOf([{ id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: 1000 }, severity: 'blocking' }]),
+      submissions: [
+        routedFillRow('xgs:00000001', '100', Date.parse(readAt) - 1_000), // on file
+        routedFillRow('xgs:00000002', '400', Date.parse(readAt) + 45_000), // 45s in the future — not yet on file
+      ],
+      outcomes: null,
+      outcomesReadable: false,
+      asOf: readAt,
+      backing: 'demo',
+    });
+    expect(read.bounds[0]).toMatchObject({ current: 100, status: 'ok' }); // the future fill excluded, never a projected book
+    // R46: an asOf that does not parse disables the gate (the fold serves
+    // every row — never a crash, never a silent empty).
+    const ungated = buildRiskUtilizationRead({
+      projectId: 'prj-pure',
+      goalSet: goalSetOf([{ id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: 1000 }, severity: 'blocking' }]),
+      submissions: [
+        routedFillRow('xgs:00000001', '100', Date.parse(readAt) - 1_000),
+        routedFillRow('xgs:00000002', '400', Date.parse(readAt) + 45_000),
+      ],
+      outcomes: null,
+      outcomesReadable: false,
+      asOf: 'not-a-date',
+      backing: 'demo',
+    });
+    expect(ungated.bounds[0]).toMatchObject({ current: 500, status: 'ok' }); // the pre-law serve — every row on file, both fills summed
   });
 
   it('the route module maps the degraded goal-set read to the typed 503 (R46 — the durable projection\'s own failure, never a crash)', () => {

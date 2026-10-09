@@ -60,6 +60,26 @@
 // state to lose, drift or double-write (the folds that serve these
 // records dedupe by id regardless).
 //
+// THE NO-FUTURE LAW (FW-36-A, Round E register §3.4 — M5's refusal
+// instant ~93s ahead of the wall clock, worsening round over round):
+// every derived instant lives inside the launch instant's OWN FIRST
+// SECOND (the entry, the trim, the refusal, the outcome, the
+// post-mortem — in story order). The pre-FW-36-A offsets spread the
+// stream across the desk's first two minutes (the trim at +60s, the
+// refusal at +120s), so a professional who launched a desk and read the
+// standing risk picture within those two minutes was served a refusal
+// STAMPED IN THE FUTURE — Risk counted the breach while the L4-gated
+// Execution blotter could not yet render the row (the divergence window
+// closes only when the wall clock passes the stamp; M5 measured it at
+// ~74s in Round D and ~93s in Round E, approaching the 120s offset as
+// launch-to-read flows got faster). A derived record may never cite an
+// instant that has not occurred: the stream is simulated substance,
+// disclosed as such, and its instants are the launch's own first second
+// — the whole story is available the moment the compiled desk's
+// evidence can serve at all (the compile gate guarantees seconds have
+// passed since the launch), and Risk and Execution agree at every
+// instant.
+//
 // THE GATE (when a stream honestly exists): the caller serves a derived
 // stream ONLY for a project that is COMPILED (its organization ref is
 // bound — the machinery's org-compile pass) AND has BOTH its captured
@@ -489,12 +509,18 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
   const quote = refusalQuoteOf(envelope, riskBudget);
   if (quote === null) return null;
 
-  // The instants (the goal's own createdAt — the launch instant — with
-  // the demo seed's own offsets; deterministic, point-in-time stable).
+  // THE INSTANTS (FW-36-A — the NO-FUTURE law, see the module comment):
+  // the goal's own createdAt (the launch instant) + the story's own
+  // sub-second offsets — the entry, the trim, the refusal, ALL INSIDE
+  // the launch's first second, in story order (entry -> trim ->
+  // refusal -> outcome -> post-mortem). Deterministic, point-in-time
+  // stable, and NEVER ahead of the wall clock of any read that can
+  // observe the stream (the compile gate means seconds have passed
+  // since the launch by the time the derived evidence can serve).
   const t0 = goal.createdAt as TimestampMs;
   const entryAt = (t0 + 250) as TimestampMs;
-  const trimAt = (t0 + 60_000) as TimestampMs;
-  const refusedAt = (t0 + 120_000) as TimestampMs;
+  const trimAt = (t0 + 500) as TimestampMs;
+  const refusedAt = (t0 + 750) as TimestampMs;
   if (![t0, entryAt, trimAt, refusedAt, t0 + 500, t0 + 1_000].every((instant) => Number.isSafeInteger(instant) && instant > 0)) return null;
 
   // The content-addressed ids (identical envelope -> identical ids).

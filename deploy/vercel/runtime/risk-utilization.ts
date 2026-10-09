@@ -464,6 +464,59 @@ function utcDayOf(at: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// THE POINT-IN-TIME AVAILABILITY GATE (FW-36-A, Round E register §3.4 + §3.5
+// — M5's refusal instant ~93s ahead of the wall clock; L3's risk standing
+// panel citing future-dated breach evidence at a past view instant)
+// ---------------------------------------------------------------------------
+
+/**
+ * THE L4 LAW, APPLIED TO THIS FOLD (FW-36-A): a record dated AFTER the
+ * read's asOf is NOT YET ON FILE at this read — it is excluded from every
+ * observation, every sum and the active-breach aggregation, exactly like
+ * the L4 projection the console's surfaces apply at a view instant. The
+ * pre-FW-36-A fold counted every row on file REGARDLESS of its instant, so
+ * a refusal stamped ahead of the wall clock (the derived stream's pre-fix
+ * +120s offset — see runtime/project-evidence.ts's NO-FUTURE law) was
+ * cited by THIS read as a standing breach while the L4-gated Execution
+ * blotter could not yet render the row — Risk surfaced the breach before
+ * Execution could show it (M5: "Risk counts it before Execution can show
+ * it"; the divergence window closed only when the wall clock passed the
+ * stamp). One law for both surfaces now: nothing dated after the read's
+ * own asOf enters this fold — never a fabricated standing picture, never
+ * future-dated evidence at a past instant.
+ *
+ * The gate is BEST-EFFORT TOTAL (R46): an asOf that does not parse to a
+ * finite epoch ms disables the gate (the fold serves every row, the
+ * pre-FW-36-A behavior — never a crash, never a silent empty).
+ */
+function asOfInstantOf(asOf: string): number | null {
+  const parsed = Date.parse(asOf);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Whether one blotter row is ON FILE at the given instant (FW-36-A): a
+ * refusal is on file at its refusedAt; a routed row's economics are on file
+ * at its fill's instant (a row without fill economics never enters a sum —
+ * the row itself may stand). A row dated after the instant is not yet on
+ * file and is excluded from the fold entirely.
+ */
+function submissionOnFileAt(row: GatewaySubmissionRecord, asOfMs: number): boolean {
+  if (row.kind === 'refused') {
+    return typeof row.refusedAt === 'number' && Number.isFinite(row.refusedAt) && row.refusedAt <= asOfMs;
+  }
+  if (row.kind === 'routed') {
+    if (typeof row.routedAt !== 'number' || !Number.isFinite(row.routedAt) || row.routedAt > asOfMs) return false;
+    const fill = (row as { readonly fill?: unknown }).fill;
+    if (!isRecord(fill)) return true; // no economics to gate — the row stands (it never enters a sum)
+    const filledAt = (fill as { readonly filledAt?: unknown }).filledAt;
+    if (typeof filledAt !== 'number' || !Number.isFinite(filledAt)) return true; // a malformed fill echo is the no-economics row's own case
+    return filledAt <= asOfMs;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // The bound-row builder (the honesty law's own surface)
 // ---------------------------------------------------------------------------
 
@@ -690,6 +743,13 @@ export function buildRiskUtilizationRead(input: {
   readonly asOf: string;
   readonly backing: 'demo' | 'durable';
 }): RiskUtilizationRead {
+  // FW-36-A THE POINT-IN-TIME AVAILABILITY GATE (see asOfInstantOf's law):
+  // only rows ON FILE at the read's own asOf enter the fold. A row dated
+  // after asOf is not yet on file — excluded from every observation, every
+  // sum and the active-breach aggregation (the L4 law, applied to this
+  // fold). An unparseable asOf disables the gate (R46 — the pre-law serve).
+  const asOfMs = asOfInstantOf(input.asOf);
+  const onFile = asOfMs === null ? input.submissions : input.submissions.filter((row) => submissionOnFileAt(row, asOfMs));
   const constraints = Array.isArray(input.goalSet.constraintSet.constraints) ? input.goalSet.constraintSet.constraints : [];
   const bounds = constraints.map((constraint) =>
     boundRowOf(
@@ -700,23 +760,24 @@ export function buildRiskUtilizationRead(input: {
         predicate: constraint.predicate,
         severity: typeof constraint.severity === 'string' ? constraint.severity : '',
       },
-      input.submissions,
+      onFile,
       input.outcomes,
       input.outcomesReadable,
     ),
   );
   const disclosure = [
     'THE HONESTY LAW: every bounds[].current is computed ONLY from the records named in its source; where the data on file cannot produce a defensible number the row serves current null with status "unknown" — never a fabricated or placeholder value.',
+    'THE POINT-IN-TIME AVAILABILITY LAW (FW-36-A): a record dated after this read\u2019s asOf is NOT YET ON FILE at this read — it is excluded from every observation, every sum and the active-breach aggregation (the L4 law, applied to this fold), so no bound row and no breach entry ever cites future-dated evidence. This read is a CURRENT-INSTANT standing picture at its own asOf; it is never a projection to any other instant.',
     'current values come from, in precedence order: (1) the most recent risk-limits refusal observation citing the constraint (a point-in-time gate observation, not a live re-computation); (2) for turnover-class metrics, the sum of filled notional over the routed fills of the latest UTC trading day on record; (3) for capital-budget-class metrics, the cumulative gross filled notional of every routed fill on record (traded-through, both sides — no position store exists); (4) for risk-budget-class metrics, the negative part of the net realized outcome over the outcome records readable by this fold. Drawdown-class metrics are unknown by construction (no equity curve exists on any backing); exposure/position-class metrics are unknown without a refusal observation (no position store exists).',
     'rows without fill economics (live recorded submissions carry no fill echo) are excluded from every sum.',
-    'activeBreaches are every refused gateway submission on file for this project (the typed record: stage, bound-vs-observed per constraint, the audit ref, the instant); a refusal stands until a later observation of the same metric supersedes it — no resolution event class exists, so every refusal on file is standing.',
+    'activeBreaches are every refused gateway submission ON FILE at this read\u2019s asOf for this project (the typed record: stage, bound-vs-observed per constraint, the audit ref, the instant); a refusal stands until a later observation of the same metric supersedes it — no resolution event class exists, so every refusal on file is standing.',
     `bounds come from the project's own goal set on record (its create-project records). This read is ${backingClause(input.backing)}.`,
   ].join(' ');
   return deepFreeze({
     projectId: input.projectId,
     asOf: input.asOf,
     bounds: deepFreeze([...bounds]),
-    activeBreaches: deepFreeze([...activeBreachesOf(input.submissions)]),
+    activeBreaches: deepFreeze([...activeBreachesOf(onFile)]),
     disclosure,
   });
 }

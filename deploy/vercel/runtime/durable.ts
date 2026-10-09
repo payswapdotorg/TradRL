@@ -155,7 +155,7 @@ import type {
 import { canonicalJson, isJobRecord } from '../../../services/api/src/index';
 import { fakeJobSubmission } from '../../../services/api/src/fixtures';
 import { DEMO_PROJECT_ID, demoSeedJobPrimingLatch, launchWorldOfSpec, OUTCOME_DURABLE_LANE_FIELD, type OutcomeDurableWriteLane, type OutcomeLearningPortWithDurableLane } from './demo';
-import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, ownerSessionOf, type GoalSetRecord, type NeonStoreDeps, type SessionProjectRow } from '../../adapters/neon/stores';
+import { NeonConsoleEventStore, NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, ownerSessionOf, type ConsoleEventAppend, type GoalSetRecord, type NeonStoreDeps, type SessionProjectRow } from '../../adapters/neon/stores';
 import { executeNeonStatement, type NeonConfig } from '../../adapters/neon/client';
 import { NEON_DDL_RECORDS } from '../../adapters/neon/schema';
 import type { ServedKnowledgeMirror } from '../../adapters/neon/mirrors';
@@ -536,6 +536,60 @@ export interface DurableBackingHandle {
    * from the fresh truth automatically — they read the projection.
    */
   reprojectQuietly(): Promise<boolean>;
+  /**
+   * THE AWAITED OUTCOME FRESHNESS GATE (FW-36-A, Round E register §3.1c —
+   * S5's stale export: an export ~15s post-promote was missing records the
+   * surfaces already rendered). The staleness heal (FW-33-A) is
+   * fire-and-forget at a bounded interval: a warm instance whose serving
+   * projection predates a promote that CONFIRMED on ANOTHER instance serves
+   * the STALE projection to the first outcome-family request that lands on
+   * it — for up to the heal interval plus the quiet rebuild, and the request
+   * that TRIGGERED the heal is itself served from the stale snapshot (the
+   * heal never blocks it). The console's wholesale outcomes re-read (the
+   * outcomes-loaded reducer REPLACES the set) then DROPS the record from
+   * the export folds while the promote response's own dispatch had already
+   * rendered it — the export lands stale, the surfaces render fresher.
+   * THE FIX: the read path for the export's own seam family AWAITS the
+   * freshness gate before serving — ONE tenant-wide outcome read compared
+   * against the serving projection's membership (the heal's own probe,
+   * awaited), and on divergence the quiet re-projection runs to completion
+   * BEFORE the request is served. The export's read (POST
+   * /v1/outcomes/query — the capsule fold's source), the post-mortems
+   * query, the risk fold and the hydration read are then the SAME FRESH
+   * seam read the surfaces render from — no cache, no staleness gap.
+   * Bounded: a degraded/pending/dirty seam skips (R46 — the current
+   * projection keeps serving, the typed degraded state is the seam's own);
+   * a failed probe read skips (the W-25D mid-instance law); a divergent
+   * probe rides `reprojectQuietly`'s own guards (one at a time; a seam
+   * that moved under the reads discards the build — the next request
+   * retries). Never throws.
+   */
+  ensureOutcomeFreshness(): Promise<void>;
+  /**
+   * THE DURABLE CONSOLE-EVENTS SEAM (FW-36-A — Round E register §3.1, the
+   * auditor's question "which artifact is the record?" for the export's
+   * events arm): the APPEND half. One batch of the console's workspace
+   * events (the EXACT payloads its reducer linked — each structurally
+   * validated by the route, each carrying its own instant) queues onto the
+   * SAME pending drain every control-plane write rides (the ordering law:
+   * the append's writes confirm before the route's response serves — a
+   * failed write is the typed 503, and the caller's idempotent retry
+   * re-inserts nothing: the rows key on the payload's own content-addressed
+   * id). L12 by construction: the rows key on the seam's credential tenant
+   * (the append route's authorized tenant IS the seam's tenant).
+   */
+  appendConsoleEvents(projectId: string, entries: readonly ConsoleEventAppend[]): void;
+  /**
+   * THE DURABLE CONSOLE-EVENTS SEAM, the READ half: the project's WHOLE
+   * append-only event log from the FRESH durable tables (never the
+   * per-instance projection — the session-listing law), in the events' own
+   * instant order. A fresh browser session reads this log and its export
+   * carries the FULL project event history, not just the current page's —
+   * the events arm and the record blocks finally agree on durability. A
+   * degraded read is the typed StoreFailure (the caller surfaces the R46
+   * 503 — never a silent empty).
+   */
+  consoleEventsOf(projectId: string): Promise<StoreResult<readonly ConsoleEventAppend[]>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +670,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   const outcomeStore = new NeonOutcomeLearningStore(neonDeps);
   const projectStore = new NeonProjectStore(neonDeps);
   const jobStore = new NeonJobStore(neonDeps);
+  const consoleEventStore = new NeonConsoleEventStore(neonDeps);
 
   // The mutable projection state. `current` swaps ATOMICALLY at the end of
   // a successful projection (the event loop makes the swap synchronous);
@@ -1000,6 +1055,40 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
       return false; // unreachable by construction (the build is typed, never throws) — R46 regardless
     } finally {
       quietRefreshInFlight = false;
+    }
+  }
+
+  /**
+   * THE AWAITED OUTCOME FRESHNESS GATE (FW-36-A — the interface's own law,
+   * see DurableBackingHandle.ensureOutcomeFreshness): the staleness heal's
+   * derived-truth probe, AWAITED on the outcome-family read path. ONE
+   * tenant-wide outcome read vs the serving projection's membership; a
+   * divergence (an outcome row of a project the projection serves whose id
+   * it lacks — a promotion that confirmed on ANOTHER instance) runs the
+   * quiet re-projection to completion BEFORE the caller serves. Bounded and
+   * total (R46): every skip keeps the current projection serving — never a
+   * crash, never a degraded read on this path.
+   */
+  async function ensureOutcomeFreshness(): Promise<void> {
+    try {
+      const membership = projectionMembership();
+      if (membership === null) return; // degraded/pending/dirty — the heal's own law (never a stale probe)
+      const fresh = await outcomeStore.queryOutcomesOfTenant(deps.tenant);
+      if (!fresh.ok) return; // the W-25D mid-instance law — the current projection keeps serving
+      for (const row of fresh.value) {
+        if (!membership.registryProjectIds.has(row.project)) continue; // a project the projection has not SEEN rides the heal's registry probe, not this gate
+        const record = row.record;
+        if (!isRecord(record)) continue;
+        const outcomeId = record.outcomeId;
+        if (typeof outcomeId === 'string' && outcomeId.length > 0 && !membership.outcomeIds.has(outcomeId)) {
+          await reprojectQuietly();
+          return;
+        }
+      }
+    } catch {
+      // R46: the gate is best-effort — a transient failure never takes the
+      // request down; the current projection keeps serving, the next
+      // request's gate retries.
     }
   }
 
@@ -1557,6 +1646,25 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     return { ok: true, value: Object.freeze(rows.value.map((row) => row.record).filter((record): record is JobRecord => isJobRecord(record))) };
   }
 
+  // -------------------------------------------------------------------------
+  // THE DURABLE CONSOLE-EVENTS SEAM (FW-36-A — the export's events
+  // telemetry persisted like the records; see the interface's own law)
+  // -------------------------------------------------------------------------
+
+  /** The append half: queue the batch's writes onto the SAME pending drain every control-plane write rides (the ordering law). */
+  function appendConsoleEvents(projectId: string, entries: readonly ConsoleEventAppend[]): void {
+    for (const entry of entries) {
+      // The store re-validates structurally (the route already did — the
+      // belt-and-suspenders law); a malformed entry is never queued.
+      pending.push({ label: 'console-event.put', run: () => consoleEventStore.putConsoleEvent(deps.tenant, projectId, entry) });
+    }
+  }
+
+  /** The read half: the FRESH durable tables (never the projection), the events' own instant order. */
+  async function consoleEventsOf(projectId: string): Promise<StoreResult<readonly ConsoleEventAppend[]>> {
+    return consoleEventStore.consoleEventsOf(deps.tenant, projectId);
+  }
+
   /**
    * THE ORG-BIND INSTANT READ (FW-34-A — the notification-state drift fix):
    * the durable compile instant of one project — the LATEST
@@ -1601,6 +1709,9 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     recordOutcome,
     projectionMembership,
     reprojectQuietly,
+    ensureOutcomeFreshness,
+    appendConsoleEvents,
+    consoleEventsOf,
     lastProjection: () => report,
     lastFailure: () => failure,
     runbook,

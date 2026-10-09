@@ -1552,11 +1552,27 @@ export function demoMachineryTick(service: ApiService, context: DemoMachineryCon
     // so the completed record — completedAt included — is byte-identical on
     // every instance (the pre-fix tick stamped the request instant, so the
     // same seeded job carried a different completedAt per serverless
-    // instance). Every LAUNCHED desk's job keeps the live tick instant — a
-    // live desk's progress is genuinely observed now.
-    const transitionAt = job.project === DEMO_PROJECT_ID
-      ? (job.submittedAt + (status === 'complete' ? DEMO_JOB_COMPLETE_AFTER_MS : DEMO_JOB_RUNNING_AFTER_MS))
-      : at;
+    // instance).
+    //
+    // FW-36-A (Round E register §3.8 — L3's cross-record timestamp
+    // disagreement: a promoted decision cited its producing job completing
+    // at 00:09:58.876Z while the job's own sheet read 00:12:49.817Z, no
+    // reconciling note): THE SAME LAW NOW COVERS EVERY JOB, not just the
+    // demo seed. The pre-FW-36-A tick stamped every LAUNCHED desk's
+    // transition with the REQUEST instant (`at`), so the SAME job completed
+    // at a DIFFERENT instant on every instance that held a non-terminal
+    // copy — each completion a legal transition, each one upserting the
+    // durable row (newest wins), so completedAt flapped across instances
+    // and reads, and the promoted decision's frozen citation (the rationale
+    // quotes the completedAt its instance's store held at mint time)
+    // disagreed with the sheet's later serve. ONE TRUTH PER INSTANT: the
+    // transition's `at` is the EVENT'S own instant (the async pattern's own
+    // schedule — the job completes 8s after its submission, 3s to running),
+    // never the observer's. The tick only fires when the schedule has
+    // ELAPSED (age >= the threshold), so the stamped instant is always in
+    // the past at the transition; every instance that completes the job
+    // writes the identical record, and the durable row never flaps.
+    const transitionAt = (job.submittedAt + (status === 'complete' ? DEMO_JOB_COMPLETE_AFTER_MS : DEMO_JOB_RUNNING_AFTER_MS)) as number;
     service.handle({
       method: 'POST',
       path: '/internal/jobs/transitions',

@@ -143,6 +143,37 @@ CREATE INDEX IF NOT EXISTS tradrl_jobs_scope
   ON tradrl_jobs (tenant, project, submitted_at);
 `;
 
+/**
+ * THE DURABLE CONSOLE-EVENTS TABLE (FW-36-A — Round E register §3.1, the
+ * export seam's last mile / the auditor's question): one row per workspace
+ * event the console dispatched, PERSISTED LIKE THE RECORDS so the events
+ * arm of the export becomes durable truth instead of page-lifetime
+ * telemetry. The payload is the EXACT event the console's reducer linked
+ * (opaque to the seam — `kind` + `at` are extracted for validation and
+ * ordering only); `event_id` is the payload's own content-addressed id (the
+ * idempotence key: a retried batch re-inserts nothing — ON CONFLICT DO
+ * NOTHING); rows are append-only (an event is never rewritten — a change
+ * arrives as a NEW event, exactly like the console's own append-only
+ * chain). One log per (tenant, project): the console posts under the scope
+ * it held, and a fresh session reads the WHOLE log — its export then
+ * carries the full project event history, not just the current page's
+ * (the M3/M5/S5/L3/L4/M1/S1 finding: 910→186→36 / 623→123 / 328→105
+ * events across page loads and restarts while the record blocks survived
+ * byte-identical).
+ */
+export const CONSOLE_EVENTS_TABLE_DDL = /* sql */ `
+CREATE TABLE IF NOT EXISTS tradrl_console_events (
+  tenant     TEXT   NOT NULL,
+  project_id TEXT   NOT NULL,
+  event_id   TEXT   NOT NULL,
+  at         BIGINT NOT NULL,
+  payload    TEXT   NOT NULL,
+  PRIMARY KEY (tenant, event_id)
+);
+CREATE INDEX IF NOT EXISTS tradrl_console_events_scope
+  ON tradrl_console_events (tenant, project_id, at);
+`;
+
 /** Every DDL record, in application order (the runbook's §neon paste block). */
 export const NEON_DDL_RECORDS: readonly { readonly table: string; readonly ddl: string }[] = [
   { table: 'tradrl_knowledge', ddl: KNOWLEDGE_TABLE_DDL },
@@ -152,4 +183,5 @@ export const NEON_DDL_RECORDS: readonly { readonly table: string; readonly ddl: 
   { table: 'tradrl_project_events', ddl: PROJECT_EVENT_TABLE_DDL },
   { table: 'tradrl_project_goals', ddl: GOAL_SET_TABLE_DDL },
   { table: 'tradrl_jobs', ddl: JOBS_TABLE_DDL },
+  { table: 'tradrl_console_events', ddl: CONSOLE_EVENTS_TABLE_DDL },
 ];

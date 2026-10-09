@@ -16,10 +16,14 @@ import { describe, expect, it } from 'vitest';
 import { buildNeonRequest, executeNeonStatement, NEON_QUERY_TIMEOUT_MS, neonConnectionString, type NeonConfig } from './client';
 import { NEON_DDL_RECORDS } from './schema';
 import {
+  NeonConsoleEventStore,
   NeonFirmMemoryStore,
   NeonJobStore,
   NeonOutcomeLearningStore,
   NeonProjectStore,
+  consoleEventIdOf,
+  consoleEventListStatement,
+  consoleEventPutStatement,
   goalSetGetStatement,
   goalSetPutStatement,
   jobListStatement,
@@ -281,8 +285,12 @@ describe('deploy/adapters/neon — L12 tenant scoping', () => {
       { label: 'jobs.read.tenant-wide', statement: jobsOfTenantStatement('tenant-a') },
       { label: 'goalset.put', statement: requireOk(goalSetPutStatement('tenant-a', 'prj_a', { goal: { id: 'goal-1' }, constraintSet: { id: 'cs-1' } })) },
       { label: 'goalset.get', statement: goalSetGetStatement('tenant-a', 'prj_a') },
+      // FW-36-A (the durable console-events seam): the append + the read —
+      // the same L12 law (tenant = $1 / VALUES ($1, ...)).
+      { label: 'console-event.put', statement: requireOk(consoleEventPutStatement('tenant-a', 'prj_a', { eventId: 'evt:1', at: 1, event: { kind: 'connection-changed', at: 1, status: 'connected' } })) },
+      { label: 'console-events.read', statement: consoleEventListStatement('tenant-a', 'prj_a') },
     ];
-    expect(statements.length).toBe(18);
+    expect(statements.length).toBe(20);
     for (const { label, statement } of statements) {
       // The L12 law: the tenant is bind parameter 1 in EVERY statement —
       // `tenant = $1` in reads/scans, `VALUES ($1, ...)` in writes.
@@ -485,6 +493,58 @@ describe('deploy/adapters/neon — the stores', () => {
     // An empty project id is the typed malformed refusal (never a statement without scope).
     const malformed = goalSetPutStatement('tenant-a', '', goalSet);
     expect(malformed.ok).toBe(false);
+  });
+
+  it('durable console events (FW-36-A — the export seam\'s events telemetry, persisted like the records): append/read round-trips the EXACT payloads in the events\' own instant order; the append is IDEMPOTENT by the content-addressed id (a retried batch re-inserts nothing); foreign tenants find nothing; malformed entries are the typed refusal (L12 + R46)', async () => {
+    const fake = fakeNeon();
+    const store = new NeonConsoleEventStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const eventOne = { kind: 'connection-changed', at: 1_700_000_000_001, status: 'connected' } as Record<string, unknown>;
+    const eventTwo = { kind: 'job-updated', at: 1_700_000_000_002, job: { jobId: 'job:1', status: 'complete' } } as Record<string, unknown>;
+    const eventThree = { kind: 'outcome-recorded', at: 1_700_000_000_003, outcome: { outcomeId: 'out:1' } } as Record<string, unknown>;
+    for (const event of [eventOne, eventTwo, eventThree]) {
+      expect((await store.putConsoleEvent('tenant-a', 'prj_a', { eventId: consoleEventIdOf(event), at: event.at as number, event })).ok).toBe(true);
+    }
+    // THE IDEMPOTENT REPLAY: the same batch again — the content-addressed id
+    // collides, nothing is inserted (the retried-append law: a 503'd batch's
+    // retry heals without a duplicate row).
+    expect((await store.putConsoleEvent('tenant-a', 'prj_a', { eventId: consoleEventIdOf(eventTwo), at: eventTwo.at as number, event: eventTwo })).ok).toBe(true);
+    const listed = await store.consoleEventsOf('tenant-a', 'prj_a');
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+    // THE ROUND-TRIP: the EXACT payloads, in the events' own instant order,
+    // each carrying its re-derived content-addressed id (the read mints
+    // exactly what the append minted — the one-mint law).
+    expect(listed.value.map((entry) => entry.event)).toEqual([eventOne, eventTwo, eventThree]);
+    expect(listed.value.map((entry) => entry.eventId)).toEqual([consoleEventIdOf(eventOne), consoleEventIdOf(eventTwo), consoleEventIdOf(eventThree)]);
+    // L12: a foreign tenant's read finds NOTHING; a foreign project's read is the honest empty.
+    const foreignTenant = await store.consoleEventsOf('tenant-b', 'prj_a');
+    expect(foreignTenant.ok).toBe(true);
+    if (foreignTenant.ok) expect(foreignTenant.value).toEqual([]);
+    const foreignProject = await store.consoleEventsOf('tenant-a', 'prj_b');
+    expect(foreignProject.ok).toBe(true);
+    if (foreignProject.ok) expect(foreignProject.value).toEqual([]);
+    // Malformed entries are the typed malformed_record (fail-closed, never a throw).
+    const malformedAt = consoleEventPutStatement('tenant-a', 'prj_a', { eventId: 'evt:x', at: 0, event: { kind: 'x', at: 0 } });
+    expect(malformedAt.ok).toBe(false);
+    if (!malformedAt.ok) expect(malformedAt.error.code).toBe('malformed_record');
+    const malformedId = consoleEventPutStatement('tenant-a', 'prj_a', { eventId: '', at: 1, event: { kind: 'x', at: 1 } });
+    expect(malformedId.ok).toBe(false);
+    // The statement vectors: tenant = $1 ALWAYS, the project scope second,
+    // APPEND-ONLY (ON CONFLICT DO NOTHING — never an UPDATE, never a rewrite).
+    const put = consoleEventPutStatement('tenant-a', 'prj_a', { eventId: 'evt:v', at: 9, event: { kind: 'x', at: 9 } });
+    expect(put.ok).toBe(true);
+    if (put.ok) {
+      expect(put.value.sql).toContain('INSERT INTO tradrl_console_events');
+      expect(put.value.sql).toContain('ON CONFLICT (tenant, event_id) DO NOTHING');
+      expect(put.value.sql).not.toContain('DO UPDATE');
+      expect(put.value.params[0]).toBe('tenant-a');
+      expect(put.value.params[1]).toBe('prj_a');
+    }
+    const select = consoleEventListStatement('tenant-a', 'prj_a');
+    expect(select.sql).toBe('SELECT payload FROM tradrl_console_events WHERE tenant = $1 AND project_id = $2 ORDER BY at, event_id');
+    expect(select.params).toEqual(['tenant-a', 'prj_a']);
+    expect(store.lastProvenance()?.adapter).toBe('neon');
+    expect(store.lastProvenance()?.store).toBe('console-event-store');
   });
 
   it('goal sets with the ADDITIVE launch world (D-8, W-28): the world rides the same opaque payload, round-trips verbatim, and a pre-W-28 row (no world) still decodes', async () => {

@@ -117,6 +117,22 @@ export function fakeProviders(): FakeProviders {
         const table = insert[1] as string;
         const columns = (insert[2] ?? '').split(',').map((column) => column.trim());
         const rows = tables.get(table) ?? [];
+        // FW-36-A (the durable console-events seam): the live Postgres
+        // `ON CONFLICT (…) DO NOTHING` — the conflict-key tuple already
+        // present means NOTHING is inserted and the statement answers
+        // `INSERT 0 0` (the same-row no-op; the fakes match the live wire,
+        // never the adapter's expectations — the append's idempotence is
+        // observable end to end: a retried batch re-inserts nothing).
+        const conflictNothing = /ON CONFLICT \(([^)]+)\) DO NOTHING/.exec(parsed.query);
+        if (conflictNothing !== null) {
+          const nothingKeyColumns = (conflictNothing[1] ?? '').split(',').map((column) => column.trim());
+          const nothingKeyIndexes = nothingKeyColumns.map((column) => columns.indexOf(column));
+          const nothingKeyOf = (row: { params: readonly string[] }): string => nothingKeyIndexes.map((index) => row.params[index === -1 ? row.params.length : index]).join('\u0000');
+          const nothingIncomingKey = nothingKeyIndexes.map((index) => parsed.params[index === -1 ? parsed.params.length : index]).join('\u0000');
+          if (rows.some((row) => nothingKeyOf(row) === nothingIncomingKey)) {
+            return responder(JSON.stringify({ command: 'INSERT 0 0', rowCount: 0 }));
+          }
+        }
         // Upsert fidelity (W-25D): an `ON CONFLICT (…) DO UPDATE` replaces the
         // row with the same conflict-key tuple — the same semantics the real
         // SQL has (the durable seam upserts project records + goal sets).
@@ -184,8 +200,12 @@ export function fakeProviders(): FakeProviders {
       }
       const select = /^SELECT payload FROM (tradrl_\w+)/.exec(parsed.query);
       if (select !== null) {
-        const orderIndex = select[1] === 'tradrl_projects' ? 5 : select[1] === 'tradrl_project_goals' ? 1 : 3;
-        const payloadIndex = select[1] === 'tradrl_projects' ? 6 : select[1] === 'tradrl_project_events' ? 5 : select[1] === 'tradrl_knowledge' ? 6 : select[1] === 'tradrl_project_goals' ? 2 : select[1] === 'tradrl_jobs' ? 5 : 7;
+        // FW-36-A: the console-events table's own column layout — the order
+        // column is `at` (param 3, the event's own instant) and the payload
+        // is param 4 (tenant, project_id, event_id, at, payload); every other
+        // table keeps its own indices.
+        const orderIndex = select[1] === 'tradrl_projects' ? 5 : select[1] === 'tradrl_project_goals' ? 1 : select[1] === 'tradrl_console_events' ? 3 : 3;
+        const payloadIndex = select[1] === 'tradrl_projects' ? 6 : select[1] === 'tradrl_project_events' ? 5 : select[1] === 'tradrl_knowledge' ? 6 : select[1] === 'tradrl_project_goals' ? 2 : select[1] === 'tradrl_jobs' ? 5 : select[1] === 'tradrl_console_events' ? 4 : 7;
         let rows = (tables.get(select[1] as string) ?? []).filter((row) => row.params[0] === parsed.params[0]);
         if (parsed.query.includes('AND project = $2') || parsed.query.includes('AND project_id = $2')) {
           rows = rows.filter((row) => row.params[1] === parsed.params[1]);
