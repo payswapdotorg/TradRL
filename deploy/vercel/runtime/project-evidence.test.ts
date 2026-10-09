@@ -137,6 +137,17 @@ function independentSubtract(a: string, b: string): string {
   return String(Number(parse(a) - parse(b)) / 1_000_000);
 }
 
+/** An INDEPENDENT exact-decimal add (6-digit fixed-point — the reconciliation witness for the projected-book arithmetic). */
+function independentAdd(a: string, b: string): string {
+  const parse = (value: string): bigint => {
+    const negative = value.startsWith('-');
+    const [intPart, fracPart = ''] = value.replace('-', '').split('.');
+    const digits = BigInt(`${intPart}${fracPart}`) * 10n ** BigInt(6 - fracPart.length);
+    return negative ? -digits : digits;
+  };
+  return String(Number(parse(a) + parse(b)) / 1_000_000);
+}
+
 const CANONICAL = /^-?(0|[1-9]\d*)(?:\.\d+)?$/;
 
 /** The ROUTED variant of a derived blotter row (the union's routed leg — venue/routedAt live there). */
@@ -194,74 +205,120 @@ describe('deploy/vercel — the per-project evidence seed (MI-D2/MI-D10: the lau
     expect(trim?.fill?.notional).toBe('1.5');
   });
 
-  it('THE HONEST PRE-TRADE-RISK REFUSAL quotes bound vs observed from the project\'s OWN constraint set (the numeric refusal law)', () => {
+  it('THE HONEST PRE-TRADE-RISK REFUSAL quotes the project\'s OWN declared bound with TRUE projected-book arithmetic that reconciles by inspection (FW-36-A, the numeric refusal law)', () => {
     const seed = deriveProjectEvidence(envelope());
     if (seed === null) return;
     const refusal = seed.submissions.find((row) => row.kind === 'refused');
     expect(refusal).toBeDefined();
     if (refusal === undefined || refusal.kind !== 'refused') return;
     expect(refusal.refusal.stage).toBe('risk_limits');
-    const quoted = (refusal.refusal as { readonly refusals: readonly { readonly constraintId: string; readonly domain: string; readonly subject: string; readonly severity: string; readonly predicate: { readonly kind: string; readonly bound: number }; readonly observed: string }[] }).refusals[0];
-    // The project's OWN c-1 drawdown ceiling, quoted verbatim + the observed derived exactly (0.2 x 1.2).
-    expect(quoted.constraintId).toBe('c-1');
-    expect(quoted.subject).toBe('risk.maxDrawdown');
+    const quoted = (refusal.refusal as { readonly refusals: readonly { readonly constraintId: string; readonly domain: string; readonly subject: string; readonly severity: string; readonly predicate: { readonly kind: string; readonly value?: string; readonly bound?: number }; readonly observed: string }[] }).refusals[0];
+    // FW-36-A (E-2): the refusal derives from the user's OWN declared
+    // constraint — the mandate's capital-budget declaration (equals
+    // 10000.00) — with the TRUE projected book: the prior cumulative fills
+    // + the candidate's OWN notional. The pre-fix behavior (a drawdown
+    // ceiling quoted with observed = bound x 1.2 — reconciling to neither
+    // the order line nor the book) is gone.
+    expect(quoted.constraintId).toBe('k-capital-budget');
+    expect(quoted.domain).toBe('outcome');
+    expect(quoted.subject).toBe('capital.budget');
     expect(quoted.severity).toBe('blocking');
-    expect(quoted.predicate.kind).toBe('limit.max');
-    expect(quoted.predicate.bound).toBe(0.2);
-    expect(quoted.observed).toBe('0.24');
-    expect(quoted.observed).toBe(independentMultiply(String(quoted.predicate.bound), '1.2'));
+    expect(quoted.predicate.kind).toBe('equals');
+    expect(quoted.predicate.value).toBe('10000.00');
+    // The arithmetic RECONCILES BY INSPECTION (exact decimals throughout):
+    // the refused row's own order line (8.333333 x 1200 = 9999.9996) + the
+    // prior cumulative book of the two fills (6 + 1.5 = 7.5) = observed.
+    expect(quoted.observed).toBe('10007.4996');
+    expect(independentMultiply(refusal.order?.quantity ?? '0', refusal.order?.price ?? '0')).toBe('9999.9996'); // the candidate's OWN notional — the order line
+    const entry = seed.submissions[0];
+    const trim = seed.submissions[1];
+    expect(independentAdd(independentMultiply(entry?.order?.quantity ?? '0', entry?.order?.price ?? '0'), independentMultiply(trim?.order?.quantity ?? '0', trim?.order?.price ?? '0'))).toBe('7.5'); // the prior cumulative book
+    expect(independentAdd('7.5', '9999.9996')).toBe(quoted.observed); // prior + candidate = projected, exactly
     // The deciding body of a refusal is the NAMED risk gate — never "unknown".
     expect(refusal.decisionBody).toBe(PROJECT_RISK_GATE);
-    expect(refusal.decisionRationale).toContain('0.2');
-    expect(refusal.decisionRationale).toContain('0.24');
+    expect(refusal.decisionRationale).toContain('10000');
+    expect(refusal.decisionRationale).toContain('10007.4996');
+    expect(refusal.decisionRationale).toContain('9999.9996');
+    // E-2.1/E-2.2: the row carries the gate's own evaluation of EVERY
+    // declared constraint at this candidate — the c-1 drawdown ceiling
+    // honestly NOT gate-evaluable from a projected book (realized-class
+    // subject), the budget constraint BREACHED with the itemized arithmetic.
+    const evaluation = (refusal.limitsEvaluation ?? []).find((row) => row.constraintId === 'k-capital-budget');
+    expect(evaluation?.verdict).toBe('breach');
+    expect(evaluation?.basis).toBe('projected_book_notional');
+    expect(evaluation?.observed).toBe('10007.4996');
+    expect(evaluation?.arithmetic).toContain('10007.4996');
+    const drawdownEvaluation = (refusal.limitsEvaluation ?? []).find((row) => row.constraintId === 'c-1');
+    expect(drawdownEvaluation?.verdict).toBe('pass'); // the chain's realized consumption 0.0015 vs the declared 0.2 — computed, not asserted
+    expect(drawdownEvaluation?.basis).toBe('realized_cumulative');
+    const positionEvaluation = (refusal.limitsEvaluation ?? []).find((row) => row.subject === 'position.grossExposure');
+    expect(positionEvaluation).toBeUndefined(); // the fixture declares no position subject — nothing fabricated
+    // The ENTRY's limits stamp is COMPUTED from the same declared constraints (never a fixed stamp).
+    const entryLimitsCheck = (entry?.riskChecks ?? []).find((check) => check.dimension === 'limits');
+    expect(entryLimitsCheck?.outcome).toBe('pass');
+    const entryBudgetEvaluation = (entry?.limitsEvaluation ?? []).find((row) => row.constraintId === 'k-capital-budget');
+    expect(entryBudgetEvaluation?.verdict).toBe('pass'); // projected book 6 inside the declared 10000 — computed
+    expect(entryBudgetEvaluation?.observed).toBe('6');
+    const entryDrawdownEvaluation = (entry?.limitsEvaluation ?? []).find((row) => row.constraintId === 'c-1');
+    expect(entryDrawdownEvaluation?.verdict).toBe('not_gate_evaluable'); // L4: the chain provides nothing yet AT the entry — never silently passed
+    expect(entryDrawdownEvaluation?.note).toContain('not gate-evaluable');
   });
 
-  it('the refusal falls back to the project\'s OWN goal criterion when the constraint set declares no numeric limit, and to its declared risk budget when neither does', () => {
-    // No limit.max constraints -> the goal's own sc-2 drawdown ceiling.
-    const criterionEnvelope = envelope({
+  it('the refusal bound\'s honesty order: a DECLARED limit.max over a gate-observable subject first, else the mandate\'s declared budget, else the launch world\'s own declared capital budget (FW-36-A — every branch a user-declared record)', () => {
+    // BRANCH 1 — the user's own book.notional limit.max outranks the budget
+    // declaration: the tightest gate-observable max bound is quoted.
+    const declaredEnvelope = envelope({
       constraintSet: {
         ...launchedConstraintSet(),
         constraints: [
-          { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: '10000.00' }, severity: 'blocking' },
-          { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: '250.00' }, severity: 'blocking' },
+          ...launchedConstraintSet().constraints,
+          { id: 'c-9', domain: 'outcome', subject: 'book.notional', predicate: { kind: 'limit.max', bound: 8000 }, severity: 'blocking', description: 'the book cap' },
         ],
       } as ConstraintSetStatement,
     });
-    const criterionSeed = deriveProjectEvidence(criterionEnvelope);
-    expect(criterionSeed).not.toBeNull();
-    const criterionRefusal = criterionSeed?.submissions.find((row) => row.kind === 'refused');
-    const criterionQuoted = criterionRefusal !== undefined && criterionRefusal.kind === 'refused'
-      ? (criterionRefusal.refusal as { readonly refusals: readonly { readonly constraintId: string; readonly subject: string; readonly predicate: { readonly bound: number }; readonly observed: string }[] }).refusals[0]
+    const declaredSeed = deriveProjectEvidence(declaredEnvelope);
+    expect(declaredSeed).not.toBeNull();
+    const declaredRefusal = declaredSeed?.submissions.find((row) => row.kind === 'refused');
+    const declaredQuoted = declaredRefusal !== undefined && declaredRefusal.kind === 'refused'
+      ? (declaredRefusal.refusal as { readonly refusals: readonly { readonly constraintId: string; readonly subject: string; readonly predicate: { readonly kind: string; readonly bound: number }; readonly observed: string }[] }).refusals[0]
       : undefined;
-    expect(criterionQuoted?.constraintId).toBe('sc-2');
-    expect(criterionQuoted?.subject).toBe('risk.maxDrawdown');
-    expect(criterionQuoted?.predicate.bound).toBe(0.2);
-    expect(criterionQuoted?.observed).toBe('0.24');
+    expect(declaredQuoted?.constraintId).toBe('c-9'); // the user's OWN limit.max — the whole point of E-2
+    expect(declaredQuoted?.subject).toBe('book.notional');
+    expect(declaredQuoted?.predicate.kind).toBe('limit.max');
+    expect(declaredQuoted?.predicate.bound).toBe(8000);
+    expect(declaredQuoted?.observed).toBe('8007.4992'); // prior 7.5 + the order line 6.666666 x 1200 = 7999.9992, exact
 
-    // No limit anywhere -> the declared risk budget (k-risk-budget, equals 250.00): the doubled position's projected consumption.
-    const budgetEnvelope = envelope({
-      goal: {
-        ...launchedGoal(),
-        successCriteria: { criteria: [{ id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 }, description: 'net profit is non-negative' }], requiredSatisfaction: 1 },
-      } as GoalStatement,
+    // BRANCH 3 — no budget/book bound anywhere in the constraint set (only a
+    // position cap, which is honestly NOT gate-evaluable at fill time): the
+    // launch world's OWN declared capital budget is the cited bound (a real
+    // user-declared record — never an invented constraint).
+    const worldBudgetEnvelope = envelope({
       constraintSet: {
         ...launchedConstraintSet(),
         constraints: [
-          { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: '10000.00' }, severity: 'blocking' },
-          { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: '250.00' }, severity: 'blocking' },
+          { id: 'k-position', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 2 }, severity: 'blocking' },
         ],
       } as ConstraintSetStatement,
     });
-    const budgetSeed = deriveProjectEvidence(budgetEnvelope);
-    expect(budgetSeed).not.toBeNull();
-    const budgetRefusal = budgetSeed?.submissions.find((row) => row.kind === 'refused');
-    const budgetQuoted = budgetRefusal !== undefined && budgetRefusal.kind === 'refused'
-      ? (budgetRefusal.refusal as { readonly refusals: readonly { readonly constraintId: string; readonly subject: string; readonly predicate: { readonly bound: number }; readonly observed: string }[] }).refusals[0]
+    const worldBudgetSeed = deriveProjectEvidence(worldBudgetEnvelope);
+    expect(worldBudgetSeed).not.toBeNull();
+    const worldBudgetRefusal = worldBudgetSeed?.submissions.find((row) => row.kind === 'refused');
+    const worldBudgetQuoted = worldBudgetRefusal !== undefined && worldBudgetRefusal.kind === 'refused'
+      ? (worldBudgetRefusal.refusal as { readonly refusals: readonly { readonly constraintId: string; readonly subject: string; readonly predicate: { readonly kind: string; readonly bound: number }; readonly observed: string }[] }).refusals[0]
       : undefined;
-    expect(budgetQuoted?.constraintId).toBe('k-risk-budget');
-    expect(budgetQuoted?.subject).toBe('risk.budget');
-    expect(budgetQuoted?.predicate.bound).toBe(250);
-    expect(budgetQuoted?.observed).toBe('550'); // 250 x 2.2, exact
+    expect(worldBudgetQuoted?.constraintId).toBe('cs-prj-evidence-1:capital-budget');
+    expect(worldBudgetQuoted?.subject).toBe('capital.budget');
+    expect(worldBudgetQuoted?.predicate.kind).toBe('limit.max');
+    expect(worldBudgetQuoted?.predicate.bound).toBe(10000);
+    expect(worldBudgetQuoted?.observed).toBe('10007.4996'); // the same TRUE projected book — the world's declared capital budget cited
+    // And the k-position subject is honestly NOT gate-evaluable at fill time
+    // (no position store exists on any backing) — reported with the loud
+    // teaching note, never silently passed (E-2.4).
+    const positionEvaluations = (worldBudgetRefusal?.limitsEvaluation ?? []).filter((row) => row.constraintId === 'k-position');
+    expect(positionEvaluations).toHaveLength(1);
+    expect(positionEvaluations[0]?.verdict).toBe('not_gate_evaluable');
+    expect(positionEvaluations[0]?.note).toContain('EXECUTION/TRADE/RISK SCOPING IS NOT YET DECLARABLE');
+    expect(positionEvaluations[0]?.note).toContain('observation | state | action | outcome');
   });
 
   it('NAMED deciding bodies + actors derived from the project\'s own identity (MI-D10: never "unknown"), with the SEVEN named pre-trade checks on every routed row', () => {

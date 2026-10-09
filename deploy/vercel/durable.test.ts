@@ -1835,25 +1835,45 @@ describe('deploy/vercel — the launched-desk evidence stream under durable (FW-
     expect(kickoff.status).toBe(202); // the kickoff request's tick compiled the org (the R4 pass over the hydrated control plane)
 
     // THE BLOTTER: the desk's own derived stream — 3 rows, named bodies, the
-    // numeric refusal quoting the project's OWN k-position cap (bound 2,
-    // observed 2.4 — the same constraint its fixture constraint set declares).
+    // FW-36-A honest gate: the refusal cites the mandate's OWN declared
+    // capital budget with TRUE projected-book arithmetic (the fixture's
+    // k-position cap is honestly NOT gate-evaluable at fill time — no
+    // position store exists on any backing — and is reported as such on the
+    // row's limitsEvaluation surface, never silently passed).
     const blotter = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/execution/submissions?project=prj-durable-evidence', headers: BEARER }));
     expect(blotter.status).toBe(200);
     const rows = ((blotter.body as { data: { items: readonly Record<string, unknown>[] } }).data).items;
     expect(rows).toHaveLength(3);
     const routed = rows.filter((row) => row.kind === 'routed') as unknown as readonly { decisionBody: string; fill: { notional: string }; order: { quantity: string; price: string }; riskChecks: readonly unknown[] }[];
-    const refused = rows.find((row) => row.kind === 'refused') as unknown as { decisionBody: string; refusal: { stage: string; refusals: readonly { constraintId: string; subject: string; predicate: { kind: string; bound: number }; observed: string }[] } };
+    const refused = rows.find((row) => row.kind === 'refused') as unknown as { decisionBody: string; refusal: { stage: string; refusals: readonly { constraintId: string; subject: string; predicate: { kind: string; bound: number }; observed: string }[] }; order: { quantity: string; price: string }; limitsEvaluation?: readonly { constraintId: string; verdict: string; note: string }[] };
     expect(routed).toHaveLength(2);
     expect(routed.every((row) => row.decisionBody === 'desk:prj-durable-evidence-execution')).toBe(true); // NAMED — never "unknown" (MI-D10)
     expect(refused.decisionBody).toBe('gate:pre-trade-risk');
     expect(routed.every((row) => row.riskChecks.length === 7)).toBe(true);
     expect(routed[0]!.fill.notional).toBe('48000'); // 0.8 x 60000 — exact (capital 500000.00, risk 40000.00)
     const quoted = refused.refusal.refusals[0]!;
-    expect(quoted.constraintId).toBe('k-position'); // the project's OWN constraint-set position cap
-    expect(quoted.subject).toBe('position.grossExposure');
+    // FW-36-A (E-2): the refusal demonstrates the gate binding against the
+    // mandate's OWN declared capital budget (Branch 3 — the fixture's
+    // constraint set declares no book/budget bound), with the TRUE
+    // projected book: the prior cumulative fills 60000 + the candidate's
+    // OWN order line (8.333333 x 60000 = 499999.98) = 559999.98, exact.
+    expect(quoted.constraintId).toBe('cs-tenant-durable:capital-budget');
+    expect(quoted.subject).toBe('capital.budget');
     expect(quoted.predicate.kind).toBe('limit.max');
-    expect(quoted.predicate.bound).toBe(2);
-    expect(quoted.observed).toBe('2.4');
+    expect(quoted.predicate.bound).toBe(500000);
+    expect(quoted.observed).toBe('559999.98');
+    // The arithmetic reconciles BY INSPECTION with the row's own order echo.
+    expect(refused.order.quantity).toBe('8.333333');
+    expect(refused.order.price).toBe('60000');
+    // And the k-position subject is honestly reported NOT gate-evaluable
+    // (E-2.4's loud teaching note) — never silently passed.
+    const positionEvaluation = (refused.limitsEvaluation ?? []).find((row) => row.constraintId === 'k-position');
+    expect(positionEvaluation?.verdict).toBe('not_gate_evaluable');
+    expect(positionEvaluation?.note).toContain('EXECUTION/TRADE/RISK SCOPING IS NOT YET DECLARABLE');
+    // The routed fills carry the COMPUTED limits stamp (the desk sized
+    // inside the declared caps — pass only on a true pass).
+    const routedChecks = (routed[0] as unknown as { riskChecks: readonly { dimension: string; outcome: string }[] }).riskChecks;
+    expect(routedChecks.find((check) => check.dimension === 'limits')?.outcome).toBe('pass');
 
     // THE OUTCOME + POST-MORTEM READS (the frozen routes over the WRAPPED seam port).
     const outcomes = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/outcomes/query', headers: BEARER, body: { project: 'prj-durable-evidence', at: T0 + 10_000 } }));

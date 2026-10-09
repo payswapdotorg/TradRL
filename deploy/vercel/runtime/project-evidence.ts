@@ -375,17 +375,6 @@ export interface EnrichedOutcomeRecord extends OutcomeRecordMirror {
   readonly limitsEvaluation?: readonly LimitsCheckEvaluation[];
 }
 
-/** The pre-trade risk-check pass list every routed row carries (the demo blotter's own closed list — the 7-check pattern). */
-const PASSED_PRE_TRADE_CHECKS: readonly ProjectRiskCheck[] = deepFreeze([
-  { dimension: 'kill_switch', outcome: 'pass' },
-  { dimension: 'identity', outcome: 'pass' },
-  { dimension: 'authorization', outcome: 'pass' },
-  { dimension: 'limits', outcome: 'pass' },
-  { dimension: 'venue_permissions', outcome: 'pass' },
-  { dimension: 'rate_limits', outcome: 'pass' },
-  { dimension: 'credentials', outcome: 'pass' },
-]);
-
 /** The platform's pre-trade risk gate — the deciding body named on the derived refusal (the demo's own named gate). */
 export const PROJECT_RISK_GATE = 'gate:pre-trade-risk';
 
@@ -443,14 +432,15 @@ function canonicalLimitBoundOf(predicate: unknown): { readonly bound: number; re
 /** The gate-evaluable observation classes (mirroring risk-utilization's own metric classification — one law, two surfaces). */
 export type GateSubjectClass = 'book_notional' | 'order_notional' | 'risk_consumption' | 'drawdown' | 'not_gate_evaluable';
 
-/** Classify one declared subject by what the gate can observe for it at fill time. */
+/** Classify one declared subject by what the gate can observe for it at fill time (case-insensitive — the grammar's own subjects are camelCase, e.g. risk.maxDrawdown). */
 export function gateSubjectClassOf(subject: string): GateSubjectClass {
-  if (subject.includes('notional')) {
-    return subject.includes('order') || subject.includes('trade') ? 'order_notional' : 'book_notional';
+  const normalized = subject.toLowerCase();
+  if (normalized.includes('notional')) {
+    return normalized.includes('order') || normalized.includes('trade') ? 'order_notional' : 'book_notional';
   }
-  if (subject.includes('capital') && subject.includes('budget')) return 'book_notional';
-  if (subject.includes('risk') && subject.includes('budget')) return 'risk_consumption';
-  if (subject.includes('drawdown')) return 'drawdown';
+  if (normalized.includes('capital') && normalized.includes('budget')) return 'book_notional';
+  if (normalized.includes('risk') && normalized.includes('budget')) return 'risk_consumption';
+  if (normalized.includes('drawdown')) return 'drawdown';
   return 'not_gate_evaluable';
 }
 
@@ -510,8 +500,10 @@ export interface GateCandidateContext {
   readonly realizedCumulative: string | null;
 }
 
-/** THE TEACHING NOTE for a subject the gate cannot evaluate (the loud, honest rejection — E-2's runtime-surface half). */
-const NOT_EVALUABLE_SUBJECT_NOTE = 'not gate-evaluable at fill time: the gateway holds no observation for this subject on any backing (no position, turnover, returns or cost store exists — the standing risk-utilization read reports the same honestly-unknown class). Gate-evaluable subjects today are the notional/budget subjects (book.notional, capital.budget, order.notional — the projected cumulative book including the candidate order, or the order\'s own notional) and the realized-cumulative subjects (risk.budget, risk.maxDrawdown — the session outcome chain\'s realized cumulative, where the chain provides one); the constraint grammar\'s accepted domains are observation | state | action | outcome, and the gate reads the outcome-scoped forms';
+/**
+ * THE TEACHING NOTE for a subject the gate cannot evaluate — E-2.4's runtime-surface half: the LOUD, teaching rejection. It names the gate-evaluable subjects, names the grammar's ACCEPTED domains, states plainly that EXECUTION/TRADE/RISK SCOPING IS NOT YET DECLARABLE (the DSL's vocabulary is closed — a constraint declared under any other domain is rejected as malformed at the boundary, never silently ignored), and points at the outcome-scoped form the gate reads.
+ */
+const NOT_EVALUABLE_SUBJECT_NOTE = 'not gate-evaluable at fill time: the gateway holds no observation for this subject on any backing (no position, turnover, returns or cost store exists — the standing risk-utilization read reports the same honestly-unknown class). Gate-evaluable subjects today are the notional/budget subjects (book.notional, capital.budget, order.notional — the projected cumulative book including the candidate order, or the order\'s own notional) and the realized-cumulative subjects (risk.budget, risk.maxDrawdown — the session outcome chain\'s realized cumulative, where the chain provides one). The constraint grammar\'s accepted domains are observation | state | action | outcome — EXECUTION/TRADE/RISK SCOPING IS NOT YET DECLARABLE: the DSL\'s vocabulary is closed, and a constraint declared under any other domain is rejected as malformed at the boundary instead of being quietly accepted; scope the SAME bound at the OUTCOME domain instead (the outcome-scoped form, e.g. a book.notional or risk.budget subject) and the gate reads it here';
 
 /** THE TEACHING NOTE for a realized-cumulative subject before the outcome chain provides a record (L4 point-in-time). */
 const NOT_EVALUABLE_YET_NOTE = 'not gate-evaluable at this instant: the session outcome chain provides no realized record yet (L4 point-in-time — the desk\'s outcome realizes after the entry fills); the constraint becomes gate-evaluable once a realized record exists, and the gate never silently passes it before then';
@@ -652,12 +644,17 @@ export interface ProjectRefusalQuote {
 
 /**
  * Derive the honest refusal quote for the stream's ONE demonstration
- * refusal (FW-36-A, E-2): the concentration attempt is an order for the
- * mandate's FULL declared capacity, and the gate refuses it against the
- * project's OWN declared constraint with the TRUE projected book —
- * `prior cumulative + candidate = projected` — never a value fabricated
- * from the bound (the pre-fix defect: observed = bound x 1.2, which
- * reconciled to NEITHER the order line NOR the cumulative book).
+ * refusal (FW-36-A, E-2): the concentration attempt is the largest order
+ * at the entry price that fits the mandate's FULL declared capacity, and
+ * the gate refuses it against the project's OWN declared constraint with
+ * the TRUE projected book — `prior cumulative + candidate = projected`,
+ * itemized — never a value fabricated from the bound (the pre-fix defect:
+ * observed = bound x 1.2, which reconciled to NEITHER the order line NOR
+ * the cumulative book).
+ *
+ * The PRIOR BOOK is passed in by the caller — the ACTUAL fills the stream
+ * carries at the refusal instant (the entry + the trim, when the trim
+ * routed), so the quote's arithmetic reconciles with the rows themselves.
  *
  * The bound's source, in honesty order:
  *   1. the TIGHTEST declared blocking `limit.max` over a gate-observable
@@ -672,21 +669,10 @@ export interface ProjectRefusalQuote {
  *      honestly demonstrate the gate (the stream answers the honest
  *      emptiness, the envelope gate's own law).
  */
-function refusalQuoteOf(envelope: ProjectEvidenceEnvelope, riskBudget: string): ProjectRefusalQuote | null {
-  // The same entry/trim economics the caller derives (pure recomputation —
-  // the prior book the gate projects against).
-  const capital = envelope.world.capitalBudget;
-  const entryPrice = multiplyDecimals(capital, ENTRY_PRICE_OF_CAPITAL);
-  const entryQty = multiplyDecimals(riskBudget, ENTRY_QTY_OF_RISK);
-  if (entryPrice === null || entryQty === null || !isPositiveDecimal(entryPrice) || !isPositiveDecimal(entryQty)) return null;
-  const entryNotional = multiplyDecimals(entryQty, entryPrice);
-  const trimPrice = multiplyDecimals(capital, TRIM_PRICE_OF_CAPITAL);
-  const trimQty = multiplyDecimals(riskBudget, TRIM_QTY_OF_RISK);
-  if (entryNotional === null || trimPrice === null || trimQty === null) return null;
-  const trimNotional = multiplyDecimals(trimQty, trimPrice);
-  if (trimNotional === null || !isPositiveDecimal(trimNotional)) return null;
-  const priorBookNotional = addDecimals(entryNotional, trimNotional);
-  if (priorBookNotional === null || !isPositiveDecimal(priorBookNotional)) return null;
+function refusalQuoteOf(envelope: ProjectEvidenceEnvelope, priorBookNotional: string, entryPrice: string): ProjectRefusalQuote | null {
+  // The prior book + the entry price are the caller's own ACTUAL economics
+  // (defensive: a malformed input answers the honest emptiness, R46).
+  if (!isPositiveDecimal(priorBookNotional) || !isPositiveDecimal(entryPrice)) return null;
 
   // The bound's source (the honesty order above).
   const gate = gateConstraintsOf(envelope.constraintSet);
@@ -730,15 +716,18 @@ function refusalQuoteOf(envelope: ProjectEvidenceEnvelope, riskBudget: string): 
   }
   if (pick === null || pickBound === null) return null; // Branch 4 — no gate-observable bound: the honest emptiness
 
-  // The concentration attempt: the mandate's FULL declared capacity at the
-  // entry price — the candidate the gate projects. The TRUE observed value
-  // is the projected book: prior cumulative + candidate (reconciles by
-  // inspection; NEVER a function of the bound alone).
-  const candidateNotional = pickBound;
+  // The concentration attempt: the largest order at the entry price that
+  // fits the mandate's FULL declared capacity (<= 6 fraction digits — the
+  // boundary's own decimal grammar). Its notional IS the order line, so the
+  // row echo, the itemized arithmetic and the refusal's observed value all
+  // reconcile EXACTLY by inspection (the TRUE projected book: prior
+  // cumulative + candidate — never a function of the bound alone).
+  const candidateQuantity = divideDecimalsFloor(pickBound, entryPrice);
+  if (candidateQuantity === null || !isPositiveDecimal(candidateQuantity)) return null; // a mandate so tight no positive order fits — the envelope gate's own law
+  const candidateNotional = multiplyDecimals(candidateQuantity, entryPrice);
+  if (candidateNotional === null || !isPositiveDecimal(candidateNotional)) return null;
   const projected = addDecimals(priorBookNotional, candidateNotional);
   if (projected === null || !isPositiveDecimal(projected)) return null;
-  const candidateQuantity = divideDecimalsFloor(candidateNotional, entryPrice);
-  if (candidateQuantity === null || !isPositiveDecimal(candidateQuantity)) return null; // a mandate so tight no positive order fits — the envelope gate's own law
   return {
     constraintId: pick.constraintId,
     domain: pick.domain,
@@ -795,20 +784,58 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
   const venue = world.venues[0] as string;
 
   // The exact economics (never a float — every value an exact decimal
-  // derived from the project's own budgets).
+  // derived from the project's own budgets). FW-36-A (E-2): the desk
+  // SIZES ITS OWN ORDERS inside the mandate's declared caps — the entry
+  // at <= ENTRY_SPACE_OF_BOUND of the tightest gate-observable
+  // book-notional/budget bound (the constraint set's own bounds + the
+  // launch world's declared capital budget), the entry+trim book at <=
+  // BOOK_SPACE_OF_BOUND — so every routed fill's `limits` stamp is TRUE
+  // (the pre-fix stream stamped pass over fills at up to 180x a declared
+  // bound). A mandate so tight that no positive order fits inside it
+  // honestly executes NOTHING (null — the zero-budget desk's own law).
   const entryPrice = multiplyDecimals(capital, ENTRY_PRICE_OF_CAPITAL);
-  const entryQty = multiplyDecimals(riskBudget, ENTRY_QTY_OF_RISK);
-  if (entryPrice === null || entryQty === null || !isPositiveDecimal(entryPrice) || !isPositiveDecimal(entryQty)) return null;
+  const trimPrice = multiplyDecimals(capital, TRIM_PRICE_OF_CAPITAL);
+  if (entryPrice === null || trimPrice === null || !isPositiveDecimal(entryPrice) || !isPositiveDecimal(trimPrice)) return null;
+
+  // The sizing bound: the TIGHTEST gate-observable book bound the mandate
+  // declares (every severity — sizing inside an advisory bound is still
+  // more honest), plus the launch world's own declared capital budget.
+  const gateConstraints = gateConstraintsOf(constraintSet);
+  const bookBoundTexts = gateConstraints
+    .filter((constraint) => constraint.boundText !== null && gateSubjectClassOf(constraint.subject) === 'book_notional')
+    .map((constraint) => constraint.boundText as string);
+  bookBoundTexts.push(capital); // the launch spec's own declared capital budget — a real user-declared bound
+  const sizingBound = bookBoundTexts.reduce<string | null>(
+    (tightest, bound) => tightest === null || (compareDecimals(bound, tightest) ?? 1) === -1 ? bound : tightest,
+    null,
+  );
+  if (sizingBound === null) return null; // no observable book bound — nothing can be sized honestly (R46)
+
+  // The entry: the project's own budget multiplier, capped at the sizing
+  // space (<= 50% of the tightest bound at the entry price).
+  const entryQtyBase = multiplyDecimals(riskBudget, ENTRY_QTY_OF_RISK);
+  const entryCapQty = divideDecimalsFloor(multiplyDecimals(sizingBound, ENTRY_SPACE_OF_BOUND) ?? '0', entryPrice);
+  if (entryQtyBase === null || entryCapQty === null) return null;
+  const entryQty = (compareDecimals(entryQtyBase, entryCapQty) ?? 1) === 1 ? entryCapQty : entryQtyBase;
+  if (!isPositiveDecimal(entryQty)) return null; // too tight to trade honestly — the desk executes nothing
   const entryNotional = multiplyDecimals(entryQty, entryPrice);
   if (entryNotional === null || !isPositiveDecimal(entryNotional)) return null;
   const entryFee = multiplyDecimals(entryNotional, FEE_RATE);
-  const trimPrice = multiplyDecimals(capital, TRIM_PRICE_OF_CAPITAL);
-  const trimQty = multiplyDecimals(riskBudget, TRIM_QTY_OF_RISK);
-  if (trimPrice === null || trimQty === null || !isPositiveDecimal(trimPrice) || !isPositiveDecimal(trimQty)) return null;
-  const trimNotional = multiplyDecimals(trimQty, trimPrice);
-  if (trimNotional === null || !isPositiveDecimal(trimNotional)) return null;
-  const trimFee = multiplyDecimals(trimNotional, FEE_RATE);
-  if (entryFee === null || trimFee === null) return null;
+
+  // The trim: the project's own multiplier, capped so the entry+trim book
+  // stays <= 75% of the tightest bound; a cap of nothing positive honestly
+  // OMITS the trim (the desk adds nothing it cannot fit inside the mandate).
+  const trimQtyBase = multiplyDecimals(riskBudget, TRIM_QTY_OF_RISK);
+  const bookRoom = subtractDecimals(multiplyDecimals(sizingBound, BOOK_SPACE_OF_BOUND) ?? '0', entryNotional);
+  const trimCapQty = bookRoom === null ? null : divideDecimalsFloor(bookRoom, trimPrice);
+  const trimQty = trimQtyBase === null || trimCapQty === null
+    ? null
+    : (compareDecimals(trimQtyBase, trimCapQty) ?? 1) === 1 ? trimCapQty : trimQtyBase;
+  const trimOmitted = trimQty === null || !isPositiveDecimal(trimQty);
+  const trimNotional = trimOmitted ? null : multiplyDecimals(trimQty as string, trimPrice);
+  if (!trimOmitted && (trimNotional === null || !isPositiveDecimal(trimNotional))) return null;
+  const trimFee = trimOmitted ? null : multiplyDecimals(trimNotional as string, FEE_RATE);
+  if (entryFee === null || (!trimOmitted && trimFee === null)) return null;
 
   // The adverse-gap outcome of the entry (expected vs realized + tolerance).
   const expected = multiplyDecimals(entryNotional, EXPECTED_OF_NOTIONAL);
@@ -832,9 +859,40 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
     .map((constraint) => canonicalLimitBoundOf(constraint.predicate))
     .find((bound) => bound !== null)?.text ?? null;
 
-  // The refusal quote (the project's own declared limit — see refusalQuoteOf).
-  const quote = refusalQuoteOf(envelope, riskBudget);
+  // THE HONEST GATE AT EVERY CANDIDATE ORDER (FW-36-A, E-2.1/E-2.2):
+  // each declared constraint evaluated WHERE DERIVABLE — the TRUE
+  // observed value itemized (prior cumulative + candidate = projected) so
+  // bound-vs-observed reconciles BY INSPECTION; not-derivable constraints
+  // honestly reported on the limitsEvaluation surface, never silently
+  // passed. The outcome chain provides its realized record only AFTER the
+  // entry fills (L4 point-in-time): the realized-cumulative subjects are
+  // honestly not-gate-evaluable AT the entry, and evaluated from the
+  // chain's realized cumulative at the later gates.
+  const entryEvaluations: readonly LimitsCheckEvaluation[] = gateConstraints.map(
+    (constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: '0', candidateNotional: entryNotional, realizedCumulative: null }),
+  );
+  const entryLimits = limitsOutcomeOf(entryEvaluations);
+  if (entryLimits === 'refused') return null; // the gate refuses the very first order — the desk honestly executes nothing (the zero-budget law)
+  const trimEvaluations: readonly LimitsCheckEvaluation[] | null = trimOmitted
+    ? null
+    : gateConstraints.map((constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: entryNotional, candidateNotional: trimNotional as string, realizedCumulative: realized }));
+  const trimLimits = trimEvaluations === null ? null : limitsOutcomeOf(trimEvaluations);
+  const trimRefused = trimLimits === 'refused';
+  const trimBlockingBreach = trimEvaluations?.find((evaluation) => evaluation.verdict === 'breach' && evaluation.severity === 'blocking') ?? null;
+
+  // The ACTUAL fills the concentration attempt is projected against — the
+  // trim counts only when it routed (a refused trim never fills).
+  const actualBookNotional = trimOmitted || trimRefused ? entryNotional : addDecimals(entryNotional, trimNotional as string);
+  if (actualBookNotional === null || !isPositiveDecimal(actualBookNotional)) return null;
+
+  // The refusal quote (the project's own declared limit — see refusalQuoteOf):
+  // the prior book is the ACTUAL fills the stream carries, so the quote's
+  // itemized arithmetic reconciles with the rows themselves by inspection.
+  const quote = refusalQuoteOf(envelope, actualBookNotional, entryPrice);
   if (quote === null) return null;
+  const concentrationEvaluations: readonly LimitsCheckEvaluation[] = gateConstraints.map(
+    (constraint) => evaluateConstraintAtGate(constraint, { priorBookNotional: actualBookNotional, candidateNotional: quote.candidateNotional, realizedCumulative: realized }),
+  );
 
   // The instants (the goal's own createdAt — the launch instant — with
   // the demo seed's own offsets; deterministic, point-in-time stable).
@@ -853,15 +911,91 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
   const postMortemRef = idOf('pmr', 'launch-post-mortem', envelope);
   const configDigest = fnv1a32Hex(canonicalJson(['launch-config', envelope.tenant, envelope.project, envelope.world.horizon.startsAt] as never));
 
-  // The audit prose (verbatim-style rationale referencing the project's
-  // ACTUAL goal numbers — its capital budget, its risk budget, and its
-  // declared drawdown ceiling when it has one; the simulated attribution
-  // is stated, never hidden).
-  const entryRationale = `The desk opened the compiled organization ${envelope.organizationRef}'s simulated session with a ${entryQty} ${marketOne} limit buy at ${entryPrice} — ${entryNotional} notional inside the declared capital budget ${capital} and risk budget ${riskBudget}${drawdownText === null ? '' : `, under the declared drawdown ceiling ${drawdownText}`}. All seven pre-trade checks passed; the simulated fill is the outcome ${outcomeRef}'s own realization.`;
-  const trimRationale = `Trim the session's ${marketTwo} exposure after the adverse gap on the entry: a ${trimQty} limit sell at ${trimPrice} (${trimNotional} notional) reduces concentrated risk against the declared risk budget ${riskBudget}. The gateway routed it; the simulated fill landed clean.`;
-  const refusalRationale = `The order was refused at the risk-limits stage: projected ${quote.subject} ${quote.observed} exceeds the ${quote.severity} ${quote.predicate.kind} bound ${quote.boundText} (constraint ${quote.constraintId} of ${constraintSet.id}). The desk's request never reached routing — the gate's refusal is the honest half of the blotter.`;
+  // THE AUDIT PROSE (FW-36-A, E-2.3: every budget relation COMPUTED
+  // before it is asserted — the "inside the declared capital budget"
+  // sentence is emitted only when the projected book is inside the bound,
+  // and the risk-budget relation is NEVER asserted before the outcome
+  // chain realizes it; the checks sentence reflects the COMPUTED stamp).
+  const entryBookVsCapital = compareDecimals(entryNotional, capital);
+  const capitalRelationSentence = entryBookVsCapital === 1
+    ? `stands past the declared capital budget ${capital} — the honest breach statement (the projected book ${entryNotional} exceeds it, computed)`
+    : `is inside the declared capital budget ${capital} (computed: the projected book ${entryNotional} vs the declared budget — never an uncomputed assertion)`;
+  const riskBudgetSentence = `the declared risk budget ${riskBudget} binds the session's realized consumption after the fill (the chain realizes ${realized} — the bound is evaluated there, never asserted before it realizes)`;
+  const entryChecksSentence = entryLimits === 'pass'
+    ? 'all seven pre-trade checks passed (the limits verdict computed from the declared constraints at this candidate — never a fixed stamp)'
+    : `the pre-trade checks returned limits: ${entryLimits} (the computed verdict — never a fixed stamp)`;
+  const entryRationale = `The desk opened the compiled organization ${envelope.organizationRef}'s simulated session with a ${entryQty} ${marketOne} limit buy at ${entryPrice} — the projected book ${entryNotional} ${capitalRelationSentence}; ${riskBudgetSentence}${drawdownText === null ? '' : `, under the declared drawdown ceiling ${drawdownText}`}. ${entryChecksSentence}; the simulated fill is the outcome ${outcomeRef}'s own realization.`;
+  const trimRationale = `Trim the session's ${marketTwo} exposure after the adverse gap on the entry: a ${trimQty} limit sell at ${trimPrice} (${trimNotional} notional) cites the declared risk budget ${riskBudget} verbatim. The gateway routed it; the simulated fill landed clean.`;
+  const refusalRationale = `The order was refused at the risk-limits stage: the projected ${quote.subject} ${quote.observed} exceeds the ${quote.severity} ${quote.predicate.kind} bound ${quote.boundText} (constraint ${quote.constraintId} of ${constraintSet.id}) — itemized, the prior cumulative book ${quote.priorBookNotional} + this candidate's own notional ${quote.candidateNotional} = ${quote.observed}, so the arithmetic reconciles by inspection. The desk's request never reached routing — the gate's refusal is the honest half of the blotter.`;
+  const outcomeRationale = `The desk approved the ${entryQty} ${marketOne} entry with the projected book ${entryNotional} ${capitalRelationSentence}; ${riskBudgetSentence}. The simulated fill realized ${realized} against the ${expected} expectation (tolerance ${tolerance}) — the adverse gap the post-mortem ${postMortemRef} attributes to the simulated venue lag.`;
+  const trimRefusalRationale = trimBlockingBreach === null
+    ? 'The trim was refused at the risk-limits stage (the gate\'s computed verdict).'
+    : `The trim was refused at the risk-limits stage: ${trimBlockingBreach.note} — itemized, ${trimBlockingBreach.arithmetic}. The desk's request never reached routing (the gate\'s refusal is the honest half of the blotter).`;
 
-  // THE BLOTTER ROWS.
+  // THE BLOTTER ROWS. The entry carries the gate's own evaluations of
+  // EVERY declared constraint at its candidate (the limitsEvaluation
+  // surface) and the COMPUTED limits stamp; the trim is the routed row
+  // when the gate passed it, the honest refused row when it did not,
+  // omitted entirely when the mandate leaves no room for it.
+  const trimOrder = {
+    clientOrderId: `ord-${envelope.project}-0002`,
+    instrumentId: marketTwo,
+    venueId: venue,
+    side: 'sell',
+    kind: 'limit',
+    quantity: trimQty as string,
+    price: trimPrice,
+    timeInForce: 'gtc',
+    createdAt: new Date(trimAt).toISOString(),
+  };
+  const trimRow: ProjectBlotterRow | null = trimOmitted ? null : trimRefused ? {
+    kind: 'refused',
+    submissionId: idOf('xgs', 'launch-trim', envelope),
+    decisionId: null,
+    auditId: idOf('xga', 'launch-trim-audit', envelope),
+    refusal: {
+      stage: 'risk_limits',
+      evaluationId: idOf('rev', 'launch-trim-evaluation', envelope),
+      refusals: [
+        {
+          constraintId: trimBlockingBreach?.constraintId ?? '',
+          domain: trimBlockingBreach?.domain ?? '',
+          subject: trimBlockingBreach?.subject ?? '',
+          severity: trimBlockingBreach?.severity ?? '',
+          predicate: trimBlockingBreach?.predicate ?? { kind: '' },
+          observed: trimBlockingBreach?.observed ?? '',
+        },
+      ],
+    },
+    refusedAt: trimAt,
+    order: trimOrder,
+    decisionBody: PROJECT_RISK_GATE,
+    decisionRationale: trimRefusalRationale,
+    riskChecks: [{ dimension: 'risk_limits', outcome: 'refused' }],
+    evidence: [{ kind: 'gateway-audit', ref: idOf('xga', 'launch-trim-audit', envelope) }],
+    limitsEvaluation: trimEvaluations ?? undefined,
+  } : {
+    kind: 'routed',
+    submissionId: idOf('xgs', 'launch-trim', envelope),
+    decisionId: idOf('xd', 'launch-trim-decision', envelope),
+    auditId: idOf('xga', 'launch-trim-audit', envelope),
+    requestRef: idOf('gor', 'launch-trim-request', envelope),
+    venue,
+    adapterRef: 'adapter:launch-broker',
+    channelRef: 'chan:launch-main',
+    routedAt: trimAt,
+    order: trimOrder,
+    fill: { state: 'filled', quantity: trimQty as string, price: trimPrice, notional: trimNotional as string, fee: trimFee as string, filledAt: (trimAt + 250) as TimestampMs },
+    decisionBody: desk,
+    decisionRationale: trimRationale,
+    riskChecks: preTradeChecksOf(trimLimits === null ? 'pass' : trimLimits),
+    evidence: [
+      { kind: 'shadow_session', ref: sessionId },
+      { kind: 'outcome', ref: outcomeRef },
+    ],
+    limitsEvaluation: trimEvaluations ?? undefined,
+  };
+
   const rows: ProjectBlotterRow[] = [
     {
       kind: 'routed',
@@ -887,43 +1021,15 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
       fill: { state: 'filled', quantity: entryQty, price: entryPrice, notional: entryNotional, fee: entryFee, filledAt: entryAt },
       decisionBody: desk,
       decisionRationale: entryRationale,
-      riskChecks: PASSED_PRE_TRADE_CHECKS,
+      riskChecks: preTradeChecksOf(entryLimits),
       evidence: [
         { kind: 'shadow_outcome', ref: shadowOutcomeRef },
         { kind: 'shadow_session', ref: sessionId },
         { kind: 'outcome', ref: outcomeRef },
       ],
+      limitsEvaluation: entryEvaluations,
     },
-    {
-      kind: 'routed',
-      submissionId: idOf('xgs', 'launch-trim', envelope),
-      decisionId: idOf('xd', 'launch-trim-decision', envelope),
-      auditId: idOf('xga', 'launch-trim-audit', envelope),
-      requestRef: idOf('gor', 'launch-trim-request', envelope),
-      venue,
-      adapterRef: 'adapter:launch-broker',
-      channelRef: 'chan:launch-main',
-      routedAt: trimAt,
-      order: {
-        clientOrderId: `ord-${envelope.project}-0002`,
-        instrumentId: marketTwo,
-        venueId: venue,
-        side: 'sell',
-        kind: 'limit',
-        quantity: trimQty,
-        price: trimPrice,
-        timeInForce: 'gtc',
-        createdAt: new Date(trimAt).toISOString(),
-      },
-      fill: { state: 'filled', quantity: trimQty, price: trimPrice, notional: trimNotional, fee: trimFee, filledAt: (trimAt + 250) as TimestampMs },
-      decisionBody: desk,
-      decisionRationale: trimRationale,
-      riskChecks: PASSED_PRE_TRADE_CHECKS,
-      evidence: [
-        { kind: 'shadow_session', ref: sessionId },
-        { kind: 'outcome', ref: outcomeRef },
-      ],
-    },
+    ...(trimRow === null ? [] : [trimRow]),
     {
       kind: 'refused',
       submissionId: idOf('xgs', 'launch-refusal', envelope),
@@ -963,6 +1069,7 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
       decisionRationale: refusalRationale,
       riskChecks: [{ dimension: 'risk_limits', outcome: 'refused' }],
       evidence: [{ kind: 'gateway-audit', ref: idOf('xga', 'launch-refusal-audit', envelope) }],
+      limitsEvaluation: concentrationEvaluations,
     },
   ];
 
@@ -1007,8 +1114,9 @@ export function deriveProjectEvidence(envelope: ProjectEvidenceEnvelope): Projec
       experiment: null,
     },
     decisionBody: desk,
-    decisionRationale: `The desk approved the ${entryQty} ${marketOne} entry against the declared capital budget ${capital} and risk budget ${riskBudget}; the simulated fill realized ${realized} against the ${expected} expectation (tolerance ${tolerance}) — the adverse gap the post-mortem ${postMortemRef} attributes to the simulated venue lag.`,
-    riskChecks: PASSED_PRE_TRADE_CHECKS,
+    decisionRationale: outcomeRationale,
+    riskChecks: preTradeChecksOf(entryLimits),
+    limitsEvaluation: entryEvaluations,
     asOf: (t0 + 500) as TimestampMs,
     priorChainHead: '00000000',
   });
