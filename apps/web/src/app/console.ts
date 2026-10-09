@@ -36,8 +36,9 @@ import { systemNowMs } from '../core/clock';
 import type { SectionId } from '../core/sections';
 import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
-import { historyFloorOf, openWorkspace, reduceWorkspace, serializeWorkspaceExport, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
+import { historyFloorOf, openWorkspace, reduceWorkspace, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
 import { isPlaybackSpeedKey, parsePlaybackCustomSpeed, playbackCustomStepMsOf, playbackStepMsOf, TIME_MACHINE_STEP_MS, viewAtOf as viewAtOfTimeMachine } from '../core/timemachine';
+import { runWorkspaceExport } from '../core/export-flow';
 import type { WorkspaceScope } from '../core/tenant';
 import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 import type { ThemeName, ThemeStorage } from '../core/theme';
@@ -2301,67 +2302,34 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // sha-256 event chain, capsules, decisions and read state —
         // not the old v1 workspace dump; core owns the bytes).
         if (kind === 'export-workspace') {
-          // FW-35-A (Round D register §3.1c — M1's 4x + M5's 8-click
-          // silent no-op, path-dependent): THE EXPORT NEVER SILENCES.
-          // The pre-fix branch composed the document INLINE in the
-          // click handler — any failure (a fold that throws over the
-          // current state shape — the chain-of-thought firewall, a
-          // future composition defect) propagated out of the delegated
-          // listener into the browser's console and the user saw
-          // NOTHING: no file, no error, no download toast (exactly the
-          // "worse than an error" class M1 named for compliance packs).
-          // The composition is now guarded: an export either downloads
-          // (the confirmation toast below) or surfaces the honest
-          // failure toast on the same W-15b-r lifecycle — never a
-          // silent no-op.
-          const fileName = `tradrl-workspace-${state.scope.projectId}.json`;
-          try {
-            const bytes = serializeWorkspaceExport(state);
-            const anchor = document.createElement('a') as Element & { click?(): void };
-            const blob = `data:application/json;charset=utf-8,${encodeURIComponent(bytes)}`;
-            anchor.setAttribute('href', blob);
-            anchor.setAttribute('download', fileName);
-            if (typeof anchor.click === 'function') anchor.click();
-            // FW-32-B (b3 — Round A blocker 5, M1/M5/S5's finding: "no
-            // download toast — had to check the Downloads folder"): the
-            // download CONFIRMATION toast, on the W-15b-r lifecycle — the
-            // same surface + token-checked ~5s auto-dismiss the notice
-            // toast rides (never a new chrome pattern), with the manual
-            // close the toast record already carries.
-            const shown = { kind: 'export-download', title: 'Export downloaded', sentence: `${fileName} — verify it any time in Settings: "Verify an export file".` };
-            view = { ...view, toast: shown };
-            render();
-            if (scheduler !== undefined) {
-              scheduler.schedule(5000, () => {
-                // Token-checked, exactly like the notice toast: a manual
-                // close (or a newer toast replacing this one) already
-                // cleared it — the late tick dismisses nothing else.
-                if (view.toast === shown) {
-                  view = { ...view, toast: null };
-                  render();
-                }
-              });
-            }
-          } catch (error) {
-            // THE HONEST FAILURE (FW-35-A): the export could not be
-            // composed — the user learns it HERE, on the toast surface,
-            // with nothing downloaded and nothing claimed. The ~8s
-            // auto-dismiss gives the sentence time to read (the same
-            // token-checked lifecycle, one deliberate duration for an
-            // error that must be read, not skimmed).
-            const message = (error as Error)?.message ?? String(error);
-            const shown = { kind: 'export-failed', title: 'Export failed', sentence: `The workspace export could not be composed (${message}). Nothing was downloaded — refresh the page and try again; if it persists, report this as a defect.` };
-            view = { ...view, toast: shown };
-            render();
-            if (scheduler !== undefined) {
-              scheduler.schedule(8000, () => {
-                if (view.toast === shown) {
-                  view = { ...view, toast: null };
-                  render();
-                }
-              });
-            }
-          }
+          // FW-35-A: THE EXPORT NEVER SILENCES; FW-36-B (E-9): it never
+          // composes an UNREAD workspace either. The orchestration lives in
+          // core/export-flow.ts (the FW-34-B extraction pattern — this
+          // wave's E-9 wiring crossed console.ts's 160 KiB single-file
+          // payload budget); the seams below are the closure state THIS
+          // handler owns, read LIVE at use time so the wait path's
+          // post-refresh world is the world that composes.
+          runWorkspaceExport({
+            state: () => state,
+            simulated: () => view.simulated,
+            // E-9: the current scope's read bundle has COMPLETED (the
+            // launchpad has nothing to read — always ready).
+            scopeReadsComplete: () => state.scope.projectId === LAUNCHPAD_PROJECT_ID || state.scope.projectId === lastFetchedScope,
+            refresh,
+            render,
+            schedule: scheduler === undefined ? undefined : (ms, run) => scheduler.schedule(ms, run),
+            setBusy: (busy) => { view = { ...view, busy }; },
+            showToast: (toast) => { view = { ...view, toast }; },
+            isToastShown: (toast) => view.toast === toast,
+            clearToast: () => { view = { ...view, toast: null }; },
+            download: (fileName, bytes) => {
+              const anchor = document.createElement('a') as Element & { click?(): void };
+              const blob = `data:application/json;charset=utf-8,${encodeURIComponent(bytes)}`;
+              anchor.setAttribute('href', blob);
+              anchor.setAttribute('download', fileName);
+              if (typeof anchor.click === 'function') anchor.click();
+            },
+          });
         }
         // §4.10 the toast dismissal (manual close; the ~5s timer is scheduled on toast show)
         if (kind === 'toast-close') {

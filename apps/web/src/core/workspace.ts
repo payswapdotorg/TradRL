@@ -799,6 +799,19 @@ export const EXPORT_FORMAT = 'tradrl-workspace-export';
 /** The export document's format version: 2 (v1 was the bare serializeWorkspace dump — the R9 findings). */
 export const EXPORT_FORMAT_VERSION = 2;
 
+/**
+ * FW-36-B (Round E register E-8, part 2) — THE PUBLISHED SIMULATED-FLAG
+ * RULE, embedded verbatim in every export's manifest. The labeling lived
+ * only in prose fields before (section badges, disclosure notes), so any
+ * prose-stripping consumer lost the simulated/production boundary
+ * entirely (L3's audit: "airtight at page level; leaks at the row/number
+ * level — exactly where a board-pack number gets copied from"). The rule
+ * states the flag's semantics AND its deliberate placement relative to
+ * the chain's digest rule (the decision is documented in the rule
+ * itself, so anyone holding the file reads it there first):
+ */
+export const EXPORT_SIMULATED_FLAG_RULE = 'simulated flag: every record this export composes — each events[] chain entry, each capsules[] record, each decisions.watch and decisions.gateway record — carries an explicit \'simulated\': true|false field stating whether the console that produced the export ran on the fake/demo adapter (true) or a real API (false); the value is environment truth, identical for every record of one export. DELIBERATELY NON-DIGESTED: the published digest rule covers exactly {seq,tenantId,projectId,payload}, so the flag rides each chain entry as envelope data beside its digest/chainHead (exactly like the entry\'s own kind/at fields) and as a top-level additive field on each capsule/watch/gateway record — the chain and every digest verify identically with or without it, and pre-flag documents verify unchanged (the format version stays 2). The workspace block mirrors the console\'s internal state verbatim and carries no per-record flags; the events\' payloads stay THE EXACT EVENTS AS APPLIED, never modified.';
+
 /** The chain descriptor every export carries (the published algorithm, verbatim). */
 export interface ExportChainDescriptor {
   readonly algorithm: string;
@@ -827,7 +840,38 @@ export interface ExportChainEntry {
   readonly payload: WorkspaceEvent;
   readonly digest: string;
   readonly chainHead: string;
+  /**
+   * FW-36-B (Round E register E-8, part 2): the structured per-record
+   * simulated flag — an explicit `true|false` on every exported event
+   * entry. ADDITIVE (optional — pre-E-8 documents carry none and verify
+   * unchanged); DELIBERATELY NON-DIGESTED (the published digest rule
+   * covers exactly {seq,tenantId,projectId,payload}, so the flag rides
+   * as envelope data beside digest/chainHead — the chain verifies
+   * identically with or without it). See EXPORT_SIMULATED_FLAG_RULE.
+   */
+  readonly simulated?: boolean;
 }
+
+/**
+ * FW-36-B (E-8, part 2): one exported EVIDENCE CAPSULE carrying the
+ * structured per-record simulated flag (the capsule's own fields plus
+ * the additive flag — the digest never covers capsules; they are
+ * envelope records of the document).
+ */
+export type ExportedCapsule = EvidenceCapsule & { readonly simulated?: boolean };
+
+/**
+ * FW-36-B (E-8, part 2): one exported WATCH record carrying the
+ * structured per-record simulated flag (envelope record — not chained).
+ */
+export type ExportedWatchEvent = WatchEvent & { readonly simulated?: boolean };
+
+/**
+ * FW-36-B (E-8, part 2): one exported GATEWAY submission record carrying
+ * the structured per-record simulated flag (envelope record — not
+ * chained; the events' payloads keep the exact records as applied).
+ */
+export type ExportedGatewaySubmission = GatewaySubmissionRecord & { readonly simulated?: boolean };
 
 /** The workspace state as exported (everything but the history — the history IS the events chain). */
 export type ExportedWorkspaceState = Omit<WorkspaceState, 'history'>;
@@ -850,6 +894,15 @@ export interface ExportManifest {
    * is single-project (or empty): nothing to disclose.
    */
   readonly chainScopeNote?: string;
+  /**
+   * FW-36-B (Round E register E-8, part 2): THE PUBLISHED SIMULATED-FLAG
+   * RULE, embedded verbatim (the EXPORT_SIMULATED_FLAG_RULE constant) —
+   * the per-record flag's semantics + its digest-rule placement, so a
+   * reader of the manifest alone knows what every record's `simulated`
+   * field means and why it is not part of any digest. ADDITIVE: pre-E-8
+   * v2 documents carry no such field and still verify.
+   */
+  readonly simulatedFlagRule?: string;
 }
 
 /** THE EXPORT DOCUMENT — everything the console knows about the workspace. */
@@ -877,12 +930,12 @@ export interface WorkspaceExportDocument {
   readonly launchWorld: ProjectGoalWorldSpec | null;
   readonly workspace: ExportedWorkspaceState;
   readonly events: readonly ExportChainEntry[];
-  readonly capsules: readonly EvidenceCapsule[];
+  readonly capsules: readonly ExportedCapsule[];
   readonly decisions: {
     /** The seven-lens decision records, exactly as the Decisions section renders them. */
-    readonly watch: readonly WatchEvent[];
+    readonly watch: readonly ExportedWatchEvent[];
     /** The execution gateway's own routed/refused records (L20 — verbatim, never re-decided). */
-    readonly gateway: readonly GatewaySubmissionRecord[];
+    readonly gateway: readonly ExportedGatewaySubmission[];
   };
   readonly readState: {
     readonly readNoticeIds: readonly string[];
@@ -897,8 +950,20 @@ export interface WorkspaceExportDocument {
  * runtime history's format (after this change they agree by
  * construction; the rebuild is the structural guarantee). An entry
  * that lacks its payload is a loud error, never a fake digest.
+ *
+ * FW-36-B (Round E register E-8, part 2): the composition gains the
+ * STRUCTURED PER-RECORD SIMULATED FLAG — every events[] chain entry,
+ * every capsules[] record, every decisions.watch and decisions.gateway
+ * record carries an explicit `simulated: true|false`. The value is
+ * ENVIRONMENT truth (the `simulated` seam the app layer passes from
+ * the boot options — the same flag the SIMULATED badges render); it
+ * is placed OUTSIDE the digest input on every record (the published
+ * digest rule covers exactly {seq,tenantId,projectId,payload} and is
+ * UNCHANGED), so the chain and every digest verify identically with
+ * or without the flag — the digest-rule decision, documented in the
+ * file itself as EXPORT_SIMULATED_FLAG_RULE.
  */
-export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDocument {
+export function composeWorkspaceExport(state: WorkspaceState, simulated = false): WorkspaceExportDocument {
   const events: ExportChainEntry[] = [];
   let priorHead = CHAIN_GENESIS;
   for (const entry of state.history) {
@@ -907,7 +972,11 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
     }
     const digest = chainDigestOf(entry.seq, entry.tenantId, entry.projectId, entry.payload);
     const chainHead = chainLinkOf(priorHead, digest);
-    events.push({ seq: entry.seq, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload, digest, chainHead });
+    // E-8, part 2: the flag rides as a NON-DIGESTED sibling of the
+    // payload (the entry's own digest/chainHead/kind class) — the
+    // digest rule is untouched, so the rebuilt chain is byte-identical
+    // to a pre-flag export's chain over the same events.
+    events.push({ seq: entry.seq, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload, digest, chainHead, simulated });
     priorHead = chainHead;
   }
 
@@ -920,21 +989,21 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
   // capsule is a lineage leaf, exactly what L2's P19 recompute found).
   // Unprojected: the export is the complete record, and every capsule
   // carries its own availability instant (L4).
-  const capsules: EvidenceCapsule[] = [
+  const capsules: ExportedCapsule[] = [
     ...state.outcomes.map((outcome) => capsuleFromOutcome(state.scope, outcome)),
     ...state.postMortems.map((postMortem) => capsuleFromPostMortem(state.scope, postMortem)),
     ...state.knowledge.map((knowledge) => capsuleFromKnowledge(state.scope, knowledge)),
     ...state.submissions.map((submission) => capsuleFromSubmission(state.scope, submission)),
     ...capsulesFromJobs(state.scope, state.jobs),
-  ];
+  ].map((capsule) => ({ ...capsule, simulated }));
 
   // R9b: the decisions — the seven-lens watch records (agent,
   // capability, evidence, proposal, challenge, risk checks, decision)
   // plus the gateway's own submission records, exactly as the
   // Decisions section renders them.
   const decisions = {
-    watch: watchEventsOf(state),
-    gateway: [...state.submissions],
+    watch: watchEventsOf(state).map((event) => ({ ...event, simulated })),
+    gateway: [...state.submissions].map((submission) => ({ ...submission, simulated })),
   };
 
   // R9b: the read-state — which notices the user has read (the
@@ -986,6 +1055,11 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
       unreadNotices: unreadNoticeIds.length,
     },
     ...(chainScopeNote === undefined ? {} : { chainScopeNote }),
+    // FW-36-B (E-8, part 2): the published simulated-flag rule rides the
+    // manifest on every export (the reader of the manifest alone knows
+    // what every record's `simulated` field means and how it relates to
+    // the digest rules).
+    simulatedFlagRule: EXPORT_SIMULATED_FLAG_RULE,
   };
 
   return {
@@ -1012,9 +1086,15 @@ export function composeWorkspaceExport(state: WorkspaceState): WorkspaceExportDo
   };
 }
 
-/** The exported document's bytes (canonical JSON — the determinism pin applies to the export too). */
-export function serializeWorkspaceExport(state: WorkspaceState): string {
-  return canonicalJson(composeWorkspaceExport(state));
+/**
+ * The exported document's bytes (canonical JSON — the determinism pin
+ * applies to the export too). FW-36-B (E-8, part 2): the `simulated`
+ * seam threads through ADDITIVELY — the app layer's export action passes
+ * the boot options' own flag (the same truth the SIMULATED badges render);
+ * the default (false) keeps every existing caller's shape.
+ */
+export function serializeWorkspaceExport(state: WorkspaceState, simulated = false): string {
+  return canonicalJson(composeWorkspaceExport(state, simulated));
 }
 
 /**
