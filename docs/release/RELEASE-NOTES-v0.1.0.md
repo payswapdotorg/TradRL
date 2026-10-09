@@ -234,3 +234,58 @@ browsers alongside the resident replay). The corrections applied to two
 recorded steps (p7's mobile check — its own data showed 0/35 under 44px; p6's
 "Pause" — the control exists only during playback, verified manually) are
 annotated inline in the per-step records.
+
+## Round E — the extended competitive-adoption measurement + FW-36 (2026-10-09, appended post-cut)
+
+**Round E (the Phase-2 competitive-adoption measurement, the post-FW-35 origin main @ 6e1f88b).**
+9 simulated professionals (3 small / 3 mid / 3 large) executed 51 complex projects
+(13 deep full-lifecycle + 38 fast throughput; agent-browser, fresh first-time sessions,
+UI-only law, honest counts bounded by the single-browser harness ceiling — disclosed)
+against the production origin, with the Bloomberg Terminal / TradingView / QuantConnect
+comparator set (fact-sheet method, disclosed asymmetry). **Main-interface adoption: 0 yes /
+2 leaning / 7 no; switch 0/6/3; would-pilot 9/9.** The audit/export spine verified real by
+every persona (independent SHA-256 recomputations, cohorts 9/9..2010/2010, all heads match);
+fast-project median 92s. Register (evidence-precise, in /home/z/my-project/phase2-roundE-report.md):
+**E-1** the research deliverable a content-free fixed stub (9/9); **E-2** declared limits never
+bind execution (fills to 180x declared caps with `limits: pass`; refusals scripted-only with
+irreconcilable arithmetic; a FALSE "inside the declared capital budget" assertion in a citable
+record at 144x; the constraint vocabulary closed to `outcome`); **E-3** the simulated desk acts
+contrary to mandate; **E-4** no desk permission walls (another session's decision stream readable)
++ demo-tenant contamination unmarked in the UI; **E-5** no consolidated multi-desk oversight;
+**E-6** no external research ingestion; **E-7** pricing unpublished; **E-8** row-level SIMULATED
+boundary leaks; **E-9** the empty-export-after-switch + the verifier input race; **E-10** the
+polish cluster.
+
+**FW-36-A (PR #77, squash 2b3ca7e) — the runtime substance wave (E-1 + E-2).** The research
+deliverable is now COMPOSED from the project's own records (the goal statement, the constraint
+set, the launch world, the promotion lineage — every number verbatim-traceable, NO fabricated
+statistics per the honesty law; two mandates produce observably different text, pinned by test;
+the SIMULATED disclosure preserved; additive payload — kind/specId/version/project verbatim).
+The pre-trade gate now evaluates every DECLARED outcome-scoped constraint at each candidate
+with the true projected book (prior cumulative + candidate = projected, itemized), stamps
+`limits` from the computed verdict (the fixed pass-list deleted), computes the capital-budget
+sentence (breach statement on a true breach — never an uncomputed assertion), sizes the desk
+inside the tightest declared bounds, and teaches loudly what is not gate-evaluable (the accepted
+domains named; EXECUTION/TRADE/RISK scoping disclosed as not-yet-declarable). Three
+unit-coherence defects found and fixed during the pin updates (the camelCase maxDrawdown
+classifier miss; the drawdown fraction-vs-absolute convention — a direct compare would have
+FABRICATED a breach; the concentration's unit-incoherent risk.budget citation). 10 files
++1561/-227, deploy/vercel only.
+
+**FW-36-B (PR #76, squash 30c4e9b) — the disclosure & export-integrity wave (E-8 + E-9).**
+Per-row SIMULATED tags on every blotter fill+refusal row; a structured per-record `simulated`
+flag on every export record (DELIBERATELY NON-DIGESTED — envelope data beside digest/chainHead;
+the rule published as EXPORT_SIMULATED_FLAG_RULE; the chain and every digest verify identically
+with or without it; format version stays 2); DEMO markers on fresh-session Home/nav demo-tenant
+data; the empty-export-after-switch root-caused (the post-adoption reset-state composition
+window) and fixed (scopeReadsComplete + a bounded 3x refresh wait + the honest "Export deferred"
+degradation — never an empty-but-valid payload); the verifier file-input race closed (id-keyed
+staged-FileList capture). The E-9 orchestration extracted to core/export-flow.ts (the payload
+budget restored: 166,583 -> 161,910 bytes). 16 files +1231/-102, apps/web only.
+
+**Merge-result battery (D-023):** 552 files / **8295 passed + 1 skipped** (main 8257 + FW-36-A's
+7 + FW-36-B's 31 — exactly additive, zero regressions); typecheck 0; program:check valid 52/52;
+governance passed. **Deployed + verified live:** production dpl_8RmSWER2petN59my8usHiDbGxJ
+READY @ main 30c4e9b (shell 200; api authn-first 401). Carried forward: E-3 mandate fidelity,
+E-5 the oversight surface, E-6 ingestion, E-7 pricing (commercial), E-10's remaining polish.
+Next: Round F re-measurement (same instrument) on the fixed origin.
