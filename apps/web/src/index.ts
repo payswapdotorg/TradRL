@@ -31,6 +31,7 @@ import { createFetchTransport } from './api/transport';
 import { readStoredTheme, type ThemeStorage } from './core/theme';
 import { browserScheduler } from './core/clock';
 import { consoleSessionHeaders, consoleSessionIdOf, generateConsoleSessionId } from './core/session';
+import { cookieStorageOf, dualStorage, type SeamStorage } from './core/dual-storage';
 
 /** The console's configuration as the static shell carries it (window.__TRADRL_CONSOLE__). */
 export interface ShellConfig {
@@ -144,7 +145,25 @@ export async function bootFromShell(options: {
     // console or the wizard never persists and returning users see it
     // on every boot (the W-10b fix: the seam existed but was never
     // wired here).
-    const storage: ThemeStorage | undefined = typeof localStorage !== 'undefined' ? localStorage : undefined;
+    // THE CONSOLE'S DUAL-HOME STORAGE (FW-36-B, Round E register §3.2 —
+    // total restart recovery): every posture-class write lands in BOTH
+    // localStorage (the primary) AND a long-lived same-origin cookie (the
+    // secondary), and every read prefers the primary and falls back to
+    // the secondary. A restart that keeps EITHER home restores every
+    // arm — the wizard's dismissal, the scope pointer, the Time Machine
+    // posture, the theme, the notice read-marks, and (through the
+    // session id's own dual home) the SESSION-DESKS MEMBERSHIP: the
+    // re-adopted session id is the host's ownership marker, so the
+    // switcher and the palette list this browser's own desks again. A
+    // restart that discards both homes (a wiped session context) is the
+    // disclosed honest limit — the ONE-GESTURE recovery card answers it
+    // (render/model.ts). The same seam shape the console always took:
+    // it never knows which home answered.
+    const primaryStorage: SeamStorage | undefined = typeof localStorage !== 'undefined' ? localStorage : undefined;
+    const cookieHome = typeof document !== 'undefined' ? cookieStorageOf(document) : null;
+    const storage: ThemeStorage | undefined = primaryStorage !== undefined && cookieHome !== null
+      ? dualStorage(primaryStorage, cookieHome)
+      : primaryStorage ?? (cookieHome ?? undefined);
     // THE CONSOLE SESSION (FW-MI-A, MI-D1): the stable per-browser session
     // id — read-or-generated against the same storage seam the theme + the
     // onboarding completion ride (the browser's localStorage, the same

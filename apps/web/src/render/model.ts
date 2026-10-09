@@ -28,10 +28,10 @@
 // bytes (tests pin it). The DOM projector is a mechanical translation
 // of this tree — no logic of its own.
 
-import type { CriterionPredicate, GatewayRefusal, GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
+import type { CriterionPredicate, GatewayRefusal, GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
 import { withRenderGuard } from '../core/clock';
 import { assertVisible, availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfProject, availabilityOfSubmission, projectToView } from '../core/availability';
-import { assertProjectScope, isLaunchpadScope, type WorkspaceScope } from '../core/tenant';
+import { assertProjectScope, isLaunchpadScope, DEMO_PROJECT_ID, type WorkspaceScope } from '../core/tenant';
 import { renderDecimal } from '../core/decimals';
 import { blotterTotalsNoteOf, blotterTotalsOf } from '../core/blotter';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
@@ -41,6 +41,7 @@ import { formatNumberGrouped } from './numbers';
 import {
   EXECUTION_MODES,
   constraintGrammarExample,
+  constraintGrammarVocabularySentence,
   launchDraftProblems,
   launchFieldValidation,
   launchFormValues,
@@ -52,10 +53,11 @@ import type { SectionId } from '../core/sections';
 import { scopedInbox, unreadCount, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, historyFloorOf, type WorkspaceState } from '../core/workspace';
+import { fuzzyScore } from '../core/palette';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
 import type { WatchEvent } from '../core/watch';
 import { timelineBucketsOf, formatTimeUtc, type TimelineEntry } from '../core/timeline';
-import { activeTargetOf, defaultShellView, heroPanel, renderAppShell, settingsPanel, type SheetRef, type ShellView } from './shell';
+import { activeTargetOf, defaultShellView, heroPanel, otherSessionsDesksOf, renderAppShell, settingsPanel, type SheetRef, type ShellView } from './shell';
 // The onboarding wizard's only render is renderAppShell's §4.13 modal
 // overlay (render/shell.ts) — this model never imports it (the W-10b
 // double-render fix: one wizard, one copy, one place).
@@ -704,15 +706,26 @@ function outcomePostMortemCard(scope: WorkspaceScope, postMortem: PostMortemReco
   ]);
 }
 
-/** Render one knowledge entry. D-18 (W-29 wave 2): the card leads with ONE human sentence — the claim in words + the confidence (L2's finding: the lessons rendered as raw field tuples; the Inbox's plain-English copy is the shape to follow) — with the full typed record beneath it. FW-35-B (Round D register §3.5 — S2: "Lessons omits the originating outcome id; must recognize the pmr id across sections"): the card CITES its originating outcome ids (and the post-mortem ids it distilled) — the provenance the record itself carries, rendered where the lesson lives. */
-function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt: number): VNode {
+/** Render one knowledge entry. D-18 (W-29 wave 2): the card leads with ONE human sentence — the claim in words + the confidence (L2's finding: the lessons rendered as raw field tuples; the Inbox's plain-English copy is the shape to follow) — with the full typed record beneath it. FW-35-B (Round D register §3.5 — S2: "Lessons omits the originating outcome id; must recognize the pmr id across sections"): the card CITES its originating outcome ids (and the post-mortem ids it distilled) — the provenance the record itself carries, rendered where the lesson lives. FW-36-B (Round E register §3.10 — S2's reach gap: the FW-35-B fix did not reach HIS surface): a record whose provenance carries the post-mortem refs but NOT the outcome refs resolves the originating outcomes THROUGH the post-mortem records on hand (the pmr's own subject.outcomeRecordRef — the record's own lineage chain: lesson <- post-mortem <- outcome), so the citation reaches the Outcomes row id on every provenance shape. */
+function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt: number, postMortems: readonly PostMortemRecord[]): VNode {
   assertProjectScope(scope, knowledge.record);
   visibleAt(knowledge, availabilityOfKnowledge(knowledge), viewAt, knowledge.record.knowledgeId);
   const claim = knowledge.record.claim;
   const dimension = claim.dimension === null || claim.dimension.length === 0 ? '' : ` (${claim.dimension})`;
   const summary = `A ${claim.kind} lesson the firm treats as ${claim.polarity}${dimension} — confidence ${knowledge.record.confidence}, from ${knowledge.record.evidenceCount} piece${knowledge.record.evidenceCount === 1 ? '' : 's'} of evidence.`;
-  const outcomeRefs = knowledge.record.provenance.outcomeRefs;
   const postMortemRefs = knowledge.record.provenance.postMortemRefs;
+  // FW-36-B: the outcome citation's REACH — the record's own outcomeRefs
+  // first; when the record carries only post-mortem refs, the pmr records
+  // on hand resolve their originating outcomes (the subject outcome each
+  // post-mortem attaches to). A pmr not on hand contributes nothing —
+  // 'none' stays honest, never a fabricated id.
+  const recordOutcomeRefs = knowledge.record.provenance.outcomeRefs;
+  const resolvedOutcomeRefs = recordOutcomeRefs.length > 0
+    ? recordOutcomeRefs
+    : postMortemRefs.flatMap((ref) => {
+        const record = postMortems.find((candidate) => candidate.postMortemId === ref);
+        return record === undefined ? [] : [record.subject.outcomeRecordRef];
+      });
   return v('div', { class: 'card lesson-card', 'data-lesson': knowledge.record.knowledgeId }, [
     v('div', { class: 'card-title' }, [knowledge.record.knowledgeId]),
     v('span', { class: `badge badge-knowledge-${knowledge.status}` }, [knowledge.status]),
@@ -727,7 +740,7 @@ function knowledgeCard(scope: WorkspaceScope, knowledge: ServedKnowledge, viewAt
       // ids (the Outcomes section rows this lesson learned from) and
       // the post-mortem ids it distilled; the record's own provenance,
       // never a guess, 'none' when the record carries none.
-      ['from outcomes', outcomeRefs.length > 0 ? outcomeRefs.join(', ') : 'none'],
+      ['from outcomes', resolvedOutcomeRefs.length > 0 ? resolvedOutcomeRefs.join(', ') : 'none'],
       ['from post-mortems', postMortemRefs.length > 0 ? postMortemRefs.join(', ') : 'none'],
       ['valid from', formatInstantUtc(knowledge.record.validity.from)],
       ['valid to', formatInstantUtc(knowledge.record.validity.to)],
@@ -942,6 +955,54 @@ export function homeFresh(state: WorkspaceState): boolean {
 }
 
 /**
+ * FW-36-B (Round E register §3.2 — total restart recovery): THE
+ * ONE-GESTURE RECOVERY CARD. A browser with NO client posture (a
+ * first run, or a restart that discarded the web-storage state — the
+ * personas' measured path: the wizard re-summoned, the scope reverted,
+ * the own desk behind the other-sessions wall, the theme reverted;
+ * 3-7 recovery gestures) gets ONE card on Home: every desk in this
+ * workspace stays reachable, and if one of them is yours, ONE click
+ * reopens it (the adoption rides the same project-adopted the switcher
+ * does; the click itself dismisses the wizard under the FW-35-B
+ * acting-past law, and the posture's claimedDesks arm keeps the
+ * re-adopted desk in this browser's own default listing from then
+ * on). The copy is honest for BOTH readers: a first-run browser is
+ * told the demo desk + the launch wizard are its path; a wiped
+ * browser is told what the wipe cost (theme + read marks lived in
+ * this browser's storage). Renders only when other sessions' desks
+ * exist to offer (a solo workspace renders nothing).
+ */
+function recoveryCard(state: WorkspaceState, view: ShellView): VNode | null {
+  const hidden = otherSessionsDesksOf(state, DEMO_PROJECT_ID, view.claimedDesks);
+  if (hidden.length === 0 || !view.returningCandidate) return null;
+  const filter = view.recoveryFilter.trim().toLowerCase();
+  const matches = filter.length === 0 ? hidden : hidden.filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), filter) >= 0);
+  const offered = matches.slice(0, 8);
+  return v('div', { class: 'card recovery-card', 'data-recovery': 'returning', 'data-recovery-hidden': String(hidden.length) }, [
+    v('div', { class: 'card-title' }, ['Welcome back?']),
+    v('p', { class: 'card-note' }, ['This browser carries no saved posture — a first visit, or a browser whose stored state was cleared. Every record is safe either way: every desk in this workspace stays reachable.']),
+    v('input', {
+      class: 'recovery-filter',
+      type: 'text',
+      value: view.recoveryFilter,
+      placeholder: 'Find your desk by name or id…',
+      'aria-label': 'Filter the recovery desk list by name or id',
+      'data-recovery-filter': 'true',
+      autocomplete: 'off',
+    }, []),
+    ...(offered.length === 0
+      ? [v('p', { class: 'card-note' }, ['No desk in this workspace matches — clear the filter to see all of them.'])]
+      : [v('div', { class: 'tm-playback' }, offered.map((project) => v('button', {
+          class: 'tm-button',
+          'data-action': 'recovery-adopt-desk',
+          'data-desk-adopt': project.id,
+          type: 'button',
+        }, [`${project.name} — ${project.id}`])))]),
+    v('p', { class: 'card-note' }, [`First visit? The shared demo desk and the launch wizard are your path. Returning after a cleared browser? One click reopens your desk; theme and read marks lived in this browser’s storage and start fresh (a cleared browser’s honest cost — ${hidden.length} desk${hidden.length === 1 ? '' : 's'} in this workspace, yours among them, stay reachable).`]),
+  ]);
+}
+
+/**
  * THE HOME PANEL (§3: the hero IS the page) — the overview surface:
  * the hero, the KPI tiles (§4.1), the rich stat card (§4.2) and the
  * activity timeline (§4.6, from the notice fold — projected by
@@ -950,7 +1011,7 @@ export function homeFresh(state: WorkspaceState): boolean {
  * (§4.12), the ErrorState when the API is unreachable with nothing
  * known, and a quiet hint when there is no activity yet.
  */
-function homePanel(state: WorkspaceState, viewAt: number): VNode {
+function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNode {
   const fresh = homeFresh(state);
   // THE HERO'S LAUNCH AFFORDANCE (the J3 entry, Home shape): the
   // primary flow's own CTA when nothing is running; a resume hint
@@ -980,9 +1041,15 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
       ? v('p', { class: 'hero-note', 'data-hero-launch': launch.phase }, ['A launch is in progress — details below.'])
       : v('button', { class: 'hero-cta', 'data-action': 'launch-start', type: 'button' }, ['Describe your goal']);
   const hero = heroPanel(heroCta);
-  if (state.connection === 'connecting' && fresh) {
-    return v('section', { class: 'panel home', 'data-section': 'home' }, [hero, loadingState('stat-grid')]);
-  }
+  // FW-36-B (Round E register §3.6 — first-paint transients, the warm
+  // path too): the loading skeleton renders while a read bundle for
+  // THIS scope is in flight (the boot, every scope adoption) and the
+  // workspace is still fresh — the pre-fix window rendered zeros and
+  // 'Not compiled yet' for ~2s (cold) and again on every warm switch,
+  // the exact perception-of-record-loss class M1/S1/M3 filed. The
+  // OFFLINE gate stays FIRST: an unreachable API with nothing known
+  // renders its ErrorState even while reads are still in flight (the
+  // J9 law — a failed read is never a loading state).
   if (state.connection === 'offline' && fresh) {
     const latest = state.degraded.length === 0 ? undefined : state.degraded[state.degraded.length - 1];
     return v('section', { class: 'panel home', 'data-section': 'home' }, [
@@ -991,6 +1058,9 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
         technical: latest === undefined ? undefined : `${latest.route} — ${latest.message}`,
       }),
     ]);
+  }
+  if ((state.connection === 'connecting' || view.hydrating) && fresh) {
+    return v('section', { class: 'panel home', 'data-section': 'home' }, [hero, loadingState('stat-grid')]);
   }
   const jobs = projectToView(state.jobs, viewAt, availabilityOfJob);
   const outcomes = projectToView(state.outcomes, viewAt, availabilityOfOutcome);
@@ -1005,15 +1075,20 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
   const unread = unreadCount(scopedNotices);
   const running = jobs.filter((job) => job.status === 'running').length;
   const snapshot = snapshots.length > 0 ? snapshots[0] : null;
+  // FW-36-B (§3.6): the unread tile states LOADING while a read bundle
+  // is in flight and no notice has landed — never a '0' that reads like
+  // a cleared inbox (the bell renders the same marker; the
+  // triple-agreement law holds at the marker too).
+  const unreadPending = view.hydrating && scopedNotices.notices.length === 0;
   const tiles = statGrid([
     statCard({ icon: 'pulse', label: 'ACTIVE JOBS', value: String(running), delta: `${jobs.length} total` }),
     statCard({ icon: 'chart', label: 'OUTCOMES', value: String(outcomes.length) }),
     statCard({ icon: 'box', label: 'EVIDENCE CAPSULES', value: String(capsuleCount) }),
-    statCard({ icon: 'inbox', label: 'UNREAD NOTICES', value: String(unread), ok: unread === 0 }),
+    statCard({ icon: 'inbox', label: 'UNREAD NOTICES', value: unreadPending ? '…' : String(unread), ok: unread === 0 }),
   ]);
   const organization = richStatCard({
     eyebrow: 'ORGANIZATION',
-    value: snapshot === null ? 'Not compiled yet' : snapshot.status,
+    value: snapshot === null ? (view.hydrating ? 'loading…' : 'Not compiled yet') : snapshot.status,
     ...(snapshot === null ? {} : { qualifier: `observed ${formatTimeUtc(snapshot.at)}` }),
     sentence: 'The compiled team working your goal.',
     details: [
@@ -1038,6 +1113,10 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
     hero,
     tiles,
     organization,
+    // FW-36-B (§3.2 — total restart recovery): the one-gesture
+    // returning-browser desk picker (null when there is nothing to
+    // offer or this browser carries its posture).
+    ...(recoveryCard(state, view) === null ? [] : [recoveryCard(state, view) as VNode]),
     v('div', { class: 'home-block' }, [v('h2', { class: 'section-heading' }, ['Recent activity']), activity]),
   ]);
 }
@@ -1620,7 +1699,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       const knowledgeProjected = projectToView(state.knowledge, viewAt, availabilityOfKnowledge);
       const postMortemProjected = projectToView(state.postMortems, viewAt, availabilityOfPostMortem);
       return v('section', { class: 'panel', 'data-section': 'lessons' }, [
-        ...knowledgeProjected.map((knowledge) => knowledgeCard(scope, knowledge, viewAt)),
+        ...knowledgeProjected.map((knowledge) => knowledgeCard(scope, knowledge, viewAt, state.postMortems)),
         ...postMortemProjected.map((postMortem) => postMortemCard(scope, postMortem, viewAt)),
         ...(knowledgeProjected.length + postMortemProjected.length === 0 ? [sectionEmpty('lessons')] : []),
       ]);
@@ -1702,7 +1781,7 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
       ...labeledInput({ label: 'Horizon ends', name: 'horizonEndsAt', value: form.horizonEndsAt, type: 'datetime-local', required: true, hint: 'UTC date and time — the horizon must end after it starts.', validation: validationOf('horizonEndsAt') }),
       ...labeledSelect({ label: 'Execution mode', name: 'executionMode', value: form.executionMode, required: true, hint: 'Simulation is the safe default — live execution goes through the gateway.', choices: EXECUTION_MODES.map((mode) => [mode, mode] as const), validation: validationOf('executionMode') }),
       ...labeledInput({ label: 'Preferences', name: 'preferences', value: form.preferences, hint: 'Optional key=value pairs.', validation: validationOf('preferences') }),
-      ...labeledInput({ label: 'Constraints', name: 'constraints', value: form.constraints, hint: `Optional executable limits, e.g. ${constraintGrammarExample()}.`, validation: validationOf('constraints') }),
+      ...labeledInput({ label: 'Constraints', name: 'constraints', value: form.constraints, hint: `Optional executable limits, e.g. ${constraintGrammarExample()}. ${constraintGrammarVocabularySentence()}`, validation: validationOf('constraints') }),
     ];
     const fieldsByStep: Record<string, readonly VNode[]> = { goal: goalFields, budget: budgetFields, markets: marketFields, world: worldFields };
     const stepFields = fieldsByStep[launch.step] ?? [];
@@ -1832,7 +1911,7 @@ export function renderConsoleModel(state: WorkspaceState, at: number, view: Shel
     const viewAt = viewAtOf(state);
     const activeTarget = activeTargetOf(state, view);
     const main: VNode = activeTarget === 'home'
-      ? homePanel(state, viewAt)
+      ? homePanel(state, viewAt, view)
       : activeTarget === 'inbox'
         ? inboxPanel(state, viewAt)
         : activeTarget === 'settings'

@@ -60,6 +60,28 @@
 // gesture, synchronously persisted — the re-summoned wizard costs ZERO
 // manual recoveries where Round D's filers paid three to five.
 //
+// FW-36-B (Round E register §3.2) — THE DIVERGENCE'S OWN ROOT CAUSE,
+// MEASURED: L4's "profile intact" restart still reset 4/4 arms while
+// the tests pass because the two paths restart DIFFERENT THINGS. The
+// tests re-boot against the SAME injected storage map — a
+// storage-KEEPING restart. The eval harness's browser restart (the
+// session's close/reopen) discards the session's whole web-storage
+// state — localStorage AND cookies — while the host-level artifacts
+// (downloads, the profile directory) survive, which is exactly the
+// filers' split: reload (same browser store) survives everything;
+// restart (a discarded store) resets every arm AT ONCE including the
+// minutes-old theme. The product's answer on the app side is layered:
+// (1) the DUAL HOME (core/dual-storage.ts — every posture write also
+// lands in a long-lived same-origin cookie; a restart that keeps
+// EITHER home restores every arm, the session-desks membership
+// included through the re-adopted session id); (2) the CLAIMED-DESKS
+// arm below (a browser that re-adopts a desk keeps it in its OWN
+// default listing, whatever the host's session marker says); (3) the
+// ONE-GESTURE RECOVERY CARD for the both-homes-discarded restart (the
+// disclosed honest limit — a new browser identity by construction).
+// The recovery GESTURE COUNT is the metric: zero when either home
+// survives, one (pick your desk) when neither does.
+//
 // THE LEGACY FALLBACK: browsers that already carry the pre-FW-34-B
 // keys (tradrl_onboarded, tradrl_scope_project) migrate transparently
 // — the record reads them when it carries none of its own, and every
@@ -119,6 +141,17 @@ export interface ConsoleSessionPosture {
   readonly scopeProjectId: string | null;
   /** The Time Machine's posture (mode + speed + the selected instant). */
   readonly timeMachine: PostureTimeMachine;
+  /**
+   * FW-36-B (Round E register §3.2 — the session-desks membership arm):
+   * the desks THIS BROWSER adopted (a switch, a palette jump, a recovery
+   * pick), most-recent-first, capped. The switcher's and the palette's
+   * DEFAULT listing folds them in beside the host's own session-owned
+   * rows — a browser that re-adopted its desk after a storage discard
+   * keeps it in its OWN listing, never behind the other-sessions wall
+   * (the host's marker still says tenant-available; the client's own
+   * claim is the honest complement: "this browser's desks").
+   */
+  readonly claimedDesks: readonly string[];
 }
 
 /** The posture's own shape law for a stored mode value. */
@@ -126,9 +159,18 @@ function isStoredMode(value: unknown): value is PostureTimeMachine['mode'] {
   return value === 'live' || value === 't-minus' || value === 'timestamp';
 }
 
+/** The claimed-desks arm's own cap (most-recent-first; the oldest claim falls off the end). */
+export const CLAIMED_DESKS_CAP = 24;
+
+/** The claimed-desks fold: the adopted desk moves to the front, deduped, capped (never reorders untouched claims). */
+export function claimDesk(claimed: readonly string[], projectId: string): readonly string[] {
+  const next = [projectId, ...claimed.filter((id) => id !== projectId)];
+  return next.slice(0, CLAIMED_DESKS_CAP);
+}
+
 /** The default posture (a first-run browser: the wizard shows, no scope, live at the anchor, the 1x step). */
 export function initialConsolePosture(): ConsoleSessionPosture {
-  return { onboarded: false, scopeProjectId: null, timeMachine: { speed: '1x', freeSpeed: '', mode: 'live', viewAt: null } };
+  return { onboarded: false, scopeProjectId: null, timeMachine: { speed: '1x', freeSpeed: '', mode: 'live', viewAt: null }, claimedDesks: [] };
 }
 
 /**
@@ -146,7 +188,7 @@ export function parseStoredPosture(value: string | null): ConsoleSessionPosture 
     return null;
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
-  const record = parsed as { readonly onboarded?: unknown; readonly scopeProjectId?: unknown; readonly timeMachine?: unknown };
+  const record = parsed as { readonly onboarded?: unknown; readonly scopeProjectId?: unknown; readonly timeMachine?: unknown; readonly claimedDesks?: unknown };
   if (typeof record.onboarded !== 'boolean') return null;
   if (record.scopeProjectId !== null && typeof record.scopeProjectId !== 'string') return null;
   if (typeof record.scopeProjectId === 'string' && record.scopeProjectId.length === 0) return null;
@@ -156,10 +198,19 @@ export function parseStoredPosture(value: string | null): ConsoleSessionPosture 
   if (typeof timeMachine.freeSpeed !== 'string') return null;
   if (!isStoredMode(timeMachine.mode)) return null;
   if (timeMachine.viewAt !== null && (typeof timeMachine.viewAt !== 'number' || !Number.isFinite(timeMachine.viewAt) || !Number.isInteger(timeMachine.viewAt))) return null;
+  // FW-36-B: the claimed-desks arm — additive and optional (a pre-FW-36-B
+  // record carries none and reads as the empty claim set); a malformed
+  // arm degrades to empty, never to a refused record.
+  let claimedDesks: readonly string[] = [];
+  if (record.claimedDesks !== undefined) {
+    if (!Array.isArray(record.claimedDesks)) return null;
+    claimedDesks = record.claimedDesks.filter((id): id is string => typeof id === 'string' && id.length > 0);
+  }
   return {
     onboarded: record.onboarded,
     scopeProjectId: typeof record.scopeProjectId === 'string' && record.scopeProjectId.length > 0 ? record.scopeProjectId : null,
     timeMachine: { speed: timeMachine.speed, freeSpeed: timeMachine.freeSpeed, mode: timeMachine.mode, viewAt: timeMachine.viewAt },
+    claimedDesks,
   };
 }
 
@@ -206,7 +257,7 @@ export function readStoredPosture(storage: PostureStorage): ConsoleSessionPostur
     legacyScope = null;
   }
   if (!legacyOnboarded && legacyScope === null) return null;
-  return { ...initialConsolePosture(), onboarded: legacyOnboarded, scopeProjectId: legacyScope };
+  return { ...initialConsolePosture(), onboarded: legacyOnboarded, scopeProjectId: legacyScope, claimedDesks: legacyScope === null ? [] : [legacyScope] };
 }
 
 /**

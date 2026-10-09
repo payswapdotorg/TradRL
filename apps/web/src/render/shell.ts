@@ -125,6 +125,32 @@ export interface ShellView {
    * desk stays reachable, one explicit disclosure away).
    */
   readonly showAllDesks: boolean;
+  /**
+   * FW-36-B (Round E register §3.6 — first-paint transients, the warm
+   * path too): true while a read bundle for the CURRENT scope is in
+   * flight (boot + every scope adoption). The Home stat tiles render
+   * the loading skeleton and the unread surfaces render '…' while a
+   * FRESH workspace hydrates — never a misleading zero/'Not compiled'
+   * window that reads like record loss.
+   */
+  readonly hydrating: boolean;
+  /**
+   * FW-36-B (Round E register §3.2 — total restart recovery): true when
+   * this boot found NO client posture (a first-run browser, or one
+   * whose web-storage state was discarded by the restart — the
+   * personas' measured path). Home renders the ONE-GESTURE recovery
+   * card for exactly this browser: the returning desk picker.
+   */
+  readonly returningCandidate: boolean;
+  /** The recovery card's live filter text (FW-36-B §3.2 — narrows the desk picker by fuzzy name/id). */
+  readonly recoveryFilter: string;
+  /**
+   * FW-36-B (§3.2 — the session-desks membership arm): the desks THIS
+   * browser adopted (the posture record's claimedDesks, most-recent
+   * first). The switcher's and the palette's DEFAULT listing folds
+   * them in beside the host's own session-owned rows.
+   */
+  readonly claimedDesks: readonly string[];
 }
 
 /** A reference to the record a detail sheet shows (§4.5a). */
@@ -150,7 +176,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null, scrubBounds: null, playbackSpeed: '1x', playbackCustomSpeed: '', playbackCustomSpeedError: null, showAllDesks: false };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null, scrubBounds: null, playbackSpeed: '1x', playbackCustomSpeed: '', playbackCustomSpeedError: null, showAllDesks: false, hydrating: false, returningCandidate: false, recoveryFilter: '', claimedDesks: [] };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */
@@ -255,8 +281,8 @@ function refreshMark(): VNode {
 }
 
 /** One navigation item (a section item ALSO carries data-section for T042's interaction law; the Inbox item is the §4.10 bell with the unread badge — visible from every page). */
-function navItem(target: ShellTarget, active: boolean, unread: number): VNode {
-  if (target === 'inbox') return notificationBell(unread);
+function navItem(target: ShellTarget, active: boolean, unread: number, unreadPending = false): VNode {
+  if (target === 'inbox') return notificationBell(unread, 'inbox', unreadPending);
   const attrs: Record<string, string> = {
     class: `nav-item${active ? ' active' : ''}`,
     'data-target': target,
@@ -273,10 +299,10 @@ function scopedUnreadCount(state: WorkspaceState): number {
 }
 
 /** The grouped navigation (aria-label="Primary", the four charter groups in order; the bell carries the unread count). */
-function shellNav(activeTarget: ShellTarget, unread: number): VNode {
+function shellNav(activeTarget: ShellTarget, unread: number, unreadPending = false): VNode {
   return v('nav', { class: 'shell-nav', 'aria-label': 'Primary' }, NAV_GROUPS.map((group) => v('div', { class: 'nav-group', 'data-nav-group': group.label }, [
     v('div', { class: 'nav-group-label' }, [group.label]),
-    ...group.targets.map((target) => navItem(target, target === activeTarget, unread)),
+    ...group.targets.map((target) => navItem(target, target === activeTarget, unread, unreadPending)),
   ])));
 }
 
@@ -403,7 +429,7 @@ export function switcherOptions(state: WorkspaceState, view: ShellView): readonl
   // the "all desks in this workspace" expander in the row below): the
   // durable registry was the FW-31-B win, and it stays reachable —
   // the default view is hygienic, not blind.
-  const listing = view.showAllDesks ? state.projectDirectory : sessionOwnDesksOf(state, DEMO_PROJECT_ID);
+  const listing = view.showAllDesks ? state.projectDirectory : sessionOwnDesksOf(state, DEMO_PROJECT_ID, view.claimedDesks);
   const filter = view.projectFilter.trim().toLowerCase();
   if (filter.length === 0) return listing;
   return listing.filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), filter) >= 0);
@@ -422,17 +448,18 @@ export { isSessionOwnDesk } from '../core/tenant';
  * session-owned + the unmarked rows + the shared demo project, every
  * session's teaching desk).
  */
-export function sessionOwnDesksOf(state: WorkspaceState, demoProjectId: string): readonly ProjectRecord[] {
-  return sessionOwnDesksOfDirectory(state.projectDirectory, demoProjectId);
+export function sessionOwnDesksOf(state: WorkspaceState, demoProjectId: string, claimedDeskIds: readonly string[] = []): readonly ProjectRecord[] {
+  return sessionOwnDesksOfDirectory(state.projectDirectory, demoProjectId, claimedDeskIds);
 }
 
 /**
  * FW-34-B (§3.8): the desks the DEFAULT listing hides — OTHER console
  * sessions' desks in this shared workspace (core/tenant.ts's own fold —
- * the explicit disclosure's own count).
+ * the explicit disclosure's own count). FW-36-B (§3.2): a CLAIMED desk
+ * (this browser's posture record) is never hidden.
  */
-export function otherSessionsDesksOf(state: WorkspaceState, demoProjectId: string): readonly ProjectRecord[] {
-  return otherSessionsDesksOfDirectory(state.projectDirectory, demoProjectId);
+export function otherSessionsDesksOf(state: WorkspaceState, demoProjectId: string, claimedDeskIds: readonly string[] = []): readonly ProjectRecord[] {
+  return otherSessionsDesksOfDirectory(state.projectDirectory, demoProjectId, claimedDeskIds);
 }
 
 /**
@@ -444,7 +471,7 @@ function hiddenDeskMatchesOf(state: WorkspaceState, view: ShellView): number {
   if (view.showAllDesks || view.palette === null) return 0;
   const query = view.palette.query.trim().toLowerCase();
   if (query.length === 0) return 0;
-  return otherSessionsDesksOf(state, DEMO_PROJECT_ID)
+  return otherSessionsDesksOf(state, DEMO_PROJECT_ID, view.claimedDesks)
     .filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), query) >= 0)
     .length;
 }
@@ -458,10 +485,10 @@ function hiddenDeskMatchesOf(state: WorkspaceState, view: ShellView): number {
 export function switcherCountLine(state: WorkspaceState, view: ShellView): string | null {
   const trimmed = view.projectFilter.trim();
   if (trimmed.length === 0) return null;
-  const listing = view.showAllDesks ? state.projectDirectory : sessionOwnDesksOf(state, DEMO_PROJECT_ID);
+  const listing = view.showAllDesks ? state.projectDirectory : sessionOwnDesksOf(state, DEMO_PROJECT_ID, view.claimedDesks);
   const matches = switcherOptions(state, view).length;
   if (matches === 0 && !view.showAllDesks) {
-    const hidden = otherSessionsDesksOf(state, DEMO_PROJECT_ID).filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), trimmed.toLowerCase()) >= 0).length;
+    const hidden = otherSessionsDesksOf(state, DEMO_PROJECT_ID, view.claimedDesks).filter((project) => fuzzyScore(`${project.id} ${project.name}`.toLowerCase(), trimmed.toLowerCase()) >= 0).length;
     return hidden > 0
       ? `No desk of yours matches “${trimmed}” — ${hidden} other desk${hidden === 1 ? '' : 's'} in this workspace do. Expand “all desks in this workspace” below to search them.`
       : `No project matches “${trimmed}” — clear the filter to see all ${listing.length}.`;
@@ -584,7 +611,7 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
       // workspace state). The expander states its own counts both ways:
       // collapsed names the hidden count; expanded states what is
       // showing and offers the way back.
-      ...(otherSessionsDesksOf(state, DEMO_PROJECT_ID).length === 0 ? [] : [v('button', {
+      ...(otherSessionsDesksOf(state, DEMO_PROJECT_ID, view.claimedDesks).length === 0 ? [] : [v('button', {
         class: 'empty-action switcher-all-desks',
         'data-action': 'switcher-all-desks',
         'data-all-desks': view.showAllDesks ? 'expanded' : 'collapsed',
@@ -592,7 +619,7 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
         'aria-expanded': view.showAllDesks ? 'true' : 'false',
       }, [view.showAllDesks
         ? `Showing all ${state.projectDirectory.length} desks in this workspace (yours and other sessions\u2019) — back to my desks`
-        : `${otherSessionsDesksOf(state, DEMO_PROJECT_ID).length} other desks in this workspace belong to other sessions — show all desks`])]),
+        : `${otherSessionsDesksOf(state, DEMO_PROJECT_ID, view.claimedDesks).length} other desks in this workspace belong to other sessions — show all desks`])]),
     ]),
     // THE PRICING DISCLOSURE (W-19, the S5 CFO finding — "zero pricing
     // information" was a stated adoption blocker; QuantConnect's only
@@ -731,7 +758,11 @@ export function renderAppShell(
         v('span', { class: 'brand-word' }, ['TradRL']),
       ]),
       paletteAffordance(),
-      shellNav(activeTarget, scopedUnreadCount(state)),
+      // FW-36-B (§3.6 — the first-paint transient): while a read bundle
+      // is in flight and no notice has landed yet, the bell states
+      // LOADING — never a 'no unread notices' flash that reads like a
+      // lost inbox (M3's reload finding).
+      shellNav(activeTarget, scopedUnreadCount(state), view.hydrating && scopedInbox(state.inbox, state.scope).notices.length === 0),
       connectionZone(state, view, at),
     ]),
     // §6 J12 (the W-17b fix): the content region is the <main> landmark
@@ -752,7 +783,7 @@ export function renderAppShell(
       ]),
     ]),
     // §4.14 the palette overlay (the app layer owns keys + Enter)
-    ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: scopedUnreadCount(state), hiddenDeskMatches: hiddenDeskMatchesOf(state, view), allDesks: view.showAllDesks })]),
+    ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: scopedUnreadCount(state), hiddenDeskMatches: hiddenDeskMatchesOf(state, view), allDesks: view.showAllDesks, hiddenDesksTotal: view.showAllDesks ? 0 : otherSessionsDesksOf(state, DEMO_PROJECT_ID, view.claimedDesks).length })]),
     // §4.13 the onboarding wizard — THE ONE COPY: the fixed-position
     // modal overlay directly under the shell root (render/model.ts
     // renders the main content normally behind it; it never renders

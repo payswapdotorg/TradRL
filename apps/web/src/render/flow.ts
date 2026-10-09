@@ -501,12 +501,17 @@ export const NOTICE_SENTENCES: Readonly<Record<NoticeKind, string>> = Object.fre
 });
 
 /** The bell with the unread-count badge (§4.10) — rendered by the shell on every page. */
-export function notificationBell(unread: number, target = 'inbox'): VNode {
+export function notificationBell(unread: number, target = 'inbox', unreadPending = false): VNode {
   return v('button', {
     class: `nav-item bell${unread > 0 ? ' has-unread' : ''}`,
     'data-target': target,
     type: 'button',
-    'aria-label': unread > 0 ? `Inbox — ${unread} unread notice${unread === 1 ? '' : 's'}` : 'Inbox — no unread notices',
+    // FW-36-B (Round E register §3.6 — the first-paint transient): while
+    // a read bundle is in flight and no notice has landed yet, the bell
+    // states LOADING — never a 'no unread notices' flash that reads like
+    // a lost inbox (M3's reload finding).
+    'aria-label': unreadPending ? 'Inbox — notices loading' : unread > 0 ? `Inbox — ${unread} unread notice${unread === 1 ? '' : 's'}` : 'Inbox — no unread notices',
+    ...(unreadPending ? { 'data-unread-pending': 'true' } : {}),
   }, [
     iconOf('inbox', 'nav-icon'),
     v('span', { class: 'nav-item-label' }, ['Inbox']),

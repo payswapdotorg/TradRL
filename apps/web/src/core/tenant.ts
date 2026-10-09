@@ -67,18 +67,37 @@ export function isSessionOwnDesk(project: ProjectRecord): boolean {
  * marker says). This is the DEFAULT listing law the switcher, the
  * palette and the boot-restore all ride; the whole registry stays one
  * explicit disclosure away (never lost — the FW-31-B durability win).
+ *
+ * FW-36-B (Round E register §3.2 — the session-desks membership arm):
+ * the CLAIMED desks (this browser's posture record — the desks it
+ * adopted through a switch, a palette jump or the recovery card) fold
+ * in beside the host's own session-owned rows. A browser that
+ * re-adopted its desk after a storage discard keeps it in its OWN
+ * default listing, never behind the other-sessions wall: the host's
+ * marker still says tenant-available (the owning session id is the
+ * host's truth), and the client's own claim is the honest complement —
+ * "the desks this browser chose". Absent claims (the default) keep
+ * the listing law byte-identical.
  */
-export function sessionOwnDesksOf(directory: readonly ProjectRecord[], demoProjectId: string): readonly ProjectRecord[] {
-  return directory.filter((project) => project.id === demoProjectId || isSessionOwnDesk(project));
+export function sessionOwnDesksOf(directory: readonly ProjectRecord[], demoProjectId: string, claimedDeskIds: readonly string[] = []): readonly ProjectRecord[] {
+  if (claimedDeskIds.length === 0) {
+    return directory.filter((project) => project.id === demoProjectId || isSessionOwnDesk(project));
+  }
+  return directory.filter((project) => project.id === demoProjectId || isSessionOwnDesk(project) || claimedDeskIds.includes(project.id));
 }
 
 /**
  * FW-34-B (§3.8): the desks the default listing hides — OTHER console
  * sessions' desks in this shared workspace (the explicit disclosure's
- * own count, never a silent wall).
+ * own count, never a silent wall). FW-36-B: a CLAIMED desk (this
+ * browser's posture record) is NOT hidden — the claim IS the browser's
+ * own listing law.
  */
-export function otherSessionsDesksOf(directory: readonly ProjectRecord[], demoProjectId: string): readonly ProjectRecord[] {
-  return directory.filter((project) => project.id !== demoProjectId && !isSessionOwnDesk(project));
+export function otherSessionsDesksOf(directory: readonly ProjectRecord[], demoProjectId: string, claimedDeskIds: readonly string[] = []): readonly ProjectRecord[] {
+  if (claimedDeskIds.length === 0) {
+    return directory.filter((project) => project.id !== demoProjectId && !isSessionOwnDesk(project));
+  }
+  return directory.filter((project) => project.id !== demoProjectId && !isSessionOwnDesk(project) && !claimedDeskIds.includes(project.id));
 }
 
 /** True when a project id is the pre-launch launchpad placeholder (no project exists yet — the primary flow starts here). */

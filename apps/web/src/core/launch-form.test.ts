@@ -28,6 +28,7 @@ import {
   blankLaunchDraft,
   editLaunchField,
   firstBadConstraintEntry,
+  constraintGrammarVocabularySentence,
   formatHorizonInstant,
   launchFieldValidation,
   launchFieldValue,
@@ -160,9 +161,10 @@ describe('launch-form: the per-field §4.11 validation', () => {
       ['horizonEndsAt', 'never', 'Enter the horizon as a UTC date and time, e.g. 2026-01-15T09:30:00 (epoch milliseconds also parse).'],
       ['executionMode', 'paper', 'Choose an execution mode.'],
       ['preferences', 'broken', 'Preferences are key=value pairs, e.g. rebalance=daily.'],
-      // D-6b (W-25C): the constraint message NAMES the offending entry —
-      // which one (1-based) + what it says + the expected grammar.
-      ['constraints', 'nope', 'Constraints entry 1 ("nope") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2.'],
+      // D-6b (W-25C) + FW-36-B (§3.7 — S2's 3 fix cycles): the constraint
+      // message NAMES the offending entry, the REASON it failed, and the
+      // WHOLE allowed vocabulary (domains + kinds + the subject shape).
+      ['constraints', 'nope', `Constraints entry 1 ("nope") is malformed — the entry must have 5 or 6 colon-separated fields (id:domain:subject:kind:bound[:severity]). Each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2. ${constraintGrammarVocabularySentence()}`],
     ];
     for (const [field, value, message] of cases) {
       const values = { ...base, [field]: value } as LaunchFormValues;
@@ -183,16 +185,24 @@ describe('launch-form: the per-field §4.11 validation', () => {
     expect(launchFieldValidation(epochForm, 'horizonStartsAt')).toBe('The horizon must end after it starts.');
   });
 
-  it('D-6b: the constraint validation names the OFFENDING entry — a mixed list points at the broken one (index + raw text), the good ones stay unnamed', () => {
+  it('D-6b + FW-36-B §3.7: the constraint validation names the OFFENDING entry AND ITS REASON — a mixed list points at the broken one, the message discloses the allowed vocabulary (S2\'s 3 fix cycles, closed)', () => {
     const base = validValues();
     const good = 'c-1:outcome:risk.maxDrawdown:limit.max:0.2';
     const alsoGood = 'c-2:action:position.size:limit.max:10:advisory';
     const broken = 'c-3:outcome:risk.maxDrawdown:limit.max:abc'; // not a number
     const values = { ...base, constraints: `${good}, ${alsoGood}, ${broken}` } as LaunchFormValues;
-    expect(firstBadConstraintEntry(values.constraints)).toEqual({ index: 3, entry: broken });
+    expect(firstBadConstraintEntry(values.constraints)).toEqual({ index: 3, entry: broken, reason: 'the bound "abc" is not a finite number' });
     expect(launchFieldValidation(values, 'constraints')).toBe(
-      `Constraints entry 3 ("${broken}") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2.`,
+      `Constraints entry 3 ("${broken}") is malformed — the bound "abc" is not a finite number. Each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2. ${constraintGrammarVocabularySentence()}`,
     );
+    // FW-36-B §3.7: the rejected DOMAIN names the allowed set (S2's
+    // "position/execution domains rejected" — the error copy never said
+    // what IS allowed).
+    const domainValues = { ...base, constraints: 'c-1:position:risk.maxDrawdown:limit.max:0.2' } as LaunchFormValues;
+    expect(launchFieldValidation(domainValues, 'constraints')).toContain('the domain "position" is not allowed (allowed: observation, state, action, outcome)');
+    // ...and the vocabulary disclosure is exported for the field's own hint
+    expect(constraintGrammarVocabularySentence()).toContain('observation, state, action, outcome');
+    expect(constraintGrammarVocabularySentence()).toContain('limit.min, limit.max, equals');
     // the offender rides the REVIEW banner's problem list too (the D-6b surface: "FIX BEFORE LAUNCHING" names its offender)
     const problems = launchDraftProblems(values);
     expect(problems).toHaveLength(1);

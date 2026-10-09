@@ -36,7 +36,8 @@ import { systemNowMs } from '../core/clock';
 import type { SectionId } from '../core/sections';
 import { isSectionId } from '../core/sections';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
-import { historyFloorOf, openWorkspace, reduceWorkspace, serializeWorkspaceExport, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
+import { historyFloorOf, openWorkspace, reduceWorkspace, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
+import { composeVerifiedExport, dispatchExportDownload, ExportCompositionError, type DownloadAnchor } from '../core/export-download';
 import { isPlaybackSpeedKey, parsePlaybackCustomSpeed, playbackCustomStepMsOf, playbackStepMsOf, TIME_MACHINE_STEP_MS, viewAtOf as viewAtOfTimeMachine } from '../core/timemachine';
 import type { WorkspaceScope } from '../core/tenant';
 import { isLaunchpadScope, LAUNCHPAD_PROJECT_ID } from '../core/tenant';
@@ -235,7 +236,7 @@ export { LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 /** The persisted-scope storage key (R6b, W-22 — localStorage `tradrl_scope_project` in production; the canonical home is core/posture.ts — FW-34-B — re-exported unchanged for the existing importers). */
 export { SCOPE_STORAGE_KEY } from '../core/posture';
 import { SCOPE_STORAGE_KEY } from '../core/posture';
-import { initialConsolePosture, persistPosture, postureTimeMachineOf, readStoredPosture, type ConsoleSessionPosture } from '../core/posture';
+import { claimDesk, initialConsolePosture, persistPosture, postureTimeMachineOf, readStoredPosture, type ConsoleSessionPosture } from '../core/posture';
 
 /** Read the persisted workspace project id (null when none is stored). */
 export function readStoredScopeProject(storage: { getItem(key: string): string | null }): string | null {
@@ -334,10 +335,18 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // FW-34-B: the same move rides THE POSTURE RECORD (the scope field's
     // write-through is one with the record's — the legacy key keeps its
     // own write inside persistPosture).
-    if (state.scope.projectId !== scopeBefore && state.scope.projectId !== LAUNCHPAD_PROJECT_ID && options.scopeStorage !== undefined) {
-      persistScopeProject(options.scopeStorage, state.scope.projectId);
-      sessionPosture = { ...sessionPosture, scopeProjectId: state.scope.projectId };
-      writeSessionPosture();
+    if (state.scope.projectId !== scopeBefore && state.scope.projectId !== LAUNCHPAD_PROJECT_ID) {
+      // FW-36-B (§3.2 — the session-desks membership arm): every adoption
+      // CLAIMS the desk for this browser (the posture record's own list,
+      // most-recent-first) — the switcher's and the palette's default
+      // listing folds the claim in, so a browser that re-adopted its desk
+      // after a storage discard keeps it in its OWN listing, never behind
+      // the other-sessions wall.
+      sessionPosture = { ...sessionPosture, scopeProjectId: state.scope.projectId, claimedDesks: claimDesk(sessionPosture.claimedDesks, state.scope.projectId) };
+      if (options.scopeStorage !== undefined) {
+        persistScopeProject(options.scopeStorage, state.scope.projectId);
+        writeSessionPosture();
+      }
     }
     // THE READ-STATE WRITE-THROUGH (D-6c, W-25C): a mark-read /
     // mark-all-read persists the affected notices' read marks (keyed
@@ -426,6 +435,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     dispatch(event);
   }
 
+  // FW-36-B (Round E register §3.6 — first-paint transients): the count
+  // of read bundles in flight for the CURRENT scope (boot + every scope
+  // adoption's refetch). While one is in flight the Home tiles render the
+  // loading skeleton and the unread surfaces render '…' — never a
+  // misleading zero/'Not compiled' window that reads like record loss.
+  let readsInFlight = 0;
+
   async function refresh(): Promise<void> {
     // The scope THIS bundle reads for, captured before the first await:
     // a mid-flight adoption (a launch, a switch) supersedes it, the
@@ -435,6 +451,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // scope (marking the CURRENT scope here would mark the adopted
     // scope as fetched without ever reading it — the R6a defect).
     const bundleScope = state.scope.projectId;
+    readsInFlight += 1;
     try {
       await read('GET /v1/meta', async () => {
         await client.negotiateVersion();
@@ -684,6 +701,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       await pollJobs();
     } finally {
       lastFetchedScope = bundleScope;
+      readsInFlight -= 1;
     }
   }
 
@@ -900,6 +918,18 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       playbackCustomSpeed: sessionPosture.timeMachine.freeSpeed,
       playbackCustomSpeedError: null,
       showAllDesks: false,
+      // FW-36-B (Round E register §3.2 — total restart recovery): the
+      // RETURNING-CANDIDATE flag is captured ONCE at mount — true exactly
+      // when this boot found NO client posture (a first-run browser, or
+      // one whose web-storage state was discarded by the restart — the
+      // personas' measured path). Home's ONE-GESTURE recovery card rides
+      // it; the claims arm renders the browser's adopted desks in its own
+      // default listing. hydrating is computed per render from the boot's
+      // reads-in-flight count.
+      hydrating: false,
+      returningCandidate: !(sessionPosture.onboarded || (options.onboardingStorage !== undefined && isOnboarded(readStoredOnboarding(options.onboardingStorage)))),
+      recoveryFilter: '',
+      claimedDesks: sessionPosture.claimedDesks,
     };
     let paletteResults: readonly PaletteEntry[] = [];
     // §4.10's once-per-notice toast guard: the id of the notice the
@@ -1208,6 +1238,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
     };
+    /** FW-36-B (§3.2): re-focus the recovery card's filter after a re-projection (the caret survives the full tree rebuild). */
+    const focusRecoveryFilter = (): void => {
+      if (document.querySelectorAll === undefined) return;
+      for (const candidate of document.querySelectorAll('[data-recovery-filter]')) {
+        (candidate as { focus(): void }).focus();
+        return;
+      }
+    };
+    /** FW-36-B (§3.2): read the recovery card's filter of an event target (null when the target is not its input; the live value rides the DOM property — the same pattern as the switcher's). */
+    const recoveryFilterQueryOf = (target: unknown): string | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      if (element.getAttribute('data-recovery-filter') === null) return null;
+      return typeof element.value === 'string' ? element.value : '';
+    };
     /** FW-34-B: re-focus the free speed input after a re-projection (the caret survives the full tree rebuild). */
     const focusFreeSpeedInput = (): void => {
       if (document.querySelectorAll === undefined) return;
@@ -1217,6 +1262,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       }
     };
     const render = (): void => {
+      // FW-36-B (§3.6): the projection reads the CURRENT hydration state
+      // (the boot's reads-in-flight count) — every pending-marker surface
+      // renders from this one flag, never from a stale copy.
+      view = { ...view, hydrating: readsInFlight > 0 };
       // The drawer state ALSO lands on the persistent host element so
       // the slide transition survives between renders (the projected
       // tree is rebuilt per state change; the host is not).
@@ -1354,13 +1403,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     /** FW-34-B (§3.8 — the shared-tenant wall): the whole-workspace desk listing (the all-desks disclosure's expanded state — every desk in the directory, other sessions' included). */
     const allDesksForPalette: DesksOf = (workspace: WorkspaceState): readonly ProjectRecord[] => workspace.projectDirectory;
 
-    /** The palette's live results for the current query (§4.14; D4's 100% coverage). FW-34-B (§3.8): the desks the index rides are the SESSION'S OWN by default (core/palette.ts's own law) — the WHOLE directory only while the all-desks disclosure is expanded (view.showAllDesks, the one expander governing the switcher and the palette both). */
+    /** The palette's live results for the current query (§4.14; D4's 100% coverage). FW-34-B (§3.8): the desks the index rides are the SESSION'S OWN by default (core/palette.ts's own law) — the WHOLE directory only while the all-desks disclosure is expanded (view.showAllDesks, the one expander governing the switcher and the palette both). FW-36-B (§3.2): the browser's CLAIMED desks ride the default listing (the posture record's own list). */
     const refreshPalette = (): void => {
       if (view.palette === null) { paletteResults = []; return; }
-      paletteResults = rankPalette(paletteIndex(state, capsulesForPalette, view.showAllDesks ? allDesksForPalette : sessionDesksForPalette), view.palette.query);
+      const claimedDesksForPalette: DesksOf = (workspace: WorkspaceState): readonly ProjectRecord[] => sessionDesksForPalette(workspace, sessionPosture.claimedDesks);
+      paletteResults = rankPalette(paletteIndex(state, capsulesForPalette, view.showAllDesks ? allDesksForPalette : claimedDesksForPalette), view.palette.query);
     };
 
     onState((next: WorkspaceState) => {
+      // FW-36-B (§3.2 — the membership + recovery arms' view sync): the
+      // posture's claimed desks and the recovery card's dismissal follow
+      // every dispatch — an adopted desk claims + the card stands down
+      // the moment the user is back on a desk of their own.
+      if (view.claimedDesks !== sessionPosture.claimedDesks || (view.returningCandidate && sessionPosture.claimedDesks.length > 0)) {
+        view = { ...view, claimedDesks: sessionPosture.claimedDesks, ...(sessionPosture.claimedDesks.length > 0 ? { returningCandidate: false } : {}) };
+      }
       render();
       // FW-34-B (Round C register §3.1) — THE TIME-MACHINE POSTURE
       // WRITE-THROUGH: every dispatch passes through here, so the
@@ -1568,6 +1625,19 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           view = { ...view, projectFilter };
           render();
           focusProjectFilter();
+        }
+        return;
+      }
+      // FW-36-B (§3.2 — the recovery card's filter): the returning
+      // browser's desk picker narrows live by fuzzy name/id — buffer
+      // ONLY, never a dispatch (the card's desks render from the
+      // directory, the filter is chrome state).
+      const recoveryFilterQuery = recoveryFilterQueryOf(event.target);
+      if (recoveryFilterQuery !== null) {
+        if (view.recoveryFilter !== recoveryFilterQuery) {
+          view = { ...view, recoveryFilter: recoveryFilterQuery };
+          render();
+          focusRecoveryFilter();
         }
         return;
       }
@@ -2297,38 +2367,38 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           focusOnboardingStart(); // the dialog's own entry point (the keyboard journey starts inside the modal)
         }
         // §5 D7 the data export — the R9 v2 chain export (W-21 seam:
-        // the button now emits serializeWorkspaceExport — the real
-        // sha-256 event chain, capsules, decisions and read state —
-        // not the old v1 workspace dump; core owns the bytes).
+        // the button emits the verified composition — the real sha-256
+        // event chain, capsules, decisions and read state; core owns the
+        // bytes).
         if (kind === 'export-workspace') {
-          // FW-35-A (Round D register §3.1c — M1's 4x + M5's 8-click
-          // silent no-op, path-dependent): THE EXPORT NEVER SILENCES.
-          // The pre-fix branch composed the document INLINE in the
-          // click handler — any failure (a fold that throws over the
-          // current state shape — the chain-of-thought firewall, a
-          // future composition defect) propagated out of the delegated
-          // listener into the browser's console and the user saw
-          // NOTHING: no file, no error, no download toast (exactly the
-          // "worse than an error" class M1 named for compliance packs).
-          // The composition is now guarded: an export either downloads
-          // (the confirmation toast below) or surfaces the honest
-          // failure toast on the same W-15b-r lifecycle — never a
-          // silent no-op.
+          // FW-36-B (Round E register §3.1 — S5's flow: 5 clicks, no
+          // file, a false "Export downloaded" toast): THE TOAST IS A
+          // RECEIPT, NEVER A WISH. The composition is verified through
+          // the SAME file-alone rules the Settings verifier rides before
+          // any claim; the anchor is clicked IN-TREE (appended, clicked,
+          // removed — a detached anchor's click is the class a hardened
+          // context silently declines); and the success toast fires ONLY
+          // on a DISPATCHED download, carrying the byte count + the
+          // sealed event count so the claim is checkable against the
+          // landed file. A composition that cannot verify, or a surface
+          // that never receives the click, surfaces the honest failure.
           const fileName = `tradrl-workspace-${state.scope.projectId}.json`;
           try {
-            const bytes = serializeWorkspaceExport(state);
-            const anchor = document.createElement('a') as Element & { click?(): void };
-            const blob = `data:application/json;charset=utf-8,${encodeURIComponent(bytes)}`;
-            anchor.setAttribute('href', blob);
-            anchor.setAttribute('download', fileName);
-            if (typeof anchor.click === 'function') anchor.click();
-            // FW-32-B (b3 — Round A blocker 5, M1/M5/S5's finding: "no
-            // download toast — had to check the Downloads folder"): the
-            // download CONFIRMATION toast, on the W-15b-r lifecycle — the
-            // same surface + token-checked ~5s auto-dismiss the notice
-            // toast rides (never a new chrome pattern), with the manual
-            // close the toast record already carries.
-            const shown = { kind: 'export-download', title: 'Export downloaded', sentence: `${fileName} — verify it any time in Settings: "Verify an export file".` };
+            const composed = composeVerifiedExport(state);
+            const downloadSurface = {
+              createElement: (tag: string): DownloadAnchor => document.createElement(tag) as unknown as DownloadAnchor,
+              appendChild: (node: DownloadAnchor): unknown => (root as Element & { appendChild?(child: unknown): unknown }).appendChild?.(node),
+            };
+            const dispatched = dispatchExportDownload(downloadSurface, fileName, composed.bytes);
+            if (!dispatched) {
+              throw new ExportCompositionError('this browser surface never received the download click');
+            }
+            // FW-32-B (b3): the download CONFIRMATION toast — now the
+            // receipt (the exact byte count + the sealed event count of
+            // the bytes handed to the browser), on the W-15b-r lifecycle
+            // (the same surface + token-checked ~5s auto-dismiss the
+            // notice toast rides, with the manual close it carries).
+            const shown = { kind: 'export-download', title: 'Export downloaded', sentence: `${fileName} — ${composed.bytes.length} bytes, ${composed.eventCount} sealed events. Verify it any time in Settings: "Verify an export file".` };
             view = { ...view, toast: shown };
             render();
             if (scheduler !== undefined) {
@@ -2343,13 +2413,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
               });
             }
           } catch (error) {
-            // THE HONEST FAILURE (FW-35-A): the export could not be
-            // composed — the user learns it HERE, on the toast surface,
+            // THE HONEST FAILURE (FW-35-A + FW-36-B): the export either
+            // failed its own verification or never reached the download
+            // surface — the user learns it HERE, on the toast surface,
             // with nothing downloaded and nothing claimed. The ~8s
-            // auto-dismiss gives the sentence time to read (the same
-            // token-checked lifecycle, one deliberate duration for an
-            // error that must be read, not skimmed).
-            const message = (error as Error)?.message ?? String(error);
+            // auto-dismiss gives the sentence time to read.
+            const message = error instanceof ExportCompositionError ? error.message : (error as Error)?.message ?? String(error);
             const shown = { kind: 'export-failed', title: 'Export failed', sentence: `The workspace export could not be composed (${message}). Nothing was downloaded — refresh the page and try again; if it persists, report this as a defect.` };
             view = { ...view, toast: shown };
             render();
@@ -2439,15 +2508,31 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             render();
             return;
           }
+          // FW-36-B (Round E register §3.3 — S1's demo-scope no-op, 3
+          // attempts, "registers nothing"): THE CLICK READS THE LIVE FORM
+          // TOO. The edits buffer fills from input events, and an event
+          // that raced a beat re-projection dies on the detached node —
+          // the submit then validated an EMPTY buffer while the form
+          // showed the user's text (the silent no-op class). The live
+          // DOM values win over the buffer — the submit always reads
+          // what the user can see.
+          let edits: Readonly<Record<string, string>> = { ...form.edits };
+          if (document.querySelectorAll !== undefined) {
+            for (const candidate of document.querySelectorAll('[data-research-field]')) {
+              const element = candidate as Partial<{ getAttribute(name: string): string | null; value?: unknown }>;
+              const name = typeof element.getAttribute === 'function' ? element.getAttribute('data-research-field') : null;
+              if (name !== null && typeof element.value === 'string') edits = { ...edits, [name]: element.value };
+            }
+          }
           const input: StandaloneResearchInput = {
-            objective: typeof form.edits.objective === 'string' ? form.edits.objective : '',
-            notes: typeof form.edits.notes === 'string' ? form.edits.notes : '',
+            objective: typeof edits.objective === 'string' ? edits.objective : '',
+            notes: typeof edits.notes === 'string' ? edits.notes : '',
           };
           try {
             validateStandaloneResearch(input);
           } catch (error) {
             if (error instanceof InvalidResearchSubmissionError) {
-              view = { ...view, researchSubmit: { ...form, error: error.message } };
+              view = { ...view, researchSubmit: { edits, error: error.message } };
               render();
               return;
             }
@@ -2462,11 +2547,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             // The affordance never renders on the launchpad; a stale
             // press landing here is refused honestly, never submitted
             // into a scope that does not exist.
-            view = { ...view, researchSubmit: { ...form, error: 'There is no project yet — launch first; the wizard is the only path from the launchpad.' } };
+            view = { ...view, researchSubmit: { edits, error: 'There is no project yet — launch first; the wizard is the only path from the launchpad.' } };
             render();
             return;
           }
-          view = { ...view, researchSubmit: { ...form, error: null } };
+          view = { ...view, researchSubmit: { edits, error: null } };
           render();
           void (async () => {
             try {
@@ -2477,8 +2562,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
               // the user returns to it — the W-25A seam).
               if (state.scope.projectId === projectId) {
                 dispatch({ kind: 'job-updated', at: instants.nowMs(), job });
+                view = { ...view, researchSubmit: null }; // success closes the form
+              } else {
+                // FW-36-B (§3.3): the mid-flight scope move is NOT a
+                // silent close — the job REGISTERED (the host accepted
+                // it); the honest notice names where it landed and how
+                // to get there. A submit always registers or surfaces
+                // an honest error, never a nothing.
+                view = { ...view, researchSubmit: { edits, error: `Submitted — the job registered with ${projectId}, but the workspace switched to ${state.scope.projectId} before it landed. Switch back to ${projectId} (Settings → Project) to see it.` } };
               }
-              view = { ...view, researchSubmit: null }; // success closes the form
               render();
             } catch (error) {
               const message = (error as Error)?.message ?? String(error);
@@ -2486,10 +2578,26 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
               // the view, and the CURRENT form state — whatever the
               // user typed while the request was in flight — is the one
               // the error renders into).
-              view = { ...view, researchSubmit: view.researchSubmit === null ? { edits: {}, error: message } : { ...view.researchSubmit, error: message } };
+              view = { ...view, researchSubmit: view.researchSubmit === null ? { edits, error: message } : { ...view.researchSubmit, error: message } };
               render();
             }
           })();
+          return;
+        }
+        // FW-36-B (Round E register §3.2 — total restart recovery): THE
+        // ONE-GESTURE DESK RE-ADOPTION. The recovery card's desk button
+        // rides the SAME user-initiated project-adopted the switcher and
+        // the palette jumps ride — the beat refetches the adopted desk's
+        // whole world, the posture's scope + claimedDesks write through,
+        // and this very click dismisses the wizard under the FW-35-B
+        // acting-past law (the recovery gesture count: ONE).
+        if (kind === 'recovery-adopt-desk') {
+          const adoptProjectId = action.getAttribute('data-desk-adopt');
+          if (adoptProjectId !== null && adoptProjectId.length > 0 && adoptProjectId !== state.scope.projectId) {
+            dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: adoptProjectId }); // renders via onState
+          } else {
+            render();
+          }
           return;
         }
         // FW-32-A (Round A blocker 2): THE RESEARCH→DECISION PROMOTION —

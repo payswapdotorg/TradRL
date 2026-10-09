@@ -50,9 +50,14 @@ export type CapsulesOf = (state: WorkspaceState) => readonly EvidenceCapsule[];
 /** The desks the palette indexes (defaults to the session own desks — the FW-34-B §3.8 law). */
 export type DesksOf = (state: WorkspaceState) => readonly ProjectRecord[];
 
-/** The default desk listing: the session own desks (core/tenant.ts §3.8 — the demo project, the session-owned rows, the unmarked rows). */
-export function sessionDesksForPalette(state: WorkspaceState): readonly ProjectRecord[] {
-  return sessionOwnDesksOf(state.projectDirectory, DEMO_PROJECT_ID);
+/**
+ * The default desk listing: the session own desks (core/tenant.ts §3.8 —
+ * the demo project, the session-owned rows, the unmarked rows, and the
+ * browser's CLAIMED desks — FW-36-B's membership arm, threaded by the
+ * app layer through the posture record).
+ */
+export function sessionDesksForPalette(state: WorkspaceState, claimedDeskIds: readonly string[] = []): readonly ProjectRecord[] {
+  return sessionOwnDesksOf(state.projectDirectory, DEMO_PROJECT_ID, claimedDeskIds);
 }
 
 export function paletteIndex(state: WorkspaceState, capsulesOf: CapsulesOf, desksOf: DesksOf = sessionDesksForPalette): readonly PaletteEntry[] {
@@ -344,6 +349,16 @@ export function paletteOverlay(options: {
   readonly hiddenDeskMatches?: number;
   /** FW-34-B §3.8: true when the listing already includes every desk in the workspace (the expanded state — the disclosure hides itself). */
   readonly allDesks?: boolean;
+  /**
+   * FW-36-B (Round E register §3.9 — the palette disclosure regression,
+   * L1+L3): the TOTAL count of other sessions' desks hidden from this
+   * session-scoped listing (0 = none / already expanded). The Round D
+   * disclosure lived only in the empty state — a query that MATCHED own
+   * desks rendered other sessions' matching desks with no marker at
+   * all. The footer now carries the counted "other sessions' — not
+   * yours" line + the include-all action on EVERY state, empty or not.
+   */
+  readonly hiddenDesksTotal?: number;
 }): VNode {
   const groups: { kind: PaletteEntry['kind']; entries: { entry: PaletteEntry; position: number }[] }[] = [];
   let position = 0;
@@ -391,6 +406,18 @@ export function paletteOverlay(options: {
         v('span', {}, ['↑ ↓ navigate']),
         v('span', {}, ['Enter open']),
         v('span', {}, ['Esc close']),
+        // FW-36-B (§3.9 — the restored disclosure): the counted
+        // other-sessions line + the include-all action ride the footer on
+        // EVERY listing state (the empty state keeps its own richer
+        // copy); hidden = 0 or the expanded listing renders neither.
+        ...((options.allDesks === true || (options.hiddenDesksTotal ?? 0) <= 0)
+          ? []
+          : [
+              v('span', { class: 'palette-footer-desks', 'data-palette-hidden-total': String(options.hiddenDesksTotal) }, [
+                `${options.hiddenDesksTotal} other desk${options.hiddenDesksTotal === 1 ? '' : 's'} in this workspace (other sessions’ — not yours) stay hidden`,
+              ]),
+              v('button', { class: 'empty-action', 'data-action': 'palette-all-desks', type: 'button' }, ['Include all desks']),
+            ]),
       ]),
     ]),
   ]);

@@ -171,6 +171,21 @@ const CONSTRAINT_DOMAINS: readonly ('observation' | 'state' | 'action' | 'outcom
 /** The constraint grammar's legal severities. */
 const CONSTRAINT_SEVERITIES: readonly ('advisory' | 'blocking')[] = ['advisory', 'blocking'];
 
+/** FW-36-B (Round E register §3.7 — S2's 3 fix cycles): the ALLOWED vocabulary, disclosed where the grammar is taught. The domains + the predicate kinds as plain lists. */
+export function constraintGrammarDomains(): readonly string[] {
+  return [...CONSTRAINT_DOMAINS];
+}
+
+/** FW-36-B (§3.7): the legal predicate kinds (the subject is any dot-separated identifier path — the hint's own sentence). */
+export function constraintGrammarKinds(): readonly string[] {
+  return [...CONSTRAINT_PREDICATE_KINDS];
+}
+
+/** FW-36-B (§3.7): one plain sentence stating the whole allowed vocabulary (the hint + the malformed entry's message both carry it). */
+export function constraintGrammarVocabularySentence(): string {
+  return `Domains: ${CONSTRAINT_DOMAINS.join(', ')}. Kinds: ${CONSTRAINT_PREDICATE_KINDS.join(', ')}. Subjects: any dot-separated identifier path, e.g. risk.maxDrawdown or capital.perDesk.`;
+}
+
 /** One constraint as the form's grammar string. */
 function formatConstraint(constraint: ConstraintStatement): string {
   const predicate = constraint.predicate as { kind: string; bound?: unknown; value?: unknown };
@@ -183,18 +198,23 @@ function formatConstraint(constraint: ConstraintStatement): string {
   return `${constraint.id}:${constraint.domain}:${constraint.subject}:${predicate.kind}:${bound}${severity}`;
 }
 
+/** Parse ONE constraints-grammar entry; the REASON it is malformed (FW-36-B §3.7 — the message names WHICH part, never a bare refusal). */
+function constraintEntryReason(entry: string): string | null {
+  const parts = entry.split(':');
+  if (parts.length < 5 || parts.length > 6) return 'the entry must have 5 or 6 colon-separated fields (id:domain:subject:kind:bound[:severity])';
+  const [id, domain, subject, kind, boundText, severityText] = parts as [string, string, string, string, string, string | undefined];
+  if (id.length === 0) return 'the id is empty';
+  if (!(CONSTRAINT_DOMAINS as readonly string[]).includes(domain)) return `the domain "${domain}" is not allowed (allowed: ${CONSTRAINT_DOMAINS.join(', ')})`;
+  if (!isIdentifierPath(subject)) return `the subject "${subject}" is not a dot-separated identifier path`;
+  if (!CONSTRAINT_PREDICATE_KINDS.includes(kind as 'limit.max')) return `the kind "${kind}" is not allowed (allowed: ${CONSTRAINT_PREDICATE_KINDS.join(', ')})`;
+  if (!Number.isFinite(Number(boundText))) return `the bound "${boundText}" is not a finite number`;
+  if (severityText !== undefined && severityText !== 'advisory' && severityText !== 'blocking') return 'the severity must be advisory or blocking';
+  return null;
+}
+
 /** Parse ONE constraints-grammar entry; false when it is malformed (the per-entry half of the grammar — D-6b's offender-naming validation reads the same law). */
 function constraintEntryParses(entry: string): boolean {
-  const parts = entry.split(':');
-  if (parts.length < 5 || parts.length > 6) return false;
-  const [id, domain, subject, kind, boundText, severityText] = parts as [string, string, string, string, string, string | undefined];
-  if (id.length === 0) return false;
-  if (!(CONSTRAINT_DOMAINS as readonly string[]).includes(domain)) return false;
-  if (!isIdentifierPath(subject)) return false;
-  if (!CONSTRAINT_PREDICATE_KINDS.includes(kind as 'limit.max')) return false;
-  if (!Number.isFinite(Number(boundText))) return false;
-  if (severityText !== undefined && severityText !== 'advisory' && severityText !== 'blocking') return false;
-  return true;
+  return constraintEntryReason(entry) === null;
 }
 
 /** Parse the constraints grammar; null when any entry is malformed (never a partial list). */
@@ -215,14 +235,17 @@ export function parseConstraintsValue(value: string): readonly ConstraintStateme
 /**
  * The FIRST malformed constraints entry (D-6b, W-25C — the offender-
  * naming validation): its 1-BASED index among the comma-separated
- * entries plus the raw entry text. Null when every entry parses (an
- * empty list is valid — nothing names nothing).
+ * entries, the raw entry text, and the REASON (FW-36-B §3.7 — S2's
+ * finding: "the FIX alert does not disclose the valid domain
+ * vocabulary"; 3 fix cycles). Null when every entry parses (an empty
+ * list is valid — nothing names nothing).
  */
-export function firstBadConstraintEntry(value: string): { readonly index: number; readonly entry: string } | null {
+export function firstBadConstraintEntry(value: string): { readonly index: number; readonly entry: string; readonly reason: string } | null {
   const entries = parseListValue(value);
   for (let position = 0; position < entries.length; position += 1) {
     const entry = entries[position] as string;
-    if (!constraintEntryParses(entry)) return { index: position + 1, entry };
+    const reason = constraintEntryReason(entry);
+    if (reason !== null) return { index: position + 1, entry, reason };
   }
   return null;
 }
@@ -476,7 +499,7 @@ export function launchFieldValidation(values: LaunchFormValues, field: LaunchFie
   // offender.
   const badConstraint = firstBadConstraintEntry(values.constraints);
   if (badConstraint !== null) {
-    return `Constraints entry ${badConstraint.index} ("${badConstraint.entry}") is malformed — each entry is id:domain:subject:kind:bound, e.g. ${CONSTRAINT_GRAMMAR_EXAMPLE}.`;
+    return `Constraints entry ${badConstraint.index} ("${badConstraint.entry}") is malformed — ${badConstraint.reason}. Each entry is id:domain:subject:kind:bound, e.g. ${CONSTRAINT_GRAMMAR_EXAMPLE}. ${constraintGrammarVocabularySentence()}`;
   }
   return '';
 }

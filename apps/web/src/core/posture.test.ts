@@ -91,7 +91,9 @@ describe('FW-34-B: the storage seam (readStoredPosture + persistPosture)', () =>
     storage.map.set(ONBOARDING_STORAGE_KEY, 'true');
     storage.map.set(SCOPE_STORAGE_KEY, 'prj-legacy');
     const restored = readStoredPosture(storage);
-    expect(restored).toEqual({ ...initialConsolePosture(), onboarded: true, scopeProjectId: 'prj-legacy' }); // the TM falls to the default (live, 1x) — never a fabricated posture
+    // FW-36-B (§3.2): the legacy scope desk rides as the browser's FIRST
+    // claimed desk — the membership arm starts from the migration itself.
+    expect(restored).toEqual({ ...initialConsolePosture(), onboarded: true, scopeProjectId: 'prj-legacy', claimedDesks: ['prj-legacy'] }); // the TM falls to the default (live, 1x) — never a fabricated posture
     // a browser with NEITHER the record NOR the legacy keys is a first run
     const fresh = new MapStorage();
     expect(readStoredPosture(fresh)).toBeNull();
