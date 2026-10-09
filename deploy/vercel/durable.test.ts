@@ -755,9 +755,20 @@ describe('deploy/vercel — the W-26B activation: the launch journey under durab
       await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
       const complete = await drive(deployment, streamingRequest({ method: 'GET', url: `/v1/jobs/${kickoffJob.jobId}`, headers: BEARER }));
       expect(complete.status).toBe(200);
-      const finished = (complete.body as { data: { status: string; result: { kind: string; specId: string; project: string } } }).data;
+      const finished = (complete.body as { data: { status: string; result: { kind: string; specId: string; project: string; summary: string; lineage: { promotedDecision: string | null; statement: string }; disclosure: string } } }).data;
       expect(finished.status).toBe('complete');
-      expect(finished.result).toEqual({ kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'prj-j3-launch' });
+      // FW-36-A (Round E register E-1): the completion's release candidate is
+      // the COMPOSED deliverable — additive on the stub's preserved shape,
+      // with the composed summary + honest lineage + SIMULATED disclosure.
+      // This launch (a research spec that is not a console-launch spec) has
+      // no captured world: the summary's world sentence is the honest
+      // no-launch-world statement naming THIS project, never the old stub.
+      expect(finished.result.kind).toBe('release-candidate');
+      expect(finished.result.specId).toBe('spec-launch-director'); // the per-project launch director
+      expect(finished.result.project).toBe('prj-j3-launch');
+      expect(finished.result.summary).toContain('no launch world on record for prj-j3-launch');
+      expect(finished.result.lineage.promotedDecision).toBeNull(); // pending promotion — the honest composition-instant truth
+      expect(finished.result.disclosure).toContain('SIMULATED');
 
       // The whole launch PERSISTED (D-5): the registry row + goal set exist.
       const direct = storesOver(providers.fetchLike);
@@ -1401,9 +1412,15 @@ describe('deploy/vercel — the W-27 durable jobs surface (D-7)', () => {
       if (!second.ok) return;
       const coldDetail = await drive(second, streamingRequest({ method: 'GET', url: `/v1/jobs/${encodeURIComponent(jobId)}`, headers: BEARER }));
       expect(coldDetail.status).toBe(200);
-      const coldRecord = (coldDetail.body as { data: { status: string; result: { kind: string; specId: string; project: string } } }).data;
+      const coldRecord = (coldDetail.body as { data: { status: string; result: { kind: string; specId: string; project: string; summary: string } } }).data;
       expect(coldRecord.status).toBe('complete');
-      expect(coldRecord.result).toEqual({ kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'prj-durable-jobs-b' });
+      // FW-36-A (E-1): the durable completion is the composed deliverable —
+      // byte-identically rehydrated by the cold start (the frozen truth of
+      // the completion instant; the additive shape never a schema change).
+      expect(coldRecord.result.kind).toBe('release-candidate');
+      expect(coldRecord.result.specId).toBe('spec-launch-director');
+      expect(coldRecord.result.project).toBe('prj-durable-jobs-b');
+      expect(coldRecord.result.summary).toContain('no launch world on record for prj-durable-jobs-b');
       // And the machinery tick does NOT re-transition the terminal durable
       // job (the async pattern's own legality machine — a terminal record
       // never re-opens; the write-through lane stays quiet).
@@ -1818,25 +1835,45 @@ describe('deploy/vercel — the launched-desk evidence stream under durable (FW-
     expect(kickoff.status).toBe(202); // the kickoff request's tick compiled the org (the R4 pass over the hydrated control plane)
 
     // THE BLOTTER: the desk's own derived stream — 3 rows, named bodies, the
-    // numeric refusal quoting the project's OWN k-position cap (bound 2,
-    // observed 2.4 — the same constraint its fixture constraint set declares).
+    // FW-36-A honest gate: the refusal cites the mandate's OWN declared
+    // capital budget with TRUE projected-book arithmetic (the fixture's
+    // k-position cap is honestly NOT gate-evaluable at fill time — no
+    // position store exists on any backing — and is reported as such on the
+    // row's limitsEvaluation surface, never silently passed).
     const blotter = await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/execution/submissions?project=prj-durable-evidence', headers: BEARER }));
     expect(blotter.status).toBe(200);
     const rows = ((blotter.body as { data: { items: readonly Record<string, unknown>[] } }).data).items;
     expect(rows).toHaveLength(3);
     const routed = rows.filter((row) => row.kind === 'routed') as unknown as readonly { decisionBody: string; fill: { notional: string }; order: { quantity: string; price: string }; riskChecks: readonly unknown[] }[];
-    const refused = rows.find((row) => row.kind === 'refused') as unknown as { decisionBody: string; refusal: { stage: string; refusals: readonly { constraintId: string; subject: string; predicate: { kind: string; bound: number }; observed: string }[] } };
+    const refused = rows.find((row) => row.kind === 'refused') as unknown as { decisionBody: string; refusal: { stage: string; refusals: readonly { constraintId: string; subject: string; predicate: { kind: string; bound: number }; observed: string }[] }; order: { quantity: string; price: string }; limitsEvaluation?: readonly { constraintId: string; verdict: string; note: string }[] };
     expect(routed).toHaveLength(2);
     expect(routed.every((row) => row.decisionBody === 'desk:prj-durable-evidence-execution')).toBe(true); // NAMED — never "unknown" (MI-D10)
     expect(refused.decisionBody).toBe('gate:pre-trade-risk');
     expect(routed.every((row) => row.riskChecks.length === 7)).toBe(true);
     expect(routed[0]!.fill.notional).toBe('48000'); // 0.8 x 60000 — exact (capital 500000.00, risk 40000.00)
     const quoted = refused.refusal.refusals[0]!;
-    expect(quoted.constraintId).toBe('k-position'); // the project's OWN constraint-set position cap
-    expect(quoted.subject).toBe('position.grossExposure');
+    // FW-36-A (E-2): the refusal demonstrates the gate binding against the
+    // mandate's OWN declared capital budget (Branch 3 — the fixture's
+    // constraint set declares no book/budget bound), with the TRUE
+    // projected book: the prior cumulative fills 60000 + the candidate's
+    // OWN order line (8.333333 x 60000 = 499999.98) = 559999.98, exact.
+    expect(quoted.constraintId).toBe('cs-tenant-durable:capital-budget');
+    expect(quoted.subject).toBe('capital.budget');
     expect(quoted.predicate.kind).toBe('limit.max');
-    expect(quoted.predicate.bound).toBe(2);
-    expect(quoted.observed).toBe('2.4');
+    expect(quoted.predicate.bound).toBe(500000);
+    expect(quoted.observed).toBe('559999.98');
+    // The arithmetic reconciles BY INSPECTION with the row's own order echo.
+    expect(refused.order.quantity).toBe('8.333333');
+    expect(refused.order.price).toBe('60000');
+    // And the k-position subject is honestly reported NOT gate-evaluable
+    // (E-2.4's loud teaching note) — never silently passed.
+    const positionEvaluation = (refused.limitsEvaluation ?? []).find((row) => row.constraintId === 'k-position');
+    expect(positionEvaluation?.verdict).toBe('not_gate_evaluable');
+    expect(positionEvaluation?.note).toContain('EXECUTION/TRADE/RISK SCOPING IS NOT YET DECLARABLE');
+    // The routed fills carry the COMPUTED limits stamp (the desk sized
+    // inside the declared caps — pass only on a true pass).
+    const routedChecks = (routed[0] as unknown as { riskChecks: readonly { dimension: string; outcome: string }[] }).riskChecks;
+    expect(routedChecks.find((check) => check.dimension === 'limits')?.outcome).toBe('pass');
 
     // THE OUTCOME + POST-MORTEM READS (the frozen routes over the WRAPPED seam port).
     const outcomes = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/outcomes/query', headers: BEARER, body: { project: 'prj-durable-evidence', at: T0 + 10_000 } }));
