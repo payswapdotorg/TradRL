@@ -264,35 +264,32 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   const scope: WorkspaceScope = { tenantId: options.scope.tenantId, projectId: options.scope.projectId.length > 0 ? options.scope.projectId : LAUNCHPAD_PROJECT_ID };
   const beatMs = options.beatMs ?? 1000;
   // D-15 (W-29 wave 2) — THE SESSION-SCOPE DISCIPLINE, part 1: the
-  // persisted scope is captured ONCE, synchronously, at boot — BEFORE
-  // any user interaction can happen and BEFORE the first read resolves.
-  // The pre-fix restore read the storage LATE (inside the async projects
-  // read), so a user-initiated scope change that landed between boot and
-  // that resolution raced the rehydration; the captured value plus the
-  // generation guard below make the restore exactly-once, boot-scoped,
-  // and structurally unable to clobber a user's choice.
+  // persisted scope is captured ONCE, synchronously, at boot — before
+  // any user interaction and before the first read resolves (the
+  // pre-fix restore read the storage LATE, inside the async projects
+  // read, racing a user scope change landed in between). With the
+  // generation guard below the restore is exactly-once, boot-scoped,
+  // and never clobbers a user's choice.
   const bootStoredScope = options.scopeStorage === undefined ? null : readStoredScopeProject(options.scopeStorage);
   // D-15 part 2 — THE SCOPE GENERATION: 0 until the first scope move
-  // this session (a switcher choice, a palette jump, a launch adoption,
-  // or the boot-restore's own adoption — every one rides dispatch). The
-  // boot-restore applies ONLY at generation 0: once ANY scope move
-  // happened, the restore is done forever (the user is driving; the
-  // rehydration must never overwrite them — the switcher-rebind race
-  // the Lead reproduced twice: "the first select change did not take",
-  // the select snapping back to the boot scope).
+  // this session (switcher choice, palette jump, launch adoption, or
+  // the boot-restore's own adoption — every one rides dispatch). The
+  // boot-restore applies ONLY at generation 0: after ANY scope move it
+  // is done forever — rehydration never overwrites a driving user (the
+  // switcher-rebind race the Lead reproduced twice: "the first select
+  // change did not take").
   let scopeGeneration = 0;
   // FW-34-B (Round C register §3.1 — the browser-restart residuals):
   // THE SESSION POSTURE. One validated record (core/posture.ts) carries
   // the wizard's dismissal, the scope pointer and the Time Machine's
   // mode + speed — read ONCE, synchronously, at boot (the D-15
-  // discipline), written through on every posture change. It rides the
+  // discipline), written through on every posture change, riding the
   // SAME seam as the scope (options.scopeStorage — localStorage in
-  // production): the record is the scope seam's successor and its
-  // legacy-key writes keep the pre-FW-34-B keys alive, so a downgrade
-  // never loses the user's world. The TM restore itself runs inside the
-  // listing read (only while the machine still sits at its boot 'live'
-  // mode — a user who touched the Time Machine first is driving, never
-  // overwritten).
+  // production). Its legacy-key writes keep the pre-FW-34-B keys alive,
+  // so a downgrade never loses the user's world. The TM restore runs
+  // inside the listing read, only while the machine still sits at its
+  // boot 'live' mode (a user who touched the Time Machine first is
+  // driving, never overwritten).
   let sessionPosture: ConsoleSessionPosture = options.scopeStorage === undefined
     ? initialConsolePosture()
     : (readStoredPosture(options.scopeStorage) ?? initialConsolePosture());
@@ -411,12 +408,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
 
   // THE SCOPE-CHANGE SEAM (R6a, the W-22 fix — the architectural
   // blocker's read half): the console read its world ONCE at boot, so
-  // after a launch ADOPTED a new project (reduceWorkspace's
-  // project-adopted arm resets every record + moves the scope) NO read
-  // ever ran for the adopted scope — the launched org's compiled
-  // snapshot (which the backing now serves, W-8's R4 pass) never
-  // rendered, the Organization section stayed empty forever, and every
-  // other section rendered the RESET (empty) world. The beat tracks the
+  // after a launch ADOPTED a project (project-adopted resets every
+  // record + moves the scope) NO read ever ran for the adopted scope —
+  // the launched org's compiled snapshot never rendered and every other
+  // section showed the RESET (empty) world. The beat tracks the
   // last-fetched scope; when state.scope.projectId differs, it re-runs
   // the full read bundle for the adopted scope.
   let lastFetchedScope: string | null = null;
@@ -448,10 +443,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // The scope THIS bundle reads for, captured before the first await:
     // a mid-flight adoption (a launch, a switch) supersedes it, the
     // dispatchIfCurrent guards drop the stale dispatches, and the
-    // finally marks THIS scope (not the current one) as fetched so the
-    // beat still sees the difference and refetches for the adopted
-    // scope (marking the CURRENT scope here would mark the adopted
-    // scope as fetched without ever reading it — the R6a defect).
+    // finally marks THIS scope as fetched so the beat still sees the
+    // difference and refetches for the adopted scope (marking the
+    // CURRENT scope would mark it fetched without ever reading it —
+    // the R6a defect).
     const bundleScope = state.scope.projectId;
     try {
       await read('GET /v1/meta', async () => {
@@ -461,15 +456,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // THE PROJECT DIRECTORY + THE STORED-SCOPE RESTORE (R6b/R6c,
       // W-22): the tenant's readable projects list once per bundle —
       // the scope switcher's data (R6c) — and the validation surface
-      // for the persisted scope (R6b): when a stored project id exists
-      // in the directory and differs from the booted scope, the
-      // workspace ADOPTS it (the same reset+switch transition a launch
-      // rides; this bundle's captured-scope reads then drop through
-      // the dispatchIfCurrent guard and the beat refetches for the
-      // adopted scope). A stored id that no longer exists is stale —
-      // cleared and ignored, falling back to the env pin EXACTLY as
-      // the pre-W-22 boot behaved (no stored scope -> no behavior
-      // change at all).
+      // for the persisted scope (R6b): a stored id that exists in the
+      // directory and differs from the booted scope is ADOPTED (the
+      // launch's reset+switch; the captured-scope reads drop through
+      // dispatchIfCurrent and the beat refetches for the adopted
+      // scope). A stale id (no longer in the directory) is cleared and
+      // ignored — the env pin holds, the pre-W-22 behavior.
       await read('GET /v1/projects', async () => {
         const records = await client.projects.listAll();
         dispatch({ kind: 'projects-listed', at: instants.nowMs(), records: [...records] });
@@ -719,32 +711,28 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // the v0.1.0 release blocker): W-16 measured the LIVE readout pinned
     // at the BOOT instant while wall-clock advanced (advanceAnchor only
     // ran on TM clicks), so every post-boot datum hit the L4 projection's
-    // typed error and killed the launch flow. The beat is the scheduler
-    // boundary — the one seam core/clock.ts sanctions — so each beat
-    // re-samples now and moves the anchor forward (timemachine.ts's own
-    // law). In LIVE mode the view IS the anchor; a T-x offset rides the
-    // fresh anchor; playback's ceiling rises with it (a tick never passes
+    // typed error. The beat is the scheduler boundary core/clock.ts
+    // sanctions: each beat re-samples now and moves the anchor forward —
+    // in LIVE mode the view IS the anchor, a T-x offset rides the fresh
+    // anchor, and playback's ceiling rises with it (a tick never passes
     // the anchor — the guard below). Monotonic by construction: a beat
     // whose observed instant is not past the current anchor dispatches
-    // nothing (the anchor never regresses).
+    // nothing.
     const observed = instants.nowMs();
     if (observed > state.timeMachine.anchorAt) {
       dispatch({ kind: 'anchor-advanced', at: observed });
     }
     // §4.8 controlled playback: the beat advances armed playback ONE
-    // controlled step — never past the anchor, and NEVER while PAUSED
-    // (R10, W-25C: the freeze is the pure machine's own law; the beat
-    // also skips the dispatch so a paused history carries no no-op
-    // ticks). FW-33-B (Round B blocker 5): a beat whose step would CROSS
-    // the anchor dispatches into the SEAM'S OWN ANCHOR CLAMP
-    // (playback-tick -> stopPlaybackAtAnchor): playback LANDS at "now" —
-    // a final partial step — and stops there, paused (the honest end
-    // state for speeds whose steps cross the remaining span in one beat;
-    // the pre-fix guard left a "playing" playback frozen one step short
-    // with no disclosed end state). A beat arriving with the view
-    // ALREADY AT the anchor still skips the dispatch (the zero-span arm
-    // is the pure machine's typed law; the loop must not spray
-    // unhandled rejections).
+    // controlled step — never past the anchor, NEVER while PAUSED (R10,
+    // W-25C: the freeze is the pure machine's own law; a paused history
+    // carries no no-op ticks). FW-33-B (Round B blocker 5): a beat whose
+    // step would CROSS the anchor dispatches into the seam's own anchor
+    // clamp (playback-tick -> stopPlaybackAtAnchor): playback LANDS at
+    // "now" — a final partial step — and stops there, paused (the
+    // pre-fix guard left a "playing" playback frozen one step short with
+    // no disclosed end state). A beat arriving with the view ALREADY AT
+    // the anchor still skips the dispatch (the zero-span arm is the pure
+    // machine's typed law; no unhandled rejections).
     const timeMachine = state.timeMachine;
     if (timeMachine.mode === 'playback' && timeMachine.playback !== null && !timeMachine.playback.paused) {
       const viewAt = timeMachine.playback.fromAt + timeMachine.playback.ticks * timeMachine.playback.stepMs;
@@ -1168,17 +1156,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     };
     /**
      * D-10 (W-29) — INTERACTIVE FOCUS SURVIVES THE BEAT RE-PROJECTION: the
-     * keyboard user's focused affordance (a nav item, the bell, a notice
-     * toggle, a capsule badge) is replaced by the ~1s beat re-projection,
-     * which used to strand the focus on <body> — the persona finding
-     * ("keyboard focus+Enter failed to activate" the Settings nav item:
-     * Tab lands the focus, the beat replaces the tree, Enter hits a dead
-     * document). The capture/restore mirrors the launch-field + palette
-     * pair below: the focused element's delegated-vocabulary identity is
+     * keyboard user's focused affordance (nav item, bell, notice toggle,
+     * capsule badge) is replaced by the ~1s beat re-projection, which used
+     * to strand focus on <body> ("keyboard focus+Enter failed to
+     * activate": Tab lands the focus, the beat replaces the tree, Enter
+     * hits a dead document). Mirroring the launch-field + palette pair
+     * below: the focused element's delegated-vocabulary identity is
      * captured BEFORE the re-projection and the FIRST VISIBLE equivalent
-     * node re-focuses after it (a display:none match — the hidden mobile
-     * header's brand row — never steals the restore; elements without a
-     * geometry probe, like the test harness's fakes, count as visible).
+     * re-focuses after it (a display:none match never steals the restore;
+     * elements without a geometry probe — the test fakes — count as
+     * visible).
      */
     const restoreInteractiveFocusByKey = (key: { readonly attr: string; readonly value: string } | null): void => {
       if (key === null || document.querySelectorAll === undefined) return;
@@ -1223,12 +1210,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // tree is rebuilt per state change; the host is not).
       host.setAttribute('data-drawer', view.drawerOpen ? 'open' : 'closed');
       // D-6d (W-25C) — THE HTML ELEMENT'S THEME AT PAINT: the active
-      // theme is synced onto documentElement on EVERY paint. The
-      // static shell's pre-paint script sets it once at load; before
-      // this sync the in-app toggle updated the .tradrl-shell root but
-      // left <html> at the boot value — stale after every change (the
-      // overscroll background flashed the wrong color and tokens.css's
-      // html[data-theme] rules never matched the live theme).
+      // theme is synced onto documentElement on EVERY paint (the static
+      // shell's pre-paint script sets it once at load; without this sync
+      // the in-app toggle updated the .tradrl-shell root but left <html>
+      // at the boot value — the overscroll background flashed the wrong
+      // color and tokens.css's html[data-theme] rules never matched).
       const documentElementOfDocument = (document as MountDocument).documentElement;
       if (documentElementOfDocument !== null && documentElementOfDocument !== undefined) {
         documentElementOfDocument.setAttribute('data-theme', view.theme);
@@ -1239,9 +1225,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // focused field (+ caret) and restore it on the new node so
       // typing never breaks. The PALETTE INPUT carries the same
       // preservation (the W-14c query wiring re-renders on every
-      // keystroke — without the restore, one typed letter would blur
-      // the input and the next keystroke would land on a detached
-      // node: the lost-second-field defect class, on the palette).
+      // keystroke; without the restore one typed letter would blur the
+      // input and the next keystroke would land on a detached node).
       let focusedField: string | null = null;
       let focusedSelection: { readonly start: number; readonly end: number } | null = null;
       let focusedPaletteInput = false;
