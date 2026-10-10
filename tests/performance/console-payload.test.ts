@@ -161,8 +161,41 @@ describe('the console boot payload budgets (the no-build console\'s boot transfe
   //   W-17a beat block, the FW-33-B playback clamp — every law kept, the
   //   wording tightened). No new files: the wave rides the extraction
   //   pattern's existing modules.
+  // Re-recorded (FW-40-B, the boot/resume wave; every number measured by
+  //   the continuation worker on the final tree, main @ 97bd1d1 the base):
+  //   53 files, 1,120,477 bytes total (1094.2 of the 1088 KiB budget —
+  //   OVER by 6,365 bytes; re-measured by cont3 after the erasable-subset
+  //   repair — the pre-repair tree measured 1,120,354). The true base (main @ 97bd1d1, FW-40-C merged)
+  //   measured 51 files / 1,086,846 bytes (1061.4 of the 1088 KiB budget —
+  //   26.6 KiB headroom). FW-40-B adds +33,631 bytes, crossing the total
+  //   budget by 6,365, and the byte budget is CONSCIOUSLY raised
+  //   1088 -> 1152 KiB per this file's own protocol ("growing past one is
+  //   a CONSCIOUS decision"). The additions, itemized (net bytes,
+  //   measured): TWO NEW MODULES riding the extraction pattern the budget
+  //   exists to encourage — src/app/boot-resume-plane.ts +12,777 (the
+  //   restored-view validation state + the draft restore/write-through/
+  //   clear plane, extracted from console.ts by the wave's own
+  //   single-file payment) + src/core/launch-draft-store.ts +11,562 (the
+  //   wizard draft's versioned, fail-closed localStorage record, net of the
+  //   cont3 erasable-subset repair — its value-is predicate names the
+  //   LaunchPreference type instead of an inline object literal, the
+  //   no-build loader grammar the boot-path pins enforce); the
+  //   H-4/H-5/H-6 surfaces — src/render/model.ts +5,239 (the
+  //   compile-divergence teaching + the view-projected unread count + the
+  //   restored-draft hint), src/render/shell.ts +2,539 (the unread wiring
+  //   + the heal/restored view fields), src/core/notices.ts +1,407
+  //   (unreadCountAt); and src/app/console.ts +107 NET: the wave's own
+  //   wiring (H-4's pending restored view + the heal note + the TM-drive
+  //   retirement + the draft wiring) was paid down to near-zero growth by
+  //   THREE comment-tightening passes (the plane extraction at 72fc594,
+  //   the first continuation worker's in-flight pass, and the second
+  //   continuation worker's finishing pass) — console.ts measures 163,685
+  //   of the 163,840-byte single-file budget, 155 bytes under the line
+  //   (every law kept, zero code lines touched, the FW-39-3/d2727da
+  //   precedent). No single-file raise: console.ts stays under its own
+  //   line untouched; the file count stays 53 of 64.
   const FILE_COUNT_BUDGET = 64; // each source is one boot fetch — the fetch count stays bounded
-  const TOTAL_BYTES_BUDGET = 1088 * 1024; // 1088 KiB — the whole boot transfer (raised from 1024 KiB at FW-39-3 — see the note above)
+  const TOTAL_BYTES_BUDGET = 1152 * 1024; // 1152 KiB — the whole boot transfer (raised from 1088 KiB at FW-40-B — see the note above)
   const LARGEST_FILE_BUDGET = 160 * 1024; // 160 KiB — one fetch + one strip pass (raised from 128 KiB at FW-34-B — see the note above)
 
   it('the payload is the copy spec\'s set on the real tree: index.html + non-test sources, NO test sources, the loader\'s critical path present', () => {

@@ -18,8 +18,9 @@
 //   CONNECTING neutral (gentle pulse, reduced-motion disabled).
 
 import type { ConnectionStatus, ExportVerificationReport, WorkspaceState } from '../core/workspace';
+import { viewAtOf } from '../core/workspace';
 import type { ProjectRecord } from '../api/contracts';
-import { scopedInbox, unreadCount } from '../core/notices';
+import { scopedInbox, unreadCountAt } from '../core/notices';
 import type { ThemeName } from '../core/theme';
 import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellTarget } from '../core/nav';
 import { DEMO_PROJECT_ID, isDemoProject, isLaunchpadScope, sessionOwnDesksOf as sessionOwnDesksOfDirectory, otherSessionsDesksOf as otherSessionsDesksOfDirectory } from '../core/tenant';
@@ -129,6 +130,45 @@ export interface ShellView {
    * payload-budget law: zero console.ts growth).
    */
   readonly account?: AccountPanelState;
+  /**
+   * FW-40-B (Round H register H-4 — the stale view-instant resume trap):
+   * THE RESTORED-VIEW HEAL NOTE — the Time Machine bar's teaching line
+   * for the one healing that reopens a desk whose stored posture
+   * parked it at a pre-history instant (S3's resume trap: every
+   * section honestly read "No ... at this view instant" over a
+   * healthy, compiled desk). The note names the stale instant, the
+   * project's own earliest record, and the heal to LIVE; it renders
+   * until the analyst next drives the Time Machine (their move retires
+   * the teaching — the machine is theirs again). OPTIONAL by design
+   * (the account-field precedent): undefined is the default every
+   * prior surface keeps, byte-for-byte; the console seam
+   * (app/console.ts) is the only writer (null = the retired note).
+   */
+  readonly tmHealNote?: TmHealNote | null;
+  /**
+   * FW-40-B (the boot-seam draft persistence, S2's draft-lost-on-reload):
+   * THE RESTORED-DRAFT HINT — the wizard card's subtle disclosure that
+   * the draft it renders came back from the browser's own trust zone
+   * (the value is the record's saved-at instant, epoch ms, so the line
+   * can name WHEN the work was saved). Renders until the user's first
+   * wizard drive (a committed edit or a step move retires it — the
+   * wizard is theirs again). OPTIONAL by design (the account-field
+   * precedent): undefined is the default every prior surface keeps,
+   * byte-for-byte; the console seam (app/console.ts) is the only
+   * writer (null = the retired hint).
+   */
+  readonly launchDraftRestored?: number | null;
+}
+
+/**
+ * FW-40-B (H-4): the restored-view heal's own teaching record — what the
+ * note names (pure data; the render composes the sentence).
+ */
+export interface TmHealNote {
+  /** The stale instant the stored posture restored (epoch ms — pre-history for this desk). */
+  readonly fromAt: number;
+  /** The desk's own earliest record instant (the record-derived floor — historyFloorOf's 'records' derivation). */
+  readonly earliestAt: number;
 }
 
 /** A reference to the record a detail sheet shows (§4.5a). */
@@ -275,9 +315,18 @@ function navItem(target: ShellTarget, active: boolean, unread: number, demo = fa
   return v('button', attrs, [navGlyphOf(target), v('span', { class: 'nav-item-label' }, [SHELL_TITLES[target]])]);
 }
 
-/** The bell's unread count of a state — the PROJECT-SCOPED inbox's own (D-13, W-29: another desk's notices never badge this desk's bell). */
+/**
+ * The bell's unread count of a state — the PROJECT-SCOPED inbox's own
+ * (D-13, W-29: another desk's notices never badge this desk's bell),
+ * counted at the VIEW INSTANT (FW-40-B, Round H register H-6): the badge
+ * rides the same L4 projection the Inbox rows and Home's activity
+ * timeline render, so the counters and the lists can never disagree at
+ * a selected instant (S3's "two surfaces, two truths, same instant").
+ * At the LIVE edge the projected count IS the plain count — the live
+ * badge is byte-identical to the pre-fix surface.
+ */
 function scopedUnreadCount(state: WorkspaceState): number {
-  return unreadCount(scopedInbox(state.inbox, state.scope));
+  return unreadCountAt(scopedInbox(state.inbox, state.scope), viewAtOf(state));
 }
 
 /** The grouped navigation (aria-label="Primary", the four charter groups in order; the bell carries the unread count — and, when the scope is the shared demo project, the DEMO disclosure chip). */

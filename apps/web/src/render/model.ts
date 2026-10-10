@@ -49,7 +49,7 @@ import {
   type LaunchFieldName,
 } from '../core/launch-form';
 import type { SectionId } from '../core/sections';
-import { scopedInbox, unreadCount, type InboxState } from '../core/notices';
+import { scopedInbox, unreadCountAt, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, historyFloorOf, type WorkspaceState } from '../core/workspace';
 import { parseInstantUtc } from '../core/format';
@@ -833,7 +833,10 @@ function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
   // records; the inbox's records predate the current scope, so the scope
   // gate applies at the view).
   const inbox = scopedInbox(state.inbox, state.scope);
-  const unread = unreadCount(inbox);
+  // FW-40-B (H-6): the header's count rides the VIEW-PROJECTED notices —
+  // the same list the rows below render (never "(4 unread)" over an
+  // empty list at a selected instant).
+  const unread = unreadCountAt(inbox, viewAt);
   const projected = projectToView(inbox.notices, viewAt, (record) => record.at);
   const rows = projected.map((record) => {
     const copy = noticeCopyOf(record.kind);
@@ -866,6 +869,9 @@ function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
     v('button', { class: 'inbox-read-all', 'data-action': 'notices-read-all', type: 'button' }, ['Mark all read']),
     ...rows,
     ...(projected.length === 0 ? [sectionEmpty('inbox')] : []),
+    // FW-40-B (H-5): the projection hid notices this desk carries — the
+    // panel says so (never a bare empty state over a folded inbox).
+    ...beyondViewHint(inbox.notices.length, projected.length, 'notice'),
   ]);
 }
 
@@ -914,6 +920,18 @@ function timeMachineBar(state: WorkspaceState, viewAt: number, view: ShellView):
       customSpeedError: view.playbackCustomSpeedError,
     }),
     v('p', { class: 'hint' }, ['Every visible datum passed the availability projection for this view instant (L4).']),
+    // FW-40-B (Round H register H-4 — the resume trap's teaching line):
+    // the one-time disclosure for the stale-instant heal. A boot restore
+    // that re-landed a stored view instant predating this project's own
+    // earliest record healed to LIVE (nothing could EVER render there —
+    // the dead-desk trap); the line names both instants so the analyst
+    // understands what happened and why the desk now reads live. The
+    // note renders until the analyst next drives the Time Machine (the
+    // console seam retires it on their first TM move — the machine is
+    // theirs again).
+    ...(view.tmHealNote === undefined || view.tmHealNote === null
+      ? []
+      : [v('p', { class: 'hint tm-heal', 'data-tm-heal': 'true' }, [`The restored view instant ${formatInstantUtc(view.tmHealNote.fromAt)} predates this project's earliest record ${formatInstantUtc(view.tmHealNote.earliestAt)} — nothing could render there; healed to LIVE.`])]),
   ]);
 }
 
@@ -943,6 +961,29 @@ const SECTION_EMPTY_STATES: Readonly<Record<SectionId | 'inbox', { readonly icon
 function sectionEmpty(section: SectionId | 'inbox'): VNode {
   const config = SECTION_EMPTY_STATES[section];
   return emptyState({ icon: config.icon, title: config.title, sentence: config.sentence, action: config.action });
+}
+
+/**
+ * FW-40-B (Round H register H-5 — S3's cross-surface compile divergence):
+ * THE BEYOND-THE-VIEW DISCLOSURE. The L4 projection honestly hides
+ * records whose availability sits after the view instant, and the
+ * section empty states honestly say "No ... at this view instant" —
+ * but pre-fix that was ALL they said, so a healthy compiled desk under
+ * a stale instant read as a total dead desk and the empty-state copy
+ * ("An organization compiles here once the launch completes")
+ * actively reinforced the misdiagnosis (it cost a Round-H persona
+ * worker three blocked ledger rows). Whenever the projection HIDES
+ * records this surface could have shown, the surface now SAYS SO —
+ * the count, the reason, and the way back (return to LIVE). Never a
+ * bare "nothing exists" over a state that carries records (the G-9
+ * lineage: never silently wrong — the lagging surface teaches).
+ * Returns an EMPTY list when nothing is hidden (the section renders
+ * exactly its pre-fix bytes at the live edge).
+ */
+function beyondViewHint(totalOnRecord: number, visibleAtView: number, noun: string): VNode[] {
+  const hidden = totalOnRecord - visibleAtView;
+  if (hidden <= 0) return [];
+  return [v('p', { class: 'hint', 'data-beyond-view': String(hidden) }, [`${hidden} ${noun}${hidden === 1 ? '' : 's'} on record sit after this view instant — return to LIVE to see them.`])];
 }
 
 /** The notice-kind severity tint (§4.6 — a closed mapping, pinned by tests). */
@@ -1035,8 +1076,15 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
   const capsuleCount = evidenceCapsulesOf(state, viewAt).length;
   // D-13 (W-29): the unread tile + the activity timeline render the
   // PROJECT-SCOPED inbox — another desk's notices never count here.
+  // FW-40-B (Round H register H-6): the tile's count rides the SAME
+  // view-projected notice list the activity timeline below renders
+  // (unreadCountAt) — the pre-fix tile counted the whole scoped inbox
+  // while the timeline projected, so at a selected instant Home read
+  // "No activity yet" beside a non-zero counter (S3's post-reload
+  // mismatch: Home 0/"No activity yet" vs the Inbox + the badge at 4).
   const scopedNotices = scopedInbox(state.inbox, state.scope);
-  const unread = unreadCount(scopedNotices);
+  const notices = projectToView(scopedNotices.notices, viewAt, (record) => record.at);
+  const unread = unreadCountAt(scopedNotices, viewAt);
   const running = jobs.filter((job) => job.status === 'running').length;
   const snapshot = snapshots.length > 0 ? snapshots[0] : null;
   const tiles = statGrid([
@@ -1056,7 +1104,6 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
       ['Instances', snapshot === null ? '0' : String(snapshot.instanceRefs.length)],
     ],
   });
-  const notices = projectToView(scopedNotices.notices, viewAt, (record) => record.at);
   // FW-36-B (Round E register E-8, part 3 — the demo-tenant
   // contamination marking, L3's exact finding): the shared demo
   // project's notices render on a fresh session's Home UNMARKED (the
@@ -1074,15 +1121,28 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
     ...(demoScope ? { demo: true } : {}),
   }));
   const buckets = timelineBucketsOf(entries, viewAt);
+  // FW-40-B (Round H register H-5 — the dead-desk misdiagnosis): when the
+  // projection hides notices this desk carries, the empty line names the
+  // VIEW INSTANT (never the pre-fix "No activity yet" — which read, over
+  // a stale instant, as "this desk never did anything" and reinforced
+  // the false diagnosis) and the beyond-the-view hint below teaches the
+  // count + the way back.
+  const noticesHiddenBeyondView = scopedNotices.notices.length - notices.length;
   const activity = buckets.length === 0
-    ? v('div', { class: 'empty' }, ['No activity yet — notices from your organization appear here.'])
+    ? v('div', { class: 'empty' }, [noticesHiddenBeyondView > 0
+      ? 'No notices at this view instant.'
+      : 'No activity yet — notices from your organization appear here.'])
     : timelineList(buckets);
   return v('section', { class: 'panel home', 'data-section': 'home' }, [
     hero,
     ...(invite === null ? [] : [invite]),
     tiles,
     organization,
-    v('div', { class: 'home-block' }, [v('h2', { class: 'section-heading' }, ['Recent activity']), activity]),
+    v('div', { class: 'home-block' }, [
+      v('h2', { class: 'section-heading' }, ['Recent activity']),
+      activity,
+      ...beyondViewHint(scopedNotices.notices.length, notices.length, 'notice'),
+    ]),
   ]);
 }
 
@@ -1481,6 +1541,11 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       return v('section', { class: 'panel', 'data-section': 'organization' }, [
         ...cards,
         ...(projected.length === 0 ? [sectionEmpty('organization')] : []),
+        // FW-40-B (H-5): the projection hid snapshots this desk carries —
+        // the section says so (S3's divergence: this empty state over a
+        // COMPILED org read as "not compiled"; the disclosure names what
+        // sits beyond the view and the way back to it).
+        ...beyondViewHint(state.orgSnapshots.length, projected.length, 'organization snapshot'),
       ]);
   } else if (selector === 'market-world') {
       // D-8 (W-28): the section is bound to the PROJECT'S OWN PERSISTED
@@ -1536,6 +1601,9 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
               // say: a research job no longer requires a launch.
               : emptyState({ icon: 'flask', title: 'No research jobs at this view instant.', sentence: 'Research jobs start when a project launches — or submit one directly with the button above.', action: { label: 'Launch from Goal', target: 'goal' } })]
           : []),
+        // FW-40-B (H-5): the projection hid jobs this desk carries — the
+        // section says so (never "no jobs" over a desk whose kickoff ran).
+        ...beyondViewHint(state.jobs.filter((job) => job.kind === 'research').length, projected.length, 'research job'),
       ]);
   } else if (selector === 'experiments') {
       const projected = projectToView(state.jobs, viewAt, availabilityOfJob);
@@ -1993,6 +2061,16 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
     const reviewValid = problems.length === 0;
     rows.push(v('div', { class: 'card launch-wizard', 'data-launch-step': launch.step }, [
       v('div', { class: 'card-title' }, [`Primary flow — ${launch.step}`]),
+      // FW-40-B (the boot-seam draft persistence, S2's
+      // draft-lost-on-reload): the subtle restored-draft disclosure —
+      // the wizard carries work the browser's own trust zone kept
+      // (the whole point of the store: losing a half-filled launch
+      // wizard to a reload is losing WORK, not state). One hint line
+      // naming WHEN it was saved; it retires on the user's first
+      // wizard drive (the console seam clears the view field).
+      ...(view.launchDraftRestored !== undefined && view.launchDraftRestored !== null
+        ? [v('p', { class: 'hint', 'data-draft-restored': 'true' }, [`Draft restored from your last session (saved ${formatInstantUtc(view.launchDraftRestored)}).`])]
+        : []),
       // FW-40-C (the wizard-race cluster): the stepper's own controls
       // carry STABLE IDS so the projector preserves the live elements
       // across every beat re-projection (render/dom.ts's keyed reuse) —
