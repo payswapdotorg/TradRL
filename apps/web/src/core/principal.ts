@@ -1,45 +1,45 @@
-// @tradrl/web-console — THE NAMED PRINCIPAL (FW-39-2, identity Wave 2 —
-// docs/design/IDENTITY-MODEL.md §5 Wave 2; the G-11 restart-orphan
-// deployment blocker's user-facing half).
+// @tradrl/web-console — THE NAMED PRINCIPAL (FW-39-2, identity Wave 2;
+// FW-39-3 adds the token-header transport — docs/design/IDENTITY-MODEL.md
+// §5 Waves 2-3; the G-11 restart-orphan blocker's user-facing half).
 //
 // THE LAW (the design's option (c), Phase 1): the deployed console was
 // anonymous by design — one developer credential baked into the public
 // shell, one shared tenant, ownership stamped by a DYING correlation
 // device (the localStorage session id) — so a browser restart, a cleared
-// profile or a new machine orphaned every desk the user launched (Round
-// F/G's four-word posture: durable DATA / ephemeral SESSION / absent
-// IDENTITY / ORPHANED access). Wave 1 (deploy/vercel, a parallel
-// surface) ships the host substrate; THIS module is the console's
-// client half — the token store, the auth client against the DOCUMENTED
-// contract, and the whoami cache — coded DEFENSIVELY (the routes may
-// not exist yet on a given backing; the typed answers below are the
-// whole truth the surface ever claims).
+// profile or a new machine orphaned every desk (Round F/G's four-word
+// posture: durable DATA / ephemeral SESSION / absent IDENTITY / ORPHANED
+// access). Wave 1 (deploy/vercel, a parallel surface) ships the host
+// substrate; THIS module is the console's client half — the token store,
+// the auth client against the DOCUMENTED contract, and the whoami cache —
+// coded DEFENSIVELY (the routes may not exist on a given backing; the
+// typed answers below are the whole truth the surface ever claims).
 //
 // THE DOCUMENTED CONTRACT (design §5 Wave 1; the parallel wave owns the
 // server side — this module never assumes beyond it):
 //   POST /v1/auth/register  { name, passphrase }        -> { token, principal }
 //   POST /v1/auth/login     { name, passphrase }        -> { token, principal }
-//   POST /v1/auth/logout    (Bearer principal token)    -> 2xx
-//   GET  /v1/auth/whoami    (Bearer principal token)    -> { principal }
-//   POST /v1/auth/adopt     (Bearer + the session header) -> { desks: [...] }
+//   POST /v1/auth/logout    (the principal-token header) -> 2xx
+//   GET  /v1/auth/whoami    (the principal-token header) -> { principal }
+//   POST /v1/auth/adopt     (the token + session headers) -> { adoptions }
 // Typed 401/404/503 per the boundary's own envelope discipline
 // ({ requestId, data } / { requestId, error }); unknown-vs-foreign
 // indistinguishable; under the DEMO backing every route answers the
 // TYPED not-available (503 — an account must never silently cold-start
-// reset, R46). The adopt route takes NO widening parameter (the FW-37-B
-// module-level lesson): it re-stamps the CALLING session's own desks,
-// idempotently, with a PER-DESK response.
+// reset, R46). FW-39-3: the principal token rides the
+// `x-tradrl-principal-token` header BESIDE the boundary credential —
+// never `authorization` (the developer credential's own header). The
+// adopt route takes NO widening parameter (the FW-37-B lesson): it
+// re-stamps the CALLING session's own desks, idempotently, per-desk.
 //
 // THE TRUST-ZONE AMENDMENT (the design §3(c), disclosed): localStorage
 // gains ONE revocable bearer token (never the passphrase — the host
-// stores only a salted verifier; the console never persists or sends
-// it after the login call). The public shell ALREADY bakes the
-// developer credential, so this adds no new exposure class — it
-// strictly narrows what a stolen browser holds (principal desks,
-// revocable) versus the status quo (the tenant credential,
-// irrevocable). A storage that refuses (private mode) degrades to
-// per-boot sessions — the same honest-degradation class as the session
-// id's ephemeral mint.
+// stores only a salted verifier; the console never persists or sends it
+// after the login call). The public shell ALREADY bakes the developer
+// credential, so this adds no new exposure class — it strictly narrows
+// what a stolen browser holds (principal desks, revocable) vs the status
+// quo (the tenant credential, irrevocable). A storage that refuses
+// (private mode) degrades to per-boot sessions — the same honest
+// degradation class as the session id's ephemeral mint.
 //
 // This module is PURE + storage-seamed (the core/session.ts pattern):
 // no DOM, no clock, no fetch — the transport and the storage are
@@ -50,6 +50,58 @@ import type { ApiTransport, SdkResponse } from '../api/transport';
 import { ApiConsoleError, errorFromEnvelope } from '../api/errors';
 import type { ProjectRecord } from '../api/contracts';
 import { isDemoProject, sessionOwnDesksOf } from './tenant';
+
+// ---------------------------------------------------------------------------
+// The principal-token header + the header-carrying transport (FW-39-3)
+// ---------------------------------------------------------------------------
+
+/**
+ * THE PRINCIPAL-TOKEN HEADER (FW-39-3): the client mirror of the host's
+ * documented wave-1 contract — the principal token rides
+ * `x-tradrl-principal-token` BESIDE the boundary credential (the
+ * two-layer model: the developer credential in `authorization` = the
+ * tenant; this header = the user). The token NEVER rides `authorization`
+ * (that header is the boundary credential's own — a client that overwrote
+ * it would fail every host route's authn-first law).
+ */
+export const PRINCIPAL_TOKEN_HEADER = 'x-tradrl-principal-token';
+
+/**
+ * The live principal-token state (FW-39-3): the account plane writes it
+ * (login mint / boot-validation success / logout + 401 clear), the
+ * transport seam reads it per request — so the console's OWN consequential
+ * writes (the launch create, the research promote) carry the acting
+ * principal's token and the host's audit stamps fire. Pure closure state:
+ * no DOM, no storage — the storage-backed truth stays the plane's own.
+ */
+export interface PrincipalHeaderState {
+  /** The current principal token (null = anonymous — no header is added). */
+  readonly token: () => string | null;
+  /** Set the live token (the plane's write path). */
+  setToken(token: string | null): void;
+}
+
+/** Build one live principal-token state (starts anonymous). */
+export function createPrincipalHeaderState(): PrincipalHeaderState {
+  let live: string | null = null;
+  return { token: () => live, setToken: (token) => { live = token; } };
+}
+
+/**
+ * Wrap one transport so EVERY request carries the boundary credential +
+ * (when a principal is signed in) the principal-token header (FW-39-3 —
+ * the audit stamp's client half). The request's OWN headers win over the
+ * injected pair (the auth client's per-call token is authoritative; the
+ * console client's own credential injection is the same value).
+ */
+export function withPrincipalHeaders(transport: ApiTransport, state: PrincipalHeaderState, bearerToken: string): ApiTransport {
+  return async (request) => {
+    const injected: Record<string, string> = { authorization: `Bearer ${bearerToken}` };
+    const token = state.token();
+    if (token !== null) injected[PRINCIPAL_TOKEN_HEADER] = token;
+    return transport({ ...request, headers: { ...injected, ...request.headers } });
+  };
+}
 
 // ---------------------------------------------------------------------------
 // The token store (the storage seam)
@@ -227,6 +279,9 @@ export function isAuthUnauthenticatedError(error: unknown): boolean {
  * envelope translation the frozen-route client rides, never
  * duplicated); a transport that throws degrades to the unavailable
  * family (the honest "cannot reach the auth plane", never a crash).
+ * FW-39-3: the principal token rides the PRINCIPAL_TOKEN_HEADER — never
+ * `authorization` (the boundary credential's own header; the host's
+ * documented wave-1 contract).
  */
 export function createPrincipalAuthClient(config: PrincipalAuthClientConfig): PrincipalAuthClient {
   const transport = config.transport;
@@ -235,7 +290,7 @@ export function createPrincipalAuthClient(config: PrincipalAuthClientConfig): Pr
   /** One envelope round-trip: unwrap the success data or throw the typed error. */
   async function roundTrip(method: 'GET' | 'POST', path: string, body?: unknown, token?: string): Promise<unknown> {
     const headers: Record<string, string> = { ...extraHeaders };
-    if (token !== undefined) headers.authorization = `Bearer ${token}`;
+    if (token !== undefined) headers[PRINCIPAL_TOKEN_HEADER] = token;
     let response: SdkResponse;
     try {
       response = await transport({ method, path, headers, ...(body === undefined ? {} : { body }) });

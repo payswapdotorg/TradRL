@@ -314,6 +314,19 @@ export interface GoalSetRecord {
    * 'principal-owned' marker serves — the `ownerSession` precedent).
    */
   readonly ownerPrincipal?: unknown;
+  /**
+   * The observed instant of the principal-ownership stamp (FW-39-3, the
+   * identity wave 3 — the audit stamp): the seam's OWN clock at the moment
+   * it stamped `ownerPrincipal` (the create-stamp, or an adoption's
+   * re-stamp). THE L4 LAW: the instant is the stamp's own observation —
+   * never a request value, never backdated to the create when an adoption
+   * re-stamped the row (the field names when THIS ownership was observed,
+   * which for an adopted pre-account row is the adoption instant — the
+   * honest observation, never a fabricated create-time actor). Absent on
+   * pre-account rows (no principal stamp was ever observed — the honest
+   * absence, never backfilled).
+   */
+  readonly ownerPrincipalAt?: unknown;
 }
 
 /**
@@ -407,6 +420,18 @@ export function ownerSessionOf(goalSet: GoalSetRecord | null): string | null {
 export function ownerPrincipalOf(goalSet: GoalSetRecord | null): string | null {
   const owner = goalSet?.ownerPrincipal;
   return typeof owner === 'string' && owner.length > 0 ? owner : null;
+}
+
+/**
+ * The observed instant of the principal-ownership stamp (FW-39-3): the
+ * additive `ownerPrincipalAt` field (a positive safe integer — the seam's
+ * own observed instant, L4) or null when the row carries none (pre-account
+ * rows — the honest absence, never backfilled). Fail-closed: a malformed
+ * field reads as unobserved.
+ */
+export function ownerPrincipalAtOf(goalSet: GoalSetRecord | null): number | null {
+  const at = goalSet?.ownerPrincipalAt;
+  return typeof at === 'number' && Number.isSafeInteger(at) && at > 0 ? at : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -658,6 +683,11 @@ function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
     // opaque payload column (the additive `ownerPrincipal` field, the
     // `ownerSession` precedent) — carried through verbatim when present;
     // pre-account rows never carry the field (the honest absence).
+    // FW-39-3 (the identity wave 3): the stamp's OWN OBSERVED INSTANT rides
+    // the same opaque payload column (the additive `ownerPrincipalAt` field,
+    // beside `ownerPrincipal` — the L4 law: the seam's clock at stamp time,
+    // never backdated) — carried through verbatim when present; pre-account
+    // rows never carry the field (no instant was ever observed).
     return {
       ok: true,
       value: {
@@ -666,6 +696,7 @@ function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
         ...('world' in value ? { world: value.world } : {}),
         ...('ownerSession' in value ? { ownerSession: value.ownerSession } : {}),
         ...('ownerPrincipal' in value ? { ownerPrincipal: value.ownerPrincipal } : {}),
+        ...('ownerPrincipalAt' in value ? { ownerPrincipalAt: value.ownerPrincipalAt } : {}),
       },
     };
   } catch {

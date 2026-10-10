@@ -273,35 +273,22 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
   //     `deployment.promotions === null` (port overrides — the injection
   //     seam owns its own world) leaves the route absent: the request
   //     falls through to the boundary's typed not-found (the pre-law).
-  //
-  //     FW-35-A (Round D register §3.1 — the export-integrity wave, S5's
-  //     capsule-set mutation masked by a flat manifest count): THE
-  //     WRITE-THROUGH DRAIN ON THE PROMOTE PATH — the same ordering law
-  //     every sibling host route (3c session, 4 substance, 5b boundary)
-  //     already runs. Pre-FW-35-A this path returned the mint's response
-  //     IMMEDIATELY and left the minted decision's putOutcome write queued
-  //     on the seam's fire-and-forget `pending` drain, to be confirmed by
-  //     "the next request" — but under the serverless balancer the next
-  //     request may land on a DIFFERENT instance, and an instance that
-  //     receives no follow-up request is frozen with the write still in
-  //     its in-memory queue: the promoted decision then exists ONLY in
-  //     the minting instance's per-instance registry. Every other
-  //     instance's /v1/outcomes/query lacks it (the serve-time backstop
-  //     re-queues only on instances whose registry holds the record), so
-  //     the console's wholesale outcomes re-read DROPS the record and the
-  //     export's capsule fold loses its capsule — the append-only breach
-  //     (S5: evc:3e4ceb75 dropped out of a consecutive same-scope export
-  //     as a new capsule entered, the manifest count staying flat). With
-  //     the drain, the mint's write CONFIRMS before the promote response
-  //     serves (a failed write replaces it with the typed 503 — the
-  //     caller learns, never a silent divergence; the idempotent
-  //     re-promotion mints the SAME content-addressed id and heals).
+  //     FW-39-3 (the identity wave 3 — the audit stamp): the composition's
+  //     shared principal-token resolver is wired here too — a promote
+  //     whose request carried a VALID principal token mints the additive
+  //     actor fields (actorPrincipal/actorAt, the stamp's own observed
+  //     instant — L4); an anonymous promote mints the byte-identical
+  //     pre-wave-3 shape; a degraded revocation read fails closed (the
+  //     typed 503 — the resolver's own law; the route is now async).
   if (deployment.promotions !== null) {
-    const promoteRoute = serveJobPromoteRoute(
+    const promoteRoute = await serveJobPromoteRoute(
       {
         verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization,
         jobs: () => deployment.service.jobs(),
         promotions: deployment.promotions,
+        // FW-39-3 (the audit stamp): the auth surface's shared verdict law —
+        // the same resolver whoami + the create-stamp + the marker fold ride.
+        resolvePrincipalToken: deployment.auth.resolvePrincipalToken,
       },
       wrapped.request,
       demoSubstanceSerial++,
@@ -415,16 +402,20 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
       await deployment.durable.stampSessionOwner(created.tenantId, created.projectId, session);
     }
   }
-  // 5a-2. THE PRINCIPAL-OWNERSHIP STAMP (FW-39-1, the identity wave 1):
-  //     a successful create-project whose request carried a VALID
-  //     principal token stamps the additive `ownerPrincipal` BESIDE the
-  //     session stamp (lineage preserved — the goal-set row's payload
-  //     carries both; a create without a session header but with a valid
-  //     token stamps the principal alone). The verdict is the auth
-  //     surface's shared resolver (the same law whoami applies); the
-  //     write queues onto the SAME drain (5b), so a failed stamp is the
-  //     typed 503 + the re-projection — the create is unconfirmed, never
-  //     a silent half-stamp.
+  // 5a-2. THE PRINCIPAL-OWNERSHIP STAMP (FW-39-1, the identity wave 1;
+  //     FW-39-3 adds the observed instant): a successful create-project
+  //     whose request carried a VALID principal token stamps the additive
+  //     `ownerPrincipal` BESIDE the session stamp (lineage preserved — the
+  //     goal-set row's payload carries both; a create without a session
+  //     header but with a valid token stamps the principal alone) and —
+  //     FW-39-3 — the seam stamps `ownerPrincipalAt`, its OWN observed
+  //     instant at stamp time (the L4 law: never backdated; a create
+  //     without a token stamps NEITHER — the pre-account row keeps the
+  //     honest absence). The verdict is the auth surface's shared resolver
+  //     (the same law whoami applies); the write queues onto the SAME
+  //     drain (5b), so a failed stamp is the typed 503 + the
+  //     re-projection — the create is unconfirmed, never a silent
+  //     half-stamp.
   if (created !== null && deployment.durable !== null) {
     const principalResolution = await deployment.auth.resolvePrincipalToken(wrapped.request.headers, created.tenantId);
     if (principalResolution.kind === 'valid') {

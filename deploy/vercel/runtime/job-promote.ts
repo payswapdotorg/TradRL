@@ -97,6 +97,7 @@ import {
   type TimestampMs,
 } from '../../../services/api/src/index';
 import { outcomeDurableLaneOf, type OutcomeDurableWriteLane } from './demo';
+import type { PrincipalResolution } from './auth-routes'; // TYPE-ONLY (the no-cycle law: erased at runtime — auth-routes imports routes/session-routes, never this module)
 
 // ---------------------------------------------------------------------------
 // The route's own grammar
@@ -110,6 +111,20 @@ export type PromotedDecisionRecord = OutcomeRecordMirror & {
   readonly decisionRationale: string;
   /** THE DECISION→JOB BACKLINK (FW-32-A): the producing job's own id — the lineage Round A's C02 audits demanded. */
   readonly promotedFromJob: string;
+  /**
+   * THE ACTING PRINCIPAL of the promotion (FW-39-3, the identity wave 3 —
+   * the audit stamp): the principal id whose VALID token rode the promote
+   * request. ADDITIVE + NON-DIGESTED (the record's own additive-field
+   * precedent — decisionBody/promotedFromJob; the export chain's digest
+   * covers {seq,tenantId,projectId,payload} of the EVENTS the console
+   * chains, never this record's envelope fields). Absent on an ANONYMOUS
+   * promotion — the honest absence, never fabricated (pre-account
+   * promotions keep it forever). The registry keeps the FIRST mint
+   * verbatim, so a re-promotion never re-attributes.
+   */
+  readonly actorPrincipal?: string;
+  /** The actor stamp's OWN observed instant (FW-39-3, L4): the promote mint's own `at` — the moment the promotion (and its actor) was observed; never backdated. Absent exactly when `actorPrincipal` is. */
+  readonly actorAt?: number;
 };
 
 /** The promote route's success payload (the response body's `data`). */
@@ -180,8 +195,15 @@ function releaseCandidateOf(job: JobRecord): { readonly specId: string; readonly
  * zero shortfall, zero fees, zero notional — no fabricated economics), and
  * the rationale cites the job, its spec + version, the completion instant
  * and the job's own evidence capsule source (`/v1/jobs/:jobId`) verbatim.
+ *
+ * FW-39-3 (the audit stamp): an `actor` (the promoting principal's id)
+ * rides as the ADDITIVE `actorPrincipal`/`actorAt` fields — the stamp's
+ * own observed instant is the mint's `at` (L4: the promotion and its
+ * actor were observed at the same instant; never backdated). NO actor —
+ * the anonymous mint — and the record's shape is byte-identical to the
+ * pre-wave-3 mint (the additive law; the honest absence).
  */
-export function mintPromotedDecision(tenant: string, job: JobRecord, at: number): PromotedDecisionRecord {
+export function mintPromotedDecision(tenant: string, job: JobRecord, at: number, actor?: { readonly principalId: string }): PromotedDecisionRecord {
   const candidate = releaseCandidateOf(job);
   // The route gates promotability before minting; a non-candidate here is a
   // programming error, never a served fabrication — loud (the seed's own law).
@@ -234,6 +256,7 @@ export function mintPromotedDecision(tenant: string, job: JobRecord, at: number)
     decisionBody: PROMOTION_DESK,
     decisionRationale: rationale,
     promotedFromJob: job.jobId,
+    ...(actor === undefined ? {} : { actorPrincipal: actor.principalId, actorAt: at }),
     asOf: at as TimestampMs,
     priorChainHead: '00000000',
   });
@@ -280,8 +303,8 @@ const registryOfOutcomeFold = new WeakMap<object, PromotionRegistry>();
  * per-instance law, unchanged, honestly under SIMULATED.
  */
 export interface PromotionRegistry {
-  /** Register (or return the existing) promotion of one job — idempotent per job, keyed tenant+job. */
-  record(tenant: string, job: JobRecord, at: number): PromotedDecisionEntry;
+  /** Register (or return the existing) promotion of one job — idempotent per job, keyed tenant+job. FW-39-3: the optional `actor` (the promoting principal) rides the FIRST mint only — a replay keeps the original attribution verbatim. */
+  record(tenant: string, job: JobRecord, at: number, actor?: { readonly principalId: string }): PromotedDecisionEntry;
   /** The promoted decision records of one tenant + project (L12: keyed on the AUTHORIZED tenant). */
   outcomesOf(tenant: string, project: string): readonly PromotedDecisionRecord[];
   /** The existing promotion of one job, when this instance already minted it. */
@@ -298,7 +321,7 @@ export function createPromotionRegistry(): PromotionRegistry {
   const byJob = new Map<string, PromotedDecisionRecord>();
   let durableLane: OutcomeDurableWriteLane | null = null;
   const registry: PromotionRegistry = {
-    record(tenant, job, at) {
+    record(tenant, job, at, actor) {
       const key = `${tenant}/${job.jobId}`;
       const existing = byJob.get(key);
       if (existing !== undefined) {
@@ -306,11 +329,12 @@ export function createPromotionRegistry(): PromotionRegistry {
         // mint whose durable write never confirmed (a failed drain, an
         // instance that died before the next request) heals here; the
         // lane's own idempotence (projection match + pending match) keeps
-        // the confirmed case a no-op.
+        // the confirmed case a no-op. FW-39-3: the replay keeps the FIRST
+        // mint's actor verbatim — a re-promotion never re-attributes.
         durableLane?.recordOutcome(existing);
         return { decision: existing, replay: true };
       }
-      const decision = mintPromotedDecision(tenant, job, at);
+      const decision = mintPromotedDecision(tenant, job, at, actor);
       byJob.set(key, decision);
       // FW-33-A: the mint queues its durable write-through IMMEDIATELY — a
       // promoted decision becomes durable TRUTH, not per-instance state.
@@ -415,6 +439,16 @@ export interface JobPromoteRouteInput {
   readonly jobs: () => readonly JobRecord[];
   /** The composition's promotion registry (the mint + the idempotence state). */
   readonly promotions: PromotionRegistry;
+  /**
+   * THE PRINCIPAL TOKEN RESOLVER (FW-39-3, the audit stamp — optional so
+   * existing constructions stay valid): the auth surface's shared verdict
+   * law. A VALID token stamps the mint's additive actor fields
+   * (`actorPrincipal`/`actorAt`); an absent/invalid one mints the ANONYMOUS
+   * shape (byte-identical to the pre-wave-3 mint — the additive law); a
+   * DEGRADED revocation read answers the typed 503 (fail closed — the
+   * auth routes' own law, never a silently unattributable write).
+   */
+  readonly resolvePrincipalToken?: (headers: unknown, tenant: string) => Promise<PrincipalResolution>;
 }
 
 /** The `/v1/jobs/:jobId/promote` path match (the captured job id, or null). */
@@ -434,8 +468,11 @@ export function matchJobPromotePath(path: string): string | null {
  * cross-tenant indistinguishable — the boundary's own law); a job that is
  * not a completed research release candidate answers the typed 409 (the
  * frozen service's own conflict family); the mint is idempotent per job.
+ * FW-39-3: a request carrying a VALID principal token mints the additive
+ * actor stamp (the audit trail's who-did-what); a degraded revocation read
+ * fails closed (the typed 503).
  */
-export function serveJobPromoteRoute(input: JobPromoteRouteInput, request: JobPromoteRequest, serial: number): ApiResponse | null {
+export async function serveJobPromoteRoute(input: JobPromoteRouteInput, request: JobPromoteRequest, serial: number): Promise<ApiResponse | null> {
   if (request.method !== 'POST') return null;
   const jobId = matchJobPromotePath(request.path);
   if (jobId === null) return null;
@@ -460,7 +497,25 @@ export function serveJobPromoteRoute(input: JobPromoteRouteInput, request: JobPr
     const resultKind = typeof (job.result as { readonly kind?: unknown } | undefined)?.kind === 'string' ? (job.result as { readonly kind: string }).kind : 'none';
     return promoteRouteError(requestId, apiError('conflict', `the job ${JSON.stringify(jobId)} is not promotable (kind ${job.kind}, status ${job.status}, result ${resultKind}) — the promotion serves completed research jobs whose result is a release candidate`));
   }
-  // The mint (idempotent per job — the registry keeps the first record verbatim).
+  // FW-39-3 — THE ACTOR RESOLUTION (the audit stamp): resolved only on the
+  // promotable path (the headerless common path pays nothing — the resolver
+  // answers absent-or-invalid without a store read). A VALID token stamps
+  // the mint; an absent/invalid one mints the anonymous shape; a DEGRADED
+  // revocation read FAILS CLOSED (the typed 503 — the auth routes' own law:
+  // an unverifiable token is never honored, never a silently unattributable
+  // consequential write; the idempotent re-promotion heals on retry).
+  if (input.resolvePrincipalToken !== undefined) {
+    const resolution = await input.resolvePrincipalToken(request.headers, authorization.tenant);
+    if (resolution.kind === 'degraded') {
+      return promoteRouteError(requestId, apiError('unavailable', `the revocation-list read failed (${resolution.error.code}): ${resolution.error.message} — the promotion fails closed (R46); retry promotes idempotently`));
+    }
+    // The mint (idempotent per job — the registry keeps the first record verbatim, FIRST actor included).
+    const entry = resolution.kind === 'valid'
+      ? input.promotions.record(authorization.tenant, job, Date.now(), { principalId: resolution.token.principalId })
+      : input.promotions.record(authorization.tenant, job, Date.now());
+    return promoteRouteSuccess(requestId, deepFreeze({ decision: entry.decision, replay: entry.replay }));
+  }
+  // No resolver wired (the pre-FW-39-3 construction): the anonymous mint, byte-identical.
   const entry = input.promotions.record(authorization.tenant, job, Date.now());
   return promoteRouteSuccess(requestId, deepFreeze({ decision: entry.decision, replay: entry.replay }));
 }

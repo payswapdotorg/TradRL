@@ -42,6 +42,13 @@ export interface ExportFlowSeams {
   readonly state: () => WorkspaceState;
   /** The environment truth (E-8, part 2: threads into every record's `simulated` flag). */
   readonly simulated: () => boolean;
+  /**
+   * The acting principal's account name (FW-39-3: threads into every
+   * record's additive `actor` field — the published actorRule; null =
+   * anonymous, the honest absence). OPTIONAL: existing callers compose
+   * anonymously.
+   */
+  readonly actor?: () => string | null;
   /** E-9: has the CURRENT scope's read bundle completed? (the lastFetchedScope seam; the launchpad is always ready). */
   readonly scopeReadsComplete: () => boolean;
   /** Re-run the current scope's read bundle (the wait path's bounded retry). */
@@ -81,7 +88,8 @@ export function runWorkspaceExport(seams: ExportFlowSeams): void {
     const fileName = `tradrl-workspace-${seams.state().scope.projectId}.json`;
     try {
       // E-8, part 2: the environment truth threads into every record.
-      const bytes = serializeWorkspaceExport(seams.state(), seams.simulated());
+      // FW-39-3: so does the acting principal (null = anonymous).
+      const bytes = serializeWorkspaceExport(seams.state(), seams.simulated(), seams.actor === undefined ? null : seams.actor());
       // FW-32-B (b3): the download — the anchor + click seam, then the
       // CONFIRMATION toast (M1/M5's "no download toast" finding), ~5s.
       seams.download(fileName, bytes);

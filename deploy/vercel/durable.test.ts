@@ -2224,4 +2224,78 @@ describe('deploy/vercel — FW-39-1: the principal substrate under durable (the 
     expect(goalSet.value?.ownerSession).toBe(SESSION_A); // the session stamp
     expect(goalSet.value?.ownerPrincipal).toBe(principalId); // the principal stamp, BESIDE it (lineage preserved)
   });
+
+  it('FW-39-3 (the audit stamp): the create-stamp carries its OWN observed instant — the seam\'s clock at stamp time (L4: never backdated), and pre-account rows keep the honest absence', async () => {
+    const providers = fakeProviders();
+    const instance = composeInstance(authSource(), providers.fetchLike);
+    expect(instance.ok).toBe(true);
+    if (!instance.ok) return;
+
+    // A PRE-ACCOUNT create (no token): the row carries NEITHER the principal stamp NOR an instant — the honest absence, never fabricated.
+    const anonCreated = await drive(instance, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: createProjectBody('prj-pre-account'),
+    }));
+    expect(anonCreated.status).toBe(201);
+    // A PRINCIPAL create: both stamps + the observed instant.
+    const token = await registerPrincipal(instance);
+    const whoami = await drive(instance, streamingRequest({ url: '/v1/auth/whoami', headers: { ...BEARER, 'x-tradrl-principal-token': token } }));
+    expect(whoami.status).toBe(200);
+    const principalId = ((whoami.body as { data: { principal: { id: string } } }).data).principal.id;
+    const created = await drive(instance, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A, { 'x-tradrl-principal-token': token }), 'content-type': 'application/json' },
+      body: createProjectBody('prj-stamped'),
+    }));
+    expect(created.status).toBe(201);
+
+    const direct = storesOver(providers.fetchLike);
+    const preAccount = await direct.project.goalSetOf(TENANT, 'prj-pre-account');
+    expect(preAccount.ok).toBe(true);
+    if (preAccount.ok) {
+      expect(preAccount.value?.ownerPrincipal).toBeUndefined(); // the honest absence
+      expect(preAccount.value?.ownerPrincipalAt).toBeUndefined(); // no instant was ever observed — never fabricated
+    }
+    const stamped = await direct.project.goalSetOf(TENANT, 'prj-stamped');
+    expect(stamped.ok).toBe(true);
+    if (stamped.ok) {
+      expect(stamped.value?.ownerPrincipal).toBe(principalId);
+      // THE L4 LAW: the instant is the SEAM'S OWN observation (the injected clock reads T0), not a request value, never backdated.
+      expect(stamped.value?.ownerPrincipalAt).toBe(T0);
+    }
+  });
+
+  it('FW-39-3 (the audit stamp): the ADOPTION re-stamp observes its OWN instant — an adopted pre-account row names the ADOPTION instant (the honest observation of when this ownership began), never backdated to the create; an idempotent re-adopt keeps the FIRST instant', async () => {
+    const providers = fakeProviders();
+    const instance = composeInstance(authSource(), providers.fetchLike);
+    expect(instance.ok).toBe(true);
+    if (!instance.ok) return;
+    // A pre-account desk (created anonymously), then adopted.
+    const anonCreated = await drive(instance, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: createProjectBody('prj-adopt-me'),
+    }));
+    expect(anonCreated.status).toBe(201);
+    const token = await registerPrincipal(instance);
+    const adopted = await drive(instance, streamingRequest({
+      method: 'POST', url: '/v1/auth/adopt', headers: { ...sessionHeaders(SESSION_A), 'x-tradrl-principal-token': token },
+    }));
+    expect(adopted.status).toBe(200);
+    const direct = storesOver(providers.fetchLike);
+    const row = await direct.project.goalSetOf(TENANT, 'prj-adopt-me');
+    expect(row.ok).toBe(true);
+    if (row.ok) {
+      expect(typeof row.value?.ownerPrincipal).toBe('string');
+      expect(row.value?.ownerPrincipalAt).toBe(T0); // the adoption's OWN observed instant — the seam's clock at stamp time (L4)
+      expect(row.value?.ownerSession).toBe(SESSION_A); // lineage preserved
+    }
+    // The idempotent re-adopt: changed=false, no write, the FIRST observed instant stands.
+    const reAdopted = await drive(instance, streamingRequest({
+      method: 'POST', url: '/v1/auth/adopt', headers: { ...sessionHeaders(SESSION_A), 'x-tradrl-principal-token': token },
+    }));
+    expect(reAdopted.status).toBe(200);
+    expect(((reAdopted.body as { data: { adoptions: readonly { changed: boolean }[] } }).data).adoptions.every((entry) => entry.changed === false)).toBe(true);
+    const rowAfter = await direct.project.goalSetOf(TENANT, 'prj-adopt-me');
+    expect(rowAfter.ok).toBe(true);
+    if (rowAfter.ok) expect(rowAfter.value?.ownerPrincipalAt).toBe(T0); // never re-stamped — the first observation is the truth
+  });
 });

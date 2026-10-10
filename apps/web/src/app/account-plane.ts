@@ -54,6 +54,7 @@ import {
   persistPrincipalSession,
   readStoredPrincipalSession,
   unavailableAccountPanel,
+  type PrincipalHeaderState,
   type WhoamiCache,
 } from '../core/principal';
 import type { PrincipalAuthClient, PrincipalStorage } from '../core/principal';
@@ -75,6 +76,14 @@ export interface AccountPlaneSeams {
   readonly auth: PrincipalAuthClient;
   /** The principal session's storage seam (localStorage in production; null = this boot persists nothing — the per-boot degradation, disclosed in the copy). */
   readonly storage: PrincipalStorage | null;
+  /**
+   * THE LIVE PRINCIPAL-TOKEN STATE (FW-39-3, optional): the plane writes it
+   * at every session transition (mint / boot-validation success / logout +
+   * the honest clears) so the console's own consequential writes carry the
+   * acting principal's token — the audit stamp's client half. Absent = the
+   * plane never touches the transport's headers (the pre-FW-39-3 shape).
+   */
+  readonly principalHeaders?: PrincipalHeaderState;
   /** The shared demo project's id (the teaching desk — never adoptable, never this session's property). */
   readonly demoProjectId: string;
   /** The tenant's project directory as currently on record (the ceremony's rows + the re-attach re-read derive from it). */
@@ -136,6 +145,7 @@ export async function readAccountBoot(seams: AccountPlaneSeams, cache: WhoamiCac
   try {
     const answer = await seams.auth.whoami(stored.token);
     cache.write(stored.token, answer);
+    seams.principalHeaders?.setToken(stored.token); // FW-39-3: the validated token goes live for the console's own writes
     put(seams, { ...authenticatedAccountPanel(answer.name), edits: panelOf(seams).edits, adoption: adoptionRowsOf(seams.directory(), seams.demoProjectId) });
     void seams.refresh(); // the re-attach: the listing re-reads for the signed-in session
   } catch (error) {
@@ -147,6 +157,7 @@ export async function readAccountBoot(seams: AccountPlaneSeams, cache: WhoamiCac
     // unexpected typed answer: the session is not usable — clear it
     // honestly and surface the host's own message inline.
     if (seams.storage !== null) clearStoredPrincipalSession(seams.storage);
+    seams.principalHeaders?.setToken(null); // FW-39-3: the dead token leaves the transport headers
     cache.clear();
     const panel = panelOf(seams);
     put(seams, { ...panel, surface: panel.surface === 'checking' ? 'anonymous' : panel.surface, error: (error as Error)?.message ?? String(error) });
@@ -182,6 +193,7 @@ async function submitCredentials(seams: AccountPlaneSeams, cache: WhoamiCache, r
       : await seams.auth.login({ name, passphrase });
     persistSession(seams, mint);
     cache.write(mint.token, { name: mint.name });
+    seams.principalHeaders?.setToken(mint.token); // FW-39-3: the minted token goes live for the console's own writes
     put(seams, {
       ...authenticatedAccountPanel(mint.name),
       edits: before.edits,
@@ -216,6 +228,7 @@ async function signOut(seams: AccountPlaneSeams, cache: WhoamiCache): Promise<vo
     }
   }
   if (seams.storage !== null) clearStoredPrincipalSession(seams.storage);
+  seams.principalHeaders?.setToken(null); // FW-39-3: the ended session leaves the transport headers
   cache.clear();
   put(seams, { ...anonymousAccountPanel(), edits: before.edits, ...(message === null ? {} : { error: message }) });
   seams.showToast({ kind: 'account', title: 'Signed out', sentence: 'This session is anonymous again — its desks stay reachable on this device.' });
@@ -264,6 +277,7 @@ async function adoptDesks(seams: AccountPlaneSeams, clickedDeskId: string): Prom
     }
     if (isAuthUnauthenticatedError(error)) {
       if (seams.storage !== null) clearStoredPrincipalSession(seams.storage);
+      seams.principalHeaders?.setToken(null); // FW-39-3: the refused token leaves the transport headers
       put(seams, { ...anonymousAccountPanel(), edits: before.edits, error: (error as Error)?.message ?? String(error) });
       return;
     }

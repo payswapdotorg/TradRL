@@ -49,6 +49,8 @@ import {
   readStoredPrincipalSession,
   serializePrincipalSession,
   unavailableAccountPanel,
+  createPrincipalHeaderState,
+  withPrincipalHeaders,
 } from './principal';
 
 // ---------------------------------------------------------------------------
@@ -169,7 +171,7 @@ describe('the principal auth client — the documented contract\'s request gramm
     expect(requests[0]?.headers['x-tradrl-console-session']).toBe('session-0123456789abcdef');
   });
 
-  it('login drives POST /v1/auth/login; whoami carries the Bearer principal token', async () => {
+  it('login drives POST /v1/auth/login; whoami carries the principal token on the PRINCIPAL-TOKEN HEADER (FW-39-3: never authorization — the boundary credential owns that header)', async () => {
     const { transport, requests } = scripted([ok(MINT), ok({ principal: { id: 'prn-1', name: 'desk.owner' } })]);
     const client = createPrincipalAuthClient({ transport, headers: SESSION_HEADERS });
     const mint = await client.login({ name: 'desk.owner', passphrase: 'correct horse battery staple' });
@@ -178,19 +180,22 @@ describe('the principal auth client — the documented contract\'s request gramm
     expect(answer).toEqual({ name: 'desk.owner' });
     expect(requests[1]?.method).toBe('GET');
     expect(requests[1]?.path).toBe('/v1/auth/whoami');
-    expect(requests[1]?.headers.authorization).toBe('Bearer tok-principal-0123456789abcdef');
+    expect(requests[1]?.headers.authorization).toBeUndefined(); // the boundary credential's header is NEVER the principal token's
+    expect(requests[1]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef');
     expect(requests[1]?.headers['x-tradrl-console-session']).toBe('session-0123456789abcdef');
   });
 
-  it('logout and adopt drive their POST routes with the Bearer token (adopt: no widening parameter — an empty body)', async () => {
+  it('logout and adopt drive their POST routes with the principal-token header (adopt: no widening parameter — an empty body)', async () => {
     const { transport, requests } = scripted([ok({}), ok({ desks: [{ projectId: 'prj-own-1', adopted: true }] })]);
     const client = createPrincipalAuthClient({ transport, headers: SESSION_HEADERS });
     await client.logout('tok-principal-0123456789abcdef');
     expect(requests[0]?.path).toBe('/v1/auth/logout');
-    expect(requests[0]?.headers.authorization).toBe('Bearer tok-principal-0123456789abcdef');
+    expect(requests[0]?.headers.authorization).toBeUndefined();
+    expect(requests[0]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef');
     const outcomes = await client.adopt('tok-principal-0123456789abcdef');
     expect(outcomes).toEqual([{ projectId: 'prj-own-1', adopted: true, already: false }]);
     expect(requests[1]?.path).toBe('/v1/auth/adopt');
+    expect(requests[1]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef');
     expect(requests[1]?.body).toEqual({}); // parameterless per the contract — the calling session's own desks
   });
 
@@ -324,5 +329,68 @@ describe('the account panel folds', () => {
     const refused = adoptionOutcomeApplied(rows, [{ projectId: 'prj-own-1', adopted: false, already: false }]);
     expect(refused.find((row) => row.projectId === 'prj-own-1')?.status).toBe('failed');
     expect(refused.find((row) => row.projectId === 'prj-own-2')?.status).toBe('offered');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-39-3 (the identity wave 3): the principal-token header state + the
+// header-carrying transport — the audit stamp's client half. The console's
+// own consequential writes (launch create, research promote) carry the
+// acting principal's token so the HOST's audit stamps fire; an anonymous
+// boot adds NO header (the wire shape stays byte-identical — the additive
+// law); the request's own headers win over the injected pair.
+// ---------------------------------------------------------------------------
+describe('FW-39-3: the live principal-token state + the header-carrying transport', () => {
+  it('the state starts anonymous and carries the live token through setToken', () => {
+    const state = createPrincipalHeaderState();
+    expect(state.token()).toBeNull();
+    state.setToken('tok-principal-0123456789abcdef');
+    expect(state.token()).toBe('tok-principal-0123456789abcdef');
+    state.setToken(null);
+    expect(state.token()).toBeNull();
+  });
+
+  it('an ANONYMOUS boot adds NO principal header — the wire shape is byte-identical (the additive law)', async () => {
+    const { transport, requests } = scripted([ok({})]);
+    const state = createPrincipalHeaderState();
+    const wrapped = withPrincipalHeaders(transport, state, 'tok-developer-boundary');
+    await wrapped({ method: 'POST', path: '/v1/projects', headers: { 'content-type': 'application/json' }, body: {} });
+    expect(requests[0]?.headers['x-tradrl-principal-token']).toBeUndefined();
+    expect(requests[0]?.headers.authorization).toBe('Bearer tok-developer-boundary'); // the boundary credential rides as ever
+  });
+
+  it('a signed-in principal\'s writes carry BOTH the boundary credential and the principal-token header (the audit stamp fires host-side)', async () => {
+    const { transport, requests } = scripted([ok({}), ok({})]);
+    const state = createPrincipalHeaderState();
+    state.setToken('tok-principal-0123456789abcdef');
+    const wrapped = withPrincipalHeaders(transport, state, 'tok-developer-boundary');
+    await wrapped({ method: 'POST', path: '/v1/projects', headers: { 'content-type': 'application/json' }, body: {} });
+    await wrapped({ method: 'POST', path: '/v1/jobs/job-1/promote', headers: {} });
+    for (const request of requests) {
+      expect(request.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef');
+      expect(request.headers.authorization).toBe('Bearer tok-developer-boundary');
+    }
+  });
+
+  it('the request\'s OWN headers win over the injected pair (the auth client\'s per-call token is authoritative)', async () => {
+    const { transport, requests } = scripted([ok({})]);
+    const state = createPrincipalHeaderState();
+    state.setToken('tok-stale');
+    const wrapped = withPrincipalHeaders(transport, state, 'tok-developer-boundary');
+    await wrapped({ method: 'GET', path: '/v1/auth/whoami', headers: { 'x-tradrl-principal-token': 'tok-per-call', 'x-tradrl-console-session': 'session-0123456789abcdef' } });
+    expect(requests[0]?.headers['x-tradrl-principal-token']).toBe('tok-per-call');
+    expect(requests[0]?.headers['x-tradrl-console-session']).toBe('session-0123456789abcdef');
+  });
+
+  it('logout clears the live token — the next write is anonymous again (the additive law, mirrored)', async () => {
+    const { transport, requests } = scripted([ok({}), ok({})]);
+    const state = createPrincipalHeaderState();
+    state.setToken('tok-principal-0123456789abcdef');
+    const wrapped = withPrincipalHeaders(transport, state, 'tok-developer-boundary');
+    await wrapped({ method: 'POST', path: '/v1/projects', headers: {} });
+    state.setToken(null); // the plane's logout write-through
+    await wrapped({ method: 'POST', path: '/v1/projects', headers: {} });
+    expect(requests[0]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef');
+    expect(requests[1]?.headers['x-tradrl-principal-token']).toBeUndefined();
   });
 });
