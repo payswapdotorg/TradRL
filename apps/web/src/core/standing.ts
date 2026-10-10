@@ -44,12 +44,22 @@
 //   class the fills cannot produce (realized losses, drawdown) stays
 //   honestly unknown — never a fabricated number, never the gate's
 //   projection standing in for the book.
+//   H-3 (FW-40-A, Round H — L2's find, one row over from G-2's fix): the
+//   position.concentration standing row reads the FILL-DERIVED FRACTION
+//   (the largest single position's notional share of the book, the
+//   boundary's own sizing division floored at six fraction digits) or
+//   honestly unknown — NEVER the open-position COUNT against a fraction
+//   bound (the pre-fix row rendered "2 · breach" on L2's compliant book:
+//   fraction 0.6664 <= bound 1, false by construction whenever >= 2
+//   fills exist; the count is the gross-exposure class's own number, and
+//   the two classes share the 'position' subject only — concentration
+//   matches FIRST, the boundary's own precedence).
 //
 // This module is PURE: identical (utilization, submissions, viewAt) ->
 // identical rows. No DOM, no clock, no transport.
 
 import type { GatewaySubmissionRecord, RiskUtilizationRead } from '../api/contracts';
-import { sumExactDecimals } from './decimals';
+import { divideDecimalsFloor, sumExactDecimals } from './decimals';
 import { parseInstantUtc } from './format';
 
 /**
@@ -63,6 +73,8 @@ export interface StandingBook {
   readonly fills: number;
   /** The exact-decimal cumulative gross booked notional of those fills ('0' when none). */
   readonly bookedNotional: string;
+  /** FW-40-A (Round H register H-3): the exact-decimal notional of the LARGEST single fill ('0' when none) — the concentration fraction's own numerator (the largest single position's share of the book). */
+  readonly largestFillNotional: string;
   /** The latest UTC trading day among the fills (ISO date), null when no fills. */
   readonly latestDay: string | null;
   /** The fills of that latest day (the turnover window's own count). */
@@ -79,12 +91,19 @@ export function standingBookOf(submissions: readonly GatewaySubmissionRecord[]):
   const dayNotionals = new Map();
   let fills = 0;
   let newestFillAt: number | null = null;
+  let largestFillNotional = '0';
   for (const submission of submissions) {
     if (submission.kind !== 'routed') continue;
     const fill = submission.fill;
     if (fill === undefined) continue; // a routed row without fill economics is never a fabricated fill (the blotter's own law)
     fills += 1;
     notionals.push(fill.notional);
+    // H-3 (FW-40-A): the largest single fill's notional, by exact-decimal
+    // comparison — never a float. A notional outside the decimal grammar
+    // leaves the running largest unchanged (the cumulative sum below throws
+    // on that same record — one failure mode, never a silent guess).
+    const larger = compareDecimalTexts(fill.notional, largestFillNotional);
+    if (larger !== null && larger > 0) largestFillNotional = fill.notional;
     const day = new Date(fill.filledAt).toISOString().slice(0, 10);
     const prior = dayNotionals.get(day);
     if (prior === undefined) {
@@ -102,6 +121,7 @@ export function standingBookOf(submissions: readonly GatewaySubmissionRecord[]):
   return {
     fills,
     bookedNotional: sumExactDecimals(notionals),
+    largestFillNotional,
     latestDay,
     latestDayFills: latestDayList === undefined ? 0 : latestDayList.length,
     latestDayNotional: latestDayList === undefined ? '0' : sumExactDecimals(latestDayList),
@@ -191,6 +211,32 @@ export interface StandingReadFold {
 /** The fill-derived standing of one metric class — a number only when the book's own folds produce one (mirrors the boundary's own class matching, case-insensitive over the subject). */
 function fillDerivedStandingOf(metric: string, book: StandingBook): { readonly value: string | null; readonly basis: string } {
   const needle = metric.toLowerCase();
+  // FW-40-A (Round H register H-3 — L2's find, the escalation-surface
+  // lie): the CONCENTRATION class FIRST — a 'position.concentration'
+  // subject also contains 'position', and the count-vs-fraction fall
+  // through produced the defect ("2 · breach" against a fraction bound
+  // of 1 — false BY CONSTRUCTION whenever >= 2 fills exist). The
+  // concentration standing row now reads the FILL-DERIVED FRACTION —
+  // the largest single position's notional share of the book (the same
+  // fill-derived-book law as every other standing row), computed with
+  // the boundary's own sizing division (divideDecimalsFloor — floored
+  // at six fraction digits, L9 exact decimals, never a float). No
+  // fills = honestly unknown; a zero book = no denominator = honestly
+  // unknown (the boundary's own honesty branch) — NEVER the raw
+  // open-position count against a fraction bound.
+  if (needle.includes('concentration')) {
+    if (book.fills === 0) {
+      return { value: null, basis: 'no routed fill on record carries fill economics at this view instant — a concentration fraction cannot be derived from rows that do not exist (the standing row stays honestly unknown; never the open-position count)' };
+    }
+    const fraction = divideDecimalsFloor(book.largestFillNotional, book.bookedNotional);
+    if (fraction === null) {
+      return { value: null, basis: 'the fill-derived book carries no positive total notional — the concentration fraction has no denominator on the desk\'s own records (the standing row stays honestly unknown; never a fabricated fraction, never the open-position count)' };
+    }
+    return {
+      value: fraction,
+      basis: `the largest single position's notional share of the fill-derived book (largest ${book.largestFillNotional} / book ${book.bookedNotional} across the ${book.fills} fill(s) on record at this view instant) — a fraction, floored at the boundary's own six-fraction-digit resolution (the same sizing-division law the gate's concentration arithmetic rides), never the open-position count, never a gate observation`,
+    };
+  }
   if (needle.includes('turnover')) {
     if (book.fills === 0 || book.latestDay === null) {
       return { value: null, basis: 'no routed fill on record carries fill economics at this view instant — a turnover cannot be summed from rows that do not exist (the standing row stays honestly unknown)' };

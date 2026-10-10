@@ -76,3 +76,49 @@ export function sumExactDecimals(values: readonly string[]): string {
 export function isNonNegativeDecimal(value: string): boolean {
   return isExactDecimal(value) && !value.startsWith('-');
 }
+
+/**
+ * FW-40-A (Round H register H-3 — L2's find): THE SIZING DIVISION,
+ * mirroring the boundary's own law VERBATIM (deploy/vercel/runtime/
+ * project-evidence.ts's divideDecimalsFloor — the FW-36-A sizing
+ * discipline): the largest canonical decimal with AT MOST 6 fraction
+ * digits that is <= a / b, for a >= 0 and b > 0 — never a float, never a
+ * non-terminating decimal. null when either input is outside the exact
+ * grammar, when either is negative, or when b is zero (the caller folds
+ * to the honest unknown, never a fabricated fraction).
+ *
+ * The concentration standing row (core/standing.ts) rides this: the
+ * largest single position's notional share of the fill-derived book,
+ * floored at the boundary's own six-digit resolution — the console's
+ * standing fraction and the boundary's own gate arithmetic agree by
+ * construction (L20), and the console never claims finer resolution
+ * than the boundary serves.
+ */
+export function divideDecimalsFloor(a: string, b: string): string | null {
+  if (!isExactDecimal(a) || !isExactDecimal(b)) return null;
+  if (a.startsWith('-') || b.startsWith('-')) return null;
+  const parse = (value: string): { readonly digits: bigint; readonly scale: number } => {
+    const dot = value.indexOf('.');
+    const whole = dot === -1 ? value : value.slice(0, dot);
+    const fraction = dot === -1 ? '' : value.slice(dot + 1);
+    return { digits: BigInt(`${whole}${fraction}`), scale: fraction.length };
+  };
+  const left = parse(a);
+  const right = parse(b);
+  if (right.digits === 0n) return null; // no denominator — the caller's honest-unknown arm
+  const scale = Math.max(left.scale, right.scale);
+  const leftLifted = left.digits * 10n ** BigInt(scale - left.scale);
+  const rightLifted = right.digits * 10n ** BigInt(scale - right.scale);
+  const quotient = (leftLifted * 1_000_000n) / rightLifted; // BigInt division floors — exact by construction
+  // Format at scale 6, then strip trailing fraction zeros (the boundary's
+  // own canonical form — '0.666640' renders as '0.66664').
+  let digits = quotient;
+  let outScale = 6;
+  while (outScale > 0 && digits % 10n === 0n) {
+    digits /= 10n;
+    outScale -= 1;
+  }
+  const plain = digits.toString();
+  const body = outScale === 0 ? plain : `${plain.padStart(outScale + 1, '0').slice(0, -outScale)}.${plain.padStart(outScale + 1, '0').slice(-outScale)}`;
+  return body;
+}

@@ -13,7 +13,13 @@
 //   L4 — every count is the view-instant projection of the desk's own
 //   records; the standing bounds keep the Risk section's current-
 //   instant law (their own asOf names the serve, never a faked
-//   point-in-time meter).
+//   point-in-time meter). H-7 (FW-40-A, Round H — L3's find): the
+//   desk LIST is the view-instant projection too — a desk launched
+//   after the view instant does not exist at it, so its card never
+//   renders at a pre-launch view (the pre-fix panel rendered the
+//   desk's full card — bounds + "organization status active" — 3+
+//   minutes before its launch); the withholding note names what is
+//   held back, the same law the breach-withholding note rides.
 //   L12 — the desk list is the session-own listing; other sessions'
 //   desks never enter (the fold's own gate, the switcher/palette's
 //   own law since this wave).
@@ -27,7 +33,7 @@
 // the wall-clock render guard): same (state, viewAt, view) ->
 // identical serialized bytes.
 
-import { oversightRowsOf, oversightScopeNoteOf, type OversightDeskRow } from '../core/oversight';
+import { desksLaunchedAfterViewOf, oversightRowsOf, oversightScopeNoteOf, type OversightDeskRow } from '../core/oversight';
 import type { StandingRow } from '../core/standing';
 import type { WorkspaceState } from '../core/workspace';
 import type { ShellView } from './shell';
@@ -165,8 +171,15 @@ export function oversightPanel(state: WorkspaceState, viewAt: number, view: Shel
     ]);
   }
   const rows = oversightRowsOf(state, viewAt);
+  // H-7 (FW-40-A — L3's find): the pre-launch desks withheld at this
+  // view instant, NAMED — never a silent absence. A desk's card is pure
+  // launch-derived identity, so nothing of it renders before the desk
+  // exists; the census (the scope note above) counts only the desks
+  // that existed at the instant under review.
+  const withheldDesks = desksLaunchedAfterViewOf(state.projectDirectory, viewAt);
   return v('section', { class: 'panel oversight', 'data-section': 'oversight' }, [
-    v('p', { class: 'hint', 'data-oversight-scope': 'true' }, [oversightScopeNoteOf(state)]),
+    v('p', { class: 'hint', 'data-oversight-scope': 'true' }, [oversightScopeNoteOf(state, viewAt)]),
+    ...(withheldDesks > 0 ? [v('p', { class: 'hint', 'data-oversight-withheld-desks': 'true' }, [`${withheldDesks} desk${withheldDesks === 1 ? '' : 's'} launched after this view instant ${formatInstantUtc(viewAt)} — not shown here (L4; a desk card never renders before the desk's own launch instant).`])] : []),
     ...rows.map((row) => oversightDeskCard(row, viewAt, view.simulated)),
     ...(rows.length === 1
       ? [v('p', { class: 'card-note', 'data-oversight-single': 'true' }, ['One desk so far — this view consolidates every desk this session owns; launch another from Home and it joins this monitor (each desk keeps its own workspace when you switch into it).'])]

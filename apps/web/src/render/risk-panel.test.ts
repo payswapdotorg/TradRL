@@ -418,3 +418,155 @@ describe('FW-37-B (F-1, UI half): the honest enforcement sentence + the gate eva
     expect(bytes).not.toContain('enforced at the pre-trade gate'); // the pre-fix overclaim is gone on every branch
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-40-A (Round H register H-2 — THE top new-surface defect, 4
+// independent confirmations: M2, M3, L2, L3): the Time-Machine
+// point-in-time leak at the gate-evaluation truth surface. The pre-fix
+// "Gate evaluation (per constraint)" card — and the enforcement sentence
+// inside the constraint-set card above it — folded the RAW blotter, so at
+// a scrubbed TIMESTAMP instant the card rendered FUTURE gate verdicts at
+// a PAST instant while the standing rows BESIDE it correctly withheld
+// the same observations. The exact reproductions on file:
+//   M3: "verdicts observed 17:14:32.305Z render at view instant
+//        17:14:00.000Z";
+//   L3: "at view instant 2026-10-10T17:33:00.000Z the block renders the
+//        gate verdicts observed at 17:33:27.861Z (C-2 breach observed 3;
+//        C-3 breach 400,449.984; K-CAPITAL breach 400,449.984) while the
+//        standing rows beside them correctly withhold";
+//   L2: "the per-constraint gate verdicts observed at
+//        2026-10-10T17:33:28.874Z render at view instant
+//        2026-10-10T17:32:00.000Z".
+// The card now consumes the SAME L4 point-in-time projection the
+// standing rows, the breach panel and the Execution blotter ride — an
+// observation never renders before the instant the gateway decided it.
+// ---------------------------------------------------------------------------
+
+describe('FW-40-A (H-2): the gate-evaluation block is the view-instant projection (the TM point-in-time leak, closed)', () => {
+  /** One routed fill decided at T+10s carrying the boundary's own limitsEvaluation rows (the leak's vehicle: a FUTURE verdict at the T view instant). */
+  function futureEvaluatedFill(): GatewaySubmissionRecord {
+    return {
+      kind: 'routed', submissionId: 'xgs:eval-future', decisionId: 'xd:eval-future', auditId: 'xga:eval-future', requestRef: 'gor:eval-future',
+      venue: 'binance', adapterRef: 'adapter', channelRef: 'channel', routedAt: T0 + 10_000,
+      fill: { state: 'filled', quantity: '1', price: '100', notional: '100.00', fee: '0.10', filledAt: T0 + 10_000 },
+      limitsEvaluation: [
+        { constraintId: 'k-capital', domain: 'outcome', subject: 'capital.budget', severity: 'blocking', predicate: { kind: 'equals', value: '300000000' }, basis: 'projected_book_notional', derivable: true, observed: '100', arithmetic: 'prior 0 + candidate 100 = 100', verdict: 'pass', note: 'the projected cumulative book of every routed fill on record' },
+      ],
+    } as unknown as GatewaySubmissionRecord;
+  }
+
+  /** The risk section at a scrubbed TIMESTAMP view instant (the Time Machine the personas scrub). */
+  function stateAtView(timestamp: number): ReturnType<typeof openWorkspace> {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      goalLoaded(),
+      { kind: 'section-selected', at: T0 + 2, section: 'risk' },
+      { kind: 'risk-utilization-loaded', at: T0 + 3, read: utilizationRead() },
+      { kind: 'submission-recorded', at: T0 + 3, submission: futureEvaluatedFill() },
+      { kind: 'view-timestamp', at: T0 + 12_000, timestamp },
+    ]);
+  }
+
+  const renderAt = (state: ReturnType<typeof openWorkspace>, at: number): string =>
+    serializeVNode(renderConsoleModel(state, at, { ...defaultShellView(state), accountView: 'section' }));
+
+  it('(a) a gate verdict observed at T+10s NEVER renders at the T view instant — the card stays absent and the enforcement sentence teaches the honest no-observations-yet truth (L4)', () => {
+    const bytes = renderAt(stateAtView(T0), T0 + 20_000);
+    // the card is ABSENT at the pre-observation instant (the pre-fix card rendered the T+10s verdicts here)
+    expect(bytes).not.toContain('data-risk-evaluations="true"');
+    expect(bytes).not.toContain('data-gate-evaluation');
+    expect(bytes).not.toContain('projected_book_notional');
+    // the enforcement sentence states what was true AT the view instant: nothing observed yet (G-9's branch, honestly re-scoped)
+    expect(bytes).toContain('No gate evaluations are on file for this scope yet — nothing has been observed');
+    // the standing rows beside it keep their own law (G-2 + G-5): the T+10s fill is not in the book at T
+    expect(bytes).toContain('standing (fill-derived book)');
+    expect(bytes).toContain('0 · ok');
+  });
+
+  it('(b) the same verdict DOES render at the T+11s view instant — the card appears with the boundary\'s own rows the moment the blotter\'s decision is visible', () => {
+    const bytes = renderAt(stateAtView(T0 + 11_000), T0 + 20_000);
+    expect(bytes).toContain('data-risk-evaluations="true"');
+    expect(bytes).toContain('data-gate-evaluation="k-capital"');
+    expect(bytes).toContain('k-capital · projected_book_notional');
+    expect(bytes).toContain('>pass<');
+    expect(bytes).toContain('the projected cumulative book of every routed fill on record'); // the boundary's own note, verbatim
+    // the enforcement sentence reads the SAME projected fold (never the raw blotter's future rows)
+    expect(bytes).toContain('binding at the gate — k-capital');
+    expect(bytes).not.toContain('No gate evaluations are on file for this scope yet');
+  });
+
+  it('(c) the standing rows\' existing behavior is UNCHANGED beside the fixed card — the same fill-derived book at both instants (G-2\'s law, undisturbed by the H-2 fix)', () => {
+    const before = renderAt(stateAtView(T0), T0 + 20_000);
+    const after = renderAt(stateAtView(T0 + 11_000), T0 + 20_000);
+    // at T: the fill is post-view — the book is the honest empty sum
+    expect(before).toContain('capital.budget (bound 300,000,000)');
+    expect(before).toContain('0 · ok');
+    expect(before).not.toContain('100 · ok');
+    // at T+11s: the fill IS in the book — the fill-derived standing, never the gate's verdict
+    expect(after).toContain('100 · ok');
+    // the read's own number stays beside the rows, labeled as the served read (the unchanged surface law)
+    expect(after).toContain('served read');
+    expect(after).toContain('91,250.375 · ok');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-40-A (Round H register H-3 — L2's find): the RENDERED concentration
+// standing row. L2's exact reproduction: "the POSITION.CONCENTRATION
+// standing row renders the open-position COUNT against the fraction
+// bound — '2 · breach (the desk's own fills at this view instant, never a
+// gate observation)' — while the gate's own C-4 verdict on the same page
+// passes the true concentration fraction (0.998502 <= 1) ... At bound 1
+// the row is false BY CONSTRUCTION whenever >= 2 fills exist." The row
+// now renders the fill-derived FRACTION (largest single position's share
+// of the book, the boundary's own sizing division) — the same
+// fill-derived-book law every other standing row rides.
+// ---------------------------------------------------------------------------
+
+describe('FW-40-A (H-3): the rendered concentration standing row reads the FRACTION — never the count against a fraction bound', () => {
+  /** One routed fill at an explicit instant (L2's book: 599.976 + 300.024 = 900). */
+  function fillAt(id: string, at: number, notional: string): GatewaySubmissionRecord {
+    return {
+      kind: 'routed', submissionId: id, decisionId: `xd:${id}`, auditId: `xga:${id}`, requestRef: `gor:${id}`,
+      venue: 'binance', adapterRef: 'adapter', channelRef: 'channel', routedAt: at,
+      fill: { state: 'filled', quantity: '1', price: '100', notional, fee: '0.10', filledAt: at },
+    } as unknown as GatewaySubmissionRecord;
+  }
+
+  function l2State(boundMax: string): ReturnType<typeof openWorkspace> {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      goalLoaded(),
+      { kind: 'section-selected', at: T0 + 2, section: 'risk' },
+      { kind: 'risk-utilization-loaded', at: T0 + 3, read: utilizationRead({
+        bounds: [
+          { constraintId: 'k-concentration', metric: 'state.position.concentration', boundMax, severity: 'blocking', current: null, source: 'the standing risk-utilization read serves no concentration current on this backing', status: 'unknown' },
+          { constraintId: 'k-position', metric: 'state.position.grossExposure', boundMax: '2', severity: 'blocking', current: null, source: 'no position or equity store exists on any backing', status: 'unknown' },
+        ],
+        activeBreaches: [],
+      }) },
+      { kind: 'submission-recorded', at: T0 + 3, submission: fillAt('xgs:l2-1', T0 - 3000, '599.976') },
+      { kind: 'submission-recorded', at: T0 + 3, submission: fillAt('xgs:l2-2', T0 - 2000, '300.024') },
+    ]);
+  }
+
+  it('(a) L2\'s compliant book: 2 open positions, fraction 0.66664 <= bound 1 — the row renders NOT-a-breach WITH the fraction (never "2 · breach")', () => {
+    const bytes = renderBytes(l2State('1'));
+    expect(bytes).toContain('position.concentration (bound 1)');
+    expect(bytes).toContain('0.66664 · ok'); // the FILL-DERIVED fraction — the largest position's share of the 900 book
+    expect(bytes).not.toContain('2 · breach'); // the count-vs-fraction lie, dead on this surface
+    expect(bytes).not.toContain('· breach');  // the compliant book carries NO breach stamp anywhere (a false escalation row never renders)
+    // the basis teaches the unit: the fraction, never the open-position count
+    expect(bytes).toContain('never the open-position count');
+    // the count keeps serving ITS OWN class beside the fraction (two classes, two units, one compliant book)
+    expect(bytes).toContain('position.grossExposure (bound 2)');
+    expect(bytes).toContain('2 · ok');
+  });
+
+  it('(b) a TRUE fraction breach renders the breach stamp — the fraction against the fraction bound', () => {
+    const bytes = renderBytes(l2State('0.5'));
+    expect(bytes).toContain('position.concentration (bound 0.5)');
+    expect(bytes).toContain('0.66664 · breach'); // 0.66664 > 0.5 — the honest stamp on a true breach
+    // the count row beside it stays ok (2 <= 2): only the fraction class is in breach
+    expect(bytes).toContain('position.grossExposure (bound 2)');
+    expect(bytes).toContain('2 · ok');
+  });
+});

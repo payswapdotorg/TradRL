@@ -50,6 +50,15 @@
 //   non-withheld observation the standing rows derive from), never the
 //   read-capture instant (the served asOf is named separately, labeled
 //   as the capture).
+//   H-7 (FW-40-A, Round H — L3's find): the desk LIST itself is the
+//   view-instant projection too — a desk's card renders only when the
+//   desk EXISTED at the view instant (its own launch instant, the
+//   project record's createdAt; the pre-fix list rendered a desk's full
+//   card — name, bounds, "organization status active" — 3+ minutes
+//   BEFORE its launch while the counts beside it honestly stayed 0).
+//   A desk launched after the view instant is withheld (never rendered
+//   at a pre-launch view) and the panel names what is withheld (L4 —
+//   the same projection discipline every count rides).
 //
 // This module is PURE: identical (state, viewAt) -> identical rows.
 // No DOM, no clock, no transport.
@@ -152,6 +161,27 @@ export function oversightDesksOf(directory: readonly ProjectRecord[]): readonly 
 }
 
 /**
+ * FW-40-A (Round H register H-7 — L3's find): the desks of the
+ * session-own listing that EXISTED at the view instant — each one
+ * projected by its own launch instant (the project record's
+ * createdAt, the same `availableAt <= viewAt` law every record rides;
+ * a desk launched AT the view instant exists at it). A desk launched
+ * after the view instant never renders at that view: its card is pure
+ * launch-derived identity (name, lifecycle, execution mode, bounds,
+ * org status), so there is nothing honest to render of it before the
+ * desk exists — the counts alone were never the leak (they already
+ * projected correctly).
+ */
+export function desksExistingAtViewOf(directory: readonly ProjectRecord[], viewAt: number): readonly ProjectRecord[] {
+  return oversightDesksOf(directory).filter((desk) => desk.createdAt <= viewAt);
+}
+
+/** FW-40-A (H-7): the session-own desks whose launch instant is AFTER the view instant — never rendered at that instant; the count the panel's withholding note names (L4, named — never silent). */
+export function desksLaunchedAfterViewOf(directory: readonly ProjectRecord[], viewAt: number): number {
+  return oversightDesksOf(directory).filter((desk) => desk.createdAt > viewAt).length;
+}
+
+/**
  * THE FOLD: every session-own desk's oversight row at the view
  * instant. Pure and total — a desk without a read on record folds to
  * its honest absence row (the render names it, never a fabricated
@@ -160,7 +190,13 @@ export function oversightDesksOf(directory: readonly ProjectRecord[]): readonly 
  * directory row).
  */
 export function oversightRowsOf(state: WorkspaceState, viewAt: number): readonly OversightDeskRow[] {
-  return oversightDesksOf(state.projectDirectory).map((desk): OversightDeskRow => {
+  // H-7 (FW-40-A): the desk list is the VIEW-INSTANT projection of the
+  // session-own listing by each desk's OWN launch instant — a desk
+  // launched after the view instant does not exist at it and renders
+  // nothing (the pre-fix list rendered its full card at a pre-launch
+  // view). The per-desk counts below keep their own record-level L4
+  // projection (a desk that existed may still show honestly-0 counts).
+  return desksExistingAtViewOf(state.projectDirectory, viewAt).map((desk): OversightDeskRow => {
     const read = state.oversight.find((candidate) => candidate.projectId === desk.id) ?? null;
     // L4: the per-desk counts are the VIEW-INSTANT projections of the
     // desk's own records (a post-availability fact never renders — the
@@ -210,8 +246,8 @@ export function oversightRowsOf(state: WorkspaceState, viewAt: number): readonly
   });
 }
 
-/** The fold's own one-line scope disclosure (rendered with the panel — what the surface covers, stated). */
-export function oversightScopeNoteOf(state: WorkspaceState): string {
-  const desks = oversightDesksOf(state.projectDirectory);
-  return `One governed view of this session's own desks in workspace ${state.scope.tenantId} — ${desks.length} desk${desks.length === 1 ? '' : 's'} (the session's own launched projects plus the shared demo desk). Other sessions' desks in this workspace never appear here; every count is the view-instant projection of each desk's own records.`;
+/** The fold's own one-line scope disclosure (rendered with the panel — what the surface covers, stated). The census is the VIEW-INSTANT count (H-7): the desks that existed at the instant under review, never the listing's full total. */
+export function oversightScopeNoteOf(state: WorkspaceState, viewAt: number): string {
+  const desks = desksExistingAtViewOf(state.projectDirectory, viewAt);
+  return `One governed view of this session's own desks in workspace ${state.scope.tenantId} — ${desks.length} desk${desks.length === 1 ? '' : 's'} at this view instant (the session's own launched projects plus the shared demo desk). Other sessions' desks in this workspace never appear here; every count is the view-instant projection of each desk's own records, and a desk launched after this view instant does not exist at it.`;
 }
