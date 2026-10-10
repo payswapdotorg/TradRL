@@ -629,6 +629,35 @@ function groupByProject<T extends { readonly project: string }>(rows: readonly T
 }
 
 /**
+ * SPLIT ONE DDL RECORD INTO INDIVIDUAL STATEMENTS (FW-40-F, the live 42601):
+ * the live Neon SQL-over-HTTP proxy now REJECTS multi-command query strings —
+ * HTTP 400 `{"message":"cannot insert multiple commands into a prepared
+ * statement","code":"42601"}` (reproduced directly against the proxy
+ * 2026-10-10; the W-28-era wire accepted whole multi-statement records — the
+ * behavior changed under us, and it broke `POST /internal/deploy/ddl/apply`
+ * on its FIRST record with the typed `neon_http_error`). Single statements
+ * still succeed over the same wire (live-proven: the Lead's manual heal of
+ * the same tables applied each `CREATE TABLE` / `CREATE [UNIQUE] INDEX` as
+ * its own single-statement query), so the apply loop (below) dispatches each
+ * record's DDL as one query PER STATEMENT, in the record's own order.
+ *
+ * THE SPLIT'S HONEST ASSUMPTION (stated, never hidden): every
+ * `NEON_DDL_RECORDS` entry is hand-authored as exactly `;`-terminated schema
+ * statements with NO semicolons inside string literals or identifiers — so a
+ * simple `;` split with whitespace tolerance is exact, and NO SQL parsing is
+ * done (the zero-dep law keeps one honest). The trailing-`;` remainder after
+ * the final statement trims to the empty string and is dropped; empty
+ * statements never dispatch. Each surviving statement carries NO semicolon —
+ * an unambiguous single command on the wire.
+ */
+function splitDdlStatements(ddl: string): readonly string[] {
+  return ddl
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+}
+
+/**
  * Build the durable backing: the Neon stores + the sync in-memory ports
  * over the REAL T007 control plane, with the boot-time projection and the
  * write-through law. Returns `null` when the Neon adapter is NOT enabled
@@ -1513,20 +1542,30 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     // are safe; raw SQL error text is NOT).
     const tables: DdlApplyTableResult[] = [];
     for (const record of NEON_DDL_RECORDS) {
-      // The DDL is a schema-level statement (no bind parameters, no tenant
-      // scope — L12 by construction: it touches NO tenant data). The Neon
-      // SQL-over-HTTP client sends the whole record's DDL string as one
-      // query (the live proxy accepts multi-statement queries when no
-      // params are bound — the same wire path every adapter read/write
-      // rides, never re-implemented).
-      const executed = await executeNeonStatement(runbookNeonDeps.config, record.ddl, [], runbookFetchLike);
-      if (!executed.ok) {
-        // The host serves the typed 503 listing the failed table + the
-        // neon failure code ONLY (the scrubbing law — the sweep precedent).
-        return {
-          ok: false,
-          error: { code: executed.error.code, message: `the DDL apply failed for ${record.table} (${executed.error.code}) — the boundary degrades this route (R46)` },
-        };
+      // FW-40-F (the live 42601, live-proven 2026-10-10): the live Neon
+      // SQL-over-HTTP proxy now REJECTS multi-command query strings —
+      // `{"message":"cannot insert multiple commands into a prepared
+      // statement","code":"42601"}` (HTTP 400, surfaced by the client as the
+      // typed `neon_http_error`; the W-28-era wire DID accept whole
+      // multi-statement records — the behavior changed under us, and the old
+      // comment claiming "the live proxy accepts multi-statement queries" is
+      // retired here, live-disproven). Each statement is dispatched as its
+      // OWN single-statement query via the same `executeNeonStatement` wire
+      // path every adapter read/write rides (never re-implemented), in the
+      // record's own order — the same wire accepted a single CREATE TABLE and
+      // a single CREATE INDEX (the Lead's live-proven manual heal). Each
+      // statement is schema-level (no bind parameters, no tenant scope — L12
+      // by construction: it touches NO tenant data).
+      for (const statement of splitDdlStatements(record.ddl)) {
+        const executed = await executeNeonStatement(runbookNeonDeps.config, statement, [], runbookFetchLike);
+        if (!executed.ok) {
+          // The host serves the typed 503 listing the failed table + the
+          // neon failure code ONLY (the scrubbing law — the sweep precedent).
+          return {
+            ok: false,
+            error: { code: executed.error.code, message: `the DDL apply failed for ${record.table} (${executed.error.code}) — the boundary degrades this route (R46)` },
+          };
+        }
       }
       // HONESTY LAW: the wire response does not distinguish "applied" from
       // "already-present" (a `CREATE TABLE IF NOT EXISTS` that changes

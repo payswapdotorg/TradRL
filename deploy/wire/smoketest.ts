@@ -78,24 +78,46 @@ export function fakeProviders(): FakeProviders {
     if (url.endsWith('/sql')) {
       seen.neon += 1;
       const parsed = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as { query: string; params: string[] };
-      // W-28 (lane B): the DDL runbook's CREATE TABLE / CREATE INDEX
-      // statements. The DDL records in NEON_DDL_RECORDS are multi-statement
-      // (CREATE TABLE ... ; CREATE INDEX ...); the live proxy accepts
-      // multi-statement queries when no params are bound. The DDL strings
-      // carry leading/trailing whitespace (the template literal that
-      // declares them starts with a newline) — the check trims before
-      // matching the start, the way the live proxy would parse the query.
-      // The fake records every `tradrl_*` identifier in the DDL string in
-      // `createdTables` (both table names AND index names — the index names
-      // are harmless extras: the verify query only ever asks for the table
-      // names in NEON_DDL_RECORDS, and the union is the information_schema
-      // truth anyway). The fake answers the same command tag the live
-      // proxy does (a DML envelope — the client's decoder accepts the
-      // `command`/`rowCount` shape, NOT the select shape). Idempotent by
-      // construction: a second apply is a no-op (the set already holds
-      // the names).
+      // FW-40-F (the live 42601, live-proven 2026-10-10): the proxy now
+      // REJECTS multi-command query strings — HTTP 400 carrying exactly the
+      // live body. The W-28-era wire accepted whole multi-statement DDL
+      // records; the behavior changed under us (the production incident:
+      // `POST /internal/deploy/ddl/apply` failing its FIRST record with the
+      // typed `neon_http_error`). The fake uses the same honest split
+      // assumption the apply loop's own splitter states
+      // (deploy/vercel/runtime/durable.ts — hand-authored `;`-terminated
+      // statements, no semicolons inside string literals): more than one
+      // non-empty `;`-separated statement is multi-command. Single
+      // statements (a trailing `;` tolerated) pass. A regression of the
+      // apply loop back to whole-record dispatch now fails the runbook
+      // suite with the production signature — the fakes match the live
+      // wire, never the adapter's expectations.
       const trimmedQuery = parsed.query.trim();
-      if (trimmedQuery.startsWith('CREATE TABLE IF NOT EXISTS') || trimmedQuery.startsWith('CREATE INDEX IF NOT EXISTS')) {
+      const commandCount = parsed.query
+        .split(';')
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0).length;
+      if (commandCount > 1) {
+        return responder(JSON.stringify({ message: 'cannot insert multiple commands into a prepared statement', code: '42601' }), 400);
+      }
+      // W-28 (lane B) + FW-40-F: the DDL runbook's single-statement CREATE
+      // TABLE / CREATE INDEX / CREATE UNIQUE INDEX statements (the apply
+      // loop splits each record's DDL into individual statements — see the
+      // 42601 law above; the UNIQUE index arm is FW-39-1's
+      // tradrl_auth_principals_name, hidden inside the whole-record form
+      // before the split). The statements carry leading/trailing whitespace
+      // (the template literals that declare them start with newlines) — the
+      // check trims before matching the start, the way the live proxy would
+      // parse the query. The fake records every `tradrl_*` identifier in
+      // the statement in `createdTables` (both table names AND index names
+      // — the index names are harmless extras: the verify query only ever
+      // asks for the table names in NEON_DDL_RECORDS, and the union is the
+      // information_schema truth anyway). The fake answers the same command
+      // tag the live proxy does (a DML envelope — the client's decoder
+      // accepts the `command`/`rowCount` shape, NOT the select shape).
+      // Idempotent by construction: a second apply is a no-op (the set
+      // already holds the names).
+      if (trimmedQuery.startsWith('CREATE TABLE IF NOT EXISTS') || trimmedQuery.startsWith('CREATE INDEX IF NOT EXISTS') || trimmedQuery.startsWith('CREATE UNIQUE INDEX IF NOT EXISTS')) {
         for (const match of parsed.query.matchAll(/\b(tradrl_\w+)\b/g)) {
           createdTables.add(match[1] as string);
         }

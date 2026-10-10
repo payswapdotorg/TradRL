@@ -5,8 +5,10 @@
 // the REAL composition (runtime/compose.ts) and the FULL function handler
 // (api/router.ts). What is pinned — the work order's test law:
 //   (a) THE HAPPY PATH: the fake Neon fleet receives the DDL statements in
-//       `NEON_DDL_RECORDS` order; the route returns the per-table report
-//       with the honest `"ok"` result; the statements' shapes are pinned.
+//       `NEON_DDL_RECORDS` order, each dispatched as its OWN single-
+//       statement query (FW-40-F — the live proxy's 42601 multi-command
+//       refusal); the route returns the per-table report with the honest
+//       `"ok"` result; the statements' shapes are pinned.
 //   (b) THE IDEMPOTENCE: a second apply over the same fake returns the
 //       same per-table report, no error (DDL is idempotent by
 //       construction — `CREATE TABLE IF NOT EXISTS`).
@@ -29,9 +31,10 @@
 //       the api key, the database name are NOT).
 //   (g) THE SMOKETEST FAKE EXTENSION (the W-27 precedent): the fake
 //       provider learns the new statement shapes (CREATE TABLE / CREATE
-//       INDEX / information_schema.tables SELECT) and serves them with
-//       the live wire envelopes — a PASS here means the fake can carry
-//       the runbook's traffic end-to-end.
+//       INDEX / CREATE UNIQUE INDEX / information_schema.tables SELECT —
+//       and, FW-40-F, the live proxy's 42601 multi-command refusal) and
+//       serves them with the live wire envelopes — a PASS here means the
+//       fake can carry the runbook's traffic end-to-end.
 //
 // Spec anchors: R46, ARCHITECTURE-LOCK L12 (the runbook routes read NO
 // tenant data — schema-level DDL + information_schema only), R7 (the
@@ -44,7 +47,7 @@ import { API_ENV_KEYS, readApiEnv } from './runtime/env';
 import { handleDeploymentRequest } from './api/router';
 import { fakeProviders } from '../wire/smoketest';
 import { NEON_DDL_RECORDS } from '../adapters/neon/schema';
-import type { NeonConfig } from '../adapters/neon/client';
+import { executeNeonStatement, type NeonConfig } from '../adapters/neon/client';
 import type { FetchLike } from '../adapters/shared';
 import type { FunctionRequest, FunctionResponse } from './runtime/http';
 
@@ -122,6 +125,21 @@ function statementCountingFetch(inner: FetchLike): { readonly fetchLike: FetchLi
   };
 }
 
+/**
+ * The test-side mirror of the apply loop's split law (FW-40-F): one DDL
+ * record splits into its individual `;`-terminated statements (whitespace
+ * tolerance, empties dropped — the same honest assumption the splitter in
+ * deploy/vercel/runtime/durable.ts states: hand-authored statements, no
+ * semicolons inside string literals). Deriving the EXPECTED statement
+ * sequence here keeps the pin independent of the loop's own dispatch.
+ */
+function splitDdl(ddl: string): readonly string[] {
+  return ddl
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+}
+
 // ---------------------------------------------------------------------------
 // The function-handler harness (the full path: settled -> wrap -> host
 // runbook route -> response). Mirrors durable.test.ts's drive() pattern.
@@ -179,7 +197,7 @@ async function drive(deployment: ReturnType<typeof composeInstance>, request: Fu
 // ---------------------------------------------------------------------------
 
 describe('deploy/vercel — the W-28 runbook: the happy path (apply EVERY DDL record)', () => {
-  it('POST /internal/deploy/ddl/apply: the fake Neon fleet receives the DDL statements in NEON_DDL_RECORDS order; the route returns the per-table report with the honest "ok" result; the statements\' shapes are pinned', async () => {
+  it('POST /internal/deploy/ddl/apply: the fake Neon fleet receives the DDL statements in NEON_DDL_RECORDS order, each dispatched as its OWN single-statement query; the route returns the per-table report with the honest "ok" result; the statements\' shapes are pinned', async () => {
     const providers = fakeProviders();
     const counting = statementCountingFetch(providers.fetchLike);
     const deployment = composeInstance(runbookSource(), counting.fetchLike);
@@ -203,25 +221,40 @@ describe('deploy/vercel — the W-28 runbook: the happy path (apply EVERY DDL re
     // (the PR body discloses this honestly; never a fabricated distinction).
     expect(data.tables.every((entry) => entry.result === 'ok')).toBe(true);
 
-    // THE STATEMENTS' SHAPES ARE PINNED: every DDL record crossed the
-    // wire, in `NEON_DDL_RECORDS` order, each as the record's own DDL
-    // string (the multi-statement CREATE TABLE + CREATE INDEX block).
+    // THE STATEMENTS ARE PINNED (FW-40-F): every dispatched query is a
+    // SINGLE statement — the live proxy's 42601 multi-command refusal
+    // (live-proven 2026-10-10) forbids a record's whole multi-statement
+    // block crossing the wire as ONE query (the fake now MODELS that
+    // refusal, so a regression to whole-record dispatch fails this test
+    // with the production signature). Each record's DDL is split into its
+    // own statements (CREATE TABLE ... ; CREATE [UNIQUE] INDEX ...) and
+    // dispatched in `NEON_DDL_RECORDS` order — one single-statement query
+    // per statement (the 9 records carry 15 statements: 6 table+index
+    // records, 3 table-only records).
     const applyStatements = counting.statements().slice(bootStatements);
-    expect(applyStatements.length).toBe(NEON_DDL_RECORDS.length);
-    for (let index = 0; index < NEON_DDL_RECORDS.length; index++) {
-      const record = NEON_DDL_RECORDS[index]!;
-      const observed = applyStatements[index]!;
-      // The DDL record's whole block (CREATE TABLE ... ; CREATE INDEX ...)
-      // crossed the wire as ONE query — the live proxy accepts multi-
-      // statement queries when no params are bound.
-      expect(observed).toBe(record.ddl);
-      // The shape pin: every DDL record carries the IF NOT EXISTS guard
-      // (idempotent by construction).
-      expect(observed).toContain('CREATE TABLE IF NOT EXISTS');
+    const expectedStatements = NEON_DDL_RECORDS.flatMap((record) => splitDdl(record.ddl));
+    expect(applyStatements).toEqual(expectedStatements);
+    // THE SINGLE-STATEMENT LAW: NO dispatched query contains a `;` AT ALL —
+    // every query is exactly one command (there is no second statement
+    // hiding behind the first; the live proxy's 42601 fires on exactly
+    // that shape).
+    for (const observed of applyStatements) {
+      expect(observed).not.toContain(';');
     }
-    // The provider was exercised once per DDL record (the wire path's
+    // The shape pin: every dispatched statement carries the IF NOT EXISTS
+    // guard (idempotent by construction) — each record's FIRST statement
+    // is its `CREATE TABLE IF NOT EXISTS <table>`, the remaining ones its
+    // `CREATE [UNIQUE] INDEX IF NOT EXISTS`.
+    for (const record of NEON_DDL_RECORDS) {
+      const recordStatements = splitDdl(record.ddl);
+      expect(recordStatements[0]!.startsWith(`CREATE TABLE IF NOT EXISTS ${record.table}`)).toBe(true);
+      for (const statement of recordStatements) {
+        expect(statement).toContain('IF NOT EXISTS');
+      }
+    }
+    // The provider was exercised once per DDL STATEMENT (the wire path's
     // determinism — the fake's neon counter is the observable).
-    expect(providers.seen.neon).toBeGreaterThanOrEqual(NEON_DDL_RECORDS.length);
+    expect(providers.seen.neon).toBeGreaterThanOrEqual(expectedStatements.length);
   });
 });
 
@@ -623,5 +656,69 @@ describe('deploy/wire/smoketest — the W-28 fake extension (the W-27 precedent:
       expect(verified.tables.every((entry) => entry.exists === true)).toBe(true);
       expect(verified.coverage).toBe('9/9 tables present');
     }
+  });
+
+  it('FW-40-F: the fake models the live proxy\'s 42601 multi-command refusal — a WHOLE multi-statement DDL record (the W-28-era dispatch form) answers HTTP 400 with the live body and the typed neon_http_error, while each SINGLE statement (incl. the UNIQUE index the whole-record form hid) answers the DML envelope', async () => {
+    const providers = fakeProviders();
+    // THE W-28-ERA FORM: a record's whole multi-statement DDL string sent
+    // as ONE query — exactly what the apply loop dispatched before FW-40-F
+    // and exactly what the live proxy began refusing (the 2026-10-10
+    // production 503: `the DDL apply failed for tradrl_knowledge
+    // (neon_http_error)`). The fake answers the live refusal verbatim:
+    // HTTP 400, `{"message":"cannot insert multiple commands into a
+    // prepared statement","code":"42601"}`.
+    const record = NEON_DDL_RECORDS[0]!; // tradrl_knowledge — the production failure's own first record
+    const multi = await providers.fetchLike(`https://${NEON_CONFIG.apiHost}/sql`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query: record.ddl, params: [] }),
+    });
+    expect(multi.ok).toBe(false);
+    expect(multi.status).toBe(400);
+    const multiBody = JSON.parse(await multi.text()) as { message: string; code: string };
+    expect(multiBody.code).toBe('42601');
+    expect(multiBody.message).toBe('cannot insert multiple commands into a prepared statement');
+
+    // THE TYPED SURFACING (R46): the client's own decoder answers the typed
+    // `neon_http_error` naming the live message — the production 503's own
+    // failure code, reproduced at the client seam (never a throw).
+    const executed = await executeNeonStatement(NEON_CONFIG, record.ddl, [], providers.fetchLike);
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error.code).toBe('neon_http_error');
+      expect(executed.error.message).toContain('cannot insert multiple commands into a prepared statement');
+    }
+
+    // THE LIVE-PROVEN SINGLE-STATEMENT FORM (the Lead's manual heal rode
+    // exactly this): every split statement answers the DML envelope —
+    // including the UNIQUE index statement the whole-record form hid
+    // behind its CREATE TABLE prefix (FW-39-1's
+    // tradrl_auth_principals_name).
+    const principals = NEON_DDL_RECORDS.find((entry) => entry.table === 'tradrl_auth_principals')!;
+    const singles = [...splitDdl(record.ddl), ...splitDdl(principals.ddl)];
+    for (const statement of singles) {
+      const single = await providers.fetchLike(`https://${NEON_CONFIG.apiHost}/sql`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query: statement, params: [] }),
+      });
+      expect(single.ok).toBe(true);
+      expect(single.status).toBe(200);
+      const body = JSON.parse(await single.text()) as { command: string; rowCount: number };
+      expect(body.command).toBe('CREATE TABLE');
+      expect(body.rowCount).toBe(0);
+    }
+    // The UNIQUE index statement is among them (the arm the pre-split fake
+    // lacked — it 404'd 'unmatched' before FW-40-F taught it the shape).
+    expect(singles.some((statement) => statement.startsWith('CREATE UNIQUE INDEX IF NOT EXISTS tradrl_auth_principals_name'))).toBe(true);
+
+    // A TRAILING `;` on an otherwise-single statement stays ONE command
+    // (the empty remainder is not a second command) — accepted.
+    const trailing = await providers.fetchLike(`https://${NEON_CONFIG.apiHost}/sql`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query: `${splitDdl(record.ddl)[0]!};`, params: [] }),
+    });
+    expect(trailing.ok).toBe(true);
   });
 });
