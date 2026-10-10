@@ -56,7 +56,7 @@ import { bootConsole, readStoredScopeProject, SCOPE_STORAGE_KEY } from './consol
 import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
 import { toCreateProjectInput } from '../core/launch';
-import type { GatewaySubmissionRecord, GoalStatement, JobRecord, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
+import type { GatewaySubmissionRecord, JobRecord, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
 import { capsuleFromJob, capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
 import { historyFloorOf, serializeWorkspaceExport, verifyWorkspaceExport, viewAtOf } from '../core/workspace';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
@@ -5585,6 +5585,292 @@ describe('executed boot: FW-37-B F-3 — the export composition boundary (the L2
 });
 
 // ---------------------------------------------------------------------------
+// FW-40-B (Round H register — S3's finds): THE BOOT/RESUME CLUSTER.
+//   H-4 the stale view-instant resume trap: every project the restarted
+//      session opened landed in TIMESTAMP mode at the constant stale
+//      instant 2025-08-22T01:53:57.640Z — pre-history for each desk —
+//      where every section honestly read "No ... at this view instant"
+//      (a healthy, compiled, actively-trading desk read as a total dead
+//      desk; the misdiagnosis cost the prior persona worker three
+//      blocked ledger rows).
+//   H-5 the cross-surface compile divergence: the event-stream surfaces
+//      (the Inbox notices + the nav badge — both UNPROJECTED) said
+//      "Organization compiled" while the state surfaces (Organization /
+//      Home / Research — all view-instant projected) said "no snapshots
+//      / not compiled / no jobs": two surfaces, two truths, the same
+//      instant, no reconciliation teaching, surviving a full reload.
+//   H-6 the Home unread counter vs the Inbox: Home's UNREAD tile + its
+//      activity feed disagreed with the Inbox + the nav badge after a
+//      reload.
+// ---------------------------------------------------------------------------
+
+/** S3's constant stale instant — the persona-measured 2025-08-22T01:53:57.640Z, identical to the millisecond across desks (a browser-profile constant, not a user choice). The rig's desks live at T0 (2023-11), so the constant is set to the SAME wall-clock instant three years earlier (2022-08-22T01:53:57.640Z) — the same shape: pre-history for every desk the browser opens, below every record the fixtures serve. */
+const STALE_INSTANT = 1_661_133_237_640;
+
+/** The stored posture record a Round-H browser carried at the restart: onboarded, parked on the compiled desk, the Time Machine in TIMESTAMP mode at the stale instant. */
+function stalePostureStorage(scopeProjectId = 'prj-compiled'): MapStorage {
+  const storage = new MapStorage();
+  storage.map.set('tradrl_console_posture', JSON.stringify({
+    onboarded: true,
+    scopeProjectId,
+    timeMachine: { speed: '1x', freeSpeed: '', mode: 'timestamp', viewAt: STALE_INSTANT },
+  }));
+  return storage;
+}
+
+/**
+ * The boot/resume transport: prj-compiled — a HEALTHY desk (the project
+ * record + an ACTIVE two-instance org snapshot at T0+50 + a completed
+ * release-candidate kickoff job at T0+60; every record instant inside
+ * [T0, the rig's anchor T0+1000]) — and prj-quiet, a desk that
+ * genuinely never compiled (the honest not-compiled teaching state).
+ */
+function bootResumeTransport(): ApiTransport {
+  const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-fw40b', data } });
+  const notFound = () => ({ status: 404, headers: {}, body: { requestId: 'req-fw40b', error: { code: 'not_found', message: 'no route', status: 404 } } });
+  const projectOf = (id: string, organizationRef: string | null): Record<string, unknown> => ({
+    id, tenantId: 'tenant-a', name: id === 'prj-compiled' ? 'The Compiled Desk' : 'The Quiet Desk', executionMode: 'simulation', consoleSessionScope: 'session-owned',
+    lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef },
+    lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+    createdAt: T0, updatedAt: T0,
+  });
+  const KICKOFF_JOB: JobRecord = { jobId: 'job:kickoff', kind: 'research', tenant: 'tenant-a', project: 'prj-compiled', status: 'complete', submittedAt: T0 + 40, completedAt: T0 + 60, result: { kind: 'release-candidate', specId: 'spec-fw40b', version: 1 } };
+  const transport: ApiTransport = async (request) => {
+    const path = (request.path.split('?')[0] ?? request.path) as string;
+    const key = `${request.method} ${path}`;
+    if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+    if (key === 'GET /v1/projects') return ok({ items: [projectOf('prj-compiled', 'org:compiled-prj-compiled'), projectOf('prj-quiet', null)] });
+    if (key === 'GET /v1/projects/prj-compiled') return ok(projectOf('prj-compiled', 'org:compiled-prj-compiled'));
+    if (key === 'GET /v1/projects/prj-quiet') return ok(projectOf('prj-quiet', null));
+    if (key.startsWith('GET /v1/organizations/')) {
+      // the client encodes the ref's colon (encodeURIComponent) — decode before matching (slice the KEY, which carries the method)
+      const ref = decodeURIComponent(key.slice('GET /v1/organizations/'.length).split('/status')[0] ?? '');
+      if (ref === 'org:compiled-prj-compiled') return ok({ organizationRef: ref, tenant: 'tenant-a', project: 'prj-compiled', status: 'active', at: T0 + 50, instanceRefs: ['ai:director-1', 'ai:researcher-2'] });
+      return notFound();
+    }
+    if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+    if (key === 'GET /v1/execution/submissions') return ok({ items: [] });
+    if (key === 'GET /v1/jobs') {
+      const project = new URLSearchParams(request.path.split('?')[1] ?? '').get('project');
+      return ok({ items: project === 'prj-compiled' ? [KICKOFF_JOB] : [] });
+    }
+    return notFound(); // the host-owned goal + risk-utilization routes answer the typed 404 — the honest absence the bundle silently skips
+  };
+  return transport;
+}
+
+describe('executed boot: FW-40-B — the boot/resume cluster (H-4 the stale view-instant + H-5 the cross-surface divergence + H-6 the counters)', () => {
+  /** The nav bell's aria-label (the badge's own surface). */
+  const bellLabelOf = (rig: Rig): string => {
+    const bell = findByData(rig.root, 'data-target', 'inbox');
+    if (bell === null) throw new Error('the nav bell is missing');
+    return bell.getAttribute('aria-label') ?? '';
+  };
+
+  /** The section PANEL of a target (the nav item carries data-section too — the panel is the .panel element). */
+  const panelOf = (rig: Rig, section: string): FakeElement => {
+    const panel = elementsOf(rig.root).find((element) => element.getAttribute('data-section') === section && element.hasClass('panel'));
+    if (panel === undefined) throw new Error(`no ${section} panel in the current tree`);
+    return panel;
+  };
+
+  /** Every text byte in a subtree (the panels' copy lives deep — textOf reads only direct children). */
+  const deepTextOf = (element: FakeElement): string => {
+    let text = '';
+    const walk = (node: FakeElement): void => {
+      for (const child of node.childNodes) {
+        if (child instanceof FakeText) text += child.text;
+        else walk(child);
+      }
+    };
+    walk(element);
+    return text;
+  };
+
+  it('H-4a: a boot restore carrying the Round-H STALE instant (pre-history for this desk) heals to LIVE with the teaching line — the healthy desk never reads as a dead desk, and the stored posture self-corrects', async () => {
+    const shared = stalePostureStorage();
+    const rig = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared });
+    // THE HEAL (RED on the unfixed tree: the machine stays in TIMESTAMP mode at the stale instant forever)
+    expect(rig.handle.state().timeMachine.mode).toBe('live');
+    expect(viewAtOf(rig.handle.state())).toBe(rig.handle.state().timeMachine.anchorAt); // at the live edge, never the pre-history instant
+    expect(viewAtOf(rig.handle.state())).toBeGreaterThan(STALE_INSTANT);
+    // THE TEACHING LINE (the TM bar names the healed instant + the desk's own earliest record)
+    const healNote = findByData(rig.root, 'data-tm-heal', 'true');
+    if (healNote === null) throw new Error('the heal note is missing from the Time Machine bar');
+    expect(textOf(healNote)).toContain(formatInstantUtc(STALE_INSTANT)); // the stale instant, named
+    expect(textOf(healNote)).toContain(formatInstantUtc(T0)); // the desk's own earliest record, named
+    expect(textOf(healNote)).toContain('healed to LIVE');
+    // THE POSTURE SELF-CORRECTS: the stored record no longer parks this browser at the stale instant (a later reload opens LIVE)
+    const stored = JSON.parse(shared.map.get('tradrl_console_posture') ?? '{}') as { timeMachine?: { mode?: string; viewAt?: number | null } };
+    expect(stored.timeMachine?.mode).toBe('live');
+    expect(stored.timeMachine?.viewAt).toBeNull();
+  });
+
+  it('H-4a (the adoption path): a stored scope DIFFERING from the booted pin adopts + heals on the beat — the adopted desk opens LIVE, never at the stale instant', async () => {
+    const shared = stalePostureStorage(); // stored scope: prj-compiled
+    const rig = await bootRig({}, bootResumeTransport(), 'prj-quiet', { scopeStorage: shared }); // booted pin: the quiet desk
+    expect(rig.handle.state().scope.projectId).toBe('prj-compiled'); // the boot listing adopted the stored scope (W-22)
+    // the adoption's own bundle read the OLD scope (dropped); the beat's scope-change refetch reads the adopted desk's world — the heal lands with the records
+    await rig.handle.beat();
+    expect(rig.handle.state().timeMachine.mode).toBe('live'); // healed (RED on the unfixed tree: still TIMESTAMP at the stale instant)
+    expect(viewAtOf(rig.handle.state())).toBe(rig.handle.state().timeMachine.anchorAt);
+    expect(findByData(rig.root, 'data-tm-heal', 'true')).not.toBeNull(); // the teaching line renders
+    // and the ADOPTED desk's world is fully hydrated (the scope-change refetch, unchanged W-22 law)
+    expect(rig.handle.state().orgSnapshots.map((snapshot) => snapshot.organizationRef)).toEqual(['org:compiled-prj-compiled']);
+  });
+
+  it('H-4b: a SCOPE SWITCH initializes the view instant to LIVE — the old desk\'s selected instant never carries into the newly opened desk (never a pre-project instant)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, bootResumeTransport(), 'prj-compiled');
+    expect(rig.handle.state().timeMachine.mode).toBe('live');
+    // the analyst scrubs the compiled desk to an incident INSIDE its own history
+    scrubTo(rig, T0 + 500);
+    expect(rig.handle.state().timeMachine.mode).toBe('timestamp');
+    expect(viewAtOf(rig.handle.state())).toBe(T0 + 500);
+    // SWITCH to the quiet desk through the switcher (the H-4 path: a project open)
+    clickNav(rig, 'settings');
+    const switcher = findByData(rig.root, 'data-action', 'project-switch');
+    if (switcher === null) throw new Error('the switcher is missing');
+    switcher.value = 'prj-quiet';
+    rig.doc.fire('change', { target: switcher });
+    await settle();
+    expect(rig.handle.state().scope.projectId).toBe('prj-quiet');
+    // THE LAW (RED on the unfixed tree: the machine stays in TIMESTAMP mode at the OLD desk's instant): the newly opened desk views LIVE
+    expect(rig.handle.state().timeMachine.mode).toBe('live');
+    expect(viewAtOf(rig.handle.state())).toBe(rig.handle.state().timeMachine.anchorAt); // the live edge — never a pre-project instant
+    // and the TM bar teaches the LIVE posture (no stale-instant carry, no heal note — the user drove the machine)
+    expect(findByData(rig.root, 'data-tm-heal', 'true')).toBeNull();
+    // the quiet desk teaches its HONEST not-compiled state (H-5c — the divergence fix never fabricates a compile)
+    await rig.handle.beat(); // the scope-change refetch reads the quiet desk's world
+    expect(rig.handle.state().orgSnapshots).toEqual([]);
+    clickNav(rig, 'organization');
+    expect(deepTextOf(panelOf(rig, 'organization'))).toContain('No organization snapshots at this view instant.');
+    expect(findByData(rig.root, 'data-beyond-view', '1')).toBeNull(); // nothing hidden at LIVE — the honest empty state, no beyond-view disclosure
+  });
+
+  it('H-4c: an EXPLICIT scrub still renders the honest "viewing one explicit instant" disclosure — the heal fires only for the stale RESTORED instant, never for the analyst\'s own choice', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, bootResumeTransport(), 'prj-compiled');
+    // the analyst scrubs to an explicit instant BELOW the desk's records (T0+30 predates both the snapshot at T0+50 and the job at T0+60) — an instant the scrubber's own range allows once the records are on hand
+    scrubTo(rig, T0 + 30);
+    expect(rig.handle.state().timeMachine.mode).toBe('timestamp');
+    expect(viewAtOf(rig.handle.state())).toBe(T0 + 30);
+    // the honest disclosure still renders (the projection notice, unchanged)
+    const tmBar = findByData(rig.root, 'data-mode', 'timestamp');
+    if (tmBar === null) throw new Error('the Time Machine bar is missing its mode');
+    expect(deepTextOf(tmBar)).toContain('Viewing one explicit instant');
+    // and NO heal fired — the analyst drove the machine to an instant the scrubber's own range allows
+    expect(findByData(rig.root, 'data-tm-heal', 'true')).toBeNull();
+    expect(rig.handle.state().timeMachine.mode).toBe('timestamp');
+    // the surfaces TEACH what the projection hides (H-5's reconciliation — never a bare "nothing exists")
+    clickNav(rig, 'organization');
+    expect(deepTextOf(panelOf(rig, 'organization'))).toContain('No organization snapshots at this view instant.'); // the L4-honest empty state
+    const beyond = findByData(rig.root, 'data-beyond-view', '1');
+    if (beyond === null) throw new Error('the beyond-the-view disclosure is missing (RED on the unfixed tree: the bare empty state reinforced the dead-desk misdiagnosis)');
+    expect(deepTextOf(beyond)).toContain('sit after this view instant');
+  });
+
+  it('H-5a: after a boot restore with a compiled org, Organization + Home + Research + Inbox ALL reflect the compiled state — no surface reads "no snapshots / not compiled / no jobs" (the cross-surface split is dead)', async () => {
+    const shared = stalePostureStorage();
+    const rig = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared });
+    expect(rig.handle.state().timeMachine.mode).toBe('live'); // the heal landed (H-4a)
+    const orgNotice = rig.handle.state().inbox.notices.find((record) => record.kind === 'organization_compiled');
+    const releaseNotice = rig.handle.state().inbox.notices.find((record) => record.kind === 'release_candidate');
+    expect(orgNotice).toBeDefined(); // the event-stream surface's own signal: the org compiled
+    expect(releaseNotice).toBeDefined();
+    // ORGANIZATION: the compiled snapshot renders (never "No organization snapshots")
+    clickNav(rig, 'organization');
+    const snapshotRow = findByData(rig.root, 'data-row', 'snapshot:org:compiled-prj-compiled');
+    if (snapshotRow === null) throw new Error('the Organization section did not render the compiled snapshot (RED on the unfixed tree: the stale instant hid it)');
+    expect(deepTextOf(snapshotRow)).toContain('org:compiled-prj-compiled');
+    expect(deepTextOf(snapshotRow)).toContain('2 instances');
+    // RESEARCH: the kickoff job renders (never "No research jobs")
+    clickNav(rig, 'research');
+    const jobRow = findByData(rig.root, 'data-row', 'job:job:kickoff');
+    if (jobRow === null) throw new Error('the Research section did not render the kickoff job (RED on the unfixed tree)');
+    // HOME: the organization card reads the compiled status (never "Not compiled yet") + the activity feed carries BOTH notices
+    clickNav(rig, 'home');
+    const homeText = deepTextOf(panelOf(rig, 'home'));
+    expect(homeText).toContain('active'); // the ORGANIZATION rich card's value — never 'Not compiled yet'
+    expect(homeText).not.toContain('Not compiled yet');
+    expect(homeText).not.toContain('No activity yet');
+    expect(homeText).toContain('Organization compiled'); // the notice-derived activity entries
+    expect(homeText).toContain('Release candidate');
+    // INBOX: the notices list + the header count agree (2 unread)
+    clickNav(rig, 'inbox');
+    const inbox = findByData(rig.root, 'data-unread', '2');
+    if (inbox === null) throw new Error('the Inbox panel does not carry 2 unread');
+    expect(bellLabelOf(rig)).toContain('2 unread notices'); // the badge agrees
+  });
+
+  it('H-5b: the no-snapshot state is NEVER shown for a desk whose records carry the compiled org — at LIVE the snapshot renders, and at an EXPLICIT pre-compile instant the surface teaches what sits beyond the view (never a bare "nothing exists")', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, bootResumeTransport(), 'prj-compiled');
+    expect(rig.handle.state().orgSnapshots).toHaveLength(1); // the compiled org record is ON RECORD
+    // LIVE: the snapshot renders — the no-snapshot state never shows
+    clickNav(rig, 'organization');
+    expect(findByData(rig.root, 'data-row', 'snapshot:org:compiled-prj-compiled')).not.toBeNull();
+    // EXPLICIT pre-compile instant: the L4-honest empty state renders WITH the beyond-the-view disclosure
+    scrubTo(rig, T0 + 30); // before the snapshot's observation (T0+50) and the job (T0+60)
+    clickNav(rig, 'organization');
+    expect(findByData(rig.root, 'data-row', 'snapshot:org:compiled-prj-compiled')).toBeNull(); // L4: the projection hides it — honestly
+    const emptyText = deepTextOf(panelOf(rig, 'organization'));
+    expect(emptyText).toContain('No organization snapshots at this view instant.');
+    expect(emptyText).toContain('sit after this view instant'); // the disclosure (RED on the unfixed tree)
+    // return to LIVE: the snapshot is back — the surfaces reconcile by construction
+    clickAction(rig, 'tm-mode-live');
+    expect(findByData(rig.root, 'data-row', 'snapshot:org:compiled-prj-compiled')).not.toBeNull();
+  });
+
+  it('H-6a: after a reload the unread notices render in Home\'s activity feed + counter — and at ANY view instant the badge, the Inbox header and Home\'s tile count the SAME view-projected notices (one source of truth, never two truths)', async () => {
+    // SESSION ONE: the compiled desk folds its 2 unread notices (org compiled + release candidate)
+    const shared = stalePostureStorage();
+    const reads = new MapStorage();
+    const rig1 = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared, noticeReadStorage: reads });
+    clickNav(rig1, 'home');
+    const home1Text = deepTextOf(panelOf(rig1, 'home'));
+    expect(home1Text).toContain('Organization compiled'); // the activity feed
+    expect(home1Text).toContain('UNREAD NOTICES');
+    expect(bellLabelOf(rig1)).toContain('2 unread notices');
+    // SESSION TWO — THE RELOAD (a fresh console, the same browser): the notices still render in Home + the counters still agree
+    const rig2 = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared, noticeReadStorage: reads });
+    clickNav(rig2, 'home');
+    const home2Text = deepTextOf(panelOf(rig2, 'home'));
+    expect(home2Text).toContain('Organization compiled'); // the feed re-rendered from the re-folded state (RED risk: the H-6 mismatch)
+    expect(home2Text).toContain('Release candidate');
+    expect(bellLabelOf(rig2)).toContain('2 unread notices');
+    // THE ONE-SOURCE PIN (RED on the unfixed tree): scrub BELOW the notices — every counting surface drops TOGETHER (never the S3 split: badge 4 / Home 0)
+    scrubTo(rig2, T0 + 10);
+    expect(bellLabelOf(rig2)).toContain('no unread notices'); // the badge counts the VIEW-PROJECTED notices
+    clickNav(rig2, 'inbox');
+    expect(findByData(rig2.root, 'data-unread', '0')).not.toBeNull(); // the Inbox header agrees
+    clickNav(rig2, 'home');
+    const homeScrubbedText = deepTextOf(panelOf(rig2, 'home'));
+    expect(homeScrubbedText).not.toContain('Organization compiled'); // the feed hides post-view notices
+    expect(homeScrubbedText).toContain('sit after this view instant'); // and TEACHES what is hidden (H-5's reconciliation)
+  });
+
+  it('H-6b: mark-read reconciles across ALL THREE surfaces (the nav badge, the Inbox header + rows, Home\'s UNREAD tile) in one gesture', async () => {
+    const shared = stalePostureStorage();
+    const reads = new MapStorage();
+    const rig = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared, noticeReadStorage: reads });
+    expect(bellLabelOf(rig)).toContain('2 unread notices'); // all three surfaces start at 2
+    clickNav(rig, 'inbox');
+    if (findByData(rig.root, 'data-unread', '2') === null) throw new Error('the Inbox header does not carry 2 unread');
+    // MARK ONE READ through the Inbox's own affordance
+    const orgNotice = rig.handle.state().inbox.notices.find((record) => record.kind === 'organization_compiled');
+    if (orgNotice === undefined) throw new Error('the org notice did not fold');
+    const toggle = findByData(rig.root, 'data-notice-read', orgNotice.noticeId);
+    if (toggle === null) throw new Error('the unread row carries no read toggle');
+    click(rig, toggle);
+    // ALL THREE surfaces dropped to 1 together (RED on the unfixed tree: the badge dropped but Home's tile + the feed rode a different fold)
+    expect(bellLabelOf(rig)).toContain('1 unread notice'); // the nav badge
+    expect(findByData(rig.root, 'data-unread', '1')).not.toBeNull(); // the Inbox header + aside
+    clickNav(rig, 'home');
+    const homeText = deepTextOf(panelOf(rig, 'home'));
+    expect(homeText).toContain('Release candidate'); // the still-unread notice renders in the activity feed
+    expect(homeText).toContain('UNREAD NOTICES'); // the Home tile's own surface (the same projected fold)
+  });
+});
+
+// ---------------------------------------------------------------------------
 // FW-40-C (the wizard race cluster + H-1 + the g1 export seam) — executed.
 //
 // THE ROUND-H EVIDENCE (the round's most-frequent friction, S2 + M3 + S3):
@@ -5763,7 +6049,7 @@ describe('executed boot: FW-40-C — the wizard race cluster (the beat-value car
     // (b) THE CHAIN LAW: an OLD export (a pre-FW-40-C stale-label goal event
     // composed into the SAME history shape) still verifies END TO END — the
     // digest/chain rules are untouched, only the label's VALUE changed
-    const staleGoal = { ...(first.payload.goal as unknown as GoalStatement), horizon: { ...first.payload.goal.horizon, label: 'one day' } };
+    const staleGoal = { ...(first.payload.goal as object), horizon: { ...first.payload.goal.horizon, label: 'one day' } };
     rig.handle.dispatch({ kind: 'goal-loaded', at: T0 + 6_000, goal: staleGoal, constraintSet: toCreateProjectInput(VALID_DRAFT, { projectId: 'prj-old', goalId: 'goal-old', constraintSetId: 'cs-old' }, 'tenant-a', T0).constraintSet });
     const oldDoc = JSON.parse(serializeWorkspaceExport(rig.handle.state(), true));
     expect(verifyWorkspaceExport(oldDoc)).toEqual({ ok: true }); // the old bytes still verify — byte-compatible rules

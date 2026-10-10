@@ -57,7 +57,7 @@ import type {
 import { digestOf } from './digest';
 import { CrossTenantRenderError } from './errors';
 import { assertProjectScope, tenantOfRecord, type WorkspaceScope } from './tenant';
-import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfProject, availabilityOfSubmission } from './availability';
+import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfProject, availabilityOfSubmission, projectToView } from './availability';
 
 /** The eight UX.md notification event types, in charter order. */
 export const NOTICE_KINDS = [
@@ -276,6 +276,29 @@ export function unreadNotices(inbox: InboxState): readonly NoticeRecord[] {
 /** The unread count of an inbox. */
 export function unreadCount(inbox: InboxState): number {
   return unreadNotices(inbox).length;
+}
+
+/**
+ * FW-40-B (Round H register H-6 — S3's Home/Inbox counter mismatch): THE
+ * VIEW-PROJECTED UNREAD COUNT — one source of truth for every counting
+ * surface. The pre-fix counters (the nav bell badge, Home's UNREAD tile,
+ * the Inbox header) counted the WHOLE scoped inbox while the lists they
+ * sit over (the Inbox rows, Home's activity timeline) rendered the
+ * L4-projected notices — so at any non-live view instant the counters
+ * and the lists disagreed (S3's exact finding: the badge said 4 unread
+ * while the Inbox list and Home's activity read empty; "two surfaces,
+ * two truths, same instant"). Every counting surface now rides THIS
+ * fold: a notice counts exactly when the SAME availability projection
+ * that gates its row admits it (`record.at <= viewAt` — the projection
+ * the Inbox rows and Home's timeline already consume). At the LIVE edge
+ * the projected count IS the plain count (nothing on record can sit
+ * after the observed anchor), so the live behavior is identical to the
+ * pre-fix surfaces — the divergence existed only at a selected instant,
+ * and there the surfaces now agree BY CONSTRUCTION.
+ */
+export function unreadCountAt(inbox: InboxState, viewAt: number): number {
+  const read = new Set(inbox.readNoticeIds);
+  return projectToView(inbox.notices, viewAt, (record) => record.at).filter((record) => !read.has(record.noticeId)).length;
 }
 
 /**

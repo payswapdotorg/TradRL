@@ -28,6 +28,7 @@ import {
   serializeNoticeReads,
   storedReadNoticeIds,
   unreadCount,
+  unreadCountAt,
   unreadNotices,
   type InboxState,
   type NoticeReads,
@@ -226,6 +227,36 @@ describe('notices: the inbox (unread state)', () => {
     const late = foldNotices(SCOPE, { jobs: [job('research', 'failed', undefined, T0 + 10)] });
     const merged = mergeNotices(mergeNotices(emptyInbox(), early), late);
     expect(merged.notices.map((n) => n.at)).toEqual([T0 + 10, T0 + 100]); // sorted by at, not arrival
+  });
+});
+
+describe('notices: FW-40-B (Round H register H-6) — the VIEW-PROJECTED unread count (one source of truth)', () => {
+  /** Two notices: a training milestone at T0+20 and a failed evaluation at T0+30 (both unread). */
+  function inboxWithTwo(): InboxState {
+    return mergeNotices(emptyInbox(), foldNotices(SCOPE, { jobs: [job('learning', 'complete', undefined, T0 + 20), job('research', 'failed', undefined, T0 + 30)] }));
+  }
+
+  it('at the LIVE edge (every notice available) the projected count IS the plain count — the badge, the tile and the header never change at live', () => {
+    const inbox = inboxWithTwo();
+    expect(unreadCountAt(inbox, T0 + 1000)).toBe(2);
+    expect(unreadCountAt(inbox, T0 + 1000)).toBe(unreadCount(inbox)); // identical at live — the pre-fix surfaces' own law, preserved
+  });
+
+  it('at a view instant BEFORE a notice\'s availability, the projected count EXCLUDES it (H-6: the counter surfaces and the list surfaces ride ONE fold — never badge 4 over an empty inbox)', () => {
+    const inbox = inboxWithTwo();
+    expect(unreadCountAt(inbox, T0 + 25)).toBe(1); // the T0+20 notice counts; the T0+30 notice is not yet knowable
+    expect(unreadCountAt(inbox, T0 + 10)).toBe(0); // nothing is knowable yet
+  });
+
+  it('mark-read reconciles inside the projected count too (a read notice never counts at any instant)', () => {
+    const inbox = inboxWithTwo();
+    const firstId = inbox.notices[0]?.noticeId as string; // the T0+20 notice
+    const readOnce = markNoticeRead(inbox, firstId);
+    expect(unreadCountAt(readOnce, T0 + 1000)).toBe(1); // at live: the unread T0+30 notice counts
+    expect(unreadCountAt(readOnce, T0 + 25)).toBe(0); // the only VISIBLE notice (T0+20) is read; the T0+30 one is beyond the view
+    const secondId = (readOnce.notices.find((n) => n.noticeId !== firstId) as NoticeRecord).noticeId;
+    const bothRead = markNoticeRead(readOnce, secondId);
+    expect(unreadCountAt(bothRead, T0 + 1000)).toBe(0);
   });
 });
 
