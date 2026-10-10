@@ -49,7 +49,7 @@ import {
   type LaunchFieldName,
 } from '../core/launch-form';
 import type { SectionId } from '../core/sections';
-import { scopedInbox, unreadCountAt, type InboxState } from '../core/notices';
+import { scopedInbox, unreadCount, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, historyFloorOf, type WorkspaceState } from '../core/workspace';
 import { parseInstantUtc } from '../core/format';
