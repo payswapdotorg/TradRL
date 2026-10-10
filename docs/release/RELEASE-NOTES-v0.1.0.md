@@ -412,3 +412,51 @@ ephemeral SESSION / absent IDENTITY / orphaned access) now has its Phase-1
 answer — a logged-in principal's desks survive a browser restart via adoption.
 Wave 3 (the audit stamp + the export disclosure) remains. Round H's remaining
 personas are the first to measure the identity origin.
+
+
+## Round H — the re-measurement on the FW-38 + identity origin: 0/8/1 (2026-10-10, appended post-cut)
+
+The second consecutive headline movement: **main-interface 0/6/3 -> 0/8/1** —
+TWO NO->LEANING flips (S2, M2 — both personas whose named Round-G findings
+shipped and verified on the exact paths that produced them); M3 the lone honest
+hold-out (the closed research world, E-6, is decisive for him). 9/9 would-pilot.
+
+- **The truth wave verified:** g2 standing-book 8 pass / 1 partial (the partial
+  is the NEW H-3, not the old G-2 class); e2 gate honesty 9/9 for the second
+  consecutive round; the export chain re-verified from the file alone by all
+  nine personas (402-886-record cohorts). risk_tooling — the Round-E LOSS — is
+  now the strongest dimension (3.33 -> 4.44 -> **4.78**). TradRL wins 8/10
+  dimensions (the two losses: pricing E-7, discoverability — the wizard race).
+- **The identity arc's first measurement (L3):** the FW-39 surface is shipped
+  and architecturally honest (Create account answers the typed refusal naming
+  the missing signing-key configuration — no fake login, no insecure fallback)
+  but unconfigurable under the demo deployment; the restart test still orphans
+  desks. L3's YES condition: a configured deployment with a working identity
+  model. The actorRule publishes in the export manifest with honest anonymous
+  absence; chains re-verify bit-for-bit.
+- **The Round H register (FW-40's work list):** H-2 the Time-Machine
+  point-in-time leak (4 confirmations — future gate verdicts render at past TM
+  instants); H-3 the concentration standing row renders the position COUNT
+  against the fraction bound (a false breach by construction — the escalation
+  surface, one row over from G-2's fix); H-4 the stale view-instant resume trap
+  (post-restart projects open at a pre-history instant reading as dead desks);
+  H-5 cross-surface compile divergence (14+ min, survives reload); H-6 the Home
+  unread counter vs Inbox; H-7 the Oversight desk-list not view-instant
+  projected; H-1 the constraint-grammar vocabulary undocumented; the wizard
+  beat-render race cluster (silent value loss + late validation + dead stepper
+  + draft lost on reload); the g1 export goal-EVENT "one day" residue (6
+  personas); carried E-3/E-6/E-7/F-12/G-11 + M1's Oversight wishlist.
+- **The environment record (all disclosed, 0 fabricated rows):** the round ran
+  through two personal-quota dead windows, an OOM freeze, the third sandbox
+  volume rollback (~14:52 UTC — the local instrument files were rebuilt from
+  the orchestrator's records; S1/M1's per-project ledger rows were lost with
+  their deleted chat sessions and are disclosed as survey-level-only), and a
+  6-hour z.ai account turn-refusal window. The final five personas ran via the
+  Lead's Task lane (the drought-era doctrine — same work orders, same laws,
+  write-early discipline; M3 + S3 completed by continuation workers after turn
+  limits, all inheritance disclosed).
+
+Full report: docs/release/ROUND-H-REPORT.md. Next: FW-40 (the register wave) —
+H-2, H-3, H-4, H-5, the wizard race, the g1 seam, M1's Oversight dead-end, and
+the two decisive-for-one-persona items (E-6 for M3, the identity deployment
+configuration for L3). The committee is one fix-wave from the first YES vote.
