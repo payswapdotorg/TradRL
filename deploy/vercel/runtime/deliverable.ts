@@ -197,6 +197,21 @@ function horizonWithDerivedLabel(goal: GoalStatement): { readonly startsAt: numb
 export interface DeliverableSource {
   /** The project's captured mandate (goal + constraint set + launch world), null when nothing is on record at this host. */
   readonly mandateOf: (project: string) => DeliverableMandate | null;
+  /**
+   * FW-38-A (Round G register G-6 — the switch-path composition miss): the
+   * mandate read's DEGRADED state, distinct from ABSENT. A backing whose
+   * goal read is currently degraded (the durable projection in flight or
+   * dirty) answers `true` here, and the machinery tick then NEVER completes
+   * a research job in that state — the composition must read the CURRENT
+   * project's goal record, never fall back to the honest-absence text ("a
+   * capital budget of not declared ... across the horizon no goal on
+   * record") while a goal exists behind a degraded read. ABSENT (the field
+   * absent, or `false`) is the honest nothing-on-record case and composes
+   * exactly as before (THE HONESTY LAW); the skipped job stays non-terminal
+   * and the next tick — after the projection lands — composes the real
+   * mandate.
+   */
+  readonly mandateDegradedOf?: (project: string) => boolean;
   /** The markets/venues the world actually served, null when nothing is on record. */
   readonly observedOf: (project: string) => DeliverableObservedState | null;
   /** The promoted decision a job's deliverable led to, when one exists at composition time (else null — the honest pending statement). */

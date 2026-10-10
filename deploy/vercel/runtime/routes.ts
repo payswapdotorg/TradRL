@@ -125,7 +125,7 @@ import {
   type ServedKnowledge,
   type TimestampMs,
 } from '../../../services/api/src/index';
-import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, demoWorldOf, isLaunchWorldRecord, withDerivedHorizonLabel, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
+import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, demoWorldOf, isLaunchWorldRecord, withDerivedGoalHorizonLabel, withDerivedHorizonLabel, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
 import type { DurableBackingHandle, DdlApplyResult, DdlVerifyResult } from './durable';
 import { matchProjectHydrationPath, serveProjectHydrationRoute } from './hydration';
 import { RISK_UTILIZATION_ROUTE_PATH, serveRiskUtilizationRoute } from './risk-utilization';
@@ -337,7 +337,12 @@ function projectGoalRoute(input: DemoSubstanceRouteInput, request: DemoSubstance
     // demo project's goal set carries NO world by design (its seed jobs
     // ride demo-seed specs — D-8's teaching empty state is correct for the
     // demo scope), so the bundle serves no `world` field here either.
-    return demoRouteSuccess(requestId, deepFreeze({ goal: demoGoalStatement(authorization.tenant), constraintSet: demoConstraintSet(authorization.tenant) }));
+    // FW-38-A (G-1): the served goal's horizon label is the SPAN-DERIVED
+    // one — the same law every goal record serves (the seed's authored
+    // annotation names the window; the derived label is the computed fact
+    // of its own bounds, so the Goal card's label reconciles with the
+    // dates beside it by arithmetic — never a contradictory annotation).
+    return demoRouteSuccess(requestId, deepFreeze({ goal: withDerivedGoalHorizonLabel(demoGoalStatement(authorization.tenant)), constraintSet: demoConstraintSet(authorization.tenant) }));
   }
   const captured = demoGoalSetOf(input.ports, authorization.tenant, projectId);
   if (captured === null) {

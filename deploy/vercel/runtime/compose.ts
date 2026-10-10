@@ -395,6 +395,16 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
             world: isLaunchWorldRecord(read.value.world) ? withDerivedHorizonLabel(read.value.world) : null,
           };
         },
+        // FW-38-A (Round G register G-6 — the switch-path composition miss):
+        // the goal-set read's DEGRADED state, carried through to the
+        // deliverable source (durableDeliverableSourceOf) so the machinery
+        // tick NEVER completes a research job while the seam's goal read is
+        // the typed degraded state — the composition must read the CURRENT
+        // project's goal record, never the honest-absence text while a goal
+        // exists behind a degraded read (S2's seq-555 record).
+        goalSetDegradedOf(project: string) {
+          return !seamHandle.goalOf(project).ok;
+        },
         organizationRefOf(tenant, project) {
           const listed = seamHandle.ports.controlPlane.projectsOf(tenant as TenantId);
           if (!listed.ok) return null; // R46: a degraded projection answers nothing

@@ -1143,3 +1143,138 @@ describe('deploy/vercel — FW-35-A: the risk-budget fold reads the SAME outcome
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-38-A (Round G register G-6 — the switch-path composition miss, S2's
+// run, export seq 555; unreproduced by M2/L2 — intermittent by construction):
+// a launch right after a project switch (the console lands on a WARM instance
+// whose projection predates the launch) composed a kickoff deliverable
+// reading "a capital budget of not declared ... across the horizon no goal
+// on record ... under no declared constraints" while the Goal surface
+// carried the full mandate. Root cause (pinned here end-to-end): the
+// staleness heal's JOBS HALF imported the kickoff job onto the warm instance
+// UNCONDITIONALLY — even when the derived-truth half could not confirm the
+// projection (a failed session-JOIN read, a degraded membership, an
+// uncommitted quiet refresh) — so the instance held the job while its
+// serving projection still PREDATED the launch, and the very next tick
+// completed it from a CLEAN ABSENT goal read. The fix: the jobs half is
+// GATED on the derived-truth half's confirmation.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-38-A (G-6): a warm instance never imports a kickoff job onto a projection that predates its launch', () => {
+  /** The launch flow's own create body (the REAL console shape: the goal + the constraint set with the two budget constraints the wizard appends). */
+  function switchPathCreateBody(projectId: string): Record<string, unknown> {
+    const goal = validGoal(TENANT) as Record<string, unknown>;
+    return {
+      id: projectId,
+      name: `the ${projectId} desk`,
+      executionMode: 'simulation',
+      goal,
+      constraintSet: {
+        id: `cs-${projectId}`, version: 1, tenantId: TENANT,
+        constraints: [
+          { id: 'c-1', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.06 }, severity: 'blocking' },
+          { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: '500000.00' }, severity: 'blocking' },
+          { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: '40000.00' }, severity: 'blocking' },
+        ],
+        createdAt: goal.createdAt,
+      },
+      at: goal.createdAt,
+    };
+  }
+
+  it('the reproduced race, pinned: B\'s heal hits a failing session-JOIN read — the gate holds the kickoff job OFF B (no wrong deliverable can ever compose there), A completes it with the REAL mandate, and B serves the completed record once its heal confirms a fresh projection', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      // THE G-6 LEVER: B's session-listing JOIN read fails on demand (the
+      // heal's derived-truth probe cannot run) while every other read works —
+      // the exact transient that made the defect intermittent (M2/L2's
+      // launches either stayed on the launch instance or the refresh committed).
+      let joinFails = false;
+      const g6Fetch: FetchLike = (url, init) => {
+        if (joinFails && typeof init?.body === 'string' && init.body.includes('FROM tradrl_projects p LEFT JOIN')) {
+          return Promise.reject(new Error('simulated session-JOIN outage (the G-6 probe lever)'));
+        }
+        return providers.fetchLike(url, init);
+      };
+
+      // INSTANCE B boots FIRST (T0) — WARM, its projection predates the
+      // launch (S2 switched the console's scope and launched right after);
+      // its first tick ARMS the heal interval.
+      const instanceB = composeInstance(durableSourceWithMachinery(), g6Fetch);
+      expect(instanceB.ok).toBe(true);
+      if (!instanceB.ok) return;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+
+      // THE SWITCH-PATH LAUNCH ON A (T0+2s): create + the console-launch
+      // kickoff. The job is NOT completed yet (A is not driven past the
+      // 8s schedule before B's heal fires).
+      vi.setSystemTime(T0 + 2_000);
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const created = await drive(instanceA, streamingRequest({ method: 'POST', url: '/v1/projects', headers: { ...BEARER, 'content-type': 'application/json' }, body: switchPathCreateBody('prj-g6-switch') }));
+      expect(created.status).toBe(201);
+      const kickoff = await drive(instanceA, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:g6:kickoff' }, body: { kind: 'research', projectId: 'prj-g6-switch', spec: consoleLaunchSpec() } }));
+      expect(kickoff.status).toBe(202);
+      const jobId = (kickoff.body as { data: { jobId: string } }).data.jobId;
+
+      // B's heal fires at T0+11s with the JOIN read FAILING: the
+      // derived-truth probe cannot confirm the projection, so the G-6 gate
+      // holds the jobs half OFF (the pre-fix law imported the kickoff job
+      // HERE — the next tick on B would have composed the honest-absence
+      // deliverable from B's stale projection, S2's seq-555 record).
+      vi.setSystemTime(T0 + 11_000);
+      joinFails = true;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      await flushAsyncWork();
+      joinFails = false;
+
+      // THE GATE'S PIN: B did NOT import the kickoff job — the per-id read
+      // answers the typed 404 and the project's jobs list is empty. No
+      // wrong deliverable can EVER compose on B (the composition reads the
+      // current project's goal record or the job simply is not there).
+      const bBefore = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/jobs/${jobId}`, headers: BEARER }));
+      expect(bBefore.status).toBe(404);
+      expect((await jobsOf(instanceB, 'prj-g6-switch'))).toEqual([]);
+
+      // A COMPLETES THE KICKOFF (T0+12s) WITH THE REAL MANDATE — the live
+      // overlay holds the goal set + the world, so the deliverable composes
+      // the mandate's actuals: the declared budgets, the goal's span-derived
+      // horizon label (G-1's law flows into the deliverable), the world's
+      // own markets/venues — never "not declared ... no goal on record".
+      vi.setSystemTime(T0 + 12_000);
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const aJob = await drive(instanceA, streamingRequest({ method: 'GET', url: `/v1/jobs/${jobId}`, headers: BEARER }));
+      expect(aJob.status).toBe(200);
+      const aRecord = (aJob.body as { data: { status: string; result: Record<string, unknown> } }).data;
+      expect(aRecord.status).toBe('complete');
+      expect(aRecord.result.capitalBudget).toBe('500000.00'); // the mandate's declared actual — NOT "not declared"
+      expect(aRecord.result.riskBudget).toBe('40000.00');
+      const goal = validGoal(TENANT) as { readonly horizon: { readonly startsAt: number; readonly endsAt: number } };
+      expect(aRecord.result.horizon).toEqual({ startsAt: goal.horizon.startsAt, endsAt: goal.horizon.endsAt, label: '90 days' }); // the goal's own span, derived (G-1)
+      expect(aRecord.result.markets).toEqual(['BTC-USD', 'ETH-USD']); // the world the launch actually served
+      expect(aRecord.result.venues).toEqual(['binance', 'kraken']);
+      expect(String(aRecord.result.summary)).toContain('the world the launch actually served');
+
+      // B's heal at T0+22s (the JOIN read healed): the probe confirms the
+      // fresh projection (the quiet re-projection commits — the project's
+      // goal set + world hydrate) and ONLY THEN does the jobs half import
+      // the COMPLETED record. B serves byte-consistent durable truth — it
+      // never composes a deliverable of its own.
+      vi.setSystemTime(T0 + 22_000);
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      await flushAsyncWork();
+      const bAfter = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/jobs/${jobId}`, headers: BEARER }));
+      expect(bAfter.status).toBe(200);
+      const bRecord = (bAfter.body as { data: { status: string; result: Record<string, unknown> } }).data;
+      expect(bRecord.status).toBe('complete');
+      expect(bRecord.result).toEqual(aRecord.result); // the SAME durable record — no instance ever re-composes it
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

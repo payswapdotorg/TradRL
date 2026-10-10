@@ -734,3 +734,167 @@ describe('deploy/vercel — FW-34-A: the risk read re-derives per request (the a
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-38-A (Round G register G-8 — the dead-desk silence, L2 + M3): the
+// desk-level ENTRY-BLOCKED status. A blocking constraint that makes entry
+// IMPOSSIBLE (L2's D1: a blocking position.concentration 0.25 — the first
+// candidate is 100% of the projected book, so every candidate is refused
+// pre-entry) produced a desk that LOOKS dead — 0 fills / 0 refusals / 0
+// decisions for 18-38 minutes — with NO surface explaining why. The runtime
+// half computes the status from the constraint set ALONE (the gate's own
+// entry arithmetic) and exposes it as the ADDITIVE `entryBlocked` field —
+// the UI contract the apps/web wave renders loudly ("this desk cannot
+// enter: <reason>").
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-38-A (G-8): the desk-level ENTRY-BLOCKED status names the blocking constraint that refuses every candidate at entry', () => {
+  /** The pure builder over one constraint set (the read's own goal-set source). */
+  function readOf(constraints: readonly unknown[]): RiskUtilizationRead {
+    return buildRiskUtilizationRead({
+      projectId: 'prj-entry-analysis',
+      goalSet: goalSetOf(constraints),
+      submissions: [],
+      outcomes: [],
+      outcomesReadable: false,
+      asOf: new Date(1_800_000_000_000).toISOString(),
+      backing: 'demo',
+    });
+  }
+
+  it("L2's exact case: a BLOCKING position.concentration limit.max 0.25 names the constraint and teaches the fraction-1 arithmetic — the desk cannot enter, loudly", () => {
+    // L2's D1 mandate (worklog P2G-L2-cont): c-3 (state, position.concentration,
+    // limit.max, bound 0.25) — the structurally dead desk, 38+ minutes of 0/0/0.
+    const read = readOf([
+      { id: 'c-1', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.06 }, severity: 'blocking' },
+      { id: 'c-2', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 2 }, severity: 'blocking' },
+      { id: 'c-3', domain: 'state', subject: 'position.concentration', predicate: { kind: 'limit.max', bound: 0.25 }, severity: 'blocking' },
+      { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: '500000.00' }, severity: 'blocking' },
+      { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: '15000.00' }, severity: 'blocking' },
+    ]);
+    expect(read.entryBlocked).not.toBeNull();
+    expect(read.entryBlocked).toMatchObject({
+      status: 'entry-blocked',
+      constraintId: 'c-3',
+      domain: 'state',
+      subject: 'position.concentration',
+      gateClass: 'position_concentration',
+      predicateKind: 'limit.max',
+      bound: '0.25',
+      severity: 'blocking',
+    });
+    // THE TEACHING REASON (the UI renders it verbatim): the first candidate is
+    // 100% of the projected book — fraction 1 by construction — and 1 > 0.25,
+    // so NO candidate can ever be admissible. The desk's 0/0/0 is explained.
+    expect(read.entryBlocked!.reason).toContain('refuses every candidate at entry');
+    expect(read.entryBlocked!.reason).toContain('100% of the projected book');
+    expect(read.entryBlocked!.reason).toContain('1 > 0.25');
+    expect(read.entryBlocked!.reason).toContain('until the constraint is revised');
+    // The honesty surface teaches the field's own law too.
+    expect(read.disclosure).toContain('entryBlocked');
+  });
+
+  it('an ADVISORY concentration bound NEVER blocks entry — the entry routes with the computed advisory stamp (the FW-37-A pinned law); a cap-2 position count blocks nothing either', () => {
+    const advisory = readOf([
+      { id: 'c-3', domain: 'state', subject: 'position.concentration', predicate: { kind: 'limit.max', bound: 0.25 }, severity: 'advisory' },
+      { id: 'c-2', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 2 }, severity: 'blocking' },
+    ]);
+    expect(advisory.entryBlocked).toBeNull(); // the advisory entry is honest (the stamp cites it) — never a structural block
+    // A cap of 2 positions admits the first candidate (the projected count 1 <= 2) — entry possible, no block claimed.
+    const capTwo = readOf([
+      { id: 'c-2', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 2 }, severity: 'blocking' },
+    ]);
+    expect(capTwo.entryBlocked).toBeNull();
+    // The demo seed's own constraint set (a cap-2 blocking position + an advisory turnover) blocks nothing.
+    const demoSeed = readOf([
+      { id: 'k-position', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 2 }, severity: 'blocking' },
+      { id: 'k-turnover', domain: 'action', subject: 'costs.dailyTurnover', predicate: { kind: 'limit.max', bound: 500 }, severity: 'advisory' },
+    ]);
+    expect(demoSeed.entryBlocked).toBeNull();
+  });
+
+  it('the same law across the entry-decidable classes: a blocking count cap below one position blocks entry (count 1 > 0); a blocking limit.min floor above one is a named DEADLOCK (refusals never grow the book or the count); size-dependent classes are NEVER claimed', () => {
+    // A cap of zero positions (limit.max bound 0 < 1): the first candidate makes the count 1 > 0 — blocked.
+    const capZero = readOf([
+      { id: 'c-2', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 0 }, severity: 'blocking' },
+    ]);
+    expect(capZero.entryBlocked).toMatchObject({ status: 'entry-blocked', constraintId: 'c-2', gateClass: 'position_gross_exposure', bound: '0' });
+    expect(capZero.entryBlocked!.reason).toContain('1 > 0');
+    // A concentration floor above one (limit.min 2 > 1): the fraction is 1 at entry and refusals never grow the book — a named deadlock.
+    const fractionFloor = readOf([
+      { id: 'c-3', domain: 'state', subject: 'position.concentration', predicate: { kind: 'limit.min', bound: 2 }, severity: 'blocking' },
+    ]);
+    expect(fractionFloor.entryBlocked).toMatchObject({ status: 'entry-blocked', constraintId: 'c-3', gateClass: 'position_concentration', predicateKind: 'limit.min', bound: '2' });
+    expect(fractionFloor.entryBlocked!.reason).toContain('a refusal never grows the book');
+    // A count floor above one (limit.min 2): the count is 1 at entry and refusals never create positions — a named deadlock.
+    const countFloor = readOf([
+      { id: 'c-2', domain: 'state', subject: 'position', predicate: { kind: 'limit.min', bound: 2 }, severity: 'blocking' },
+    ]);
+    expect(countFloor.entryBlocked).toMatchObject({ status: 'entry-blocked', constraintId: 'c-2', gateClass: 'position_gross_exposure', predicateKind: 'limit.min', bound: '2' });
+    expect(countFloor.entryBlocked!.reason).toContain('a refusal never creates a position');
+    // SIZE-DEPENDENT classes (notional/budget/turnover — their entry projection depends on the candidate's own size, not a construction constant) are NEVER claimed: a blocking capital budget of 1 never names a structural block, honestly.
+    const sizeDependent = readOf([
+      { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'limit.max', bound: 1 }, severity: 'blocking' },
+      { id: 'k-turnover', domain: 'action', subject: 'costs.dailyTurnover', predicate: { kind: 'limit.max', bound: 1 }, severity: 'blocking' },
+      { id: 'c-1', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.05 }, severity: 'blocking' },
+    ]);
+    expect(sizeDependent.entryBlocked).toBeNull();
+  });
+
+  it('THE ROUTE SERVES IT (the additive wire contract the apps/web wave renders): GET /v1/risk/utilization?project=<id> carries entryBlocked for a blocked desk, null for an enterable one', async () => {
+    // A launched desk carrying L2's blocking concentration bound, created through the REAL route.
+    const providers = fakeProviders();
+    const source = {
+      [API_ENV_KEYS.apiDeveloperToken]: 'tok-risk-g8',
+      [API_ENV_KEYS.apiDeveloperTenant]: 'tenant-risk-g8',
+      [API_ENV_KEYS.apiDeveloperPrincipal]: 'public-console',
+      [API_ENV_KEYS.apiInternalToken]: 'tok-internal-risk-g8',
+      [API_ENV_KEYS.apiInternalPrincipal]: 'risk-g8-machinery',
+    };
+    const deployment = composeDeployment(readApiEnv(source), {}, { fetchLike: providers.fetchLike, instants: { next: () => 1_800_000_000_000 } });
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+    const bearer = { authorization: `Bearer ${source[API_ENV_KEYS.apiDeveloperToken]}` };
+    const create = capture();
+    await handleDeploymentRequest(deployment, streamingRequest({
+      method: 'POST',
+      url: '/v1/projects',
+      headers: { ...bearer, 'content-type': 'application/json' },
+      body: {
+        id: 'prj-g8-blocked',
+        name: 'the structurally dead desk',
+        executionMode: 'simulation',
+        goal: {
+          id: 'goal-prj-g8-blocked', version: 1, tenantId: 'tenant-risk-g8',
+          objective: 'Operate inside the declared envelope.',
+          horizon: { startsAt: 1_800_000_000_000, endsAt: 1_800_000_000_000 + 45 * 24 * 3_600_000, label: 'one day' },
+          successCriteria: { criteria: [{ id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 } }], requiredSatisfaction: 0.5 },
+          evaluation: { blindRef: 'eval:blind-1', walkForwardRef: 'eval:wf-1', regimeRef: 'eval:regime-1', adversarialRequired: true },
+          createdAt: 1_800_000_000_000,
+        },
+        constraintSet: {
+          id: 'cs-prj-g8-blocked', version: 1, tenantId: 'tenant-risk-g8',
+          constraints: [
+            { id: 'c-3', domain: 'state', subject: 'position.concentration', predicate: { kind: 'limit.max', bound: 0.25 }, severity: 'blocking' },
+            { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: '500000.00' }, severity: 'blocking' },
+          ],
+          createdAt: 1_800_000_000_000,
+        },
+        at: 1_800_000_000_000,
+      },
+    }), create.response);
+    expect(create.captured().status).toBe(201); // the launch's create succeeded (the console's flow) — the desk is now structurally dead at entry
+    const blocked = capture();
+    await handleDeploymentRequest(deployment, streamingRequest({ url: '/v1/risk/utilization?project=prj-g8-blocked', headers: bearer }), blocked.response);
+    expect(blocked.captured().status).toBe(200);
+    const blockedBody = JSON.parse(blocked.captured().payload as string) as { data: RiskUtilizationRead };
+    expect(blockedBody.data.entryBlocked).toMatchObject({ status: 'entry-blocked', constraintId: 'c-3', bound: '0.25' });
+
+    // The DEMO project (the seeded cap-2 + advisory turnover set) serves entryBlocked null on the same route.
+    const demo = capture();
+    await handleDeploymentRequest(deployment, streamingRequest({ url: `/v1/risk/utilization?project=${encodeURIComponent(DEMO_PROJECT_ID)}`, headers: bearer }), demo.response);
+    expect(demo.captured().status).toBe(200);
+    const demoBody = JSON.parse(demo.captured().payload as string) as { data: RiskUtilizationRead };
+    expect(demoBody.data.entryBlocked).toBeNull();
+  });
+});

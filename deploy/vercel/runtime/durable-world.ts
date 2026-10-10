@@ -528,8 +528,29 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
       //    the derived-truth probe + refresh must run before it. The fresh
       //    reads vs the serving projection's membership; a divergence is
       //    the quiet re-projection's trigger.
+      //    FW-38-A (Round G register G-6 — the switch-path composition miss,
+      //    S2's seq-555 record): the probe's verdict now GATES the jobs half
+      //    below. The pre-fix defect: the jobs half replayed a launch's
+      //    kickoff job onto a warm instance UNCONDITIONALLY — even when the
+      //    derived-truth half could not confirm the projection (a failed
+      //    session-JOIN read, a degraded projection membership) or its quiet
+      //    refresh did NOT commit (a failed read, the discard guard). The
+      //    instance then held the kickoff job while its serving projection
+      //    still PREDATED the launch, so the very next tick completed the job
+      //    and composed the deliverable from a CLEAN ABSENT goal read — "a
+      //    capital budget of not declared ... across the horizon no goal on
+      //    record ... under no declared constraints" — while the goal surface
+      //    (served from the FRESH session-JOIN rows) carried the full mandate
+      //    and the immutable chain record persisted the miss. Intermittent by
+      //    construction: it needed the balancer to route a poll to a
+      //    pre-launch warm instance AND the same heal's refresh to fail or
+      //    discard (M2/L2's launches either stayed on the launch instance or
+      //    the refresh committed). The gate: an instance imports a job only
+      //    onto a projection CONFIRMED to serve the durable truth the job's
+      //    composition reads.
       const rows = await durable.sessionProjectRows();
       const membership = durable.projectionMembership();
+      let projectionReadyForJobs = true;
       if (rows.ok && membership !== null) {
         const freshProjectIds = new Set(rows.value.map((row) => projectOfSessionRow(row)));
         const unseenProject = [...freshProjectIds].some((id) => id.length > 0 && !membership.registryProjectIds.has(id));
@@ -544,20 +565,39 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
         const unseenKnowledge = freshKnowledge !== null && freshKnowledge.ok
           && knowledgeRowHasNewId(freshKnowledge.value, membership.registryProjectIds, membership.knowledgeIds);
         if (unseenProject || unseenOutcome || unseenPostMortem || unseenKnowledge) {
-          await durable.reprojectQuietly();
+          // FW-38-A (G-6): the refresh MUST commit before the jobs half may
+          // import — an uncommitted (failed/discarded) refresh leaves the
+          // serving projection predating the divergence; never import onto it.
+          projectionReadyForJobs = await durable.reprojectQuietly();
         }
+      } else {
+        // FW-38-A (G-6): the probe could not run (a failed session-JOIN read,
+        // a degraded projection membership) — the projection's freshness for
+        // a launch that landed on ANOTHER instance is UNKNOWN. Never import
+        // jobs onto an unverified projection: skip this interval's jobs half
+        // (the console's poll on THIS instance waits one interval longer,
+        // honest; the next interval retries the probe). The job still
+        // completes on the launch instance (its live overlay holds the
+        // mandate) and on every instance that DID confirm a fresh projection
+        // — the composition never reads a stale-absent mandate.
+        projectionReadyForJobs = false;
       }
-      // 2. THE JOBS HALF — the fresh tenant-wide durable-jobs read (the
+      // 2. THE JOBS HALF — gated on the derived-truth half's confirmation
+      //    (FW-38-A/G-6): the fresh tenant-wide durable-jobs read (the
       //    replay's write-through lane queues here; a later request's drain
       //    confirms it — the W-27 law).
-      const jobs = await durable.freshJobRecordsOfTenant();
-      if (jobs.ok) {
-        const known = new Set(service.jobs().map((job) => job.jobId as string));
-        const missing = jobs.value.filter((record) => !known.has(record.jobId));
-        replayDurableJobs(missing);
+      if (projectionReadyForJobs) {
+        const jobs = await durable.freshJobRecordsOfTenant();
+        if (jobs.ok) {
+          const known = new Set(service.jobs().map((job) => job.jobId as string));
+          const missing = jobs.value.filter((record) => !known.has(record.jobId));
+          replayDurableJobs(missing);
+        }
       }
       // 3. THE ORG HALF — the snapshot pass over the fresh JOIN rows (the
-      //    read from step 1 rides again — the same rows, the same interval).
+      //    read from step 1 rides again — the same rows, the same interval;
+      //    this half reads the fresh rows itself, never the instance's
+      //    projection, so the G-6 gate does not apply to it).
       if (rows.ok) reportMissingOrgStatusSnapshots(freshProjectsForSnapshots(rows.value), at);
     } catch {
       // R46: the heal is best-effort — a transient failure never takes the

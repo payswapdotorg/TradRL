@@ -290,8 +290,179 @@ export interface RiskUtilizationRead {
   readonly bounds: readonly RiskUtilizationBound[];
   /** Every refusal/safety-intervention record on file for the project (ascending by instant) — a refusal stands until a later observation of the same metric supersedes it; nothing on file ever does. */
   readonly activeBreaches: readonly RiskUtilizationBreach[];
+  /**
+   * FW-38-A (Round G register G-8 — the dead-desk silence, L2 + M3): the
+   * desk-level ENTRY-BLOCKED status — the FIRST explanation surface for a
+   * desk that never enters. A blocking constraint of an entry-decidable
+   * class (position.concentration; the position/gross-exposure count)
+   * whose ENTRY projection is a construction constant (the first candidate
+   * is 100% of the projected book — fraction 1; the sole position is count
+   * 1) refuses EVERY candidate before the desk can ever enter, so the
+   * desk produces 0 fills / 0 refusals / 0 decisions with no surface saying
+   * why (L2: a blocking concentration 0.25 killed the desk at entry for
+   * 38+ minutes; M3's D2: 18+ minutes of 0/0/0). The field names the
+   * blocking constraint (id, domain, subject, class, predicate kind,
+   * bound, severity) and carries the teaching `reason` — the UI contract
+   * for the apps/web half (the parallel wave's G-3 status-pill work
+   * consumes it): render "this desk cannot enter: <reason>" LOUDLY on the
+   * desk's surfaces. null = no declared blocking constraint blocks entry
+   * by construction (a silent desk with entryBlocked null has NO STRUCTURAL
+   * cause on record — its silence is the desk's own, honestly unexplained
+   * by this read, never fabricated here).
+   */
+  readonly entryBlocked: RiskUtilizationEntryBlocked | null;
   /** The honesty surface: what each class of current number is computed from, and the null/unknown law. */
   readonly disclosure: string;
+}
+
+// ---------------------------------------------------------------------------
+// THE DESK-LEVEL ENTRY-BLOCKED STATUS (FW-38-A, Round G register G-8 — the
+// dead-desk silence, L2 + M3)
+// ---------------------------------------------------------------------------
+
+/**
+ * ONE ENTRY-BLOCKED DESK: the named blocking constraint whose class makes
+ * every entry candidate inadmissible BY CONSTRUCTION (FW-38-A, G-8). The
+ * teaching payload the UI renders loudly: "this desk cannot enter: <reason>".
+ */
+export interface RiskUtilizationEntryBlocked {
+  /** The literal discriminator (the read's own status vocabulary). */
+  readonly status: 'entry-blocked';
+  /** The blocking constraint's own id (its constraint set's vocabulary — never renamed). */
+  readonly constraintId: string;
+  /** The constraint's declared domain (verbatim). */
+  readonly domain: string;
+  /** The constraint's declared subject (verbatim, e.g. 'position.concentration'). */
+  readonly subject: string;
+  /** The gate subject class the constraint binds as (the FW-37-A gate vocabulary). */
+  readonly gateClass: 'position_concentration' | 'position_gross_exposure';
+  /** The predicate's own kind (limit.max | limit.min). */
+  readonly predicateKind: string;
+  /** The bound's own numeric text (verbatim — never re-rounded). */
+  readonly bound: string;
+  /** The constraint's declared severity ('blocking' — an advisory bound never blocks entry). */
+  readonly severity: string;
+  /** The teaching reason (the entry arithmetic, named): why NO candidate can ever be admissible. */
+  readonly reason: string;
+}
+
+/** The exact decimal 1 (the entry projection's construction constant: fraction 1, count 1). */
+const ENTRY_CONSTANT: ExactDecimal = { sign: 1, unscaled: 1n, scale: 0 };
+
+/**
+ * Compute the desk-level ENTRY-BLOCKED status from the constraint set ALONE
+ * (FW-38-A, G-8 — pure, structural, never a throw). The law, exactly the
+ * gate's own arithmetic (runtime/project-evidence.ts's
+ * evaluateConstraintAtGate) evaluated at the ENTRY candidate (an empty book,
+ * a sole first position):
+ *
+ *   - position.concentration (limit.max): the first candidate is 100% of the
+ *     projected book (candidate / (0 + candidate) = 1, whatever its size), so
+ *     a bound < 1 refuses EVERY first candidate — entry is impossible by
+ *     construction (L2's D1: a blocking 0.25 produced 0 fills / 0 refusals /
+ *     0 decisions for 38+ minutes with no surface explaining why).
+ *   - position.concentration (limit.min): the fraction is 1 at entry and
+ *     refusals never grow the book, so a bound > 1 is a DEADLOCK — the
+ *     fraction can never rise to the floor, no candidate can ever pass.
+ *   - position/grossExposure (limit.max, the count class): the first
+ *     candidate makes the projected count 1, so a bound < 1 refuses every
+ *     candidate (a cap of zero positions).
+ *   - position/grossExposure (limit.min, the count class): the count is 1 at
+ *     entry and refusals never create positions, so a bound > 1 is a
+ *     DEADLOCK — the count can never rise to the floor.
+ *
+ * An ADVISORY bound NEVER blocks entry (the FW-37-A law: the entry routes
+ * with the computed advisory_breach stamp). Classes whose entry projection
+ * depends on the candidate's own SIZE (notional/budget/turnover) are not
+ * entry-decidable from the bound alone and are NEVER claimed here (the
+ * honesty law — no fabricated blocking cause). The FIRST blocking
+ * entry-blocker in the constraint set's own order is named (one is enough to
+ * kill the desk; the UI teaches the first named cause).
+ */
+function entryBlockedOf(goalSet: RiskUtilizationGoalSet): RiskUtilizationEntryBlocked | null {
+  const constraints = Array.isArray(goalSet.constraintSet.constraints) ? goalSet.constraintSet.constraints : [];
+  for (const constraint of constraints) {
+    if (!isRecord(constraint)) continue; // a malformed row is skipped, never a crash (R46)
+    const constraintId = typeof constraint.id === 'string' ? constraint.id : '';
+    const domain = typeof constraint.domain === 'string' ? constraint.domain : '';
+    const subject = typeof constraint.subject === 'string' ? constraint.subject : '';
+    const severity = typeof constraint.severity === 'string' ? constraint.severity : '';
+    const predicate = (constraint as { readonly predicate?: unknown }).predicate;
+    if (constraintId.length === 0 || subject.length === 0) continue;
+    // ONLY a BLOCKING declaration blocks entry — an advisory bound routes the
+    // entry with the computed advisory stamp (the FW-37-A pinned law).
+    if (severity !== 'blocking') continue;
+    if (!isRecord(predicate)) continue;
+    const predicateKind = typeof predicate.kind === 'string' ? predicate.kind : '';
+    const bound = declaredBoundOf(predicate);
+    const needle = subject.toLowerCase();
+    // The concentration class FIRST (a 'position.concentration' subject also
+    // contains 'position' — the bound-row matcher's own precedence).
+    if (needle.includes('concentration')) {
+      const boundText = bound.boundMaxText ?? (bound.floor === null ? null : formatExactDecimal(bound.floor));
+      const ceiling = bound.ceiling;
+      const floor = bound.floor;
+      if (predicateKind === 'limit.max' && ceiling !== null && compareExact(ceiling, ENTRY_CONSTANT) < 0 && boundText !== null) {
+        return {
+          status: 'entry-blocked',
+          constraintId,
+          domain,
+          subject,
+          gateClass: 'position_concentration',
+          predicateKind,
+          bound: boundText,
+          severity,
+          reason: `the blocking constraint ${constraintId} (${domain || 'undeclared domain'}, ${subject}, ${predicateKind}, bound ${boundText}) refuses every candidate at entry: the first candidate is 100% of the projected book (a sole position's concentration fraction is 1 by construction, whatever its size), and 1 > ${boundText}, so no candidate can ever be admissible until the constraint is revised`,
+        };
+      }
+      if (predicateKind === 'limit.min' && floor !== null && compareExact(floor, ENTRY_CONSTANT) > 0 && boundText !== null) {
+        return {
+          status: 'entry-blocked',
+          constraintId,
+          domain,
+          subject,
+          gateClass: 'position_concentration',
+          predicateKind,
+          bound: boundText,
+          severity,
+          reason: `the blocking constraint ${constraintId} (${domain || 'undeclared domain'}, ${subject}, ${predicateKind}, bound ${boundText}) refuses every candidate at entry: the first candidate's concentration fraction is 1 by construction and 1 < ${boundText}, and a refusal never grows the book, so the fraction can never rise to the floor — no candidate can ever be admissible until the constraint is revised`,
+        };
+      }
+      continue;
+    }
+    if (needle.includes('exposure') || needle.includes('position')) {
+      const boundText = bound.boundMaxText ?? (bound.floor === null ? null : formatExactDecimal(bound.floor));
+      const ceiling = bound.ceiling;
+      const floor = bound.floor;
+      if (predicateKind === 'limit.max' && ceiling !== null && compareExact(ceiling, ENTRY_CONSTANT) < 0 && boundText !== null) {
+        return {
+          status: 'entry-blocked',
+          constraintId,
+          domain,
+          subject,
+          gateClass: 'position_gross_exposure',
+          predicateKind,
+          bound: boundText,
+          severity,
+          reason: `the blocking constraint ${constraintId} (${domain || 'undeclared domain'}, ${subject}, ${predicateKind}, bound ${boundText}) refuses every candidate at entry: the first candidate makes the projected open-position count 1 by construction, and 1 > ${boundText} (a cap below one position), so no candidate can ever be admissible until the constraint is revised`,
+        };
+      }
+      if (predicateKind === 'limit.min' && floor !== null && compareExact(floor, ENTRY_CONSTANT) > 0 && boundText !== null) {
+        return {
+          status: 'entry-blocked',
+          constraintId,
+          domain,
+          subject,
+          gateClass: 'position_gross_exposure',
+          predicateKind,
+          bound: boundText,
+          severity,
+          reason: `the blocking constraint ${constraintId} (${domain || 'undeclared domain'}, ${subject}, ${predicateKind}, bound ${boundText}) refuses every candidate at entry: the first candidate makes the projected open-position count 1, and 1 < ${boundText}, and a refusal never creates a position, so the count can never rise to the floor — no candidate can ever be admissible until the constraint is revised`,
+        };
+      }
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -710,6 +881,7 @@ export function buildRiskUtilizationRead(input: {
     'current values come from, in precedence order: (1) the most recent risk-limits refusal observation citing the constraint (a point-in-time gate observation, not a live re-computation); (2) for turnover-class metrics, the sum of filled notional over the routed fills of the latest UTC trading day on record; (3) for capital-budget-class metrics, the cumulative gross filled notional of every routed fill on record (traded-through, both sides — no position store exists); (4) for risk-budget-class metrics, the negative part of the net realized outcome over the outcome records readable by this fold. Drawdown-class metrics are unknown by construction (no equity curve exists on any backing); exposure/position-class metrics are unknown without a refusal observation (no position store exists).',
     'rows without fill economics (live recorded submissions carry no fill echo) are excluded from every sum.',
     'activeBreaches are every refused gateway submission on file for this project (the typed record: stage, bound-vs-observed per constraint, the audit ref, the instant); a refusal stands until a later observation of the same metric supersedes it — no resolution event class exists, so every refusal on file is standing.',
+    'entryBlocked (FW-38-A, G-8) is computed from the constraint set ALONE — the desk-level entry analysis, exactly the pre-trade gate\'s own arithmetic evaluated at the entry candidate (an empty book, a sole first position): a BLOCKING constraint of an entry-decidable class (position.concentration; the position/gross-exposure count) whose entry projection is a construction constant (the first candidate is 100% of the projected book — fraction 1; the sole position is count 1) refuses every candidate before the desk can ever enter (limit.max bound < 1; a limit.min bound > 1 is a deadlock — refusals never grow the book or the count). An ADVISORY bound never blocks entry (the entry routes with the computed advisory stamp); classes whose entry projection depends on the candidate\'s own size (notional/budget/turnover) are not entry-decidable and are never claimed here. entryBlocked null means NO declared blocking constraint blocks entry by construction — a silent desk with entryBlocked null has no structural cause on record, and this read never fabricates one.',
     `bounds come from the project's own goal set on record (its create-project records). This read is ${backingClause(input.backing)}.`,
   ].join(' ');
   return deepFreeze({
@@ -717,6 +889,10 @@ export function buildRiskUtilizationRead(input: {
     asOf: input.asOf,
     bounds: deepFreeze([...bounds]),
     activeBreaches: deepFreeze([...activeBreachesOf(input.submissions)]),
+    // FW-38-A (G-8): the desk-level ENTRY-BLOCKED status — the named blocking
+    // constraint + the teaching reason, additive on the read (the UI contract
+    // the apps/web wave renders: "this desk cannot enter: <reason>").
+    entryBlocked: deepFreeze(entryBlockedOf(input.goalSet)),
     disclosure,
   });
 }

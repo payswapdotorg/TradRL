@@ -137,7 +137,7 @@ import {
 } from '../../../services/api/src/index';
 import type { SessionProjectRow, StoreResult } from '../../adapters/neon/stores';
 import type { StoreFailure } from '../../adapters/shared';
-import { DEMO_PROJECT_ID, isLaunchWorldRecord, withDerivedHorizonLabel } from './demo';
+import { DEMO_PROJECT_ID, isLaunchWorldRecord, withDerivedGoalHorizonLabel, withDerivedHorizonLabel } from './demo';
 import { matchProjectHydrationPath } from './hydration';
 import { demoRouteError, demoRouteRequestId, demoRouteSuccess, type DemoSubstanceAuthorization, type DemoSubstanceRequest, type VerifyDeveloperAuthorization } from './routes';
 
@@ -425,7 +425,12 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
     }
     const goalSet = row.goalSet;
     return demoRouteSuccess(requestId, deepFreeze({
-      goal: goalSet.goal,
+      // FW-38-A (G-1): the served goal's horizon label is the SPAN-DERIVED
+      // one (withDerivedGoalHorizonLabel) — a row persisted before this
+      // wave (the console's stale 'one day' annotation on a multi-day
+      // horizon) serves the same computed label as a fresh capture, the
+      // same law the world's label serves below.
+      goal: withDerivedGoalHorizonLabel(goalSet.goal),
       constraintSet: goalSet.constraintSet,
       // FW-37-A (F-4): the served world's horizon label is the SPAN-DERIVED
       // one — a pre-wave persisted annotation never serves contradictory.

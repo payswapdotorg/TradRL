@@ -28,14 +28,18 @@ import {
   composeResearchDeliverableResult,
   declaredConstraintFacts,
   type DeliverableMandate,
+  type DeliverableSource,
 } from './deliverable';
 import {
   DEMO_PROJECT_ID,
+  demoControlPlane,
   demoDeliverableSourceOf,
+  demoMachineryTick,
   durableDeliverableSourceOf,
   horizonSpanLabel,
   launchWorldOfSpec,
   seedDemoBacking,
+  withDerivedGoalHorizonLabel,
   withDerivedHorizonLabel,
   type DurableEvidenceSource,
   type LaunchWorldRecord,
@@ -416,5 +420,130 @@ describe('deploy/vercel — FW-37-A (F-4): the horizon label is the span-derived
       expect(summary).not.toContain('(one day)'); // the stale annotation never renders as the horizon's label
       expect(payload.horizon).toEqual({ startsAt: AT, endsAt: AT + days * 86_400_000, label }); // the structured field carries the SAME derived label
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-38-A (Round G register G-1 — the goal-capture seam, F-4's completion):
+// the GOAL record's horizon label is the span-derived one, at capture and at
+// every serve. FW-37-A fixed the deliverable + launchWorld seams; the goal
+// record was still born at the create-project capture with the console
+// wizard's free-text annotation trusted off the wire — the wizard's draft
+// stamps its 'one day' default and never updates it when the horizon end
+// moves, so 30/45/60/90-day spans served "horizon label: one day" on the
+// Goal card and in the export's goal record (9/9 Round G personas) while
+// the SAME launch's deliverable said "(span 90 days)".
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-38-A (G-1): the goal-capture seam derives the horizon label from the goal\'s own bounds', () => {
+  /** The wizard's stale default annotation, exactly as the launch draft stamps it (apps/web blankLaunchDraft). */
+  const STALE_LABEL = 'one day';
+
+  /** One goal statement carrying the wizard's stale annotation on a span of N days. */
+  function staleGoal(days: number): GoalStatement {
+    return {
+      ...(validGoal(TENANT) as unknown as GoalStatement),
+      horizon: { startsAt: AT as TimestampMs, endsAt: (AT + days * 86_400_000) as TimestampMs, label: STALE_LABEL },
+    };
+  }
+
+  it('THE DERIVATION (withDerivedGoalHorizonLabel): the label is a computed fact of the goal\'s own bounds — the stale annotation never survives, every other field byte-identical', () => {
+    for (const [days, label] of [[1, 'one day'], [30, '30 days'], [45, '45 days'], [60, '60 days'], [90, '90 days']] as const) {
+      const derived = withDerivedGoalHorizonLabel(staleGoal(days));
+      expect(derived.horizon.label).toBe(label); // the computed fact of the span — 'one day' only for the exactly-1-day span (the one correct pre-fix rendering)
+      expect(derived.horizon.startsAt).toBe(AT);
+      expect(derived.horizon.endsAt).toBe(AT + days * 86_400_000);
+      expect(derived.objective).toBe(staleGoal(days).objective); // every other field verbatim
+      expect(derived.id).toBe(staleGoal(days).id);
+    }
+    // A sub-day span renders the review's own precise form (never a wrong day-count).
+    const subDay = withDerivedGoalHorizonLabel({ ...staleGoal(0), horizon: { startsAt: AT as TimestampMs, endsAt: (AT + 25 * 3_600_000) as TimestampMs, label: STALE_LABEL } });
+    expect(subDay.horizon.label).toBe('25h 00m 00s');
+  });
+
+  it('R46: a malformed horizon answers the goal record UNCHANGED — never a crash, never a fabricated label', () => {
+    const noHorizon = { ...(validGoal(TENANT) as unknown as GoalStatement), horizon: undefined } as unknown as GoalStatement;
+    expect(withDerivedGoalHorizonLabel(noHorizon)).toBe(noHorizon);
+    const badBounds = { ...(validGoal(TENANT) as unknown as GoalStatement), horizon: { startsAt: 'not-a-number', endsAt: AT, label: STALE_LABEL } } as unknown as GoalStatement;
+    expect(withDerivedGoalHorizonLabel(badBounds)).toBe(badBounds);
+    // A non-record value passes through untouched (the generic pass-through law).
+    expect(withDerivedGoalHorizonLabel(null)).toBe(null);
+  });
+
+  it('THE CAPTURE SEAM (demoControlPlane.createProject): the retained goal is BORN with the derived label — the create input\'s stale annotation never crosses into the capture', () => {
+    const controlPlane = demoControlPlane();
+    for (const [projectId, days, label] of [['prj-g1-30d', 30, '30 days'], ['prj-g1-45d', 45, '45 days'], ['prj-g1-60d', 60, '60 days'], ['prj-g1-90d', 90, '90 days'], ['prj-g1-1d', 1, 'one day']] as const) {
+      const created = controlPlane.createProject({
+        id: projectId as never,
+        tenantId: TENANT as never,
+        name: `the ${projectId} desk`,
+        executionMode: 'simulation' as never,
+        goal: staleGoal(days),
+        constraintSet: validConstraintSet(TENANT) as never,
+        at: AT as never,
+      });
+      expect(created.ok).toBe(true); // the create itself rides the real fixture (the capture only retains SUCCESSFUL creates)
+      const captured = controlPlane.goalSets.get(`${TENANT}/${projectId}`);
+      expect(captured).toBeDefined();
+      expect(captured!.goal.horizon.label).toBe(label); // BORN right at the capture seam — the Goal card and the export's goal record read the capture
+      expect(captured!.goal.objective).toBe(staleGoal(days).objective); // the statement itself verbatim
+      expect(captured!.constraintSet).toEqual(validConstraintSet(TENANT)); // the constraint set verbatim
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-38-A (Round G register G-6 — the switch-path composition miss, S2's
+// seq-555 record): the composition must read the CURRENT project's goal
+// record — NEVER fall back to the honest-absence text while a goal exists
+// behind a degraded read. The machinery tick's completion guard.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-38-A (G-6): the tick never completes a research job whose mandate read is DEGRADED (the invariant)', () => {
+  it('a DEGRADED mandate read holds the research job (no transition, no honest-absence deliverable); the read landing completes it with the REAL mandate — and an ABSENT (ready, nothing on record) mandate still composes the honest text', () => {
+    const handled: { readonly method: string; readonly path: string; readonly body: Record<string, unknown> }[] = [];
+    const job = { jobId: 'job-g6-degraded', kind: 'research', project: 'prj-g6', tenant: TENANT, status: 'running', submittedAt: AT } as never;
+    const service = {
+      jobs: () => [job],
+      handle: (request: { method: string; path: string; body: Record<string, unknown> }) => {
+        handled.push({ method: request.method, path: request.path, body: request.body });
+        return { status: 202, headers: {}, body: {} } as never;
+      },
+      orgStatusSnapshots: () => [],
+    } as never;
+    // The control-plane listing is EMPTY (the compile pass no-ops) — the pin
+    // isolates the job-advancement half of the tick.
+    const controlPlane = demoControlPlane();
+    let degraded = true;
+    const deliverables: DeliverableSource = {
+      // The mandate read flattens to null at this layer — EXACTLY the pre-fix
+      // hazard: the composer cannot tell a degraded read from an absent one,
+      // so the DEGRADED flag is the distinction the tick guards on.
+      mandateOf: () => null,
+      mandateDegradedOf: () => degraded,
+      observedOf: () => null,
+      promotionOf: () => null,
+    };
+    const context = { ports: { controlPlane }, deliverables, tenant: TENANT, developerToken: 'tok-g6', internalToken: 'tok-g6-internal' } as never;
+
+    // THE DEGRADED TICK (the projection in flight/dirty): the job is DUE
+    // (age 10s >= the 8s schedule) but NO completion transition fires — the
+    // pre-fix law would have composed "a capital budget of not declared ...
+    // across the horizon no goal on record" here (S2's immutable miss).
+    demoMachineryTick(service, context, AT + 10_000);
+    expect(handled).toEqual([]);
+
+    // THE LANDED READ (the next tick, after settled()): the job completes —
+    // and with an ABSENT mandate (ready, nothing on record for the project)
+    // the honest-absence text IS the correct composition (the honesty law
+    // preserved: absent is absent, degraded is never absent).
+    degraded = false;
+    demoMachineryTick(service, context, AT + 11_000);
+    expect(handled).toHaveLength(1);
+    expect(handled[0]!.path).toBe('/internal/jobs/transitions');
+    expect(handled[0]!.body).toMatchObject({ jobId: 'job-g6-degraded', status: 'complete' });
+    const result = (handled[0]!.body as { readonly result: Record<string, unknown> }).result;
+    expect(result.capitalBudget).toBe('not declared'); // the honest ABSENT composition — unchanged by the guard
+    expect(result.horizon).toEqual({ statement: 'no goal statement on record for this project at this host' });
   });
 });
