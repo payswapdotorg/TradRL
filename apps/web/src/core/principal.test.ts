@@ -22,6 +22,13 @@
 //     surface's teaching state's own gate;
 //   - the mint guard: an answer without a well-formed token or name is
 //     the typed unavailable, never a fabricated session;
+//   - the token GRAMMAR pin (FW-40-E): the guard accepts the HOST's own
+//     mint — `v1.<base64url(canonical-json claims)>.<base64url(hmac)>`
+//     (deploy/vercel/runtime/auth-routes.ts, mintPrincipalToken) — and
+//     rejects the dot-free legacy shape the old mocks used. THE SEAM THE
+//     DOT-FREE MOCKS MASKED: the union battery passed while the
+//     production register/login flow threw the typed 503 (the client's
+//     own wrong regex vs the host's real dotted mint);
 //   - the adoption rows: the session's OWN desks minus the shared demo
 //     desk (never adoptable — every session's teaching desk);
 //   - the per-desk outcome fold's idempotence (an `already` outcome
@@ -43,6 +50,7 @@ import {
   createPrincipalAuthClient,
   createWhoamiCache,
   isAuthUnavailableError,
+  isPrincipalToken,
   parseStoredPrincipalSession,
   persistPrincipalSession,
   PRINCIPAL_SESSION_STORAGE_KEY,
@@ -80,7 +88,16 @@ function envelopeError(status: number, code: string, message: string): SdkRespon
 }
 
 const SESSION_HEADERS = { 'x-tradrl-console-session': 'session-0123456789abcdef' };
-const MINT = { token: 'tok-principal-0123456789abcdef', principal: { id: 'prn-1', name: 'desk.owner' } };
+
+// THE HOST'S REAL MINT GRAMMAR (FW-40-E — the seam the dot-free mocks masked):
+// `v1.<base64url(canonical-json claims)>.<base64url(hmac-sha256)>` — the
+// exact shape deploy/vercel/runtime/auth-routes.ts's mintPrincipalToken
+// mints. Every mock below rides this shape so the scripted answers can
+// never again diverge from the production wire.
+const TOKEN = 'v1.eyJzdWIiOiJwcm4tMSIsIm5hbWUiOiJkZXNrLm93bmVyIn0.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789_-AbCdEfGhI';
+/** A second, DISTINCT well-formed mint (the cross-token checks — never a shared key). */
+const OTHER_TOKEN = 'v1.eyJzdWIiOiJwcm4tMiIsIm5hbWUiOiJvdGhlci5kZXNrIn0.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789_-JhGfEdCbA';
+const MINT = { token: TOKEN, principal: { id: 'prn-1', name: 'desk.owner' } };
 
 /** A directory row with the host's additive session-scope marker. */
 function directoryRow(id: string, marker: 'session-owned' | 'principal-owned' | 'tenant-available' | 'none'): ProjectRecord {
@@ -98,6 +115,62 @@ function directoryRow(id: string, marker: 'session-owned' | 'principal-owned' | 
 }
 
 // ---------------------------------------------------------------------------
+// The principal-token grammar (FW-40-E — the seam pin the dot-free mocks
+// failed to provide)
+// ---------------------------------------------------------------------------
+
+describe('the principal-token grammar (the host\'s own mint — FW-40-E\'s seam pin)', () => {
+  /**
+   * THE HOST'S OWN RECIPE (deploy/vercel/runtime/auth-routes.ts,
+   * mintPrincipalToken): `v1.` + base64url(canonical-json claims) + `.` +
+   * base64url(hmac-sha256 over the prefix). The signature is HMAC-SHA256
+   * base64url — ALWAYS exactly 43 chars (32 bytes, padding stripped).
+   */
+  function hostMint(claims: Record<string, unknown>): string {
+    const keys = Object.keys(claims).sort();
+    const canonical = `{${keys.map((key) => `${JSON.stringify(key)}:${JSON.stringify(claims[key])}`).join(',')}}`;
+    const payload = Buffer.from(canonical, 'utf8').toString('base64url');
+    const signature = Buffer.from('h'.repeat(32), 'utf8').toString('base64url'); // 32 bytes -> the 43-char hmac length
+    return `v1.${payload}.${signature}`;
+  }
+
+  it('accepts the HOST\'S OWN MINT — the register/login answer\'s exact shape (the pin the dot-free mocks failed to provide)', () => {
+    const token = hostMint({ sub: 'prn-1a2b3c4d5e6f7890', name: 'desk.owner', tid: 'tenant-0123456789abcdef', iat: 1_760_000_000_000, exp: 1_760_432_000_000, jti: '0123456789abcdef0123456789abcdef', scope: 'principal-desks' });
+    const segments = token.split('.');
+    expect(segments).toHaveLength(3);
+    expect(segments[0]).toBe('v1');
+    expect((segments[2] as string).length).toBe(43); // the hmac-sha256 base64url length, exactly
+    expect(isPrincipalToken(token)).toBe(true); // THE SEAM: the host's real mint passes the guard
+    // GENEROUS bounds — never tighter than the host's real output: a 128-char
+    // principal name (the host's own cap) mints a ~410-char payload and passes
+    expect(isPrincipalToken(hostMint({ sub: 'prn-1', name: 'a'.repeat(128), tid: 'tenant-0123456789abcdef', iat: 1_760_000_000_000, exp: 1_760_432_000_000, jti: '0123456789abcdef0123456789abcdef', scope: 'principal-desks' }))).toBe(true);
+  });
+
+  it('rejects everything that is not the host\'s grammar (empty, garbage, the dot-free legacy mock, wrong version, non-url-safe bytes, out-of-bounds segments)', () => {
+    for (const bad of [
+      '',
+      'not-a-token',
+      'tok-principal-0123456789abcdef', // the DOT-FREE LEGACY MOCK — never the host's grammar (the seam this fix closes)
+      'short',
+      'v1.only', // a segment missing
+      'v1.only.', // the signature segment empty
+      'v2.eyJzdWIiOiJwcm4tMSJ9.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789_-AbCdEfGhI', // wrong version
+      'v1.eyJzdWIiOiJwcm4tMSJ9.aBcDeF+/Gh=', // non-url-safe bytes (+ and =)
+      `v1.${'x'.repeat(7)}.${'a'.repeat(43)}`, // payload under the generous floor
+      `v1.${'x'.repeat(64)}.${'a'.repeat(15)}`, // signature under the floor
+      `v1.${'x'.repeat(1025)}.${'a'.repeat(43)}`, // payload over the ceiling
+      `v1.${'x'.repeat(64)}.${'a'.repeat(129)}`, // signature over the ceiling
+      'v1.payload.signature.extra', // too many segments
+    ]) {
+      expect(isPrincipalToken(bad)).toBe(false);
+    }
+    expect(isPrincipalToken(null)).toBe(false);
+    expect(isPrincipalToken(undefined)).toBe(false);
+    expect(isPrincipalToken(42)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The token store
 // ---------------------------------------------------------------------------
 
@@ -106,13 +179,13 @@ describe('the principal session store (the storage seam)', () => {
     const map = new Map<string, string>();
     const storage = { getItem: (key: string) => map.get(key) ?? null, setItem: (key: string, value: string) => { map.set(key, value); } };
     expect(readStoredPrincipalSession(storage)).toBeNull(); // absent — a fresh browser
-    persistPrincipalSession(storage, { token: 'tok-principal-0123456789abcdef', name: 'desk.owner' });
-    expect(readStoredPrincipalSession(storage)).toEqual({ token: 'tok-principal-0123456789abcdef', name: 'desk.owner' });
-    expect(map.get(PRINCIPAL_SESSION_STORAGE_KEY)).toBe(serializePrincipalSession({ token: 'tok-principal-0123456789abcdef', name: 'desk.owner' }));
+    persistPrincipalSession(storage, { token: TOKEN, name: 'desk.owner' });
+    expect(readStoredPrincipalSession(storage)).toEqual({ token: TOKEN, name: 'desk.owner' });
+    expect(map.get(PRINCIPAL_SESSION_STORAGE_KEY)).toBe(serializePrincipalSession({ token: TOKEN, name: 'desk.owner' }));
   });
 
   it('clears to the honest absence (an empty value reads as null)', () => {
-    const map = new Map<string, string>([[PRINCIPAL_SESSION_STORAGE_KEY, serializePrincipalSession({ token: 'tok-principal-0123456789abcdef', name: 'desk.owner' })]]);
+    const map = new Map<string, string>([[PRINCIPAL_SESSION_STORAGE_KEY, serializePrincipalSession({ token: TOKEN, name: 'desk.owner' })]]);
     const storage = { getItem: (key: string) => map.get(key) ?? null, setItem: (key: string, value: string) => { map.set(key, value); } };
     clearStoredPrincipalSession(storage);
     expect(readStoredPrincipalSession(storage)).toBeNull();
@@ -123,9 +196,9 @@ describe('the principal session store (the storage seam)', () => {
     expect(parseStoredPrincipalSession('')).toBeNull();
     expect(parseStoredPrincipalSession('not json')).toBeNull();
     expect(parseStoredPrincipalSession('{"token":"short","name":"x"}')).toBeNull(); // the token grammar guards
-    expect(parseStoredPrincipalSession('{"token":"tok-principal-0123456789abcdef"}')).toBeNull(); // no name
-    expect(parseStoredPrincipalSession('{"token":"tok-principal-0123456789abcdef","name":""}')).toBeNull(); // empty name
-    expect(parseStoredPrincipalSession('{"token":"tok-principal-0123456789abcdef","name":"desk.owner"}')).not.toBeNull();
+    expect(parseStoredPrincipalSession(`{"token":"${TOKEN}"}`)).toBeNull(); // no name
+    expect(parseStoredPrincipalSession(`{"token":"${TOKEN}","name":""}`)).toBeNull(); // empty name
+    expect(parseStoredPrincipalSession(`{"token":"${TOKEN}","name":"desk.owner"}`)).not.toBeNull();
   });
 
   it('never crashes on a throwing storage (the private-mode degradation: per-boot sessions)', () => {
@@ -134,7 +207,7 @@ describe('the principal session store (the storage seam)', () => {
       setItem: (): void => { throw new Error('refused'); },
     };
     expect(readStoredPrincipalSession(refusing)).toBeNull();
-    expect(() => persistPrincipalSession(refusing, { token: 'tok-principal-0123456789abcdef', name: 'desk.owner' })).not.toThrow();
+    expect(() => persistPrincipalSession(refusing, { token: TOKEN, name: 'desk.owner' })).not.toThrow();
     expect(() => clearStoredPrincipalSession(refusing)).not.toThrow();
   });
 });
@@ -146,12 +219,12 @@ describe('the principal session store (the storage seam)', () => {
 describe('the whoami cache (in-memory, keyed by token)', () => {
   it('writes, reads and clears per token (a stale token\'s answer never leaks to a new one)', () => {
     const cache = createWhoamiCache();
-    expect(cache.read('tok-principal-0123456789abcdef')).toBeNull();
-    cache.write('tok-principal-0123456789abcdef', { name: 'desk.owner' });
-    expect(cache.read('tok-principal-0123456789abcdef')).toEqual({ name: 'desk.owner' });
-    expect(cache.read('tok-other-0123456789abcdef')).toBeNull(); // keyed — never cross-token
+    expect(cache.read(TOKEN)).toBeNull();
+    cache.write(TOKEN, { name: 'desk.owner' });
+    expect(cache.read(TOKEN)).toEqual({ name: 'desk.owner' });
+    expect(cache.read(OTHER_TOKEN)).toBeNull(); // keyed — never cross-token
     cache.clear();
-    expect(cache.read('tok-principal-0123456789abcdef')).toBeNull();
+    expect(cache.read(TOKEN)).toBeNull();
   });
 });
 
@@ -164,7 +237,7 @@ describe('the principal auth client — the documented contract\'s request gramm
     const { transport, requests } = scripted([ok(MINT)]);
     const client = createPrincipalAuthClient({ transport, headers: SESSION_HEADERS });
     const mint = await client.register({ name: 'desk.owner', passphrase: 'correct horse battery staple' });
-    expect(mint).toEqual({ token: 'tok-principal-0123456789abcdef', name: 'desk.owner' });
+    expect(mint).toEqual({ token: TOKEN, name: 'desk.owner' });
     expect(requests[0]?.method).toBe('POST');
     expect(requests[0]?.path).toBe('/v1/auth/register');
     expect(requests[0]?.body).toEqual({ name: 'desk.owner', passphrase: 'correct horse battery staple' });
@@ -175,27 +248,27 @@ describe('the principal auth client — the documented contract\'s request gramm
     const { transport, requests } = scripted([ok(MINT), ok({ principal: { id: 'prn-1', name: 'desk.owner' } })]);
     const client = createPrincipalAuthClient({ transport, headers: SESSION_HEADERS });
     const mint = await client.login({ name: 'desk.owner', passphrase: 'correct horse battery staple' });
-    expect(mint.token).toBe('tok-principal-0123456789abcdef');
+    expect(mint.token).toBe(TOKEN);
     const answer = await client.whoami(mint.token);
     expect(answer).toEqual({ name: 'desk.owner' });
     expect(requests[1]?.method).toBe('GET');
     expect(requests[1]?.path).toBe('/v1/auth/whoami');
     expect(requests[1]?.headers.authorization).toBeUndefined(); // the boundary credential's header is NEVER the principal token's
-    expect(requests[1]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef');
+    expect(requests[1]?.headers['x-tradrl-principal-token']).toBe(TOKEN);
     expect(requests[1]?.headers['x-tradrl-console-session']).toBe('session-0123456789abcdef');
   });
 
   it('logout and adopt drive their POST routes with the principal-token header (adopt: no widening parameter — an empty body)', async () => {
     const { transport, requests } = scripted([ok({}), ok({ desks: [{ projectId: 'prj-own-1', adopted: true }] })]);
     const client = createPrincipalAuthClient({ transport, headers: SESSION_HEADERS });
-    await client.logout('tok-principal-0123456789abcdef');
+    await client.logout(TOKEN);
     expect(requests[0]?.path).toBe('/v1/auth/logout');
     expect(requests[0]?.headers.authorization).toBeUndefined();
-    expect(requests[0]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef');
-    const outcomes = await client.adopt('tok-principal-0123456789abcdef');
+    expect(requests[0]?.headers['x-tradrl-principal-token']).toBe(TOKEN);
+    const outcomes = await client.adopt(TOKEN);
     expect(outcomes).toEqual([{ projectId: 'prj-own-1', adopted: true, already: false }]);
     expect(requests[1]?.path).toBe('/v1/auth/adopt');
-    expect(requests[1]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef');
+    expect(requests[1]?.headers['x-tradrl-principal-token']).toBe(TOKEN);
     expect(requests[1]?.body).toEqual({}); // parameterless per the contract — the calling session's own desks
   });
 
@@ -207,7 +280,7 @@ describe('the principal auth client — the documented contract\'s request gramm
       { notAProjectId: true }, // skipped defensively, never a fabricated row
     ] })]);
     const client = createPrincipalAuthClient({ transport });
-    const outcomes = await client.adopt('tok-principal-0123456789abcdef');
+    const outcomes = await client.adopt(TOKEN);
     expect(outcomes).toEqual([
       { projectId: 'prj-own-1', adopted: true, already: false },
       { projectId: 'prj-own-2', adopted: true, already: true },
@@ -229,7 +302,7 @@ describe('the principal auth client — the typed answers (the honest degradatio
   it('the typed 401 (an unknown/revoked token) and 404 (unknown-vs-foreign) translate through the shared mirror', async () => {
     const unauth = scripted([envelopeError(401, 'unauthenticated', 'the principal token is not on record')]);
     const clientA = createPrincipalAuthClient({ transport: unauth.transport });
-    const errorA = await clientA.whoami('tok-principal-0123456789abcdef').then(() => null, (cause: unknown) => cause);
+    const errorA = await clientA.whoami(TOKEN).then(() => null, (cause: unknown) => cause);
     expect(errorA).toBeInstanceOf(ApiConsoleError);
     expect((errorA as ApiConsoleError).family).toBe('auth');
     expect(isAuthUnavailableError(errorA)).toBe(false);
@@ -249,7 +322,7 @@ describe('the principal auth client — the typed answers (the honest degradatio
   });
 
   it('an answer without a well-formed mint is the typed unavailable — never a fabricated session', async () => {
-    for (const bad of [ok({}), ok({ token: 'short' }), ok({ token: 'tok-principal-0123456789abcdef' }), ok({ token: 'tok-principal-0123456789abcdef', principal: {} })]) {
+    for (const bad of [ok({}), ok({ token: 'short' }), ok({ token: TOKEN }), ok({ token: TOKEN, principal: {} })]) {
       const { transport } = scripted([bad]);
       const client = createPrincipalAuthClient({ transport });
       const error = await client.login({ name: 'desk.owner', passphrase: 'x'.repeat(20) }).then(() => null, (cause: unknown) => cause);
@@ -257,14 +330,14 @@ describe('the principal auth client — the typed answers (the honest degradatio
     }
     const noDesks = scripted([ok({})]);
     const adoptClient = createPrincipalAuthClient({ transport: noDesks.transport });
-    const adoptError = await adoptClient.adopt('tok-principal-0123456789abcdef').then(() => null, (cause: unknown) => cause);
+    const adoptError = await adoptClient.adopt(TOKEN).then(() => null, (cause: unknown) => cause);
     expect(isAuthUnavailableError(adoptError)).toBe(true);
   });
 
   it('a non-envelope answer (a bare status) is the typed unavailable', async () => {
     const { transport } = scripted([{ status: 500, headers: {}, body: null }]);
     const client = createPrincipalAuthClient({ transport });
-    const error = await client.logout('tok-principal-0123456789abcdef').then(() => null, (cause: unknown) => cause);
+    const error = await client.logout(TOKEN).then(() => null, (cause: unknown) => cause);
     expect(isAuthUnavailableError(error)).toBe(true);
   });
 });
@@ -344,8 +417,8 @@ describe('FW-39-3: the live principal-token state + the header-carrying transpor
   it('the state starts anonymous and carries the live token through setToken', () => {
     const state = createPrincipalHeaderState();
     expect(state.token()).toBeNull();
-    state.setToken('tok-principal-0123456789abcdef');
-    expect(state.token()).toBe('tok-principal-0123456789abcdef');
+    state.setToken(TOKEN);
+    expect(state.token()).toBe(TOKEN);
     state.setToken(null);
     expect(state.token()).toBeNull();
   });
@@ -362,12 +435,12 @@ describe('FW-39-3: the live principal-token state + the header-carrying transpor
   it('a signed-in principal\'s writes carry BOTH the boundary credential and the principal-token header (the audit stamp fires host-side)', async () => {
     const { transport, requests } = scripted([ok({}), ok({})]);
     const state = createPrincipalHeaderState();
-    state.setToken('tok-principal-0123456789abcdef');
+    state.setToken(TOKEN);
     const wrapped = withPrincipalHeaders(transport, state, 'tok-developer-boundary');
     await wrapped({ method: 'POST', path: '/v1/projects', headers: { 'content-type': 'application/json' }, body: {} });
     await wrapped({ method: 'POST', path: '/v1/jobs/job-1/promote', headers: {} });
     for (const request of requests) {
-      expect(request.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef');
+      expect(request.headers['x-tradrl-principal-token']).toBe(TOKEN);
       expect(request.headers.authorization).toBe('Bearer tok-developer-boundary');
     }
   });
@@ -375,22 +448,22 @@ describe('FW-39-3: the live principal-token state + the header-carrying transpor
   it('the request\'s OWN headers win over the injected pair (the auth client\'s per-call token is authoritative)', async () => {
     const { transport, requests } = scripted([ok({})]);
     const state = createPrincipalHeaderState();
-    state.setToken('tok-stale');
+    state.setToken('v1.eyJzdWIiOiJwcm4tOSJ9.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789_-StAlE9999'); // a stale (but well-formed) mint
     const wrapped = withPrincipalHeaders(transport, state, 'tok-developer-boundary');
-    await wrapped({ method: 'GET', path: '/v1/auth/whoami', headers: { 'x-tradrl-principal-token': 'tok-per-call', 'x-tradrl-console-session': 'session-0123456789abcdef' } });
-    expect(requests[0]?.headers['x-tradrl-principal-token']).toBe('tok-per-call');
+    await wrapped({ method: 'GET', path: '/v1/auth/whoami', headers: { 'x-tradrl-principal-token': 'v1.eyJzdWIiOiJwcm4tOCJ9.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789_-PeRcAlL999', 'x-tradrl-console-session': 'session-0123456789abcdef' } });
+    expect(requests[0]?.headers['x-tradrl-principal-token']).toBe('v1.eyJzdWIiOiJwcm4tOCJ9.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789_-PeRcAlL999');
     expect(requests[0]?.headers['x-tradrl-console-session']).toBe('session-0123456789abcdef');
   });
 
   it('logout clears the live token — the next write is anonymous again (the additive law, mirrored)', async () => {
     const { transport, requests } = scripted([ok({}), ok({})]);
     const state = createPrincipalHeaderState();
-    state.setToken('tok-principal-0123456789abcdef');
+    state.setToken(TOKEN);
     const wrapped = withPrincipalHeaders(transport, state, 'tok-developer-boundary');
     await wrapped({ method: 'POST', path: '/v1/projects', headers: {} });
     state.setToken(null); // the plane's logout write-through
     await wrapped({ method: 'POST', path: '/v1/projects', headers: {} });
-    expect(requests[0]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef');
+    expect(requests[0]?.headers['x-tradrl-principal-token']).toBe(TOKEN);
     expect(requests[1]?.headers['x-tradrl-principal-token']).toBeUndefined();
   });
 });
