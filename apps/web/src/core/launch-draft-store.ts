@@ -42,7 +42,7 @@
 // string is the canonical CLEARED value (the posture's legacy-key
 // precedent — a storage seam with no removeItem stays honest).
 
-import { LAUNCH_STEPS, type LaunchDraft, type LaunchStep } from './launch';
+import { LAUNCH_STEPS, type LaunchDraft, type LaunchPreference, type LaunchStep } from './launch';
 import type { WorkspaceScope } from './tenant';
 
 /** The draft record's storage key (the browser's trust zone — one versioned JSON value). */
@@ -86,8 +86,8 @@ function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
-/** One { key, value } preference pair. */
-function isPreference(value: unknown): value is { readonly key: string; readonly value: string } {
+/** One { key, value } preference pair — the draft's own LaunchPreference type (named: the loader's erasable subset takes no inline object type in a value-is predicate). */
+function isPreference(value: unknown): value is LaunchPreference {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as { readonly key?: unknown; readonly value?: unknown };
   return typeof record.key === 'string' && typeof record.value === 'string';

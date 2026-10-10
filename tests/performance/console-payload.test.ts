@@ -163,19 +163,23 @@ describe('the console boot payload budgets (the no-build console\'s boot transfe
   //   pattern's existing modules.
   // Re-recorded (FW-40-B, the boot/resume wave; every number measured by
   //   the continuation worker on the final tree, main @ 97bd1d1 the base):
-  //   53 files, 1,120,354 bytes total (1094.1 of the 1088 KiB budget —
-  //   OVER by 6,242 bytes). The true base (main @ 97bd1d1, FW-40-C merged)
+  //   53 files, 1,120,477 bytes total (1094.2 of the 1088 KiB budget —
+  //   OVER by 6,365 bytes; re-measured by cont3 after the erasable-subset
+  //   repair — the pre-repair tree measured 1,120,354). The true base (main @ 97bd1d1, FW-40-C merged)
   //   measured 51 files / 1,086,846 bytes (1061.4 of the 1088 KiB budget —
-  //   26.6 KiB headroom). FW-40-B adds +33,508 bytes, crossing the total
-  //   budget by 6,242, and the byte budget is CONSCIOUSLY raised
+  //   26.6 KiB headroom). FW-40-B adds +33,631 bytes, crossing the total
+  //   budget by 6,365, and the byte budget is CONSCIOUSLY raised
   //   1088 -> 1152 KiB per this file's own protocol ("growing past one is
   //   a CONSCIOUS decision"). The additions, itemized (net bytes,
   //   measured): TWO NEW MODULES riding the extraction pattern the budget
   //   exists to encourage — src/app/boot-resume-plane.ts +12,777 (the
   //   restored-view validation state + the draft restore/write-through/
   //   clear plane, extracted from console.ts by the wave's own
-  //   single-file payment) + src/core/launch-draft-store.ts +11,439 (the
-  //   wizard draft's versioned, fail-closed localStorage record); the
+  //   single-file payment) + src/core/launch-draft-store.ts +11,562 (the
+  //   wizard draft's versioned, fail-closed localStorage record, net of the
+  //   cont3 erasable-subset repair — its value-is predicate names the
+  //   LaunchPreference type instead of an inline object literal, the
+  //   no-build loader grammar the boot-path pins enforce); the
   //   H-4/H-5/H-6 surfaces — src/render/model.ts +5,239 (the
   //   compile-divergence teaching + the view-projected unread count + the
   //   restored-draft hint), src/render/shell.ts +2,539 (the unread wiring
