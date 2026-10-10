@@ -99,17 +99,24 @@ function renderBytes(state: ReturnType<typeof openWorkspace>): string {
 }
 
 describe('the Risk section\'s standing utilization panel (FW-32-A, Round A blocker 1)', () => {
-  it('renders one row per constraint: the bound, the current number, and the honest ok/breach/unknown verdict — the unknown rendered AS unknown, never a fabricated zero', () => {
+  it('renders one row per constraint: the bound, the FILL-DERIVED standing number, and the honest ok/breach/unknown verdict — the unknown rendered AS unknown, never a fabricated zero', () => {
+    // FW-38-B (G-2) pin update, justified: the standing number is no
+    // longer the read's own `current` (the boundary's precedence-1 LAST
+    // GATE OBSERVATION — the refused candidate's projection) but the
+    // desk's own fill-derived book at the view instant; the read's own
+    // number still renders, labeled as what it is (the served read /
+    // the last gate observation — never the standing book).
     const bytes = renderBytes(riskState(utilizationRead()));
-    expect(bytes).toContain('Standing utilization');
-    expect(bytes).toContain('k-capital');
-    expect(bytes).toContain('91,250.375'); // the current number, grouped — the one-glance answer
+    expect(bytes).toContain('Standing utilization (the fill-derived book)');
+    expect(bytes).toContain('capital.budget (bound 300,000,000)');
     expect(bytes).toContain('300,000,000'); // the bound
-    expect(bytes).toContain('k-position');
-    expect(bytes).toContain('unknown — no defensible number on file'); // the honest unknown
+    expect(bytes).toContain('standing (fill-derived book)');
+    expect(bytes).toContain('served read');
+    expect(bytes).toContain('91,250.375 · ok'); // the boundary's own fill-derived sum, rendered verbatim beside the standing rows
+    expect(bytes).toContain('position.grossExposure (bound 2)');
+    expect(bytes).toContain('0 · ok'); // the standing open-position count (no fills in the console's blotter at this view instant) — never a fabricated "unknown"
     expect(bytes).toContain('>ok<'); // the status pill labels render
-    expect(bytes).toContain('>unknown<');
-    // each row's own source disclosure is available on the surface
+    // the read's own source disclosures stay on the surface
     expect(bytes).toContain('without fabricating a book');
   });
 
@@ -133,11 +140,47 @@ describe('the Risk section\'s standing utilization panel (FW-32-A, Round A block
     expect(bytes).toContain('2026-10-07T14:03:00.000Z'); // the breach's own observed instant, verbatim
   });
 
-  it('states the L4 current-instant law on the surface (the read is NOT projected to the view instant) and carries the honesty disclosure', () => {
+  it('states the as-of law on the surface: the DATA\'S OWN AS-OF (never the read-capture instant) and the honesty disclosure', () => {
+    // FW-38-B (G-12) pin update, justified: "Standing read as of" cited
+    // the read-capture instant (the served asOf — the moment the route
+    // ran); the footer now cites the data's own as-of (the newest fill
+    // or refusal observation the rows derive from) and names the
+    // read-capture instant separately, labeled as what it is.
     const bytes = renderBytes(riskState(utilizationRead()));
-    expect(bytes).toContain('Standing read as of 2026-10-08T05:00:00.000Z');
-    expect(bytes).toContain('not projected to the view instant');
+    expect(bytes).toContain('The read itself was captured at 2026-10-08T05:00:00.000Z (the read-capture instant, not the data\'s as-of)');
+    expect(bytes).toContain('the data\'s own as-of');
     expect(bytes).toContain('THE HONESTY LAW');
+  });
+
+  it('FW-38-B (G-8, consumed defensively): a read carrying the desk-level ENTRY-BLOCKED status renders the loud cause before the standing rows; absent/null renders nothing (graceful degradation)', () => {
+    // The FW-38-A runtime contract (PR #81) — data.entryBlocked = the
+    // named blocking constraint whose class makes every entry candidate
+    // inadmissible BY CONSTRUCTION. L2's D1: a blocking concentration
+    // 0.25 killed the desk at entry for 38+ minutes with 0 fills / 0
+    // refusals / 0 decisions and NO surface explaining why — this panel
+    // is one of the two surfaces that now names the cause (the Oversight
+    // desk card is the other, pinned in render/oversight.test.ts).
+    const blocked = utilizationRead({ entryBlocked: {
+      status: 'entry-blocked',
+      constraintId: 'k-concentration',
+      domain: 'state',
+      subject: 'position.concentration',
+      gateClass: 'position_concentration',
+      predicateKind: 'limit.max',
+      bound: '0.25',
+      severity: 'blocking',
+      reason: 'the first candidate is 100% of the projected book (candidate / (0 + candidate) = 1, whatever its size) and 1 > 0.25, so no candidate can ever be admissible until the constraint is revised',
+    } });
+    const blockedBytes = renderBytes(riskState(blocked));
+    expect(blockedBytes).toContain('data-risk-entry-blocked="true"');
+    expect(blockedBytes).toContain('this desk cannot enter: the first candidate is 100% of the projected book');
+    expect(blockedBytes).toContain('position.concentration · limit.max bound 0.25, blocking — constraint k-concentration');
+    // GRACEFUL DEGRADATION, pinned both ways: the default fixture carries
+    // NO entryBlocked field (a backing that predates the contract) and an
+    // explicit null serves "no structural cause on record" — neither
+    // renders anything, neither fabricates a cause.
+    expect(renderBytes(riskState(utilizationRead())).includes('this desk cannot enter')).toBe(false);
+    expect(renderBytes(riskState(utilizationRead({ entryBlocked: null }))).includes('this desk cannot enter')).toBe(false);
   });
 
   it('renders the honest zero-breach state as the absence it is (never a fabricated all-clear)', () => {
@@ -203,14 +246,23 @@ describe('FW-37-B (F-6): the breaches panel is the view-instant projection (the 
     expect(bytes).not.toContain('data-risk-breach="xgs:unreadable"'); // an unparseable instant is excluded, never guessed past
     expect(bytes).toContain('data-risk-breach-projection="true"'); // the withholding note renders
     expect(bytes).toContain('2 standing breaches observed after (or unparseable against) this view instant — not shown here (L4).');
-    // the standing bounds above keep their own current-instant law (never a faked point-in-time meter)
-    expect(bytes).toContain('not projected to the view instant');
+    // the standing rows themselves are the FILL-DERIVED book (G-12: the footer
+    // names the read-capture instant as the capture, never the data's as-of)
+    expect(bytes).toContain('the read-capture instant, not the data\'s as-of');
   });
 
-  it('the standing bounds themselves are NOT projected (the read\'s own asOf stays the law — only the breach ROWS project)', () => {
+  it('the standing rows are the FILL-DERIVED book — the read\'s own number renders beside them, labeled (never swapped for the book)', () => {
+    // FW-38-B (G-2 + F-6 pin update, justified): the pre-fix "standing
+    // bounds are NOT projected" pin asserted the read's own `current`
+    // (91,250.375) rendered verbatim as the standing number — that WAS
+    // the G-2 defect when the read's current is a gate observation. The
+    // standing number is now the desk's own fills at the view instant;
+    // the read's own fill-derived sum renders in its own labeled row.
     const bytes = renderBytes(riskState(utilizationRead()));
-    expect(bytes).toContain('Standing read as of 2026-10-08T05:00:00.000Z');
-    expect(bytes).toContain('91,250.375'); // the standing current, served verbatim — never re-derived from the view instant
+    expect(bytes).toContain('standing (fill-derived book)');
+    expect(bytes).toContain('0 · ok'); // no fills in this console's blotter at the view instant — the honest empty sum
+    expect(bytes).toContain('served read');
+    expect(bytes).toContain('91,250.375 · ok'); // the boundary's own number, verbatim, labeled
   });
 });
 
@@ -225,30 +277,64 @@ describe('FW-37-B (F-6): the breaches panel is the view-instant projection (the 
 // file beside it.
 // ---------------------------------------------------------------------------
 
-describe('FW-37-B (F-7): the violation row labels the projection and shows the standing book beside it', () => {
-  it('the refused candidate\'s projected value is LABELED as the projection, and the matching bound\'s standing current renders beside it (S3\'s 184,859.99-vs-4,860 card, closed)', () => {
-    const read = utilizationRead({ activeBreaches: [{
-      kind: 'risk_limits_refusal',
-      submissionId: 'xgs:capital-refusal',
-      auditId: 'xga:capital-refusal',
-      stage: 'risk_limits',
-      at: '2026-10-07T14:03:00.000Z',
-      decisionBody: 'gate:pre-trade-risk',
-      violations: [{ constraintId: 'k-capital', domain: 'outcome', subject: 'capital.budget', severity: 'blocking', predicate: { kind: 'limit.max', bound: 300000000 }, observed: '184859.99' }],
-      rationale: 'The order was refused at the risk-limits stage.',
-    }] });
-    const bytes = renderBytes(riskState(read));
+describe('FW-37-B (F-7) + FW-38-B (G-2): the violation row labels the projection and shows the FILL-DERIVED standing book beside it', () => {
+  /** Two compliant fills summing 4,860 — S3's exact ground truth. */
+  function fillsSumming4860(): GatewaySubmissionRecord[] {
+    const fill = (id: string, notional: string): GatewaySubmissionRecord => ({
+      kind: 'routed', submissionId: id, decisionId: `xd:${id}`, auditId: `xga:${id}`, requestRef: `gor:${id}`,
+      venue: 'binance', adapterRef: 'adapter', channelRef: 'channel', routedAt: T0 - 5000,
+      fill: { state: 'filled', quantity: '1', price: '100', notional, fee: '0.10', filledAt: T0 - 5000 },
+    });
+    return [fill('xgs:s3-1', '2430.00'), fill('xgs:s3-2', '2430.00')];
+  }
+
+  it('THE G-2 PIN (S3\'s card): 2 compliant fills + 1 refused candidate — the standing book beside the projection is the FILL-DERIVED 4,860 · ok, never the projected 184,859.99', () => {
+    const read = utilizationRead({
+      bounds: [
+        { constraintId: 'k-capital', metric: 'capital.budget', boundMax: '300000000', severity: 'blocking', current: 184859.99, source: 'the risk-limits refusal xgs:capital-refusal (audit xga:capital-refusal) observed at ... — a point-in-time gate observation', status: 'breach' },
+      ],
+      activeBreaches: [{
+        kind: 'risk_limits_refusal',
+        submissionId: 'xgs:capital-refusal',
+        auditId: 'xga:capital-refusal',
+        stage: 'risk_limits',
+        at: '2026-10-07T14:03:00.000Z',
+        decisionBody: 'gate:pre-trade-risk',
+        violations: [{ constraintId: 'k-capital', domain: 'outcome', subject: 'capital.budget', severity: 'blocking', predicate: { kind: 'limit.max', bound: 300000000 }, observed: '184859.99' }],
+        rationale: 'The order was refused at the risk-limits stage.',
+      }],
+    });
+    const events: WorkspaceEvent[] = [
+      goalLoaded(),
+      { kind: 'section-selected', at: T0 + 2, section: 'risk' },
+      { kind: 'risk-utilization-loaded', at: T0 + 3, read },
+      ...fillsSumming4860().map((submission): WorkspaceEvent => ({ kind: 'submission-recorded', at: T0 + 4, submission })),
+    ];
+    const bytes = renderBytes(reduceAll(openWorkspace(SCOPE, T0), events));
     expect(bytes).toContain('vs projected 184859.99'); // the gate's own arithmetic, labeled as the projection
-    expect(bytes).toContain('standing book on file');  // the actual book renders beside it
-    expect(bytes).toContain('91,250.375 · ok (the standing utilization row above)'); // the bound's own current + verdict, traceable up the card
+    expect(bytes).toContain('standing book (fill-derived)');
+    expect(bytes).toContain('4,860 · ok — the desk\'s own fills at this view instant, never the gate\'s projection'); // S3's card, closed: the book IS the book
+    // the standing row itself reads the fills' book — never the projection, never a false breach
+    expect(bytes).toContain('standing (fill-derived book)');
+    expect(bytes).toContain('4,860 · ok');
+    expect(bytes).not.toContain('4,860 · breach');
+    // the projection NEVER renders AS the standing value (it may render ONLY in its own labeled observation row)
+    expect(bytes).not.toContain('fill-derived book)</span><span class="fact-value">184,859.99');
     // the pre-fix misreading is structurally gone: the observed value never renders unlabeled
     expect(bytes).not.toContain('observed 184859.99');
   });
 
-  it('a violation whose bound has NO defensible standing current renders the labeled projection alone (never a fabricated standing book)', () => {
-    const bytes = renderBytes(riskState(utilizationRead())); // the k-position violation: its bound's current is null (unknown)
+  it('a violation whose bound has NO fill-derived class still renders the labeled projection alone (never a fabricated standing book)', () => {
+    // FW-38-B (G-2) pin update, justified: the k-position violation's
+    // "standing" is now the fill count (the open-position class IS
+    // fill-derived); with NO fills in this console's blotter the honest
+    // book is 0 — the pre-fix "no standing number on file" pin asserted
+    // the read's null `current`, which was the G-2 defect's twin (the
+    // read's unknown standing in for the book while the blotter
+    // plainly carries its own counts).
+    const bytes = renderBytes(riskState(utilizationRead()));
     expect(bytes).toContain('vs projected 2.4');
-    expect(bytes).not.toContain('standing book on file'); // no standing number on file — the row stays absent, never a zero
+    expect(bytes).toContain('the desk\'s own fills at this view instant');
   });
 });
 
@@ -312,12 +398,22 @@ describe('FW-37-B (F-1, UI half): the honest enforcement sentence + the gate eva
     expect(bytes).toContain('not gate-evaluable: no position or equity store exists'); // the boundary's own note, verbatim
   });
 
-  it('with NO evaluations on file the sentence names the gate-evaluable subjects honestly and points at the card — never a fabricated verdict, never the blanket claim', () => {
+  it('G-9: with NO evaluations on file the sentence teaches the no-observations truth — never a fabricated verdict, never the stale pre-FW-37 taxonomy fallback', () => {
+    // FW-38-B (Round G register G-9 — L2 + M3) pin update, justified: the
+    // empty-blotter branch used to render the STALE HARDCODED pre-FW-37
+    // taxonomy ("the notional/budget subjects ... bind where derivable;
+    // every other class is taught, not enforced") — contradicting the
+    // boundary's own cards the moment the gate binds every declared
+    // class (L2's rebuilt taxonomy: BOUND AT GATE all five). The empty
+    // state now says exactly what is true: NOTHING has been observed
+    // yet; the taxonomy derives from the live limitsEvaluation rows.
     const bytes = renderBytes(riskState(null)); // no read, no blotter rows
     expect(bytes).toContain('data-risk-enforcement="true"');
-    expect(bytes).toContain('not by this list'); // the honest framing: the LIST does not decide what binds
-    expect(bytes).toContain('the notional/budget subjects (book.notional, capital.budget, order.notional) and the realized-cumulative subjects (risk.budget, risk.maxDrawdown) bind where derivable');
-    expect(bytes).toContain('every other class is taught, not enforced');
+    expect(bytes).toContain('No gate evaluations are on file for this scope yet — nothing has been observed');
+    expect(bytes).toContain('the moment the blotter serves its first observation');
+    // the STALE taxonomy strings never render on the empty branch
+    expect(bytes).not.toContain('bind where derivable');
+    expect(bytes).not.toContain('every other class is taught, not enforced');
     expect(bytes).not.toContain('data-risk-evaluations="true"'); // the card renders only when verdicts are on file
     expect(bytes).not.toContain('enforced at the pre-trade gate'); // the pre-fix overclaim is gone on every branch
   });

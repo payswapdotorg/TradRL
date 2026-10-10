@@ -29,19 +29,36 @@
 //   decision record entering the state passed the tenant gate at
 //   ingest (the reducer's own arm).
 //   L20/honesty — a desk without a read on record renders its honest
-//   "no read on record" facts, never a fabricated number; "open
-//   positions" is NOT fabricated (no position store exists on any
-//   backing — the runtime's own disclosure): the row carries the
-//   blotter's own counts (fills on record / refusals the gateway
-//   stopped), the same vocabulary the Execution section rides.
+//   "no read on record" facts, never a fabricated number.
+//
+// FW-38-B (Round G register G-2 + G-3 + G-5 + G-12 — the truth wave):
+//   G-2 — the standing rows derive from the desk's own FILLS (core/
+//   standing.ts's fill-derived book at the view instant), NEVER from a
+//   gate observation; the gate's projection stays visible ONLY labeled
+//   as the last gate observation; the breach stamp on a standing row
+//   reflects the fill-derived book vs the bound (9 scopes, the round's
+//   top friction — every compliant desk with one refusal used to read
+//   as a standing breach at 38-445x overstatement).
+//   G-3 — the row carries the desk's ORG operating status (the bundle's
+//   own org-status snapshot) beside the project lifecycle, each
+//   labeled as its own entity; the status pill renders the ORG status
+//   (compiled/active/…), never the project-record lifecycle "draft".
+//   G-5 — a gate observation never renders before its observed instant
+//   (the fold's withheldAtView — the same parseInstantUtc projection
+//   the breach rows ride since FW-37-B).
+//   G-12 — the row names the DATA'S OWN AS-OF (the newest fill or
+//   non-withheld observation the standing rows derive from), never the
+//   read-capture instant (the served asOf is named separately, labeled
+//   as the capture).
 //
 // This module is PURE: identical (state, viewAt) -> identical rows.
 // No DOM, no clock, no transport.
 
-import type { GatewaySubmissionRecord, OutcomeRecord, ProjectRecord, RiskUtilizationRead } from '../api/contracts';
+import type { GatewaySubmissionRecord, OrgStatusSnapshot, OutcomeRecord, ProjectRecord, RiskUtilizationEntryBlocked, RiskUtilizationRead } from '../api/contracts';
 import { blotterTotalsOf } from './blotter';
 import { availabilityOfOutcome, availabilityOfSubmission, projectToView } from './availability';
 import { parseInstantUtc } from './format';
+import { standingReadFoldOf, type StandingReadFold } from './standing';
 import { DEMO_PROJECT_ID, isDemoProject, sessionOwnDesksOf } from './tenant';
 import type { WorkspaceState } from './workspace';
 
@@ -64,22 +81,21 @@ export interface OversightDeskRead {
   readonly submissions: readonly GatewaySubmissionRecord[];
   /** The desk's decision-stream records (the outcomes the decision projection renders). */
   readonly decisions: readonly OutcomeRecord[];
+  /**
+   * FW-38-B (Round G register G-3): the desk's OWN organization-status
+   * snapshot (read through the same frozen route the Organization
+   * section rides, paired with THIS desk's project id) — the org
+   * operating status the row's pill renders ('active', 'forming', …).
+   * Optional + nullable: a desk with no organization ref yet (pre-
+   * compile), a backing that answers nothing, and every pre-FW-38-B
+   * bundle all fold to the honest "not compiled" absence — never a
+   * fabricated status. A NEW status value (e.g. the parallel wave's
+   * 'entry-blocked') renders verbatim — the fold treats the status as
+   * the boundary's own vocabulary, never a closed enum it re-decides.
+   */
+  readonly orgStatus?: OrgStatusSnapshot | null;
   /** The observed instant the bundle was read at (injected — never a wall clock). */
   readonly readAt: number;
-}
-
-/** One budget/utilization pair of a desk's standing read (the bound + the honest current, verbatim). */
-export interface OversightBudgetRow {
-  /** The constraint's own id (traceable to the desk's mandate). */
-  readonly constraintId: string;
-  /** The metric the bound binds (verbatim, e.g. 'outcome.capital.budget'). */
-  readonly metric: string;
-  /** The bound's own max-side number as served ('' when none declared). */
-  readonly boundMax: string;
-  /** The standing current utilization — a number ONLY when the records on file produce a defensible one; null = honestly unknown, never fabricated. */
-  readonly current: number | null;
-  /** The bound's own verdict (ok / breach / unknown — the read's own, never re-decided). */
-  readonly status: 'ok' | 'breach' | 'unknown';
 }
 
 /** One desk's oversight row — the fold's product (the render layer's single input). */
@@ -88,13 +104,25 @@ export interface OversightDeskRow {
   readonly name: string;
   /** True for the shared demo project (the teaching desk — the E-8 demo-tenant marking law). */
   readonly demo: boolean;
-  /** The project record's own lifecycle status (the boundary's stamp, verbatim). */
+  /** The project record's own lifecycle status (the boundary's stamp, verbatim — a LABELED fact row, never the pill). */
   readonly status: string;
+  /** FW-38-B (G-3): the desk's ORG operating status (the bundle's own snapshot: 'active'/'forming'/…, rendered verbatim — an unknown status renders as itself, never re-decided); null = no snapshot on record (the honest "not compiled"). */
+  readonly orgStatus: string | null;
+  /**
+   * FW-38-B (G-8's UI half, consumed defensively): the desk-level
+   * ENTRY-BLOCKED status the utilization read serves ADDITIVELY (the
+   * FW-38-A runtime contract, PR #81) — the named blocking constraint
+   * that makes every entry candidate inadmissible by construction (the
+   * dead-desk silence's first explanation surface). null when the read
+   * serves none OR the backing predates the field (an old origin simply
+   * omits it) — never a fabricated cause, never a crash.
+   */
+  readonly entryBlocked: RiskUtilizationEntryBlocked | null;
   readonly executionMode: string;
   /** The desk's read bundle (null when no read is on record — the honest pre-read absence). */
   readonly read: OversightDeskRead | null;
-  /** The capital + risk budget rows (the standing read's own bounds, verbatim). */
-  readonly budgets: readonly OversightBudgetRow[];
+  /** FW-38-B (G-2 + G-5): the standing rows — the fill-derived book vs each bound, with the last gate observation labeled (and withheld before its observed instant); [] when no read is on record. */
+  readonly standing: readonly StandingReadFold['rows'][number][];
   /** The fills on record AT THE VIEW INSTANT (routed rows with fill economics — never a fabricated position count). */
   readonly fills: number;
   /** The refusals on record AT THE VIEW INSTANT (each one a stopped decision — counted, never hidden). */
@@ -107,8 +135,10 @@ export interface OversightDeskRow {
   readonly breachesAtView: number;
   /** Every active breach the standing read carries (the unprojected total — the standing read's own count). */
   readonly breachesTotal: number;
-  /** The standing read's own serve instant (verbatim asOf), or null when no read is on record. */
+  /** The standing read's own serve instant (verbatim asOf — the READ-CAPTURE instant), or null when no read is on record. */
   readonly asOf: string | null;
+  /** FW-38-B (G-12): the DATA'S OWN AS-OF — the newest fill or non-withheld observation the standing rows derive from; null when nothing derives. */
+  readonly standingAsOf: number | null;
 }
 
 /**
@@ -119,29 +149,6 @@ export interface OversightDeskRow {
  */
 export function oversightDesksOf(directory: readonly ProjectRecord[]): readonly ProjectRecord[] {
   return sessionOwnDesksOf(directory, DEMO_PROJECT_ID);
-}
-
-/**
- * The budget rows of a standing utilization read — the capital and
- * risk budget bounds first (metric-match, the boundary's own
- * vocabulary), every other bound after them in the read's own order.
- * An absent read folds to [] (the honest absence).
- */
-export function oversightBudgetRowsOf(utilization: RiskUtilizationRead | null): readonly OversightBudgetRow[] {
-  if (utilization === null) return [];
-  const rows: OversightBudgetRow[] = utilization.bounds.map((bound) => ({
-    constraintId: bound.constraintId,
-    metric: bound.metric,
-    boundMax: bound.boundMax === null ? '' : bound.boundMax,
-    current: bound.current,
-    status: bound.status,
-  }));
-  const isCapital = (row: OversightBudgetRow): boolean => row.metric.includes('capital') && row.metric.includes('budget');
-  const isRisk = (row: OversightBudgetRow): boolean => row.metric.includes('risk') && row.metric.includes('budget');
-  const capital = rows.filter(isCapital);
-  const risk = rows.filter((row) => isRisk(row) && !isCapital(row));
-  const rest = rows.filter((row) => !isCapital(row) && !isRisk(row));
-  return [...capital, ...risk, ...rest];
 }
 
 /**
@@ -174,14 +181,23 @@ export function oversightRowsOf(state: WorkspaceState, viewAt: number): readonly
       const observedAt = parseInstantUtc(breach.at);
       return observedAt !== null && observedAt <= viewAt;
     }).length;
+    // FW-38-B (G-2 + G-5 + G-12): the standing rows are the FILL-DERIVED
+    // book of the desk's own L4-projected submissions at the view
+    // instant — NEVER the gate's projection (the read's precedence-1
+    // observation renders beside it, labeled, withheld before its own
+    // observed instant); the data's own as-of names the newest record
+    // the rows derive from, never the read-capture instant.
+    const standing = standingReadFoldOf(read?.utilization ?? null, submissions, viewAt);
     return {
       projectId: desk.id,
       name: desk.name,
       demo: isDemoProject(desk.id),
       status: desk.lifecycle.status,
+      orgStatus: read?.orgStatus?.status ?? null,
+      entryBlocked: read?.utilization?.entryBlocked ?? null,
       executionMode: desk.executionMode,
       read,
-      budgets: oversightBudgetRowsOf(read?.utilization ?? null),
+      standing: standing.rows,
       fills: totals.fills,
       refusals: totals.refusals,
       decisions: decisions.length,
@@ -189,6 +205,7 @@ export function oversightRowsOf(state: WorkspaceState, viewAt: number): readonly
       breachesAtView,
       breachesTotal: breaches.length,
       asOf: read?.utilization?.asOf ?? null,
+      standingAsOf: standing.dataAsOf,
     };
   });
 }

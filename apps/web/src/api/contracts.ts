@@ -408,6 +408,40 @@ export interface RiskUtilizationBreach {
   readonly rationale?: string;
 }
 
+/**
+ * THE DESK-LEVEL ENTRY-BLOCKED STATUS (FW-38-A's runtime half, Round G
+ * register G-8 — the dead-desk silence, L2 + M3; mirrored here by
+ * FW-38-B's UI half): the named blocking constraint whose class makes
+ * every entry candidate inadmissible BY CONSTRUCTION (the first
+ * candidate is 100% of the projected book — fraction 1; the sole first
+ * position — count 1), so the desk produces 0 fills / 0 refusals /
+ * 0 decisions with no surface explaining why. The client mirror is
+ * OPTIONAL + nullable: a backing that predates the field (any origin
+ * serving the FW-31-A shape) simply omits it, and the console folds
+ * that to the honest "no structural cause on record" — never a
+ * fabricated one, never a crash (degrade gracefully when absent).
+ */
+export interface RiskUtilizationEntryBlocked {
+  /** The literal discriminator (the read's own status vocabulary). */
+  readonly status: 'entry-blocked';
+  /** The blocking constraint's own id (its constraint set's vocabulary — never renamed). */
+  readonly constraintId: string;
+  /** The constraint's declared domain (verbatim). */
+  readonly domain: string;
+  /** The constraint's declared subject (verbatim, e.g. 'position.concentration'). */
+  readonly subject: string;
+  /** The gate subject class the constraint binds as (the FW-37-A gate vocabulary). */
+  readonly gateClass: 'position_concentration' | 'position_gross_exposure';
+  /** The predicate's own kind (limit.max | limit.min). */
+  readonly predicateKind: string;
+  /** The bound's own numeric text (verbatim — never re-rounded). */
+  readonly bound: string;
+  /** The constraint's declared severity ('blocking' — an advisory bound never blocks entry). */
+  readonly severity: string;
+  /** The teaching reason (the entry arithmetic, named): why NO candidate can ever be admissible. */
+  readonly reason: string;
+}
+
 /** The standing risk-utilization read's payload (the FW-31-A route's `data`). */
 export interface RiskUtilizationRead {
   readonly projectId: string;
@@ -415,6 +449,15 @@ export interface RiskUtilizationRead {
   readonly asOf: string;
   readonly bounds: readonly RiskUtilizationBound[];
   readonly activeBreaches: readonly RiskUtilizationBreach[];
+  /**
+   * FW-38-B (G-8's UI half): OPTIONAL on the client mirror — the runtime
+   * (FW-38-A, PR #81) serves it non-optional; a backing that predates the
+   * field omits it entirely and the console degrades gracefully (nothing
+   * renders, no structural cause is fabricated). Present + non-null = the
+   * named blocking constraint that makes every entry candidate
+   * inadmissible by construction: render "this desk cannot enter: <reason>".
+   */
+  readonly entryBlocked?: RiskUtilizationEntryBlocked | null;
   readonly disclosure: string;
 }
 

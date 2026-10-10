@@ -29,10 +29,10 @@ const project = (id: string, name: string, marker?: 'session-owned' | 'tenant-av
   createdAt: T0, updatedAt: T0,
 });
 
-const routedFill = (id: string, at: number): GatewaySubmissionRecord => ({
+const routedFill = (id: string, at: number, notional = '100.00'): GatewaySubmissionRecord => ({
   kind: 'routed', submissionId: id, decisionId: `xd:${id}`, auditId: `xga:${id}`, requestRef: `gor:${id}`,
   venue: 'binance', adapterRef: 'adapter', channelRef: 'channel', routedAt: at,
-  fill: { state: 'filled', quantity: '1', price: '100', notional: '100.00', fee: '0.10', filledAt: at },
+  fill: { state: 'filled', quantity: '1', price: '100', notional, fee: '0.10', filledAt: at },
 });
 
 const decision = (id: string, at: number, project: string): OutcomeRecord => ({
@@ -96,14 +96,114 @@ describe('FW-37-B (F-2): the oversight panel render', () => {
     expect(bytes).toContain("One governed view of this session's own desks");
   });
 
-  it('the per-desk card renders the budget rows + utilization (bound + honest current) in the card language (card-title + factRows)', () => {
+  it('the per-desk card renders the STANDING ROWS as the FILL-DERIVED BOOK (bound + standing + the labeled gate observation) in the card language (card-title + factRows)', () => {
+    // FW-38-B (G-2) pin update, justified: the pre-fix "(standing)" rows
+    // rendered the read's own `current` — the boundary's precedence-1
+    // LAST GATE OBSERVATION — as the standing utilization; the rows now
+    // render the desk's own fills at the view instant, the projection
+    // stays visible ONLY labeled as the last gate observation.
     const bytes = oversightBytes(oversightState());
     expect(bytes).toContain('outcome.capital.budget (bound)');
     expect(bytes).toContain('10,000'); // the bound, grouped
-    expect(bytes).toContain('outcome.capital.budget (standing)');
-    expect(bytes).toContain('4,860 · ok'); // the honest current + the read's own verdict
-    expect(bytes).toContain('outcome.risk.budget (standing)');
-    expect(bytes).toContain('unknown — no defensible number on file'); // never a fabricated zero
+    expect(bytes).toContain('outcome.capital.budget (standing — fill-derived book)');
+    expect(bytes).toContain('100 · ok (the desk\'s own fills at this view instant, never a gate observation)'); // the one pre-view fill's book
+    expect(bytes).toContain('outcome.capital.budget (last gate observation)');
+    expect(bytes).toContain('withheld — observed at'); // the newest citing refusal lands after the view instant — G-5 withholds it
+    expect(bytes).toContain('outcome.risk.budget (standing — fill-derived book)');
+    expect(bytes).toContain('unknown — no fill-derived number on file'); // never a fabricated zero (the realized-loss class derives from outcomes, not fills)
+  });
+
+  it('G-3: the status pill renders the desk\'s ORG operating status — never the project-record lifecycle "draft" (6+ personas)', () => {
+    // L1's exact defect: every card incl. the long-compiled demo read
+    // "draft" while the Goal section itself shows "organization active".
+    // The fixture reproduces it exactly: prj-a's PROJECT-RECORD lifecycle
+    // is "draft" while its ORGANIZATION is compiled + operating
+    // ("active") — the pill must read the org status.
+    const draftLifecycle = { ...project('prj-a', 'Alpha Desk', 'session-owned'), lifecycle: { projectId: 'prj-a', status: 'draft' as const, acceptanceCriteriaId: null, organizationRef: 'org:a' } };
+    const state = reduceAll(oversightState(), [
+      { kind: 'projects-listed', at: VIEW_AT, records: [
+        draftLifecycle,
+        project('prj-b', 'Beta Desk', 'session-owned'),
+        project(DEMO_PROJECT_ID, 'the TradRL demo project', 'tenant-available'),
+      ] },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-a', utilization: utilizationOf('prj-a'), submissions: [], decisions: [], readAt: VIEW_AT, orgStatus: { organizationRef: 'org:a', tenant: 'tenant-a', project: 'prj-a', status: 'active', at: VIEW_AT - 1000, instanceRefs: ['ai:director-1'] } } },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-b', utilization: null, submissions: [], decisions: [], readAt: VIEW_AT } },
+    ]);
+    const all = oversightBytes(state);
+    // prj-a's org is compiled + operating: the pill reads the ORG status
+    const alphaCard = all.slice(all.indexOf('data-oversight-desk="prj-a"'), all.indexOf('data-oversight-desk="prj-b"'));
+    expect(alphaCard).toContain('<span class="pill-label">active</span>');  // the ORG operating status on the pill
+    expect(alphaCard).not.toContain('<span class="pill-label">draft</span>'); // the lifecycle never wears the pill again
+    expect(alphaCard).toContain('organization status'); // the org status keeps its own labeled fact row
+    expect(alphaCard).toContain('project lifecycle');   // the lifecycle keeps its own labeled fact row (a different entity)
+    expect(alphaCard).toContain('>draft<');              // the lifecycle's own labeled fact row keeps its truth — labeled, never the pill
+    // a desk with no snapshot on record renders the honest absence, never a fabricated status
+    const betaCard = all.slice(all.indexOf('data-oversight-desk="prj-b"'), all.indexOf('data-oversight-desk="prj-demo-console"'));
+    expect(betaCard).toContain('<span class="pill-label">org not compiled</span>');
+  });
+
+  it('G-5 + G-12: a not-yet-observed projection withholds at a scrubbed instant; the footer cites the DATA\'S OWN AS-OF, never the read-capture instant', () => {
+    const bytes = oversightBytes(oversightState());
+    // the newest citing refusal lands AFTER the view instant — its projection withholds (the G-5 pin)
+    expect(bytes).toContain('withheld — observed at');
+    expect(bytes).toContain('never rendered before its observed instant');
+    // G-12: the footer cites the data's own as-of (the newest fill — the one pre-view fill), the read-capture instant named separately
+    expect(bytes).toContain('Standing book as of');
+    expect(bytes).toContain('the data\'s own as-of: the newest fill or refusal observation the rows above derive from');
+    expect(bytes).toContain('The read itself was captured at'); // the read-capture instant, labeled as the capture — never the data's as-of
+    // once the view instant passes the observed instant, the observation renders — LABELED as the projection, never the standing book
+    const later = reduceAll(oversightState(), [
+      { kind: 'anchor-advanced', at: VIEW_AT + 10_000 }, // live mode: the view follows the fresh anchor
+    ]);
+    const laterBytes = oversightBytes(later);
+    expect(laterBytes).toContain('never the standing book');
+    expect(laterBytes).toContain("the refused candidate's projection");
+  });
+
+  it('G-8 (consumed defensively): the read\'s desk-level ENTRY-BLOCKED status renders LOUDLY — "this desk cannot enter: <reason>" + the named constraint; absent/null renders nothing (graceful degradation)', () => {
+    // The FW-38-A runtime contract (PR #81), consumed by THIS wave's UI
+    // half: GET /v1/risk/utilization serves data.entryBlocked = the named
+    // blocking constraint whose class makes every entry candidate
+    // inadmissible BY CONSTRUCTION — the dead-desk silence's (L2: 38+
+    // minutes of 0/0/0; M3's D2: 18+) first explanation surface. The
+    // client mirror is OPTIONAL: a backing that predates the field omits
+    // it entirely and NOTHING renders (pinned below with the default
+    // fixture, whose read carries no entryBlocked field at all).
+    const blocked: RiskUtilizationRead = {
+      ...utilizationOf('prj-a'),
+      entryBlocked: {
+        status: 'entry-blocked',
+        constraintId: 'k-concentration',
+        domain: 'state',
+        subject: 'position.concentration',
+        gateClass: 'position_concentration',
+        predicateKind: 'limit.max',
+        bound: '0.25',
+        severity: 'blocking',
+        reason: 'the first candidate is 100% of the projected book (candidate / (0 + candidate) = 1, whatever its size) and 1 > 0.25, so no candidate can ever be admissible until the constraint is revised',
+      },
+    };
+    const state = reduceAll(oversightState(), [
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-a', utilization: blocked, submissions: [], decisions: [], readAt: VIEW_AT } },
+    ]);
+    const all = oversightBytes(state);
+    const alphaCard = all.slice(all.indexOf('data-oversight-desk="prj-a"'), all.indexOf('data-oversight-desk="prj-b"'));
+    // THE LOUD RENDER: the desk cannot enter, the reason verbatim (the runtime's own entry arithmetic), the named constraint beside it
+    expect(alphaCard).toContain('data-entry-blocked="prj-a"');
+    expect(alphaCard).toContain('this desk cannot enter: the first candidate is 100% of the projected book');
+    expect(alphaCard).toContain('no candidate can ever be admissible until the constraint is revised');
+    expect(alphaCard).toContain('position.concentration · limit.max bound 0.25, blocking — constraint k-concentration');
+    // the pill keeps its own G-3 law (the ORG status — 'org not compiled' here, no snapshot in this bundle) — the entry block is its own labeled surface, never a pill conflation
+    expect(alphaCard).toContain('<span class="pill-label">org not compiled</span>');
+    // GRACEFUL DEGRADATION, pinned: the default fixture's read carries NO entryBlocked field (a backing that predates the contract) — nothing renders
+    const defaultBytes = oversightBytes(oversightState());
+    expect(defaultBytes.includes('this desk cannot enter')).toBe(false);
+    expect(defaultBytes.includes('data-entry-blocked')).toBe(false);
+    // and a read that serves entryBlocked: null explicitly renders nothing either (no structural cause on record — never fabricated)
+    const explicitNull = reduceAll(oversightState(), [
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-a', utilization: { ...utilizationOf('prj-a'), entryBlocked: null }, submissions: [], decisions: [], readAt: VIEW_AT } },
+    ]);
+    expect(oversightBytes(explicitNull).includes('this desk cannot enter')).toBe(false);
   });
 
   it('every desk row carries the visible SIMULATED tag on the demo adapter, and the demo desk carries its own DEMO chip (the E-8 law at the new surface)', () => {

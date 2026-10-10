@@ -565,6 +565,13 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       if (event.read.utilization !== null && event.read.utilization.projectId !== event.read.projectId) {
         throw new Error(`reduceWorkspace: oversight-read requires the utilization read's own project scope (got ${JSON.stringify(event.read.utilization.projectId)}, the bundle is for ${JSON.stringify(event.read.projectId)})`);
       }
+      // FW-38-B (Round G register G-3): the bundle's org-status snapshot,
+      // when present, must be THIS desk's own (the snapshot carries its
+      // own project pairing — a crossed org read never enters, the same
+      // own-desk law the utilization read rides).
+      if (event.read.orgStatus !== undefined && event.read.orgStatus !== null && event.read.orgStatus.project !== event.read.projectId) {
+        throw new Error(`reduceWorkspace: oversight-read requires the org-status snapshot's own project scope (got ${JSON.stringify(event.read.orgStatus.project)}, the bundle is for ${JSON.stringify(event.read.projectId)})`);
+      }
       for (const decision of event.read.decisions) {
         assertTenantScope(withHistory.scope, { tenantId: decision.tenant });
       }
