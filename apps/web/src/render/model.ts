@@ -2061,6 +2061,16 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
     const reviewValid = problems.length === 0;
     rows.push(v('div', { class: 'card launch-wizard', 'data-launch-step': launch.step }, [
       v('div', { class: 'card-title' }, [`Primary flow — ${launch.step}`]),
+      // FW-40-B (the boot-seam draft persistence, S2's
+      // draft-lost-on-reload): the subtle restored-draft disclosure —
+      // the wizard carries work the browser's own trust zone kept
+      // (the whole point of the store: losing a half-filled launch
+      // wizard to a reload is losing WORK, not state). One hint line
+      // naming WHEN it was saved; it retires on the user's first
+      // wizard drive (the console seam clears the view field).
+      ...(view.launchDraftRestored !== undefined && view.launchDraftRestored !== null
+        ? [v('p', { class: 'hint', 'data-draft-restored': 'true' }, [`Draft restored from your last session (saved ${formatInstantUtc(view.launchDraftRestored)}).`])]
+        : []),
       // FW-40-C (the wizard-race cluster): the stepper's own controls
       // carry STABLE IDS so the projector preserves the live elements
       // across every beat re-projection (render/dom.ts's keyed reuse) —

@@ -29,6 +29,7 @@ import type { LaunchDraft, LaunchIds, StandaloneResearchInput } from '../core/la
 import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, toLaunchWorldSpec, toStandaloneResearchSpec, validateLaunchDraft, validateStandaloneResearch, isResearchFieldName } from '../core/launch';
 import { InvalidLaunchDraftError, InvalidResearchSubmissionError } from '../core/errors';
 import { absorbedEdit, blankLaunchDraft, editLaunchField, isLaunchFieldName, launchFieldValidation, launchFormValues, launchFormValuesOfDraft, launchStepFields, type LaunchFieldName } from '../core/launch-form';
+import { clearStoredLaunchDraft, persistLaunchDraft, readStoredLaunchDraftRecord, type StoredLaunchDraft } from '../core/launch-draft-store';
 import { digestOf } from '../core/digest';
 import type { InstantSource, TickScheduler } from '../core/clock';
 import { systemNowMs } from '../core/clock';
@@ -280,6 +281,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   // generation guard below the restore is exactly-once, boot-scoped,
   // and never clobbers a user's choice.
   const bootStoredScope = options.scopeStorage === undefined ? null : readStoredScopeProject(options.scopeStorage);
+  // FW-40-B (the boot-seam draft persistence, S2's draft-lost-on-reload):
+  // the stored wizard draft record, captured ONCE, synchronously, at
+  // boot (the D-15 discipline) — UNGATED here by design: the record's
+  // scope gate applies at the RESTORE, against the SETTLED scope (the
+  // listing read below may first adopt the stored scope, and the desk
+  // that settles is the desk whose own draft restores — never another
+  // desk's).
+  const bootStoredDraft: StoredLaunchDraft | null = options.scopeStorage === undefined ? null : readStoredLaunchDraftRecord(options.scopeStorage);
   // D-15 part 2 — THE SCOPE GENERATION: 0 until the first scope move
   // this session (switcher choice, palette jump, launch adoption, or
   // the boot-restore's own adoption — every one rides dispatch). The
@@ -397,6 +406,37 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     return event.kind.startsWith('playback-');
   }
 
+  // FW-40-B (the boot-seam draft persistence, S2's draft-lost-on-reload):
+  // the restore + write-through state. The restore applies EXACTLY ONCE,
+  // inside the listing read (the settled-scope cadence), only while the
+  // wizard is UNTOUCHED (phase 'idle', no draft — a driving user is never
+  // clobbered, the D-15 law); the restored hint (the saved-at instant the
+  // wizard card names) is held console-side pre-mount and rides the
+  // shell view after (the account plane's holder+setter pattern); the
+  // write-through persists every committed edit/step under the CURRENT
+  // scope, and a successful launch / an explicit reset CLEARS the record.
+  let launchDraftRestoreApplied = false;
+  let restoringLaunchDraft = false;
+  let launchDraftRestoredAt: number | null = null;
+  let showLaunchDraftRestored: ((savedAt: number | null) => void) | null = null;
+
+  /** FW-40-B: attempt the stored-draft restore against the SETTLED scope (called from the listing read; exactly once, never over a driving user). */
+  function restoreStoredLaunchDraft(): void {
+    if (launchDraftRestoreApplied || bootStoredDraft === null) return;
+    if (state.launch.draft !== null || state.launch.phase !== 'idle') return; // the user is already driving the wizard — never clobber (D-15)
+    if (bootStoredDraft.tenantId !== state.scope.tenantId || bootStoredDraft.projectId !== state.scope.projectId) return; // a draft authored on ANOTHER desk never restores here
+    launchDraftRestoreApplied = true;
+    launchDraftRestoredAt = bootStoredDraft.savedAt;
+    if (showLaunchDraftRestored !== null) showLaunchDraftRestored(bootStoredDraft.savedAt); // the hint rides the view BEFORE the render the dispatch triggers
+    restoringLaunchDraft = true;
+    try {
+      dispatch({ kind: 'launch-draft-started', at: instants.nowMs(), draft: bootStoredDraft.draft });
+      if (bootStoredDraft.step !== 'goal') dispatch({ kind: 'launch-step-changed', at: instants.nowMs(), step: bootStoredDraft.step });
+    } finally {
+      restoringLaunchDraft = false;
+    }
+  }
+
   let state: WorkspaceState = openWorkspace(scope, instants.nowMs());
   const listeners: WorkspaceListener[] = [];
   // THE DURABLE READ-STATE (D-6c, W-25C): the persisted read-mark map,
@@ -419,6 +459,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     if (restoredViewHeal !== null && !healingRestoredView && isTimeMachineDriveEvent(event)) {
       restoredViewHeal = null;
       if (showRestoredViewHeal !== null) showRestoredViewHeal(null);
+    }
+    // FW-40-B (the draft persistence): the user's own wizard drive (a
+    // committed edit, a step move) RETIRES the restored hint — the
+    // teaching line described the restore; once the user drives the
+    // wizard it is theirs. The restore's OWN dispatches are exempt
+    // (restoringLaunchDraft) — they are the hint's product.
+    if (launchDraftRestoredAt !== null && !restoringLaunchDraft && (event.kind === 'launch-draft-edited' || event.kind === 'launch-step-changed')) {
+      launchDraftRestoredAt = null;
+      if (showLaunchDraftRestored !== null) showLaunchDraftRestored(null);
     }
     const scopeBefore = state.scope.projectId;
     state = reduceWorkspace(state, event);
@@ -468,6 +517,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         } catch {
           // storage unavailable (private mode, quota): session-only read-state
         }
+      }
+    }
+    // FW-40-B (the boot-seam draft persistence) — THE DRAFT
+    // WRITE-THROUGH + CLEAR: a committed wizard edit or step move
+    // persists the draft + step under the CURRENT scope (the store
+    // records INVESTMENT — a merely opened blank wizard never
+    // persists); a SUCCESSFUL LAUNCH (the draft became a project) or
+    // an explicit RESET (the user abandoned it) clears the record.
+    // The restore's own dispatches never re-write (the record is
+    // already exactly that value). Best-effort, the posture seam's law.
+    if (options.scopeStorage !== undefined) {
+      if (event.kind === 'launch-completed' || event.kind === 'launch-reset') {
+        clearStoredLaunchDraft(options.scopeStorage);
+      } else if (!restoringLaunchDraft && state.launch.draft !== null && (event.kind === 'launch-draft-edited' || event.kind === 'launch-step-changed')) {
+        persistLaunchDraft(options.scopeStorage, state.scope, state.launch.draft, state.launch.step, instants.nowMs());
       }
     }
     for (const listener of [...listeners]) listener(state);
@@ -622,6 +686,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             pendingRestoredView = clamped; // FW-40-B (H-4): same pending validation as the t-minus arm
           }
         }
+        // FW-40-B (the boot-seam draft persistence, S2's
+        // draft-lost-on-reload) — THE STORED-DRAFT RESTORE, same pass,
+        // AFTER the scope branch: the scope has SETTLED (the stored-scope
+        // adoption above), so the boot-captured record's own scope gate
+        // compares against the desk this console actually opens into —
+        // the desk that settles is the desk whose own draft restores
+        // (never another desk's), once, never over a driving user.
+        restoreStoredLaunchDraft();
       });
       // FW-37-B (Round F register F-2 — the consolidated oversight
       // surface) + FW-38-B (Round G register G-3 — the org-status bundle
@@ -1029,6 +1101,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       view = { ...view, tmHealNote: note };
     };
     if (restoredViewHeal !== null) view = { ...view, tmHealNote: restoredViewHeal };
+    // FW-40-B (the boot-seam draft persistence): bind the restored-draft
+    // hint's view setter (the same holder+setter pattern — the console
+    // seam owns the hint, the shell view carries it, and the wizard card
+    // in render/model.ts composes the line). A restore that landed BEFORE
+    // mount (the boot listing read races it) is held console-side and
+    // applies to this first view; from here on the setter keeps the view
+    // in step (set + retire on the user's first wizard drive).
+    showLaunchDraftRestored = (savedAt) => {
+      view = { ...view, launchDraftRestored: savedAt };
+    };
+    if (launchDraftRestoredAt !== null) view = { ...view, launchDraftRestored: launchDraftRestoredAt };
     let paletteResults: readonly PaletteEntry[] = [];
     // §4.10's once-per-notice toast guard: the id of the notice the
     // chrome last toasted (chrome state only — never workspace state).

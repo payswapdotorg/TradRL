@@ -145,6 +145,19 @@ export interface ShellView {
    * (app/console.ts) is the only writer (null = the retired note).
    */
   readonly tmHealNote?: TmHealNote | null;
+  /**
+   * FW-40-B (the boot-seam draft persistence, S2's draft-lost-on-reload):
+   * THE RESTORED-DRAFT HINT — the wizard card's subtle disclosure that
+   * the draft it renders came back from the browser's own trust zone
+   * (the value is the record's saved-at instant, epoch ms, so the line
+   * can name WHEN the work was saved). Renders until the user's first
+   * wizard drive (a committed edit or a step move retires it — the
+   * wizard is theirs again). OPTIONAL by design (the account-field
+   * precedent): undefined is the default every prior surface keeps,
+   * byte-for-byte; the console seam (app/console.ts) is the only
+   * writer (null = the retired hint).
+   */
+  readonly launchDraftRestored?: number | null;
 }
 
 /**

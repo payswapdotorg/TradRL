@@ -57,6 +57,7 @@ import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
 import { toCreateProjectInput } from '../core/launch';
 import type { GatewaySubmissionRecord, GoalStatement, JobRecord, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
+import { LAUNCH_DRAFT_STORAGE_KEY, parseStoredLaunchDraft, persistLaunchDraft, type StoredLaunchDraft } from '../core/launch-draft-store';
 import { capsuleFromJob, capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
 import { historyFloorOf, serializeWorkspaceExport, verifyWorkspaceExport, viewAtOf } from '../core/workspace';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
@@ -5869,6 +5870,192 @@ describe('executed boot: FW-40-B — the boot/resume cluster (H-4 the stale view
     expect(homeText).toContain('UNREAD NOTICES'); // the Home tile's own surface (the same projected fold)
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-40-B (the boot-seam draft persistence) — S2's draft-lost-on-reload,
+// the half of the wizard-race cluster FW-40-C documented for THIS wave:
+// after the silent-freeze friction, "the wizard draft does NOT persist
+// across reload (all inputs lost)" — losing a half-filled launch wizard
+// to a reload is losing WORK, not state. The store (core/launch-draft-store.ts)
+// persists the committed draft + step under the authoring scope; the boot
+// restore reopens the wizard with a subtle "draft restored" hint; a
+// successful launch or an explicit reset clears the record; a draft
+// authored on another desk NEVER restores elsewhere.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-40-B — the boot-seam draft persistence (the wizard draft survives the reload)', () => {
+  /** A RETURNING browser's posture record: onboarded, no stored scope (or a chosen one), the Time Machine LIVE (the quiet boot — no H-4 machinery engaged). */
+  function returningPostureStorage(scopeProjectId: string | null = null): MapStorage {
+    const storage = new MapStorage();
+    storage.map.set('tradrl_console_posture', JSON.stringify({
+      onboarded: true,
+      scopeProjectId,
+      timeMachine: { speed: '1x', freeSpeed: '', mode: 'live', viewAt: null },
+    }));
+    return storage;
+  }
+
+  /** The stored draft record of a scope, hand-seeded through the real serializer (the browser's own bytes). */
+  function seedDraft(storage: MapStorage, projectId: string, theDraft: LaunchDraft, step: 'goal' | 'budget' | 'markets' | 'world' | 'review', savedAt: number): void {
+    persistLaunchDraft(storage, { tenantId: 'tenant-a', projectId }, theDraft, step, savedAt);
+  }
+
+  /** Fill the wizard's goal step through the real UI (the committed-edit path the write-through rides). */
+  function fillGoalStep(rig: Rig): void {
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget'); // the flush commits the edits + moves the step (both persist)
+  }
+
+  it('DP-1 THE LAW: a committed wizard edit + step persist, and a RELOAD reopens the wizard with the draft, the step, and the subtle restored hint', async () => {
+    // SESSION ONE: the analyst fills the goal step (the committed investment) — the write-through fires on the flush
+    const shared = returningPostureStorage();
+    const rig1 = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared });
+    fillGoalStep(rig1);
+    expect(rig1.handle.state().launch.draft?.name).toBe('Momentum scout');
+    const stored = parseStoredLaunchDraft(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY) ?? null);
+    if (stored === null) throw new Error('the committed edit did not persist (RED: the draft was lost on reload — S2\'s exact finding)');
+    expect(stored.draft.name).toBe('Momentum scout');
+    expect(stored.step).toBe('budget');
+    expect(stored.projectId).toBe('prj-compiled'); // authored under THIS desk
+    expect(stored.savedAt).toBe(T0 + 1000); // the rig's fixed instant source
+    // SESSION TWO — THE RELOAD (a fresh console, the same browser storage): the wizard REOPENS with the work
+    const rig2 = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared });
+    expect(rig2.handle.state().launch.phase).toBe('draft');
+    expect(rig2.handle.state().launch.draft?.name).toBe('Momentum scout'); // the work survived (RED pre-fix: a blank boot)
+    expect(rig2.handle.state().launch.step).toBe('budget'); // the step survived too
+    expect(findByData(rig2.root, 'data-launch-step', 'budget')).not.toBeNull(); // the wizard sits at the restored step
+    // THE SUBTLE HINT: one line naming when the work was saved
+    const hint = findByData(rig2.root, 'data-draft-restored', 'true');
+    if (hint === null) throw new Error('the restored-draft hint is missing');
+    expect(textOf(hint)).toContain('Draft restored from your last session');
+    expect(textOf(hint)).toContain(formatInstantUtc(T0 + 1000));
+    // and the FORM carries the restored values (a backward move to the goal step renders its fields; the rendered value attribute is the fake DOM's own truth — the same read the J3 buffered-edit pin uses)
+    clickAction(rig2, 'launch-step-goal');
+    const nameField = findByData(rig2.root, 'data-launch-field', 'name');
+    if (nameField === null) throw new Error('the restored wizard renders no name field');
+    expect(nameField.getAttribute('value')).toBe('Momentum scout');
+  });
+
+  it('DP-2: the user\'s first wizard drive RETIRES the hint and the new commitment re-persists (the wizard is theirs again)', async () => {
+    const shared = returningPostureStorage();
+    seedDraft(shared, 'prj-compiled', VALID_DRAFT, 'goal', T0 + 400);
+    const rig = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared });
+    expect(rig.handle.state().launch.draft?.name).toBe('Momentum scout');
+    expect(findByData(rig.root, 'data-draft-restored', 'true')).not.toBeNull(); // the hint renders at the restore
+    // the user edits the name + moves the step — the drive retires the hint, the flush re-persists
+    clickNav(rig, 'goal');
+    typeField(rig, 'name', 'Futures Book');
+    clickAction(rig, 'launch-step-budget');
+    expect(findByData(rig.root, 'data-draft-restored', 'true')).toBeNull(); // retired (the teaching line described the restore only)
+    const stored = parseStoredLaunchDraft(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY) ?? null);
+    expect(stored?.draft.name).toBe('Futures Book'); // the NEW commitment persisted
+    expect(stored?.step).toBe('budget');
+  });
+
+  it('DP-3: an explicit RESET clears the record durably (the failed launch\'s Start over, the affordance\'s own path) — the next reload boots to the idle wizard-less state', async () => {
+    const shared = returningPostureStorage();
+    const rig1 = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared });
+    // the FULL valid fill (every step commits — the record carries the whole draft at review)
+    clickNav(rig1, 'goal');
+    clickAction(rig1, 'launch-start');
+    typeField(rig1, 'name', 'Momentum scout');
+    typeField(rig1, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig1, 'launch-step-budget');
+    typeField(rig1, 'capitalBudget', '10000.00');
+    typeField(rig1, 'riskBudget', '250.00');
+    clickAction(rig1, 'launch-step-markets');
+    typeField(rig1, 'markets', 'binance:BTC-USDT');
+    typeField(rig1, 'venues', 'binance');
+    typeField(rig1, 'dataSources', 'candles:1m');
+    clickAction(rig1, 'launch-step-review');
+    expect(parseStoredLaunchDraft(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY) ?? null)?.draft.name).toBe('Momentum scout'); // persisted
+    clickAction(rig1, 'confirm-arm-launch');
+    clickAction(rig1, 'confirm-launch');
+    await settle();
+    expect(rig1.handle.state().launch.phase).toBe('failed'); // the transport 404s the create — the honest failure
+    clickAction(rig1, 'launch-reset'); // the error card's Start over — the explicit abandon
+    expect(rig1.handle.state().launch.phase).toBe('idle');
+    expect(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY)).toBe(''); // the canonical cleared value
+    // THE RELOAD: nothing restores (RED risk: the abandoned draft re-summons)
+    const rig2 = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared });
+    expect(rig2.handle.state().launch.phase).toBe('idle');
+    expect(rig2.handle.state().launch.draft).toBeNull();
+    expect(findByData(rig2.root, 'data-draft-restored', 'true')).toBeNull();
+  });
+
+  it('DP-4: a draft authored on ANOTHER desk never restores (the desk that boots is the desk that gets its own draft back, exactly and only)', async () => {
+    const shared = returningPostureStorage(); // no stored scope: the boot pin prj-compiled settles
+    seedDraft(shared, 'prj-quiet', VALID_DRAFT, 'budget', T0 + 400); // authored on the QUIET desk (in the directory, never adopted)
+    const rig = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared });
+    expect(rig.handle.state().scope.projectId).toBe('prj-compiled'); // the settled scope
+    expect(rig.handle.state().launch.phase).toBe('idle'); // the foreign desk's draft NEVER restores here
+    expect(rig.handle.state().launch.draft).toBeNull();
+    expect(findByData(rig.root, 'data-draft-restored', 'true')).toBeNull();
+    // ...and the record itself stays intact for ITS OWN desk (a later switch to prj-quiet does not summon it either — the restore is boot-settled-scope-gated, once per boot)
+    expect(parseStoredLaunchDraft(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY) ?? null)?.projectId).toBe('prj-quiet');
+  });
+
+  it('DP-5: the SETTLED-SCOPE path — a stored scope adoption lands first, and the adopted desk\'s OWN draft restores onto it', async () => {
+    const shared = returningPostureStorage('prj-quiet'); // the returning browser was last on the quiet desk (in the directory)
+    seedDraft(shared, 'prj-quiet', VALID_DRAFT, 'markets', T0 + 400); // the draft was authored THERE
+    const rig = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared }); // booted pinned to the compiled desk
+    expect(rig.handle.state().scope.projectId).toBe('prj-quiet'); // the stored-scope adoption settled the quiet desk (W-22)
+    expect(rig.handle.state().launch.phase).toBe('draft'); // ...and the quiet desk's own draft restored onto it
+    expect(rig.handle.state().launch.draft?.name).toBe('Momentum scout');
+    expect(rig.handle.state().launch.step).toBe('markets');
+    expect(findByData(rig.root, 'data-draft-restored', 'true')).not.toBeNull(); // with the hint
+  });
+
+  it('DP-6: a CORRUPT stored record never crashes the boot — the record degrades to absent (the fail-closed parse, executed)', async () => {
+    const corrupt = returningPostureStorage();
+    corrupt.map.set(LAUNCH_DRAFT_STORAGE_KEY, '{"version":1,"draft":'); // truncated JSON (the browser's worst day)
+    const rig1 = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: corrupt });
+    expect(rig1.handle.state().launch.phase).toBe('idle'); // no crash, no wizard, no hint
+    // a FUTURE-VERSION record (a downgrade from a newer console) is equally absent
+    const versioned = returningPostureStorage();
+    versioned.map.set(LAUNCH_DRAFT_STORAGE_KEY, JSON.stringify({ version: 2, tenantId: 'tenant-a', projectId: 'prj-compiled', savedAt: T0, step: 'goal', draft: VALID_DRAFT }));
+    const rig2 = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: versioned });
+    expect(rig2.handle.state().launch.phase).toBe('idle');
+    expect(rig2.handle.state().launch.draft).toBeNull();
+  });
+
+  it('DP-7: a SUCCESSFUL LAUNCH clears the record (the draft became a project — nothing to restore on the next reload)', async () => {
+    const demo = deployedClockLaunchTransport();
+    const scheduler = new ScriptedScheduler();
+    let nowMs = T0;
+    const instants: InstantSource = { nowMs: () => (nowMs += 50) };
+    const shared = new MapStorage(); // the launchpad-shaped boot: the rig pins prj-a; no posture record
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, demo.transport, 'prj-a', { scheduler, instants, scopeStorage: shared });
+    // the full wizard path through the real UI — every commit persists
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-review');
+    expect(parseStoredLaunchDraft(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY) ?? null)?.draft.name).toBe('Momentum scout'); // the persisted draft
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch');
+    await settle();
+    expect(rig.handle.state().launch.phase).toBe('launching'); // the submit fired (the record still holds the draft mid-flight — the honest recovery path)
+    expect(scheduler.fireNext()).toBe(true); // beat 1 -> poll 1 -> running
+    await settle();
+    expect(scheduler.fireNext()).toBe(true); // beat 2 -> poll 2 -> complete
+    await settle();
+    expect(rig.handle.state().launch.phase).toBe('launched');
+    expect(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY)).toBe(''); // CLEARED on the successful launch
+  });
+});
+
 
 // ---------------------------------------------------------------------------
 // FW-40-C (the wizard race cluster + H-1 + the g1 export seam) — executed.
