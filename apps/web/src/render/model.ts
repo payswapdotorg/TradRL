@@ -40,7 +40,7 @@ import { elapsedMsOfJobRecord, initialLaunchState, renderJobProgress, LAUNCH_STE
 import { formatNumberGrouped } from './numbers';
 import {
   EXECUTION_MODES,
-  constraintGrammarExample,
+  constraintGrammarHint,
   launchDraftProblems,
   launchFieldValidation,
   launchFormValues,
@@ -49,7 +49,7 @@ import {
   type LaunchFieldName,
 } from '../core/launch-form';
 import type { SectionId } from '../core/sections';
-import { scopedInbox, unreadCount, type InboxState } from '../core/notices';
+import { scopedInbox, unreadCountAt, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, historyFloorOf, type WorkspaceState } from '../core/workspace';
 import { parseInstantUtc } from '../core/format';
@@ -1973,7 +1973,14 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
       ...labeledInput({ label: 'Horizon ends', name: 'horizonEndsAt', value: form.horizonEndsAt, type: 'datetime-local', required: true, hint: 'UTC date and time — the horizon must end after it starts.', validation: validationOf('horizonEndsAt') }),
       ...labeledSelect({ label: 'Execution mode', name: 'executionMode', value: form.executionMode, required: true, hint: 'Simulation is the safe default — live execution goes through the gateway.', choices: EXECUTION_MODES.map((mode) => [mode, mode] as const), validation: validationOf('executionMode') }),
       ...labeledInput({ label: 'Preferences', name: 'preferences', value: form.preferences, hint: 'Optional key=value pairs.', validation: validationOf('preferences') }),
-      ...labeledInput({ label: 'Constraints', name: 'constraints', value: form.constraints, hint: `Optional executable limits, e.g. ${constraintGrammarExample()}.`, validation: validationOf('constraints') }),
+      // FW-40-C (H-1, L1's find): the constraints hint teaches the FULL
+      // grammar — the entry shape, the domains, the kinds (L3's
+      // 'advisory.max' rejection pre-taught away), the severity suffix,
+      // and the ACCEPTED SUBJECT LIST with one canonical example each
+      // (the subjects the gate actually evaluates, mirrored from the
+      // host's own parser) plus the honest taught-never-enforced note for
+      // every other dotted subject.
+      ...labeledInput({ label: 'Constraints', name: 'constraints', value: form.constraints, hint: constraintGrammarHint(), validation: validationOf('constraints') }),
     ];
     const fieldsByStep: Record<string, readonly VNode[]> = { goal: goalFields, budget: budgetFields, markets: marketFields, world: worldFields };
     const stepFields = fieldsByStep[launch.step] ?? [];
@@ -1986,8 +1993,17 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
     const reviewValid = problems.length === 0;
     rows.push(v('div', { class: 'card launch-wizard', 'data-launch-step': launch.step }, [
       v('div', { class: 'card-title' }, [`Primary flow — ${launch.step}`]),
+      // FW-40-C (the wizard-race cluster): the stepper's own controls
+      // carry STABLE IDS so the projector preserves the live elements
+      // across every beat re-projection (render/dom.ts's keyed reuse) —
+      // an element handle resolved against the stepper stays valid
+      // across beats, so a press or fill dispatched on it still reaches
+      // the document's delegated listeners (the "stepper can go fully
+      // dead" class: events fired on a REPLACED node never bubble to
+      // the document — a preserved node never has that problem).
       v('div', { class: 'segmented tm-modes' }, LAUNCH_STEPS.map((step) => v('button', {
         class: `segment${launch.step === step ? ' active' : ''}`,
+        id: `launch-step-seg-${step}`,
         'data-action': `launch-step-${step}`,
         type: 'button',
         'aria-pressed': launch.step === step ? 'true' : 'false',
@@ -2017,8 +2033,8 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
               ])]),
         ]
         : [...stepFields, v('div', { class: 'tm-playback' }, [
-          v('button', { class: 'tm-button', 'data-action': `launch-step-${nextStepOf(launch.step)}`, type: 'button' }, [`Next: ${nextStepOf(launch.step)}`]),
-          v('button', { class: 'tm-button', 'data-action': 'launch-step-review', type: 'button' }, ['Review']),
+          v('button', { class: 'tm-button', id: 'launch-next', 'data-action': `launch-step-${nextStepOf(launch.step)}`, type: 'button' }, [`Next: ${nextStepOf(launch.step)}`]),
+          v('button', { class: 'tm-button', id: 'launch-review-button', 'data-action': 'launch-step-review', type: 'button' }, ['Review']),
         ])]),
     ]));
   }
@@ -2056,7 +2072,7 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
     rows.push(v('div', { class: 'card error-card' }, [
       v('div', { class: 'card-title' }, ['Launch failed']),
       factRow('error', launch.error),
-      v('button', { class: 'tm-button', 'data-action': 'launch-reset', type: 'button' }, ['Start over']),
+      v('button', { class: 'tm-button', id: 'launch-start-over', 'data-action': 'launch-reset', type: 'button' }, ['Start over']),
     ]));
   }
   if (rows.length === 0) {

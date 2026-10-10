@@ -103,6 +103,61 @@ export function isIdentifierPath(value: string): boolean {
   return IDENTIFIER_PATH_PATTERN.test(value);
 }
 
+// ---------------------------------------------------------------------------
+// THE SPAN-DERIVED HORIZON LABEL (FW-40-C, Round H register g1 — the
+// goal-capture seam, the client half of FW-37-A/FW-38-A's law).
+// ---------------------------------------------------------------------------
+
+/** One UTC day, in epoch milliseconds (the span label's whole-day unit). */
+const SPAN_DAY_MS = 86_400_000;
+
+/**
+ * THE SPAN-DERIVED HORIZON LABEL (FW-40-C, the g1 residue): the
+ * human-readable horizon label COMPUTED from the record's own bounds —
+ * never a free-text annotation trusted off the wire. The pre-fix defect
+ * (six personas — S1/M1/M3/L3/L2/S3): the wizard's draft stamps its
+ * default label ('one day') and never updates it when the horizon end
+ * moves, so a 30/45/60/90-day launch composed its FIRST goal-loaded
+ * event — the export's own chain entry — with the stale 'one day'
+ * annotation while the same event's startsAt/endsAt encoded the true
+ * span (L3: "seq 250 stamps 'one day' ... the corrected '1079h 59m
+ * 59s' arrives at seq 259"; the host's serve-side read-back composes the
+ * corrected one). The law is the HOST's own (deploy/vercel/runtime/
+ * demo.ts horizonSpanLabel — FW-37-A/F-38-A): whole-day spans render in
+ * days ('one day', '30 days', '90 days'); any other span renders the
+ * wizard review's own precise hours/minutes/seconds form ('719h 59m
+ * 59s'). Same algorithm, same strings — so the client-composed records
+ * and the host-served ones agree BY CONSTRUCTION and the label can
+ * never contradict the span it annotates (reconcilable by arithmetic —
+ * the anti-deception law's own standard).
+ */
+export function horizonSpanLabel(startsAt: number, endsAt: number): string {
+  if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt)) return 'an unverifiable span';
+  const span = endsAt - startsAt;
+  if (span <= 0) return 'an empty span';
+  if (span % SPAN_DAY_MS === 0) {
+    const days = span / SPAN_DAY_MS;
+    return days === 1 ? 'one day' : `${days} days`;
+  }
+  const hours = Math.floor(span / 3_600_000);
+  const minutes = Math.floor((span % 3_600_000) / 60_000);
+  const seconds = Math.floor((span % 60_000) / 1000);
+  return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
+}
+
+/**
+ * The horizon the composition seams carry: the record's own bounds with
+ * the SPAN-DERIVED label (FW-40-C — the draft's annotation is
+ * deliberately NOT trusted at the composition seam, mirroring the host's
+ * withDerivedGoalHorizonLabel: the bounds are the machine truth, the label
+ * is a computed fact of them, so every composed record — the POST body's
+ * goal, the goal-loaded event the export chains, the launch world — can
+ * never contradict the span it annotates).
+ */
+function withDerivedHorizonLabel(horizon: { readonly startsAt: number; readonly endsAt: number; readonly label?: string }): { readonly startsAt: number; readonly endsAt: number; readonly label: string } {
+  return { startsAt: horizon.startsAt, endsAt: horizon.endsAt, label: horizonSpanLabel(horizon.startsAt, horizon.endsAt) };
+}
+
 /**
  * Validate a launch draft — the typed gate before any API call.
  * Every violation throws InvalidLaunchDraftError with the dotted
@@ -169,7 +224,12 @@ export function toCreateProjectInput(draft: LaunchDraft, ids: LaunchIds, tenantI
     version: 1,
     tenantId,
     objective: draft.objective,
-    horizon: draft.horizon,
+    // FW-40-C (the g1 seam): the composed goal's horizon label is the
+    // SPAN-DERIVED fact of the draft's own bounds — the draft's free-text
+    // annotation is not trusted at the composition seam (the host's own
+    // FW-38-A capture law; the first goal-loaded event the export chains
+    // is born right, never 'one day' against a 30-day span).
+    horizon: withDerivedHorizonLabel(draft.horizon),
     successCriteria: { criteria: draft.successCriteria, requiredSatisfaction: draft.successCriteria.length === 1 ? 1 : (draft.successCriteria.length - 1) / draft.successCriteria.length },
     evaluation: draft.evaluation,
     createdAt: at,
@@ -226,9 +286,13 @@ export function toLaunchWorldSpec(draft: LaunchDraft): ProjectGoalWorldSpec {
     executionMode: draft.executionMode,
     capitalBudget: draft.capitalBudget,
     riskBudget: draft.riskBudget,
-    horizon: draft.horizon.label === undefined
-      ? { startsAt: draft.horizon.startsAt, endsAt: draft.horizon.endsAt }
-      : { startsAt: draft.horizon.startsAt, endsAt: draft.horizon.endsAt, label: draft.horizon.label },
+    // FW-40-C (the g1 seam, the world's half): the launch world's horizon
+    // label is the SPAN-DERIVED fact of the bounds — ALWAYS stamped, never
+    // the draft's annotation — mirroring the host's launchWorldOfSpec
+    // (FW-37-A: "the console's free-text annotation is deliberately NOT
+    // trusted off the wire"), so the goal-loaded event's in-session world
+    // bridge and the persisted world record agree by construction.
+    horizon: withDerivedHorizonLabel(draft.horizon),
   };
 }
 

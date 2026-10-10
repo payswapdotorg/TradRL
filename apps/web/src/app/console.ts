@@ -28,7 +28,7 @@ import type { ApiConsoleError } from '../api/errors';
 import type { LaunchDraft, LaunchIds, StandaloneResearchInput } from '../core/launch';
 import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, toLaunchWorldSpec, toStandaloneResearchSpec, validateLaunchDraft, validateStandaloneResearch, isResearchFieldName } from '../core/launch';
 import { InvalidLaunchDraftError, InvalidResearchSubmissionError } from '../core/errors';
-import { absorbedEdit, blankLaunchDraft, editLaunchField, isLaunchFieldName, launchFormValuesOfDraft, type LaunchFieldName } from '../core/launch-form';
+import { absorbedEdit, blankLaunchDraft, editLaunchField, isLaunchFieldName, launchFieldValidation, launchFormValues, launchFormValuesOfDraft, launchStepFields, type LaunchFieldName } from '../core/launch-form';
 import { digestOf } from '../core/digest';
 import type { InstantSource, TickScheduler } from '../core/clock';
 import { systemNowMs } from '../core/clock';
@@ -2351,12 +2351,39 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           view = { ...view, toast: null };
           render();
         }
-        // §4.11 the primary flow: step navigation + the two-step confirm
+        // §4.11 the primary flow: step navigation + the two-step confirm.
+        //
+        // FW-40-C (the Round H wizard-race cluster — the inline-validation
+        // law): a step-advance from a step whose OWN fields are invalid
+        // REFUSES to advance and TEACHES AT THE FIELDS (the outgoing step's
+        // fields all become touched, so their §4.11 messages render inline
+        // exactly where the user stands — S2/M3's finding: "values can be
+        // silently lost ... with no inline error (only Review reveals the
+        // loss)"; L3's late constraint-kind validation surfaced only at
+        // Review). A BACKWARD move (an earlier step — the escape hatch to
+        // go fix something) always advances; the REVIEW step's own gate
+        // (launchDraftProblems — the FIX BEFORE LAUNCHING card) stays the
+        // defense in depth over every field.
         if (kind !== null && kind.startsWith('launch-step-')) {
           const step = kind.slice('launch-step-'.length);
           if ((LAUNCH_STEPS as readonly string[]).includes(step)) {
-            dispatch({ kind: 'launch-step-changed', at: instants.nowMs(), step: step as typeof LAUNCH_STEPS[number] });
-            view = { ...view, confirm: null };
+            const outgoing = state.launch.step;
+            const fromIndex = (LAUNCH_STEPS as readonly string[]).indexOf(outgoing);
+            const toIndex = (LAUNCH_STEPS as readonly string[]).indexOf(step);
+            const draft = state.launch.draft;
+            const stepFields = launchStepFields(outgoing);
+            const problemsAtStep = draft !== null && toIndex >= fromIndex
+              ? stepFields.filter((field) => launchFieldValidation(launchFormValues(draft, view.launchEdits), field).length > 0)
+              : [];
+            if (problemsAtStep.length > 0) {
+              // THE TEACHING: stay on the step, mark its fields touched, and
+              // render — every invalid field's message appears AT the field.
+              for (const field of problemsAtStep) touchLaunchField(field);
+              render();
+            } else {
+              dispatch({ kind: 'launch-step-changed', at: instants.nowMs(), step: step as typeof LAUNCH_STEPS[number] });
+              view = { ...view, confirm: null };
+            }
           }
         }
         // THE J3 ENTRY (the missing launch-draft-started dispatcher):

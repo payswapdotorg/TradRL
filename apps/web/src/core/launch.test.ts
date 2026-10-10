@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { InvalidLaunchDraftError } from './errors';
 import {
   LAUNCH_STEPS,
+  horizonSpanLabel,
   elapsedMsOfJobRecord,
   initialLaunchState,
   isIdentifierPath,
@@ -179,7 +180,7 @@ describe('launch: the composition (POST /v1/projects + the kickoff job spec)', (
     expect(JSON.stringify(toLaunchJobSpec(validDraft()))).toBe(JSON.stringify(toLaunchJobSpec(validDraft()))); // deterministic
   });
 
-  it('D-8/W-28 — the world spec derives from the draft (the host goal route\'s additive `world` shape): the world fields, exact decimals, the horizon label, deterministic; an invalid draft refuses BEFORE any derivation', () => {
+  it('D-8/W-28 — the world spec derives from the draft (the host goal route\'s additive `world` shape): the world fields, exact decimals, the horizon label; an invalid draft refuses BEFORE any derivation. FW-40-C (the g1 seam): the label is the SPAN-DERIVED fact of the bounds (never the draft\'s free-text annotation — the host\'s own FW-37-A launchWorldOfSpec law, mirrored)', () => {
     const world = toLaunchWorldSpec(validDraft());
     expect(world).toEqual({
       markets: ['SPY', 'GLD'],
@@ -188,17 +189,49 @@ describe('launch: the composition (POST /v1/projects + the kickoff job spec)', (
       executionMode: 'simulation',
       capitalBudget: '1000000.00',
       riskBudget: '0.02',
-      horizon: { startsAt: T0, endsAt: T0 + 90 * 86_400_000, label: 'Q1' },
+      // the draft carries label 'Q1' — the annotation is NOT trusted off the
+      // wire: the 90-day span derives '90 days' (a computed fact of the bounds)
+      horizon: { startsAt: T0, endsAt: T0 + 90 * 86_400_000, label: '90 days' },
     });
-    // the horizon's OPTIONAL label stays optional — an unlabeled horizon derives an unlabeled world
+    // FW-40-C: an UNLABELED horizon derives the span-derived label too (the
+    // host stamps it ALWAYS — one law, every record)
     const unlabeled = validDraft();
     const unlabeledWorld = toLaunchWorldSpec({ ...unlabeled, horizon: { startsAt: T0, endsAt: T0 + 1000 } });
-    expect(unlabeledWorld.horizon).toEqual({ startsAt: T0, endsAt: T0 + 1000 });
-    expect('label' in unlabeledWorld.horizon).toBe(false);
+    expect(unlabeledWorld.horizon).toEqual({ startsAt: T0, endsAt: T0 + 1000, label: '0h 00m 01s' });
     // deterministic — identical draft -> identical world (the same derivation the job spec carries)
     expect(JSON.stringify(toLaunchWorldSpec(validDraft()))).toBe(JSON.stringify(toLaunchWorldSpec(validDraft())));
     // the typed gate refuses an invalid draft BEFORE any derivation (no partial world)
     expect(() => toLaunchWorldSpec(validDraft({ venues: [] }))).toThrow(InvalidLaunchDraftError);
+  });
+
+  it('FW-40-C: horizonSpanLabel — the HOST\'s own law, mirrored (deploy/vercel/runtime/demo.ts): whole-day spans in days, every other span the precise h/m/s form, never a fabricated label for a malformed span', () => {
+    expect(horizonSpanLabel(T0, T0 + 86_400_000)).toBe('one day'); // the wizard\'s own seed — the only correct pre-fix rendering
+    expect(horizonSpanLabel(T0, T0 + 30 * 86_400_000)).toBe('30 days');
+    expect(horizonSpanLabel(T0, T0 + 45 * 86_400_000)).toBe('45 days');
+    expect(horizonSpanLabel(T0, T0 + 60 * 86_400_000)).toBe('60 days');
+    expect(horizonSpanLabel(T0, T0 + 90 * 86_400_000)).toBe('90 days');
+    // the sub-day precision form (S2\'s live case: a 30-day span set 462ms late)
+    expect(horizonSpanLabel(T0 + 462, T0 + 30 * 86_400_000)).toBe('719h 59m 59s');
+    // L3\'s live case: a 45-day span set 462ms late
+    expect(horizonSpanLabel(T0 + 462, T0 + 45 * 86_400_000)).toBe('1079h 59m 59s');
+    // the honest degenerate forms (never a fabricated number)
+    expect(horizonSpanLabel(Number.NaN, T0)).toBe('an unverifiable span');
+    expect(horizonSpanLabel(T0, T0)).toBe('an empty span');
+    expect(horizonSpanLabel(T0 + 1000, T0)).toBe('an empty span');
+  });
+
+  it('FW-40-C (the g1 seam — six personas: S1/M1/M3/L3/L2/S3): the composed GOAL derives the SPAN-DERIVED horizon label at the composition seam — a 30/45/60/90-day draft NEVER composes the wizard\'s stale \'one day\' annotation (the export\'s first goal-loaded event is born right)', () => {
+    const ids: LaunchIds = { projectId: 'prj-x', goalId: 'goal-x', constraintSetId: 'cs-x' };
+    // the wizard\'s own seed: a one-day horizon whose stale default label rides a 30-day edit
+    const staleLabelDraft = validDraft({ horizon: { startsAt: T0, endsAt: T0 + 30 * 86_400_000, label: 'one day' } });
+    const composed = toCreateProjectInput(staleLabelDraft, ids, 'tenant-a', T0);
+    expect(composed.goal.horizon).toEqual({ startsAt: T0, endsAt: T0 + 30 * 86_400_000, label: '30 days' }); // the annotation is not trusted
+    // the sub-day precision form (L3\'s exact live case: 45 days minus 462ms -> '1079h 59m 59s')
+    const precise = validDraft({ horizon: { startsAt: T0 + 462, endsAt: T0 + 45 * 86_400_000, label: 'one day' } });
+    expect(toCreateProjectInput(precise, ids, 'tenant-a', T0).goal.horizon.label).toBe('1079h 59m 59s');
+    // the one-day default is UNCHANGED (the only correct pre-fix rendering)
+    const oneDay = validDraft({ horizon: { startsAt: T0, endsAt: T0 + 86_400_000, label: 'one day' } });
+    expect(toCreateProjectInput(oneDay, ids, 'tenant-a', T0).goal.horizon.label).toBe('one day');
   });
 });
 

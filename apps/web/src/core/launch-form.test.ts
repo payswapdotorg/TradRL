@@ -24,16 +24,20 @@ import type { LaunchDraft } from './launch';
 import { validateLaunchDraft } from './launch';
 import {
   LAUNCH_FIELD_NAMES,
+  CONSTRAINT_SUBJECT_VOCABULARY,
   absorbedEdit,
   blankLaunchDraft,
+  constraintGrammarHint,
   editLaunchField,
   firstBadConstraintEntry,
   formatHorizonInstant,
+  isLaunchFieldName,
   launchFieldValidation,
   launchFieldValue,
   launchDraftProblems,
   launchFormValues,
   launchFormValuesOfDraft,
+  launchStepFields,
   parseConstraintsValue,
   parseHorizonInstant,
   parseListValue,
@@ -161,8 +165,11 @@ describe('launch-form: the per-field §4.11 validation', () => {
       ['executionMode', 'paper', 'Choose an execution mode.'],
       ['preferences', 'broken', 'Preferences are key=value pairs, e.g. rebalance=daily.'],
       // D-6b (W-25C): the constraint message NAMES the offending entry —
-      // which one (1-based) + what it says + the expected grammar.
-      ['constraints', 'nope', 'Constraints entry 1 ("nope") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2.'],
+      // which one (1-based) + what it says + the expected grammar. FW-40-C
+      // (H-1): the message also pre-teaches the closed KIND + SEVERITY sets
+      // (L3's 'advisory.max' rejection — a plausible kind under the product's
+      // advisory taxonomy — is now named away at the field itself).
+      ['constraints', 'nope', 'Constraints entry 1 ("nope") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2 (kinds: limit.min | limit.max | equals; severities: :advisory | :blocking).'],
     ];
     for (const [field, value, message] of cases) {
       const values = { ...base, [field]: value } as LaunchFormValues;
@@ -191,7 +198,7 @@ describe('launch-form: the per-field §4.11 validation', () => {
     const values = { ...base, constraints: `${good}, ${alsoGood}, ${broken}` } as LaunchFormValues;
     expect(firstBadConstraintEntry(values.constraints)).toEqual({ index: 3, entry: broken });
     expect(launchFieldValidation(values, 'constraints')).toBe(
-      `Constraints entry 3 ("${broken}") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2.`,
+      `Constraints entry 3 ("${broken}") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2 (kinds: limit.min | limit.max | equals; severities: :advisory | :blocking).`,
     );
     // the offender rides the REVIEW banner's problem list too (the D-6b surface: "FIX BEFORE LAUNCHING" names its offender)
     const problems = launchDraftProblems(values);
@@ -307,5 +314,65 @@ describe('launch-form: FW-33-B — the horizon datetime grammar (Round B blocker
     expect(message).toBe('Enter the horizon as a UTC date and time, e.g. 2026-01-15T09:30:00 (epoch milliseconds also parse).');
     expect(message).not.toBe('Enter the horizon instants as epoch milliseconds.');
     expect(message).not.toContain(' 0'); // never a bare "0" (the pre-fix "ISO dates parse to 0")
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-40-C — H-1 (L1's find): the constraint-grammar SUBJECT vocabulary,
+// the full-grammar hint, and the wizard's step-fields map.
+// ---------------------------------------------------------------------------
+
+describe('launch-form: FW-40-C — H-1 the constraint-grammar vocabulary + the step-fields map', () => {
+  it('H-1: the ACCEPTED SUBJECT LIST — every canonical subject parses under the FORM grammar (identifier paths) and the list is the FULL closed set the hint teaches (one example each)', () => {
+    // the canonical subjects the demo Risk page + the product's own docs teach — the vocabulary L1 had to reverse-engineer
+    expect(CONSTRAINT_SUBJECT_VOCABULARY.map((entry) => entry.subject)).toEqual([
+      'position.concentration',
+      'position.grossExposure',
+      'costs.dailyTurnover',
+      'order.notional',
+      'capital.budget',
+      'risk.budget',
+      'risk.maxDrawdown',
+    ]);
+    // every canonical example PARSES as a form-grammar constraint entry (identifier-path subjects)
+    for (const entry of CONSTRAINT_SUBJECT_VOCABULARY) {
+      const parsed = parseConstraintsValue(`c-1:outcome:${entry.subject}:limit.max:0.2`);
+      expect(parsed, entry.subject).not.toBeNull();
+      expect(parsed?.[0]?.subject, entry.subject).toBe(entry.subject);
+      expect(isLaunchFieldName('name')).toBe(true); // the guard import stays exercised
+    }
+    // every taught subject carries its gate class + its one-sentence teaching (never an empty string)
+    for (const entry of CONSTRAINT_SUBJECT_VOCABULARY) {
+      expect(entry.gateClass.length, entry.subject).toBeGreaterThan(0);
+      expect(entry.teaches.length, entry.subject).toBeGreaterThan(0);
+    }
+  });
+
+  it('H-1: the hint renders the FULL grammar — the entry shape, the domains, the kinds (L3\'s \'advisory.max\' pre-taught away), the severity suffix, EVERY accepted subject with its teaching, and the honest taught-never-enforced note', () => {
+    const hint = constraintGrammarHint();
+    expect(hint).toContain('each entry is id:domain:subject:kind:bound');
+    expect(hint).toContain('c-1:outcome:risk.maxDrawdown:limit.max:0.2');
+    expect(hint).toContain('Domains: observation | state | action | outcome');
+    expect(hint).toContain('Kinds: limit.min | limit.max | equals');
+    expect(hint).toContain(':advisory or :blocking');
+    for (const entry of CONSTRAINT_SUBJECT_VOCABULARY) {
+      expect(hint, entry.subject).toContain(`${entry.subject} (${entry.teaches})`); // one example each, verbatim
+    }
+    expect(hint).toContain('Any other dotted subject parses but is taught, never enforced at the gate');
+  });
+
+  it('the wizard\'s step-fields map (the inline-validation-at-the-step law\'s own map): every step names exactly the fields its rendered card carries; review names none', () => {
+    expect(launchStepFields('goal')).toEqual(['name', 'objective']);
+    expect(launchStepFields('budget')).toEqual(['capitalBudget', 'riskBudget']);
+    expect(launchStepFields('markets')).toEqual(['markets', 'venues', 'dataSources']);
+    expect(launchStepFields('world')).toEqual(['horizonStartsAt', 'horizonEndsAt', 'executionMode', 'preferences', 'constraints']);
+    expect(launchStepFields('review')).toEqual([]);
+    expect(launchStepFields('anything-else')).toEqual([]);
+    // every mapped field is a real launch field name (the form\'s own vocabulary)
+    for (const step of ['goal', 'budget', 'markets', 'world'] as const) {
+      for (const field of launchStepFields(step)) {
+        expect((LAUNCH_FIELD_NAMES as readonly string[]).includes(field), `${step}: ${field}`).toBe(true);
+      }
+    }
   });
 });
