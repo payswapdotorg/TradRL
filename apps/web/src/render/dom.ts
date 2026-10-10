@@ -23,6 +23,26 @@
 // control the re-render REMOVES carries nothing over; a closed
 // `<details>` stays closed (only the OPEN state is preserved, so the
 // model stays the source of truth for what renders).
+//
+// THE FORM-CONTROL IDENTITY LAW (FW-40-C, the Round H wizard-race
+// cluster — the round's most-frequent friction, S2 + M3 + S3): a
+// full replacement also DETACHED every live form control mid-fill,
+// so an input value staged on the current node (a two-step
+// programmatic fill, an autofill, an IME composition) could lose its
+// input/change events — dispatched on the detached node, they never
+// bubble to the document, and the value silently vanished (the
+// wizard refused to advance with no inline error; the Settings
+// account form lost the same values; the datetime-local editor reset
+// mid-typing). The eligible controls (the delegated form fields +
+// the id-carrying interactive controls) are now collected from the
+// OUTGOING tree and TRANSPLANTED onto the identity-matched fresh
+// projections: the live ELEMENT persists across every beat, its
+// user-edited value property survives, and any event later
+// dispatched against a handle resolved for it still reaches the
+// document's delegated listeners. Attributes and children re-sync
+// from the incoming VNode — the model stays the source of truth for
+// what renders; this layer keeps only what the user had in flight
+// (the same law as the open accordions and scroll offsets above).
 
 import type { VNode } from './vtree';
 
@@ -234,6 +254,175 @@ function applyStagedFiles(element: Element, files: readonly unknown[]): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The beat-value preservation (FW-40-C, the Round H wizard-race cluster)
+// — the identity-keyed REUSE of the live form controls.
+// ---------------------------------------------------------------------------
+
+/**
+ * The delegated form-field attributes — the identities the app layer's
+ * edit buffers read (launch / research / account). An element carrying
+ * one of these is a FORM CONTROL the user types into; its live value is
+ * the user's latest intent.
+ */
+const FIELD_ATTRIBUTES: readonly string[] = ['data-launch-field', 'data-research-field', 'data-account-field'];
+
+/** The control tags eligible for identity-keyed reuse (the value/focus carriers + the stepper's buttons). */
+function isPreservableTag(tag: string): boolean {
+  return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON';
+}
+
+/** The stable identity of an eligible control, from the DOM side (null = not eligible). */
+function preserveKeyOfElement(element: Element): string | null {
+  if (!isPreservableTag(tagNameOf(element))) return null;
+  for (const attribute of FIELD_ATTRIBUTES) {
+    const value = element.getAttribute(attribute);
+    if (value !== null && value.length > 0) return `${attribute}:${value}`;
+  }
+  const id = element.getAttribute('id');
+  if (id !== null && id.length > 0) return `id:${id}`;
+  return null;
+}
+
+/** The stable identity of an eligible control, from the VNode side (same law, pure attrs). */
+function preserveKeyOfAttrs(tag: string, attrs: Readonly<Record<string, string>>): string | null {
+  if (!isPreservableTag(tag.toUpperCase())) return null;
+  for (const attribute of FIELD_ATTRIBUTES) {
+    const value = attrs[attribute];
+    if (typeof value === 'string' && value.length > 0) return `${attribute}:${value}`;
+  }
+  const id = attrs.id;
+  if (typeof id === 'string' && id.length > 0) return `id:${id}`;
+  return null;
+}
+
+/**
+ * Collect the OUTGOING tree's eligible controls (identity -> live
+ * element), BEFORE the clear — the same place captureInteractions reads.
+ */
+function collectPreservable(outgoing: Element, found: Map<string, Element>): void {
+  walkElements(outgoing, (element) => {
+    const key = preserveKeyOfElement(element);
+    if (key !== null && !found.has(key)) found.set(key, element);
+  });
+}
+
+/** The parent of an element across every element shape (the real DOM's parentNode; the stubs' parent; null when detached). */
+function parentOf(element: Element): Element | null {
+  const parentNode = (element as Element & { readonly parentNode?: unknown }).parentNode;
+  if (parentNode !== null && parentNode !== undefined) return parentNode as Element;
+  const parent = (element as Element & { readonly parent?: unknown }).parent;
+  return parent === null || parent === undefined ? null : (parent as Element);
+}
+
+/**
+ * The transplant's swap carrier (the erasable-subset law: function
+ * signatures live in named interfaces, never inline in casts).
+ */
+interface ReplaceChildCarrier {
+  replaceChild?(newNode: Node, oldNode: Node): unknown;
+}
+
+/** The attribute re-sync surface (the same law — named method signatures, never inline arrows). */
+interface AttributeResyncCarrier {
+  getAttributeNames?(): Iterable<string>;
+  removeAttribute?(name: string): void;
+}
+
+/** The value-property carrier (a form control's live value — the browser-owned state the transplant preserves). */
+interface ValueCarrier {
+  value?: string;
+}
+
+/** The paired (VNode, Element) visitor of the preservable walk (the ElementVisitor pattern). */
+type PreservableVisitor = (vnode: VNode, element: Element) => void;
+
+/**
+ * Re-attach one preserved control in place of its fresh projection (the
+ * transplant): the preserved element takes the fresh node's place in the
+ * incoming tree, its attributes are re-synced from the incoming VNode, and
+ * the fresh node's children move onto it (labels/options re-render; the
+ * ELEMENT IDENTITY persists). Degrades to the fresh projection whenever the
+ * parent lacks replaceChild (R46 — never a crash over a preservation nicety).
+ */
+function transplantPreserved(preserved: Element, fresh: Element, attrs: Readonly<Record<string, string>>): boolean {
+  const parent = parentOf(fresh);
+  if (parent === null) return false;
+  const replacer = parent as Element & ReplaceChildCarrier;
+  if (typeof replacer.replaceChild !== 'function') return false;
+  // The user's live value is captured BEFORE the attribute sync: a value
+  // that differs from the outgoing tree's own painted attribute is an edit
+  // whose input/change events may NEVER have landed (the beat detached the
+  // node mid-fill) — it survives the re-projection on the SAME element, so
+  // the next input event (whenever it fires, on this live node) commits it.
+  const isField = tagNameOf(preserved) === 'INPUT' || tagNameOf(preserved) === 'SELECT' || tagNameOf(preserved) === 'TEXTAREA';
+  const liveValue = (preserved as Element & ValueCarrier).value;
+  const outgoingValueAttribute = preserved.getAttribute('value');
+  const userEdited = isField && typeof liveValue === 'string' && outgoingValueAttribute !== null && liveValue !== outgoingValueAttribute;
+  // Attribute sync: the incoming set applies verbatim; an attribute the
+  // incoming projection dropped is removed (class/aria-invalid toggles stay
+  // the model's truth). Best-effort without getAttributeNames (a stub
+  // without it keeps stale attrs — never a crash).
+  const named = preserved as Element & AttributeResyncCarrier;
+  if (typeof named.getAttributeNames === 'function' && typeof named.removeAttribute === 'function') {
+    for (const name of named.getAttributeNames()) {
+      if (!Object.prototype.hasOwnProperty.call(attrs, name)) named.removeAttribute(name);
+    }
+  }
+  for (const [name, value] of Object.entries(attrs)) preserved.setAttribute(name, value);
+  // Children: the fresh projection's children replace the preserved node's
+  // own (the model keeps deciding what renders; this layer keeps only the
+  // element identity + its browser-owned state).
+  while (preserved.firstChild !== null) preserved.removeChild(preserved.firstChild);
+  while (fresh.firstChild !== null) preserved.appendChild(fresh.firstChild);
+  // The value property: a USER-EDITED live value survives untouched (the
+  // dirty value the browser would keep anyway); otherwise the incoming
+  // (model) value takes the property so the control reflects the fresh paint.
+  if (isField && typeof liveValue === 'string') {
+    const valueCarrier = preserved as Element & { value: string };
+    if (userEdited) {
+      valueCarrier.value = liveValue;
+    } else {
+      valueCarrier.value = Object.prototype.hasOwnProperty.call(attrs, 'value') ? (attrs.value as string) : '';
+    }
+  }
+  replacer.replaceChild(preserved, fresh);
+  return true;
+}
+
+/** Walk the incoming projection paired with its VNode (element children pair 1:1 with element VNodes, in order). */
+function walkPreservable(vnode: VNode, element: Element, visit: PreservableVisitor): void {
+  visit(vnode, element);
+  const children = elementChildrenOf(element);
+  let index = 0;
+  for (const child of vnode.children) {
+    if (typeof child === 'string') continue;
+    const paired = children[index];
+    if (paired === undefined) break;
+    walkPreservable(child, paired, visit);
+    index += 1;
+  }
+}
+
+/**
+ * Re-attach every identity-matched preserved control onto the incoming
+ * projection (the pairs are collected FIRST — the full walk over the fresh
+ * tree — then the transplants mutate it; the eligible controls are leaves
+ * in this render model, so no transplant ever hides a deeper match).
+ */
+function reattachPreservable(incoming: Element, root: VNode, preservable: ReadonlyMap<string, Element>): void {
+  const pairs: { readonly key: string; readonly attrs: Readonly<Record<string, string>>; readonly element: Element }[] = [];
+  walkPreservable(root, incoming, (vnode, element) => {
+    const key = preserveKeyOfAttrs(vnode.tag, vnode.attrs);
+    if (key !== null && preservable.has(key)) pairs.push({ key, attrs: vnode.attrs, element });
+  });
+  for (const pair of pairs) {
+    const preserved = preservable.get(pair.key);
+    if (preserved === undefined) continue;
+    transplantPreserved(preserved, pair.element, pair.attrs);
+  }
+}
+
 function applyInteractions(incoming: Element, captured: ReadonlyMap<string, InteractionState>): void {
   if (captured.size === 0) return;
   walkElements(incoming, (element, path) => {
@@ -256,15 +445,26 @@ export function mountVTree(document: ProjectorDocument, container: Element, root
   // R7/R8: capture what the user had in flight on the outgoing tree
   // BEFORE the clear — an open accordion, a scrolled nav — and carry
   // it onto the fresh projection (identity-matched; see above).
+  // FW-40-C (the wizard-race cluster): the outgoing tree's eligible form
+  // controls are collected here too — the live elements themselves, not
+  // just their state — so the identity-matched ones TRANSPLANT onto the
+  // fresh projection (a fill or press resolved against them keeps
+  // landing: the element never leaves the document, so its events always
+  // reach the document's delegated listeners).
   let captured: ReadonlyMap<string, InteractionState> = new Map();
+  const preservable: Map<string, Element> = new Map();
   const outgoing = firstElementOf(container);
   if (outgoing !== null) {
     captured = captureInteractions(outgoing);
+    collectPreservable(outgoing, preservable);
   }
   while (container.firstChild !== null) container.removeChild(container.firstChild);
   const projected = projectVNode(document, root);
   container.appendChild(projected);
   const incoming = firstElementOf(container);
+  if (preservable.size > 0 && incoming !== null) {
+    reattachPreservable(incoming, root, preservable);
+  }
   if (captured.size > 0 && incoming !== null) {
     applyInteractions(incoming, captured);
   }

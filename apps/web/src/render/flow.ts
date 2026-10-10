@@ -671,14 +671,22 @@ export const CONFIRM_QUESTIONS: Readonly<Record<ConfirmAction, string>> = Object
  * question + [Cancel] [Confirm] INLINE — never a bare confirm(). The
  * first click arms (data-confirm-armed), the second click confirms
  * (data-confirm); the app layer owns the arming state.
+ *
+ * FW-40-C (the wizard-race cluster): the confirm's own buttons carry
+ * STABLE IDS (keyed by the confirm action — unique per render) so the
+ * projector preserves the live elements across every beat re-projection
+ * (render/dom.ts's keyed reuse — the same law the stepper's controls
+ * ride: an element handle resolved against the confirm stays valid
+ * across beats, so a press dispatched on it still reaches the
+ * document's delegated listener).
  */
 export function twoStepConfirm(action: ConfirmAction, armed: boolean): VNode {
   if (!armed) {
-    return v('button', { class: 'confirm-arm', 'data-action': `confirm-arm-${action}`, type: 'button' }, [CONFIRM_QUESTIONS[action]]);
+    return v('button', { class: 'confirm-arm', id: `${action}-confirm-arm`, 'data-action': `confirm-arm-${action}`, type: 'button' }, [CONFIRM_QUESTIONS[action]]);
   }
   return v('div', { class: 'confirm-inline', 'data-confirm-pending': action, role: 'group', 'aria-label': CONFIRM_QUESTIONS[action] }, [
     v('span', { class: 'confirm-question' }, [`Are you sure? ${CONFIRM_QUESTIONS[action]}`]),
-    v('button', { class: 'confirm-cancel', 'data-action': `confirm-cancel-${action}`, type: 'button' }, ['Cancel']),
-    v('button', { class: 'confirm-go', 'data-action': `confirm-${action}`, type: 'button' }, ['Confirm']),
+    v('button', { class: 'confirm-cancel', id: `${action}-confirm-cancel`, 'data-action': `confirm-cancel-${action}`, type: 'button' }, ['Cancel']),
+    v('button', { class: 'confirm-go', id: `${action}-confirm-go`, 'data-action': `confirm-${action}`, type: 'button' }, ['Confirm']),
   ]);
 }

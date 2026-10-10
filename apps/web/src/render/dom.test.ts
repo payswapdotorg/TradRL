@@ -20,6 +20,8 @@ import { findByDataAttribute, mountVTree, projectVNode } from './dom';
 /** A stub text node. */
 class StubText {
   readonly nodeName = '#text';
+  /** The parent chain (FW-40-C's move semantics reads it; null until attached). */
+  parent: StubElement | null = null;
   constructor(readonly data: string) {}
 }
 
@@ -28,10 +30,14 @@ class StubElement {
   readonly nodeName: string;
   readonly attributes = new Map<string, string>();
   readonly childNodes: (StubElement | StubText)[] = [];
+  /** The parent chain (FW-40-C: the identity-keyed transplant's replaceChild walks it). */
+  parent: StubElement | null = null;
   /** The native interaction surface the beat-preservation reads/writes (R7/R8): a <details>' open flag + a scroller's offsets. */
   open = false;
   scrollTop = 0;
   scrollLeft = 0;
+  /** The input's live value property (FW-40-C: the user-edited value the transplant preserves). */
+  value = '';
 
   constructor(tag: string) {
     this.nodeName = tag.toUpperCase();
@@ -45,7 +51,23 @@ class StubElement {
     return this.attributes.has(name) ? (this.attributes.get(name) as string) : null;
   }
 
+  /** FW-40-C: the attribute enumeration + removal the transplant's re-sync rides (the real DOM's own surface). */
+  getAttributeNames(): string[] {
+    return [...this.attributes.keys()];
+  }
+
+  removeAttribute(name: string): void {
+    this.attributes.delete(name);
+  }
+
+  /** FW-40-C: the DOM's own MOVE semantics (an appendChild of an attached node removes it from its prior parent — the transplant's children move rides it). */
   appendChild(node: StubElement | StubText): StubElement | StubText {
+    const prior = node.parent;
+    if (prior !== null) {
+      const priorIndex = prior.childNodes.indexOf(node);
+      if (priorIndex !== -1) prior.childNodes.splice(priorIndex, 1);
+    }
+    node.parent = this;
     this.childNodes.push(node);
     return node;
   }
@@ -53,7 +75,18 @@ class StubElement {
   removeChild(node: StubElement | StubText): StubElement | StubText {
     const index = this.childNodes.indexOf(node);
     if (index !== -1) this.childNodes.splice(index, 1);
+    node.parent = null;
     return node;
+  }
+
+  /** FW-40-C: the DOM's own swap (the transplant's carrier). */
+  replaceChild<T extends StubElement | StubText>(newNode: T, oldNode: T): T {
+    const index = this.childNodes.indexOf(oldNode);
+    if (index === -1) return oldNode;
+    this.childNodes.splice(index, 1, newNode);
+    oldNode.parent = null;
+    newNode.parent = this;
+    return oldNode;
   }
 
   get firstChild(): StubElement | StubText | null {
@@ -320,7 +353,7 @@ describe('dom: FW-36-B (E-8, part 4) — the beat-interaction preservation exten
     return found as unknown as StubElement;
   };
 
-  it('a selection staged on the outgoing input SURVIVES the beat re-projection — the fresh input carries the same files (the DataTransfer re-attach)', () => {
+  it('a selection staged on the outgoing input SURVIVES the beat re-projection — FW-40-C: the id-carrying input is PRESERVED (the same live element), so its FileList survives natively', () => {
     const restore = installDataTransfer();
     try {
       const container = new StubElement('div');
@@ -329,10 +362,30 @@ describe('dom: FW-36-B (E-8, part 4) — the beat-interaction preservation exten
       (outgoing as unknown as { files: unknown }).files = [stagedFile('tradrl-workspace-prj-a.json')]; // the selection lands (the browser's pick / the automation path)
       mountVTree(stubDocument, container as unknown as Element, settingsTree()); // the beat re-projects the WHOLE tree
       const incoming = verifyInputOf(container);
-      expect(incoming).not.toBe(outgoing); // the element WAS replaced (no diffing — the race's precondition)
+      expect(incoming).toBe(outgoing); // FW-40-C: the element is the SAME live object (identity-keyed reuse — a stronger guarantee than the DataTransfer re-attach)
       const carried = (incoming as unknown as { files?: { readonly length: number; readonly [index: number]: { readonly name: string } } }).files;
-      expect(carried?.length).toBe(1); // the files:0 class is dead — the fresh input carries the selection
+      expect(carried?.length).toBe(1); // the files:0 class is dead — the selection never left the element
       expect(carried?.[0]?.name).toBe('tradrl-workspace-prj-a.json');
+    } finally {
+      restore();
+    }
+  });
+
+  it('FW-40-C: the DataTransfer re-attach stays as the FALLBACK — a file input WITHOUT an id is still replaced, and its captured selection re-attaches (the mechanism guards any future non-id input)', () => {
+    const restore = installDataTransfer();
+    try {
+      const idlessTree = () => v('section', { class: 'panel' }, [
+        v('input', { class: 'export-verify-input', type: 'file', 'data-action': 'export-verify-file-alt' }, []),
+      ]);
+      const container = new StubElement('div');
+      mountVTree(stubDocument, container as unknown as Element, idlessTree());
+      const outgoing = findByDataAttribute(container as unknown as Element, 'data-action', 'export-verify-file-alt') as unknown as StubElement;
+      (outgoing as unknown as { files: unknown }).files = [stagedFile('a.json')];
+      mountVTree(stubDocument, container as unknown as Element, idlessTree());
+      const incoming = findByDataAttribute(container as unknown as Element, 'data-action', 'export-verify-file-alt') as unknown as StubElement;
+      expect(incoming).not.toBe(outgoing); // no identity key — replaced as always
+      const carried = (incoming as unknown as { files?: { readonly length: number } }).files;
+      expect(carried?.length ?? 0).toBe(1); // the DataTransfer re-attach carried it
     } finally {
       restore();
     }
@@ -367,13 +420,13 @@ describe('dom: FW-36-B (E-8, part 4) — the beat-interaction preservation exten
       mountVTree(stubDocument, container as unknown as Element, settingsTree());
       const incoming = verifyInputOf(container);
       const carried = (incoming as unknown as { files?: { readonly length: number } }).files;
-      expect(carried?.length ?? 0).toBe(0); // never resurrected — the clear is the user's own state
+      expect(carried?.length ?? 0).toBe(0); // never resurrected — the clear is the user's own state (and FW-40-C: the SAME element, so nothing even re-attached)
     } finally {
       restore();
     }
   });
 
-  it('WITHOUT a DataTransfer global (the hardened/stubbed platform) the preservation degrades SILENTLY — never a throw (R46)', () => {
+  it('WITHOUT a DataTransfer global (the hardened/stubbed platform) the preservation degrades SILENTLY — never a throw (R46); FW-40-C: the id-carrying input is preserved anyway (the selection needs no re-attach at all)', () => {
     const holder = globalThis as { DataTransfer?: unknown };
     const prior = holder.DataTransfer;
     delete holder.DataTransfer;
@@ -384,10 +437,120 @@ describe('dom: FW-36-B (E-8, part 4) — the beat-interaction preservation exten
       (outgoing as unknown as { files: unknown }).files = [stagedFile('a.json')];
       expect(() => mountVTree(stubDocument, container as unknown as Element, settingsTree())).not.toThrow();
       const incoming = verifyInputOf(container);
-      expect(incoming).not.toBe(outgoing); // replaced as always
-      expect((incoming as unknown as { files?: unknown }).files).toBeUndefined(); // simply not carried — the pre-fix behavior, no crash
+      expect(incoming).toBe(outgoing); // FW-40-C: identity-keyed reuse — the element (and its selection) never left
+      const carried = (incoming as unknown as { files?: { readonly length: number } }).files;
+      expect(carried?.length ?? 0).toBe(1);
     } finally {
       if (prior !== undefined) holder.DataTransfer = prior;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-40-C (the Round H wizard-race cluster) — THE FORM-CONTROL IDENTITY
+// LAW. The round's most-frequent friction (S2 + M3 + S3): a fill staged on
+// a live form control was EATEN by the ~500ms beat re-projection — the
+// full-tree replacement detached the node mid-fill, the input/change
+// events dispatched against it never bubbled to the document, and the
+// value silently vanished (the wizard refused to advance with no inline
+// error; the Settings account form lost the same values; the
+// datetime-local editor reset mid-typing). The fix: the eligible controls
+// (the delegated form fields — data-launch-field / data-research-field /
+// data-account-field — plus the id-carrying interactive controls) are
+// TRANSPLANTED onto the identity-matched fresh projections: the live
+// ELEMENT persists across every beat, its user-edited value property
+// survives, and any event later dispatched against a handle resolved for
+// it still reaches the document's delegated listeners.
+// ---------------------------------------------------------------------------
+
+describe('dom: FW-40-C — the form-control identity law (the beat-value preservation)', () => {
+  /** The wizard's markets step (the exact labeledInput shape render/flow.ts serves). */
+  const marketsTree = (typed: string) => v('section', { class: 'panel' }, [
+    v('div', { class: 'card launch-wizard' }, [
+      v('div', { class: 'field', 'data-field': 'markets' }, [
+        v('label', { class: 'field-label', for: 'launch-markets' }, ['Markets *']),
+        v('input', { class: 'field-input', id: 'launch-markets', name: 'markets', type: 'text', value: typed, 'data-launch-field': 'markets' }, []),
+      ]),
+      v('button', { class: 'tm-button', id: 'launch-next', 'data-action': 'launch-step-world', type: 'button' }, ['Next: world']),
+    ]),
+  ]);
+
+  it('a delegated form field TRANSPLANTS across the beat: the SAME live element, its USER-EDITED value property surviving (the input event may never have landed)', () => {
+    const container = new StubElement('div');
+    mountVTree(stubDocument, container as unknown as Element, marketsTree(''));
+    const outgoing = findByDataAttribute(container as unknown as Element, 'data-launch-field', 'markets') as unknown as StubElement;
+
+    // THE EATEN-FILL CLASS: the automation sets the value on the live node,
+    // then the beat re-projects BEFORE the input event is dispatched.
+    outgoing.value = 'futures, fx';
+    mountVTree(stubDocument, container as unknown as Element, marketsTree(''));
+
+    const incoming = findByDataAttribute(container as unknown as Element, 'data-launch-field', 'markets') as unknown as StubElement;
+    expect(incoming).toBe(outgoing); // the SAME element — a handle resolved against it never goes stale
+    expect(incoming.value).toBe('futures, fx'); // the user's value survived on the live node
+    expect(incoming.getAttribute('value')).toBe(''); // the ATTRIBUTE stays the model's truth (the painted value)
+  });
+
+  it('an id-carrying BUTTON transplants too (the stepper controls never go stale) and its label re-syncs from the model', () => {
+    const container = new StubElement('div');
+    mountVTree(stubDocument, container as unknown as Element, marketsTree(''));
+    const outgoing = findByDataAttribute(container as unknown as Element, 'id', 'launch-next') as unknown as StubElement;
+
+    mountVTree(stubDocument, container as unknown as Element, marketsTree('')); // the beat
+
+    const incoming = findByDataAttribute(container as unknown as Element, 'id', 'launch-next') as unknown as StubElement;
+    expect(incoming).toBe(outgoing); // the stepper's Next button is the SAME element across every beat
+    expect(incoming.getAttribute('data-action')).toBe('launch-step-world'); // attributes re-sync from the incoming VNode
+  });
+
+  it('an element with NO identity key (a plain div, an id-less button) is still REPLACED — the model keeps deciding what renders', () => {
+    const container = new StubElement('div');
+    mountVTree(stubDocument, container as unknown as Element, v('section', {}, [
+      v('div', { class: 'card', 'data-section': 'goal' }, []),
+      v('button', { class: 'tm-button', 'data-action': 'launch-start', type: 'button' }, ['Describe your goal']),
+    ]));
+    const outgoingDiv = findByDataAttribute(container as unknown as Element, 'data-section', 'goal');
+    const outgoingButton = findByDataAttribute(container as unknown as Element, 'data-action', 'launch-start');
+
+    mountVTree(stubDocument, container as unknown as Element, v('section', {}, [
+      v('div', { class: 'card', 'data-section': 'goal' }, []),
+      v('button', { class: 'tm-button', 'data-action': 'launch-start', type: 'button' }, ['Describe your goal']),
+    ]));
+
+    expect(findByDataAttribute(container as unknown as Element, 'data-section', 'goal')).not.toBe(outgoingDiv); // replaced
+    expect(findByDataAttribute(container as unknown as Element, 'data-action', 'launch-start')).not.toBe(outgoingButton); // replaced (no id, no delegated field attribute)
+  });
+
+  it('when the model itself repaints the field (no user edit), the transplanted control carries the MODEL\'S fresh value — the value never runs stale', () => {
+    const container = new StubElement('div');
+    mountVTree(stubDocument, container as unknown as Element, marketsTree(''));
+    const outgoing = findByDataAttribute(container as unknown as Element, 'data-launch-field', 'markets') as unknown as StubElement;
+
+    mountVTree(stubDocument, container as unknown as Element, marketsTree('SPY, GLD')); // the flush committed — the model paints the new value
+
+    const incoming = findByDataAttribute(container as unknown as Element, 'data-launch-field', 'markets') as unknown as StubElement;
+    expect(incoming).toBe(outgoing); // still the same element
+    expect(incoming.value).toBe('SPY, GLD'); // the MODEL's value took the property (no user edit was in flight)
+    expect(incoming.getAttribute('value')).toBe('SPY, GLD');
+  });
+
+  it('a control whose step LEFT the projection (no incoming identity match) is discarded — nothing resurrects', () => {
+    const container = new StubElement('div');
+    mountVTree(stubDocument, container as unknown as Element, marketsTree('futures'));
+    const outgoing = findByDataAttribute(container as unknown as Element, 'data-launch-field', 'markets');
+    expect(outgoing).not.toBeNull();
+
+    // the world step carries NO markets field — the wizard moved on
+    mountVTree(stubDocument, container as unknown as Element, v('section', {}, [
+      v('input', { class: 'field-input', id: 'launch-horizonStartsAt', type: 'datetime-local', value: '', 'data-launch-field': 'horizonStartsAt' }, []),
+    ]));
+
+    expect(findByDataAttribute(container as unknown as Element, 'data-launch-field', 'markets')).toBeNull();
+    // and returning to the markets step later does NOT resurrect the old node — a fresh projection
+    // (the detached subtree keeps its internal parent links, as in the real DOM; what matters is
+    // that nothing ever re-attaches it to the mounted tree)
+    mountVTree(stubDocument, container as unknown as Element, marketsTree(''));
+    const back = findByDataAttribute(container as unknown as Element, 'data-launch-field', 'markets');
+    expect(back).not.toBe(outgoing); // never the old element — no resurrection, no leak
   });
 });

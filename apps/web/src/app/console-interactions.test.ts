@@ -56,9 +56,9 @@ import { bootConsole, readStoredScopeProject, SCOPE_STORAGE_KEY } from './consol
 import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
 import { toCreateProjectInput } from '../core/launch';
-import type { GatewaySubmissionRecord, JobRecord, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
+import type { GatewaySubmissionRecord, GoalStatement, JobRecord, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
 import { capsuleFromJob, capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
-import { historyFloorOf, verifyWorkspaceExport, viewAtOf } from '../core/workspace';
+import { historyFloorOf, serializeWorkspaceExport, verifyWorkspaceExport, viewAtOf } from '../core/workspace';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -102,7 +102,23 @@ class FakeElement {
     return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
   }
 
+  /** FW-40-C (the wizard-race cluster): the attribute enumeration + removal the projector's identity-keyed transplant re-syncs with (the real DOM's own surface). */
+  getAttributeNames(): string[] {
+    return Object.keys(this.attributes);
+  }
+
+  removeAttribute(name: string): void {
+    delete this.attributes[name];
+  }
+
   appendChild<T extends FakeElement | FakeText>(node: T): T {
+    // FW-40-C: the DOM's own MOVE semantics — appending an attached node
+    // removes it from its prior parent (the transplant's children move rides it).
+    const prior = node.parent;
+    if (prior !== null) {
+      const priorIndex = prior.childNodes.indexOf(node);
+      if (priorIndex !== -1) prior.childNodes.splice(priorIndex, 1);
+    }
     node.parent = this;
     this.childNodes.push(node);
     return node;
@@ -113,6 +129,16 @@ class FakeElement {
     if (index !== -1) this.childNodes.splice(index, 1);
     node.parent = null;
     return node;
+  }
+
+  /** FW-40-C (the wizard-race cluster): the DOM's own swap — the projector's identity-keyed transplant carrier. */
+  replaceChild<T extends FakeElement | FakeText>(newNode: T, oldNode: T): T {
+    const index = this.childNodes.indexOf(oldNode);
+    if (index === -1) return oldNode;
+    this.childNodes.splice(index, 1, newNode);
+    oldNode.parent = null;
+    newNode.parent = this;
+    return oldNode;
   }
 
   get firstChild(): FakeElement | FakeText | null {
@@ -3625,10 +3651,14 @@ describe('executed boot: MI-D7 — the in-UI export verification affordance', ()
 // ---------------------------------------------------------------------------
 
 describe('executed boot: D-6a (W-25C) — the beat-render click race', () => {
-  it('a press on "Next" that the mid-press beat re-projection REPLACED still lands (the silent no-op is gone)', async () => {
+  it('a press on "Next" that the mid-press beat re-projection REPLACED still lands (the silent no-op is gone) — FW-40-C: the wizard\'s own controls now carry stable ids, so the beat PRESERVES the pressed element and the composed click lands ON it (no replay needed); the generic replaced-element class stays covered by the NAV press test below', async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' });
     clickAction(rig, 'launch-start'); // the primary flow begins on the goal step
     expect(rig.handle.state().launch.step).toBe('goal');
+    // the goal step must be VALID before it can advance (FW-40-C's step gate:
+    // an invalid outgoing step refuses to advance and teaches at its fields)
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
 
     // THE PRESS: mousedown on the current tree's Next button
     const next = findByData(rig.root, 'data-action', 'launch-step-budget');
@@ -3636,11 +3666,18 @@ describe('executed boot: D-6a (W-25C) — the beat-render click race', () => {
     rig.doc.fire('mousedown', { target: next });
 
     // THE BEAT LANDS MID-PRESS: a state change re-projects the whole tree —
-    // the pressed element is REPLACED (detached from the mounted root), and
-    // the browser composes the click on a common ANCESTOR (an inert
-    // container) that resolves to nothing interactive.
+    // but the Next button carries a stable id (FW-40-C), so the projector
+    // TRANSPLANTS the live element onto the fresh projection: the pointer
+    // never left it and the browser composes the click ON the PRESERVED
+    // button — the action resolves natively (the pre-FW-40-C world needed
+    // the pending-press replay for this; the preserved element makes the
+    // mid-press replacement class structurally impossible for the wizard\'s
+    // own controls).
     rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 5_000 });
-    rig.doc.fire('click', { target: shellOf(rig.root) });
+    const stillLive = findByData(rig.root, 'data-action', 'launch-step-budget');
+    if (stillLive === null) throw new Error('the preserved Next button left the tree');
+    expect(stillLive).toBe(next); // the SAME live element (FW-40-C: identity-keyed reuse)
+    rig.doc.fire('click', { target: stillLive }); // the composed click on the PRESERVED element
 
     expect(rig.handle.state().launch.step).toBe('budget'); // the click LANDED
   });
@@ -3648,6 +3685,9 @@ describe('executed boot: D-6a (W-25C) — the beat-render click race', () => {
   it('the normal path is never double-dispatched: mousedown + click on the SAME live element advances exactly once; a dead click with no stale press fires nothing', async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' });
     clickAction(rig, 'launch-start');
+    // FW-40-C's step gate: the goal step must be valid before it can advance
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
     const next = findByData(rig.root, 'data-action', 'launch-step-budget');
     if (next === null) throw new Error('the goal step renders no Next: budget button');
     rig.doc.fire('mousedown', { target: next });
@@ -5111,7 +5151,7 @@ describe('executed boot: FW-36-B (E-8, part 4) — the verify file-input keeps i
     return parts.join('');
   }
 
-  it('a selection staged on the mounted verify input SURVIVES the next re-projection — the fresh input carries the same file (the files:0 / never-attaches class is dead)', async () => {
+  it('a selection staged on the mounted verify input SURVIVES the next re-projection — FW-40-C: the id-carrying input is PRESERVED (the same live element), so the staged FileList never leaves the document (the files:0 / never-attaches class is dead)', async () => {
     const holder = globalThis as { DataTransfer?: unknown };
     const prior = holder.DataTransfer;
     holder.DataTransfer = StubDataTransfer;
@@ -5126,11 +5166,11 @@ describe('executed boot: FW-36-B (E-8, part 4) — the verify file-input keeps i
       rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 5_000 });
       const fresh = findByData(rig.root, 'data-action', 'export-verify-file');
       if (fresh === null) throw new Error('the verify input vanished from the projection');
-      expect(fresh).not.toBe(input); // replaced, as always (no diffing)
+      expect(fresh).toBe(input); // FW-40-C: identity-keyed reuse — the verify input carries a stable id, so the SAME live element persists (a stronger guarantee than the capture/re-attach)
       const carried = (fresh as FakeElement & { files?: { readonly length: number; readonly [index: number]: { readonly name: string } } }).files;
-      expect(carried?.length).toBe(1); // the selection SURVIVED the beat
+      expect(carried?.length).toBe(1); // the selection SURVIVED the beat — it never left the element
       expect(carried?.[0]?.name).toBe('tradrl-workspace-prj-a.json');
-      // and the commit path reads it: a change on the FRESH element verifies the carried file (no DataTransfer workaround needed)
+      // and the commit path reads it: a change on the PRESERVED element verifies the carried file (no DataTransfer workaround needed)
       rig.doc.fire('change', { target: fresh });
       await settle();
       const card = findByData(rig.root, 'data-export-verify', 'broken'); // '{}' is a JSON object but not an export — the honest refusal, not files:0 silence
@@ -5541,5 +5581,195 @@ describe('executed boot: FW-37-B F-3 — the export composition boundary (the L2
     expect([...cohortProjects].every((project) => sessionOwn.has(project))).toBe(true); // every oversight-plane desk is the session's own
     expect((parsed.decisions?.gateway ?? []).length).toBe(0); // no submission rows on this empty-blotter rig — none leak in
     expect(parsed.events?.length ?? 0).toBeGreaterThan(0); // the export is non-empty (the E-9 law held)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-40-C (the wizard race cluster + H-1 + the g1 export seam) — executed.
+//
+// THE ROUND-H EVIDENCE (the round's most-frequent friction, S2 + M3 + S3):
+// "agent-browser @ref fills were eaten by the ~500ms beat re-render (draft
+// state empty) ... the input event never bubbles from the detached node";
+// "values on the markets step can be silently lost ... with no inline error
+// (only Review reveals the loss)"; "the wizard silently froze mid-markets
+// step — 'Next: world' no-op'd 2x, ALL stepper tabs + Review no-op'd". The
+// fixes pinned here, end to end through the REAL mount:
+//   (a) THE FORM-CONTROL IDENTITY LAW (render/dom.ts): the delegated form
+//       fields + the id-carrying wizard controls TRANSPLANT across every
+//       beat re-projection — a fill staged on the live node survives, and a
+//       late input event fired on the SAME live node still reaches the
+//       document's delegated listener;
+//   (b) THE INLINE STEP GATE: an advance from a step whose OWN fields are
+//       invalid refuses to advance and teaches AT THE FIELDS (never only at
+//       Review); a BACKWARD move always advances (the escape hatch);
+//   (c) H-1: the Constraints hint renders the FULL accepted-subject list
+//       (L1 had to reverse-engineer the position-cap subject from the demo
+//       Risk page);
+//   (d) THE G1 EXPORT SEAM: the first goal-loaded EVENT carries the
+//       SPAN-DERIVED horizon label (never the wizard's stale 'one day'
+//       annotation against its own correct endpoints — six personas:
+//       S1/M1/M3/L3/L2/S3), and an OLD export (the stale-label event bytes)
+//       still verifies under the unchanged digest/chain rules.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-40-C — the wizard race cluster (the beat-value carry + the inline step gate) + H-1 + the g1 export seam', () => {
+  it('THE EATEN-FILL CLASS IS DEAD: a value staged on a live wizard field SURVIVES the mid-fill beat (the SAME element), the late input event still lands on it, and the flush commits it', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start'); // the goal step
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.'); // a landed fill (the normal class)
+
+    // THE EATEN FILL (S2/M3's exact class): the automation sets the value on
+    // the live node, and the beat re-projects BEFORE the input event is
+    // dispatched — pre-FW-40-C the node was REPLACED, the event fired on a
+    // detached node never bubbled to the document, and the value vanished.
+    const staged = findByData(rig.root, 'data-launch-field', 'name');
+    if (staged === null) throw new Error('the goal step renders no name field');
+    staged.value = 'Futures Book';
+    rig.handle.dispatch({ kind: 'anchor-advanced', at: T0 + 5_000 }); // the beat lands mid-fill
+
+    // the fill SURVIVED: the SAME live element, still carrying the staged value
+    const survived = findByData(rig.root, 'data-launch-field', 'name');
+    if (survived === null) throw new Error('the name field vanished from the projection');
+    expect(survived).toBe(staged); // identity-keyed reuse — the element handle never went stale
+    expect(survived.value).toBe('Futures Book'); // the staged value is still on the live node
+
+    // the LATE input event (the automation's second half) fires on the SAME
+    // live node — it reaches the document's delegated listener and buffers
+    rig.doc.fire('input', { target: survived });
+    expect(rig.handle.state().launch.draft?.name).toBe(''); // buffered only — the flush belongs to the next action
+
+    clickAction(rig, 'launch-step-budget'); // the flush commits; the step advances (both fields valid)
+    expect(rig.handle.state().launch.draft?.name).toBe('Futures Book'); // THE FILL COMMITTED
+    expect(rig.handle.state().launch.step).toBe('budget');
+  });
+
+  it('THE INLINE STEP GATE: an advance from a step whose OWN fields are invalid REFUSES to advance and teaches AT THE FIELDS (never only at Review); the BACKWARD move always advances — S2/M3\'s "no inline error anywhere on the step" is dead', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start'); // the goal step, nothing filled
+    expect(rig.handle.state().launch.step).toBe('goal');
+
+    // THE REFUSAL: the advance attempt stays on the stuck step and every
+    // invalid field's message renders INLINE at the field (§4.11's touched
+    // law, engaged by the refusal itself)
+    clickAction(rig, 'launch-step-budget');
+    expect(rig.handle.state().launch.step).toBe('goal'); // REFUSED
+    expect(elementsOf(rig.root).some((element) => element.hasClass('field-error') && textOf(element) === 'Give the launch a name.')).toBe(true);
+    expect(elementsOf(rig.root).some((element) => element.hasClass('field-error') && textOf(element) === 'Describe the objective in one sentence.')).toBe(true);
+
+    // fill them: the advance lands
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge.');
+    clickAction(rig, 'launch-step-budget');
+    expect(rig.handle.state().launch.step).toBe('budget');
+
+    // a BAD DECIMAL (never blurred — the fill landed, the validation has not
+    // been shown yet) refuses the budget step's own advance WITH the teaching
+    typeField(rig, 'capitalBudget', '10.5.0');
+    clickAction(rig, 'launch-step-markets');
+    expect(rig.handle.state().launch.step).toBe('budget'); // refused, taught
+    expect(elementsOf(rig.root).some((element) => element.hasClass('field-error') && textOf(element) === 'Enter an exact non-negative decimal.')).toBe(true);
+
+    // THE BACKWARD ESCAPE HATCH: a move to an EARLIER step always advances
+    // (going back to fix something is never blocked — the wizard never traps)
+    clickAction(rig, 'launch-step-goal');
+    expect(rig.handle.state().launch.step).toBe('goal');
+
+    // the world step's own teaching (S2's carried datetime polish): a cleared
+    // horizon refuses with the UTC-grammar message AT the field
+    clickAction(rig, 'launch-step-budget'); // goal is valid — advance
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-world'); // markets valid — advance
+    typeField(rig, 'horizonStartsAt', String(T0));
+    typeField(rig, 'horizonEndsAt', 'never'); // the unparseable grammar (a cleared/rejected datetime value)
+    clickAction(rig, 'launch-step-review');
+    expect(rig.handle.state().launch.step).toBe('world'); // refused, taught at the field
+    expect(elementsOf(rig.root).some((element) => element.hasClass('field-error') && textOf(element).startsWith('Enter the horizon as a UTC date and time'))).toBe(true);
+
+    // fix it: the review is reachable (its own FIX-BEFORE-LAUNCHING gate stays the defense in depth)
+    typeField(rig, 'horizonEndsAt', String(T0 + 86_400_000));
+    clickAction(rig, 'launch-step-review');
+    expect(rig.handle.state().launch.step).toBe('review');
+    expect(findByData(rig.root, 'data-review', 'launch')).not.toBeNull();
+  });
+
+  it('H-1: the world step\'s Constraints hint renders the FULL accepted-subject list — the position-cap subject L1 had to reverse-engineer from the demo Risk page, taught in place with one example each', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    // jump straight to the world step through the sanctioned dispatch path (the seeded VALID_DRAFT passes every gate)
+    rig.handle.dispatch({ kind: 'launch-draft-started', at: T0 + 10, draft: VALID_DRAFT });
+    rig.handle.dispatch({ kind: 'launch-step-changed', at: T0 + 11, step: 'world' });
+
+    const field = findByData(rig.root, 'data-field', 'constraints');
+    if (field === null) throw new Error('the world step renders no constraints field');
+    const hint = elementsOf(field).find((element) => element.hasClass('field-hint'));
+    if (hint === undefined) throw new Error('the constraints field carries no hint');
+    const text = textOf(hint);
+    // THE FULL ACCEPTED-SUBJECT LIST (one canonical example each — the gate's own classes)
+    for (const subject of ['position.concentration', 'position.grossExposure', 'costs.dailyTurnover', 'order.notional', 'capital.budget', 'risk.budget', 'risk.maxDrawdown']) {
+      expect(text, subject).toContain(subject);
+    }
+    // the grammar itself (L3's 'advisory.max' rejection pre-taught away) + the honest taught-never-enforced note
+    expect(text).toContain('Kinds: limit.min | limit.max | equals');
+    expect(text).toContain('Domains: observation | state | action | outcome');
+    expect(text).toContain('Any other dotted subject parses but is taught, never enforced at the gate');
+  });
+
+  it('THE G1 EXPORT SEAM: a 30-day launch composes its FIRST goal-loaded EVENT with the TRUE span label (never the stale \'one day\' against its own endpoints) — and an OLD export (the stale-label event bytes) still verifies under the unchanged chain law', async () => {
+    const demo = launchDemoTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, demo.transport, ''); // the LAUNCHPAD (the shipped shell's own default)
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Futures Book');
+    typeField(rig, 'objective', 'Find and keep an edge in futures.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '120000.00');
+    typeField(rig, 'riskBudget', '6000.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'futures, fx');
+    typeField(rig, 'venues', 'BROKER-FIX');
+    typeField(rig, 'dataSources', 'demo-feed');
+    clickAction(rig, 'launch-step-world');
+    typeField(rig, 'horizonStartsAt', String(T0));
+    typeField(rig, 'horizonEndsAt', String(T0 + 30 * 86_400_000)); // THE 30-DAY SPAN (S2's D1H2 shape)
+    typeField(rig, 'constraints', 'c-1:outcome:risk.maxDrawdown:limit.max:0.08');
+    clickAction(rig, 'launch-step-review');
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch');
+    await settle();
+    expect(rig.handle.state().launch.phase).toBe('launching'); // the create + the kickoff submitted
+
+    // THE EXPORT'S FIRST GOAL-LOADED EVENT: the span-derived label against its own endpoints
+    const doc = JSON.parse(serializeWorkspaceExport(rig.handle.state(), true)) as {
+      readonly events: readonly { readonly payload: { readonly kind: string; readonly goal?: { readonly horizon: { readonly startsAt: number; readonly endsAt: number; readonly label: string } }; readonly world?: { readonly horizon: { readonly label: string } } } }[];
+    };
+    const goalEvents = doc.events.filter((entry) => entry.payload?.kind === 'goal-loaded');
+    expect(goalEvents.length).toBeGreaterThan(0); // the launch seam composed it (the in-session bridge)
+    const first = goalEvents[0] as { readonly payload: { readonly goal: { readonly horizon: { readonly startsAt: number; readonly endsAt: number; readonly label: string } }; readonly world?: { readonly horizon: { readonly label: string } } } };
+    expect(first.payload.goal.horizon.startsAt).toBe(T0); // the true endpoints (the pre-fix defect's own half)
+    expect(first.payload.goal.horizon.endsAt).toBe(T0 + 30 * 86_400_000);
+    expect(first.payload.goal.horizon.label).toBe('30 days'); // THE TRUE SPAN LABEL — the stale 'one day' is dead at the seam
+    if (first.payload.world !== undefined) {
+      expect(first.payload.world.horizon.label).toBe('30 days'); // the world's half rides the same derivation (FW-37-A's law)
+    }
+
+    // (b) THE CHAIN LAW: an OLD export (a pre-FW-40-C stale-label goal event
+    // composed into the SAME history shape) still verifies END TO END — the
+    // digest/chain rules are untouched, only the label's VALUE changed
+    const staleGoal = { ...(first.payload.goal as unknown as GoalStatement), horizon: { ...first.payload.goal.horizon, label: 'one day' } };
+    rig.handle.dispatch({ kind: 'goal-loaded', at: T0 + 6_000, goal: staleGoal, constraintSet: toCreateProjectInput(VALID_DRAFT, { projectId: 'prj-old', goalId: 'goal-old', constraintSetId: 'cs-old' }, 'tenant-a', T0).constraintSet });
+    const oldDoc = JSON.parse(serializeWorkspaceExport(rig.handle.state(), true));
+    expect(verifyWorkspaceExport(oldDoc)).toEqual({ ok: true }); // the old bytes still verify — byte-compatible rules
+    const oldGoalEvents = (oldDoc as { readonly events: readonly { readonly payload: { readonly kind: string; readonly goal?: { readonly horizon: { readonly label: string } } } }[] }).events
+      .filter((entry) => entry.payload?.kind === 'goal-loaded' && (entry.payload.goal?.horizon.label ?? '') === 'one day');
+    expect(oldGoalEvents.length).toBe(1); // the stale-label event is IN the chain (the old shape is legal history)...
+    expect(verifyWorkspaceExport(oldDoc)).toEqual({ ok: true }); // ...and the chain verifies over it — the law held
   });
 });

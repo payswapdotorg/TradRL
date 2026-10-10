@@ -171,6 +171,65 @@ const CONSTRAINT_DOMAINS: readonly ('observation' | 'state' | 'action' | 'outcom
 /** The constraint grammar's legal severities. */
 const CONSTRAINT_SEVERITIES: readonly ('advisory' | 'blocking')[] = ['advisory', 'blocking'];
 
+// ---------------------------------------------------------------------------
+// H-1 (L1's find, Round H): THE CONSTRAINT-GRAMMAR SUBJECT VOCABULARY.
+// The wizard taught outcomes/limits/bounds but never the SUBJECT grammar
+// (the position-cap subject had to be reverse-engineered from the demo
+// Risk page). The list below mirrors, ONE EXAMPLE EACH, the gate's own
+// subject classes — the source of truth is the host's parser (deploy/
+// vercel/runtime/project-evidence.ts gateSubjectClassOf: the classes the
+// PRE-TRADE GATE actually evaluates), re-declared here because the client
+// never imports the host. Every canonical example parses under the FORM
+// grammar (identifier paths) AND classifies into exactly its named class
+// under the host's rules — pinned by launch-form.test.ts.
+// ---------------------------------------------------------------------------
+
+/** One taught subject: the canonical example plus the one-sentence teaching of what the gate evaluates it as. */
+export interface TaughtConstraintSubject {
+  /** The canonical example subject (parses under the form grammar; classifies into the named class). */
+  readonly subject: string;
+  /** The class the gate binds the subject as. */
+  readonly gateClass: string;
+  /** The one-sentence teaching (what the gate evaluates, in the class's own unit). */
+  readonly teaches: string;
+}
+
+/**
+ * THE ACCEPTED SUBJECT LIST (H-1): the subjects the product's gate
+ * actually evaluates, one canonical example each — the vocabulary the
+ * hint teaches. Anything else that parses as a dotted identifier path is
+ * accepted by the FORM but taught, never enforced at the gate (the hint
+ * says so — never a silent wall).
+ */
+export const CONSTRAINT_SUBJECT_VOCABULARY: readonly TaughtConstraintSubject[] = [
+  { subject: 'position.concentration', gateClass: 'position_concentration', teaches: 'a position\'s share of the projected book (a fraction, 0 to 1)' },
+  { subject: 'position.grossExposure', gateClass: 'position_gross_exposure', teaches: 'the count of concurrent open positions' },
+  { subject: 'costs.dailyTurnover', gateClass: 'daily_turnover', teaches: 'a UTC day\'s cumulative traded notional' },
+  { subject: 'order.notional', gateClass: 'order_notional', teaches: 'the candidate order\'s own notional (quantity x price)' },
+  { subject: 'capital.budget', gateClass: 'book_notional', teaches: 'the cumulative booked notional (the projected book)' },
+  { subject: 'risk.budget', gateClass: 'risk_consumption', teaches: 'the realized losses consumed (cumulative, never refilled by gains)' },
+  { subject: 'risk.maxDrawdown', gateClass: 'drawdown', teaches: 'the drawdown against the declared capital budget' },
+];
+
+/**
+ * THE CONSTRAINT HINT (H-1): the full grammar in one reference-grade hint —
+ * the entry shape with the canonical example, the legal domains, the legal
+ * kinds (L3's 'advisory.max' rejection: a plausible kind under the
+ * product's advisory taxonomy, but NOT a predicate kind — the hint now
+ * pre-teaches the closed set), the optional severity suffix, the FULL
+ * accepted-subject list with one example each, and the honest
+ * taught-never-enforced note for every other dotted subject.
+ */
+export function constraintGrammarHint(): string {
+  const subjects = CONSTRAINT_SUBJECT_VOCABULARY.map((entry) => `${entry.subject} (${entry.teaches})`).join('; ');
+  return `Optional executable limits — each entry is id:domain:subject:kind:bound, e.g. ${CONSTRAINT_GRAMMAR_EXAMPLE}. Domains: ${CONSTRAINT_DOMAINS.join(' | ')}. Kinds: ${CONSTRAINT_PREDICATE_KINDS.join(' | ')} (an optional :advisory or :blocking suffix; blocking is the default). Subjects the gate evaluates, one example each: ${subjects}. Any other dotted subject parses but is taught, never enforced at the gate.`;
+}
+
+/** The constraint grammar's documented example (the malformed-entry message names it). */
+export function constraintGrammarExample(): string {
+  return CONSTRAINT_GRAMMAR_EXAMPLE;
+}
+
 /** One constraint as the form's grammar string. */
 function formatConstraint(constraint: ConstraintStatement): string {
   const predicate = constraint.predicate as { kind: string; bound?: unknown; value?: unknown };
@@ -476,7 +535,7 @@ export function launchFieldValidation(values: LaunchFormValues, field: LaunchFie
   // offender.
   const badConstraint = firstBadConstraintEntry(values.constraints);
   if (badConstraint !== null) {
-    return `Constraints entry ${badConstraint.index} ("${badConstraint.entry}") is malformed — each entry is id:domain:subject:kind:bound, e.g. ${CONSTRAINT_GRAMMAR_EXAMPLE}.`;
+    return `Constraints entry ${badConstraint.index} ("${badConstraint.entry}") is malformed — each entry is id:domain:subject:kind:bound, e.g. ${CONSTRAINT_GRAMMAR_EXAMPLE} (kinds: ${CONSTRAINT_PREDICATE_KINDS.join(' | ')}; severities: :advisory | :blocking).`;
   }
   return '';
 }
@@ -496,7 +555,17 @@ export function launchDraftProblems(values: LaunchFormValues): readonly (readonl
   return problems;
 }
 
-/** The constraint grammar's documented example (the hint renders it). */
-export function constraintGrammarExample(): string {
-  return CONSTRAINT_GRAMMAR_EXAMPLE;
+/**
+ * The fields that render at one wizard step (the step-gate teaching's
+ * own map — FW-40-C, the Round H wizard-race cluster: a stuck step
+ * teaches AT ITS OWN FIELDS, never only at Review). The review step
+ * renders no inputs; its own gate (launchDraftProblems) stays the
+ * defense in depth.
+ */
+export function launchStepFields(step: string): readonly LaunchFieldName[] {
+  if (step === 'goal') return ['name', 'objective'];
+  if (step === 'budget') return ['capitalBudget', 'riskBudget'];
+  if (step === 'markets') return ['markets', 'venues', 'dataSources'];
+  if (step === 'world') return ['horizonStartsAt', 'horizonEndsAt', 'executionMode', 'preferences', 'constraints'];
+  return [];
 }
