@@ -8,15 +8,13 @@
 //     INJECTED instants (never a wall-clock read in a render path);
 //   - drives the read cadence (negotiation, project/knowledge/
 //     outcome/post-mortem/org reads, job polling) with graceful
-//     degradation on every failure (the console never crashes on an
-//     unreachable API — it renders the last known world plus the
-//     degradation note);
+//     degradation on every failure (never a crash on an unreachable
+//     API — the last known world + the degradation note);
 //   - composes the primary flow's launch (project create + kickoff
 //     job submission + progress) through the API routes;
 //   - mounts the render model into a DOM root and re-projects on
 //     every state change (the model enforces the laws; this layer
 //     only wires events).
-//
 // Spec anchors: R36, R39, R46 (graceful provider degradation), L12,
 // L20, COMPETITIVE-ADOPTION.md (the console orchestrates; it never
 // locks in — every read goes through the boundary).
@@ -105,7 +103,7 @@ export interface ConsoleBootOptions {
    * so the host scopes the project listing/detail/goal reads to THIS
    * session (the demo project + the session's own projects — the wave-1
    * #1 trust blocker, 9/9 professionals). Absent = the pre-fix behavior
-   * (the shared-tenant view), exactly as the headerless SDK caller sees.
+   * (the shared-tenant view), as the headerless SDK caller sees.
    */
   readonly clientHeaders?: Readonly<Record<string, string>>;
   /** The INJECTED transport adapter (default: the browser fetch binding). */
@@ -122,7 +120,7 @@ export interface ConsoleBootOptions {
   readonly theme?: ThemeName;
   /** The theme persistence seam (the browser's localStorage in production). */
   readonly storage?: ThemeStorage;
-  /** THE SCOPE PERSISTENCE SEAM (R6b, W-22): the browser's localStorage in production. When injected, the workspace's project id persists on every scope change and a stored scope that still exists in the tenant's project directory is RESTORED at boot (a stale/deleted id falls back to the env pin, exactly the pre-W-22 behavior). */
+  /** THE SCOPE PERSISTENCE SEAM (R6b, W-22): the browser's localStorage in production. When injected, the workspace's project id persists on every scope change and a stored scope still in the tenant's project directory is RESTORED at boot (a stale/deleted id falls back to the env pin, the pre-W-22 behavior). */
   readonly scopeStorage?: { getItem(key: string): string | null; setItem(key: string, value: string): void };
   /** True when the console runs on a fake/demo adapter (the SIMULATED environment badge; §7 anti-deception). */
   readonly simulated?: boolean;
@@ -137,11 +135,10 @@ export interface ConsoleBootOptions {
    * the same browser-trust-zone class as `tradrl_theme` /
    * `tradrl_onboarded` / `tradrl_scope_project` (spec/SECURITY.md's
    * trust zones place the browser first; UX-DESIGN.md sanctions
-   * localStorage for this class of state): no credentials, no notice
-   * content — only tenant/project/notice-id read marks, and the map is
-   * keyed by the full triple so one tenant's read-state never applies
-   * to another's notices (the tenant-isolation law, carried into the
-   * persisted shape).
+   * localStorage for this class): no credentials, no notice content —
+   * only tenant/project/notice-id read marks, keyed by the full triple
+   * so one tenant's read-state never applies to another's notices (the
+   * tenant-isolation law, carried into the persisted shape).
    */
   readonly noticeReadStorage?: { getItem(key: string): string | null; setItem(key: string, value: string): void };
 }
@@ -222,14 +219,14 @@ export interface MountDocument {
   readonly activeElement?: Element | null;
   /** Optional: the document head (the browser binding provides it) — the R8 interaction supplement's injection target (W-19). */
   readonly head?: Element | null;
-  /** Optional: the document's root element (the browser binding provides it). D-6d (W-25C): the html element's `data-theme` is synced to the active theme at every paint — tokens.css keys the html background on it, so a stale attribute flashes the wrong color on overscroll. */
+  /** Optional: the document's root element (the browser binding provides it). D-6d (W-25C): the html element's `data-theme` is synced to the active theme at every paint — tokens.css keys the html background on it; a stale attribute flashes the wrong overscroll color. */
   readonly documentElement?: Element | null;
 }
 
 /** The launchpad project id — the workspace's pre-launch scope placeholder (core/tenant.ts owns the constant; re-exported for the existing imports). */
 export { LAUNCHPAD_PROJECT_ID } from '../core/tenant';
 
-/** The persisted-scope storage key (R6b, W-22 — localStorage `tradrl_scope_project` in production; the canonical home is core/posture.ts — FW-34-B — re-exported unchanged for the existing importers). */
+/** The persisted-scope storage key (R6b, W-22 — localStorage `tradrl_scope_project` in production; the canonical home is core/posture.ts (FW-34-B), re-exported unchanged for the existing importers). */
 export { SCOPE_STORAGE_KEY } from '../core/posture';
 import { SCOPE_STORAGE_KEY } from '../core/posture';
 import { initialConsolePosture, persistPosture, postureTimeMachineOf, readStoredPosture, type ConsoleSessionPosture } from '../core/posture';
@@ -290,8 +287,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   // production). Its legacy-key writes keep the pre-FW-34-B keys alive,
   // so a downgrade never loses the user's world. The TM restore runs
   // inside the listing read, only while the machine still sits at its
-  // boot 'live' mode (a user who touched the Time Machine first is
-  // driving, never overwritten).
+  // boot 'live' mode (a user who touched the TM first is driving,
+  // never overwritten).
   let sessionPosture: ConsoleSessionPosture = options.scopeStorage === undefined
     ? initialConsolePosture()
     : (readStoredPosture(options.scopeStorage) ?? initialConsolePosture());
@@ -310,15 +307,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   // FW-40-B (Round H — the boot/resume cluster: H-4 the stale view-instant
   // resume trap + the boot-seam draft persistence): THE BOOT/RESUME PLANE
   // (app/boot-resume-plane.ts, the oversight-plane extraction pattern —
-  // console.ts's 160 KiB single-file payload budget). The plane owns the
-  // restored-view validation state (the pending instant + the post-hydration
-  // heal to LIVE with the TM bar's teaching line), the draft restore +
-  // write-through + clear laws (core/launch-draft-store.ts the record), and
-  // both restored disclosures' holders (pre-mount) — the console keeps the
-  // thin wiring: the dispatch wrapper's before/after hooks, the TM restore
-  // arm's pending hand-off, the listing read's settled-scope restore, and
-  // the bundle-finally/beat validation cadences. Full laws:
-  // app/boot-resume-plane.ts + core/launch-draft-store.ts.
+  // console.ts's 160 KiB single-file payload budget) owns the resume state
+  // + cadences: the restored-view validation (the pending instant + the
+  // post-hydration heal to LIVE + the teaching note holder), the draft
+  // restore/write-through/clear laws (core/launch-draft-store.ts), and
+  // both restored disclosures' pre-mount holders. The console keeps the
+  // thin wiring (the dispatch hooks, the TM-restore hand-off, the
+  // listing-read restore, the validation cadences). Full laws: the plane.
   const resume: BootResumePlane = createBootResumePlane({
     storage: options.scopeStorage,
     scope,
@@ -353,7 +348,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // a stored-scope restore) — persist the current project id so a
     // reload reopens THE USER'S world, not the env pin's (the 69-friction-row
     // finding: reload silently reset the scope to the demo project).
-    // The launchpad placeholder never persists (there is no project yet).
+    // The launchpad placeholder never persists (no project yet).
     // FW-34-B: the same move rides THE POSTURE RECORD (the scope field's
     // write-through is one with the record's — the legacy key keeps its
     // own write inside persistPosture).
@@ -369,8 +364,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // (the scoped inbox the user pressed the action on) — another desk's
     // notices keep their unread state in their own scope.
     // A storage failure degrades silently: the session keeps the reads
-    // (the workspace state is already reduced), only the durability
-    // across reload is lost — exactly the pre-seam behavior.
+    // (the workspace state is already reduced); only the durability
+    // across reload is lost — the pre-seam behavior.
     if (options.noticeReadStorage !== undefined && (event.kind === 'notice-read' || event.kind === 'notices-read-all')) {
       const marks: readonly NoticeRecord[] = event.kind === 'notice-read'
         ? state.inbox.notices.filter((record) => record.noticeId === event.noticeId)
@@ -423,11 +418,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // UNREACHABLE connection block + Home's ErrorState ("The console
       // could not reach the API.", role=alert) with its Try again pill
       // render — the catalog's J9 surface, previously unreachable in a
-      // real browser (a failed read mapped to 'degraded' unconditionally
-      // and 'offline' was state-machine+test-only). A failure WITH the
-      // last known world present stays DEGRADED (amber) — the proven
-      // graceful path; a typed API error (the API ANSWERED) is never
-      // offline — the family gate.
+      // real browser (a failed read always mapped to 'degraded';
+      // 'offline' was state-machine+test-only). A failure WITH the
+      // last known world present stays DEGRADED (amber); a typed API
+      // error (the API ANSWERED) is never offline — the family gate.
       if (family === 'unavailable' && homeFresh(state)) {
         dispatch({ kind: 'connection-changed', at: instants.nowMs(), status: 'offline' });
       }
@@ -438,13 +432,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   // blocker's read half): the console read its world ONCE at boot, so
   // after a launch ADOPTED a project (project-adopted resets every
   // record + moves the scope) NO read ever ran for the adopted scope —
-  // the launched org's compiled snapshot never rendered and every other
-  // section showed the RESET (empty) world. The beat tracks the
+  // every section showed the RESET (empty) world. The beat tracks the
   // last-fetched scope; when state.scope.projectId differs, it re-runs
   // the full read bundle for the adopted scope.
   let lastFetchedScope: string | null = null;
 
-  /** Dispatch a read result ONLY while the workspace still carries the scope it was read for — a mid-flight adoption (a launch, a switch) supersedes the scope, so the stale read's dispatch is dropped (the typed assertProjectScope would refuse it; the beat's scope-change refetch re-reads everything for the adopted scope). */
+  /** Dispatch a read result ONLY while the workspace still carries the scope it was read for — a mid-flight adoption (a launch, a switch) supersedes the scope and the stale dispatch is dropped (the typed assertProjectScope would refuse it; the beat's scope-change refetch re-reads the adopted scope). */
   function dispatchIfCurrent(projectId: string, event: WorkspaceEvent): void {
     if (state.scope.projectId !== projectId) return;
     dispatch(event);
@@ -488,8 +481,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // directory and differs from the booted scope is ADOPTED (the
       // launch's reset+switch; the captured-scope reads drop through
       // dispatchIfCurrent and the beat refetches for the adopted
-      // scope). A stale id (no longer in the directory) is cleared and
-      // ignored — the env pin holds, the pre-W-22 behavior.
+      // scope). A stale id (no longer in the directory) is cleared —
+      // the env pin holds, the pre-W-22 behavior.
       await read('GET /v1/projects', async () => {
         const records = await client.projects.listAll();
         dispatch({ kind: 'projects-listed', at: instants.nowMs(), records: [...records] });
@@ -503,12 +496,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // AFTER the scope branch: when the stored posture left the machine
         // at a selected instant (scrubbed / t-x / paused) and the machine
         // STILL sits at its boot 'live' mode, the console REOPENS VIEWING
-        // THAT INSTANT (L3: the incident view was lost on every reload). A
-        // user who touched the TM before the listing landed left 'live'
-        // already — their choice stands (D-15). Clamped to [floor, anchor]
-        // exactly like the scrubber's commit — never a fabricated instant.
+        // THAT INSTANT (L3: the incident view was lost on every reload);
+        // a user who touched the TM first left 'live' already — their
+        // choice stands (D-15). Clamped to [floor, anchor] exactly like
+        // the scrubber's commit — never a fabricated instant.
         const stored = sessionPosture.scopeProjectId ?? bootStoredScope;
-        if (stored !== null && scopeGeneration === 0 && stored !== state.scope.projectId) { // the early-return-free form of the W-22/D-15 guards (the TM restore below must run on EVERY path, never skipped by a scope-branch return)
+        if (stored !== null && scopeGeneration === 0 && stored !== state.scope.projectId) { // the early-return-free W-22/D-15 guards: the TM restore below runs on EVERY path, never skipped by a scope-branch return
           if (records.some((record) => record.id === stored)) {
             dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
           } else if (options.scopeStorage !== undefined) {
@@ -555,20 +548,19 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // FW-37-B (Round F register F-2) + FW-38-B (Round G register G-3 —
       // the org-status bundle field): THE OVERSIGHT READ CADENCE, one
       // bundle per SESSION-OWN desk (core/tenant.ts's sessionOwnDesksOf
-      // — the session's own launched projects plus the shared demo desk;
+      // — the session's own launched projects + the shared demo desk;
       // another session's desks NEVER enter, the L12 boundary the
       // switcher and palette ride since FW-37-B), each collected through
       // the SAME frozen routes every section rides (the standing
       // risk-utilization read, the execution blotter, the decision
-      // stream, and — G-3 — the desk's own org-status snapshot) and
-      // dispatched as the cross-desk `oversight-read` event the fold
-      // renders. The whole plane lives in app/oversight-plane.ts (the
-      // export-flow.ts extraction pattern — console.ts's 160 KiB
-      // single-file payload budget); it degrades SILENTLY per desk, like
-      // the goal/utilization reads: a desk without records on the host
-      // is the host's answer (the honest "no read on record" row — never
-      // a fabricated number, never a degradation note for a route the
-      // host never promised that desk).
+      // stream, and — G-3 — the desk's own org-status snapshot),
+      // dispatched as the cross-desk `oversight-read` event. The whole
+      // plane lives in app/oversight-plane.ts (the export-flow.ts
+      // extraction pattern — console.ts's 160 KiB single-file payload
+      // budget); it degrades SILENTLY per desk, like the goal read: a
+      // desk without records is the host's answer (the honest "no read
+      // on record" row — never a fabricated number, never a degradation
+      // note for a route the host never promised that desk).
       await readOversightPlane(oversightPlaneSeams());
       const projectId = bundleScope;
       if (projectId === LAUNCHPAD_PROJECT_ID) return;
@@ -577,18 +569,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // pairs the organization ref of THE BUNDLE'S OWN project record
       // with the bundle's own project id — same scope by construction.
       // The pre-W-27 code read `state.project` at the bundle's END; a
-      // mid-bundle scope move (the stored-scope restore, a launch
-      // adoption) could leave state.project holding the ADOPTED
-      // project's record — with its compiled organization ref — while
-      // this bundle's `projectId` was still the pre-adoption scope: the
-      // read crossed scopes (GET /v1/organizations/<launched
-      // ref>/status?project=<demo id> — the Lead's observed 404, the
-      // boot-order race). CAPTURING the ref from the FRESHLY READ
-      // record of THIS scope at read time keeps the pair same-scope; a
-      // failed project read leaves the capture null and skips the org
-      // read honestly (no record, no ref — dispatchIfCurrent still
-      // drops stale snapshots; the org-snapshot dedup keeps repeats
-      // idempotent).
+      // mid-bundle scope move could leave it holding the ADOPTED
+      // project's record (with its compiled ref) while this bundle's
+      // `projectId` was still the pre-adoption scope: the read crossed
+      // scopes (GET /v1/organizations/<launched ref>/status?project=
+      // <demo id> — the Lead's observed 404, the boot-order race).
+      // CAPTURING the ref from the FRESHLY READ record of THIS scope
+      // keeps the pair same-scope; a failed project read leaves the
+      // capture null and skips the org read honestly (no record, no
+      // ref — dispatchIfCurrent drops stale snapshots; the org-snapshot
+      // dedup keeps repeats idempotent).
       let bundleOrganizationRef: string | null = null;
       await read('GET /v1/projects/:id', async () => {
         const project = await client.projects.get(projectId);
@@ -597,30 +587,28 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       });
       // THE GOAL READ (D-1, the W-23 fix — the boot seam the Lead
       // verified broken live): `goal-loaded` fired ONLY inside the
-      // launch submit path (from the launch DRAFT), so after any reload
-      // or project switch state.goal/state.constraintSet stayed null —
-      // the Goal section lost its "Goal statement" card and the Risk
-      // section its "Constraint set" card (the R5 numeric-bounds render
-      // included) for every session that didn't just launch. The read
-      // rides the bundle's own cadence, so it runs at boot here AND on
-      // the beat's scope-change refetch for every adopted scope (the
-      // same refresh()). Unlike its siblings it degrades SILENTLY: the
-      // route is HOST-OWNED and demo-backing-only (it serves the demo
-      // project's seeded records, a typed 404 everywhere else — every
-      // launched project included), so on ANY failure (a typed 404
-      // included) NOTHING dispatches: no goal-loaded, no degraded-read
-      // note, no offline flip — the honest pre-fix absence (never a
-      // fabricated goal, never a degradation note for a route the host
-      // never promised this scope).
+      // launch submit path, so after any reload or switch
+      // state.goal/state.constraintSet stayed null — the Goal section
+      // lost its "Goal statement" card and the Risk section its
+      // "Constraint set" card (the R5 numeric-bounds render included)
+      // for every session that didn't just launch. The read rides the
+      // bundle's own cadence (boot + every scope-change refetch).
+      // Unlike its siblings it degrades SILENTLY: the route is
+      // HOST-OWNED and demo-backing-only (the demo project's seeded
+      // records, a typed 404 everywhere else — every launched project
+      // included), so on ANY failure NOTHING dispatches: no
+      // goal-loaded, no degraded-read note, no offline flip — the honest
+      // pre-fix absence (never a fabricated goal, never a degradation
+      // note for an unhosted route).
       try {
         const bundle = await client.projects.goal(projectId);
         // D-8 (W-28): the bundle's ADDITIVE `world` (the scope's persisted
         // launch world — the backing captured it from the kickoff job's
         // spec into the goal-set record) rides the SAME event, so the
         // Market World section renders the project's OWN world after a
-        // reload, a scope switch or a cold start; an absent world (the
+        // reload, switch or cold start; an absent world (the
         // demo scope, a pre-W-28 launch) clears any prior one — the
-        // teaching empty state stays CORRECT for exactly those cases.
+        // teaching empty state stays CORRECT for those cases.
         dispatchIfCurrent(projectId, {
           kind: 'goal-loaded',
           at: instants.nowMs(),
@@ -649,8 +637,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // Lead verified broken live): the backing serves the gateway's
       // submission records at GET /v1/execution/submissions?project=…
       // (the W-8 host route), but the console never READ them — the
-      // Execution section rendered state.submissions, which only the
-      // watch events populated (the console's own submissions), so the
+      // Execution section rendered state.submissions, populated only
+      // by the watch events (the console's own submissions), so the
       // seeded blotter stayed invisible forever. The read follows the
       // bundle's own pattern; each served row dispatches the existing
       // submission-recorded event, whose reducer arm merges deduped by
@@ -668,16 +656,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // them: state.jobs populated ONLY from session-local events
       // (job-submitted on the launch kickoff, job-updated from pollJobs
       // of jobs ALREADY in state), so on boot/reload/scope-switch
-      // state.jobs reset to [] and NEVER refilled — the Research
+      // it reset to [] and NEVER refilled — the Research
       // section and the palette's JOB group stayed empty forever ("JOB:
-      // not searchable in any scope", the J8-spec goal unreachable).
-      // The read follows the bundle's own pattern, one collection over
-      // the W-22 blotter seam; each served row dispatches the EXISTING
-      // job-updated event, whose reducer arm merges deduped by jobId
-      // (the launch kickoff's record rides the same merge — a
-      // re-refresh never duplicates, and the read runs BEFORE pollJobs
-      // so the served non-terminal jobs join the poll cadence
-      // immediately).
+      // not searchable in any scope"). The read follows the bundle's
+      // own pattern, one collection over the W-22 blotter seam; each
+      // served row dispatches the EXISTING job-updated event, whose
+      // reducer arm merges deduped by jobId (the launch kickoff's
+      // record rides the same merge — a re-refresh never duplicates,
+      // and the read runs BEFORE pollJobs so the served non-terminal
+      // jobs join the poll cadence immediately).
       await read('GET /v1/jobs', async () => {
         const page = await client.jobs.list(projectId);
         for (const job of page.items) {
@@ -689,16 +676,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // serves per-bound standing utilization (boundMax + current + the
       // honest ok/breach/unknown verdict) plus the active-breach
       // aggregation (bound-vs-observed, audit refs, instants) — the
-      // payload the Risk section's utilization panel renders. It rides
-      // the bundle's own cadence (boot + every scope-change refetch) and,
-      // like the goal read, degrades SILENTLY: the route is HOST-OWNED
+      // utilization panel's payload. It rides
+      // the bundle's own cadence (the goal read above) and, like it,
+      // degrades SILENTLY: the route is HOST-OWNED
       // and project-scoped (a project without goal records answers the
       // typed 404 — the host's answer, not a console failure), so on ANY
       // failure NOTHING dispatches: no read event, no degraded-read note,
       // no offline flip — the section renders its honest teaching note
-      // (never a fabricated meter). THE L4 LAW: the read is a
-      // current-instant standing read (its own asOf); the panel never
-      // fakes point-in-time risk.
+      // (never a fabricated meter). THE L4 LAW: a current-instant
+      // standing read (its own asOf); the panel never fakes
+      // point-in-time risk.
       try {
         const utilization = await client.risk.utilization(projectId);
         dispatchIfCurrent(projectId, { kind: 'risk-utilization-loaded', at: instants.nowMs(), read: utilization });
@@ -754,8 +741,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // in LIVE mode the view IS the anchor, a T-x offset rides the fresh
     // anchor, and playback's ceiling rises with it (a tick never passes
     // the anchor — the guard below). Monotonic by construction: a beat
-    // whose observed instant is not past the current anchor dispatches
-    // nothing.
+    // not past the current anchor dispatches nothing.
     const observed = instants.nowMs();
     if (observed > state.timeMachine.anchorAt) {
       dispatch({ kind: 'anchor-advanced', at: observed });
@@ -786,10 +772,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // the org-status read and job polling. Before this, the launched
     // project's world (its compiled org snapshot included — the backing
     // compiles it on its own clock, W-8's R4 pass) NEVER rendered
-    // without a page reload: the console kept the boot scope's world
-    // forever. The bundle degrades gracefully per-read like every other
-    // cadence (the read wrapper); the finally-marked lastFetchedScope
-    // keeps this from re-firing while the scope holds.
+    // without a page reload. The bundle degrades gracefully per-read
+    // (the read wrapper); the finally-marked lastFetchedScope keeps this
+    // from re-firing while the scope holds.
     const scopeNow = state.scope.projectId;
     if (scopeNow !== LAUNCHPAD_PROJECT_ID && scopeNow !== lastFetchedScope) {
       // The full bundle ends with its own job polling, and this beat's
@@ -805,14 +790,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // the compiled snapshot. While the CURRENT project record carries
       // no organization ref, each beat re-observes the project; the
       // moment the ref flips, the org-status read runs and the
-      // Organization section renders the compiled snapshot — still
-      // without any reload. Self-terminating: once the ref exists this
+      // Organization section renders the compiled snapshot — no reload.
+      // Self-terminating: once the ref exists this
       // branch stops (the org-snapshot dedup keeps repeats idempotent).
-      // D-7 (W-27): the org-status read pairs the ref with the
-      // RE-OBSERVED record of THIS scope — never the mutable
-      // state.project (a mid-beat scope move could leave it holding the
-      // newly adopted scope's record while `scopeNow` is still this
-      // branch's scope — the same crossed-scope read as the bundle's
+      // D-7 (W-27): the read pairs the ref with the RE-OBSERVED record
+      // of THIS scope — never the mutable state.project (a mid-beat
+      // scope move could cross the pair — the same read as the bundle's
       // end, fixed the same way).
       await read('GET /v1/projects/:id', async () => {
         const project = await client.projects.get(scopeNow);
@@ -859,9 +842,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // THE LAUNCH SEAM (the W-17a fix's second half): the created
       // record's availability is the boundary's stamp of the SUBMITTED
       // `at` (the deployed backing stamps createdAt/updatedAt from the
-      // request's at — services/api's own law), which is strictly after
-      // the boot instant and can be up to a beat ahead of the last
-      // anchor re-sample. The record has ARRIVED — re-observe now from
+      // request's at — services/api's own law), strictly after the boot
+      // instant and up to a beat ahead of the last anchor re-sample. The
       // the same injected source that stamped the submit, so the view
       // instant is at the record's availability by construction and
       // the adoption + render below paint the just-created project
@@ -974,9 +956,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // text) and COMMIT into the state machine on the next action —
     // never synchronously on focusout, because a re-render between
     // mousedown and mouseup replaces the clicked button and the
-    // browser would drop the click (the silent-no-op class this
-    // program keeps meeting). `pointerDown` marks a click in flight;
-    // the click handler itself flushes before running any action.
+    // browser would drop the click — the silent-no-op class).
+    // `pointerDown` marks a click in flight; the click handler flushes
+    // before running any action.
     let pointerDown = false;
     /** Read the launch field name of an event target (null when the target is not a launch field). */
     const launchFieldOf = (target: unknown): { readonly field: LaunchFieldName; readonly value: string } | null => {
@@ -1047,7 +1029,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       if (view.touchedFields.includes(field)) return;
       view = { ...view, touchedFields: [...view.touchedFields, field] };
     };
-    /** The focus-restore key of an element the browser was moving focus TO (its delegated-vocabulary identity), null when it carries none. D-10 (W-29): the preference order puts the UNIQUE discriminators first (a row id, a notice id, a capsule id, a palette ref) so a restore never lands on a sibling that merely shares the action class. */
+    /** The focus-restore key of an element the browser was moving focus TO (its delegated-vocabulary identity), null when it carries none. D-10 (W-29): the preference order puts the UNIQUE discriminators first (row id, notice id, capsule id, palette ref) so a restore never lands on a sibling sharing the action class. */
     const focusKeyOf = (element: unknown): { readonly attr: string; readonly value: string } | null => {
       const candidate = element as FieldEventTarget | null | undefined;
       if (candidate === null || candidate === undefined || typeof candidate.getAttribute !== 'function') return null;
@@ -1121,11 +1103,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      * the pre-fix `Array.isArray(files)` guard passed ONLY the test
      * harness's plain arrays (a REAL browser serves a FileList —
      * array-like, never an Array): every real upload fell through to
-     * null, the verifier never ran, no verdict ever rendered (the
-     * L3/L4/M5 finding). Array-likes and Arrays both read the same way
-     * here; the beat-race class (a change on a replaced element) is
-     * already covered by the J3 discipline — the change reads the
-     * buffered state or the live element, whichever survived.
+     * null, no verdict ever rendered (the L3/L4/M5 finding). Array-likes
+     * and Arrays read the same here; the beat-race class (a change on a
+     * replaced element) is already covered by the J3 discipline — the
+     * change reads the buffered state or the live element, whichever
+     * survived.
      */
     const verifyFileTargetOf = (target: unknown): { readonly element: FieldEventTarget; readonly file: SelectedExportFile } | null => {
       const element = target as FieldEventTarget | null;
@@ -1159,22 +1141,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      * path stages the file on one element and commits on its
      * replacement), the change lands on the FRESH element whose
      * FileList is EMPTY — files=0, the verify never runs, and the
-     * re-projected input renders the browser's own "No file chosen"
-     * (the Round C regression: worked in Round B, refused every attempt
-     * in Round C). The input-time selection BUFFERS here (the J3
-     * discipline — the same class as the launch edits and the scrub
-     * position); the change commit reads the LIVE element's file when
-     * it carries one (a fresh selection always wins) and the BUFFERED
-     * file otherwise, so the commit path survives every replacement.
+     * re-projected input renders "No file chosen" (the Round C
+     * regression: worked in Round B, refused every attempt in Round C).
+     * The input-time selection BUFFERS here (the J3 discipline — the
+     * same class as the launch edits and the scrub position); the
+     * change commit reads the LIVE element's file when it carries one
+     * (a fresh selection always wins) and the BUFFERED file otherwise,
+     * so the commit path survives every replacement.
      */
     let pendingVerifyFile: SelectedExportFile | null = null;
     // THE SCRUB BUFFER (the J5 wiring — the J3 pointer discipline): a
     // drag fires `input` per pointer move; those BUFFER here and never
-    // dispatch, because a re-render under the pointer replaces the
-    // range input mid-drag and the browser silently drops the drag.
-    // The `change` event (the release / the keyboard commit) is the
-    // one commit point.
-    //
+    // dispatch (a re-render under the pointer replaces the range input
+    // mid-drag and the browser silently drops the drag). The `change`
+    // event (the release / the keyboard commit) is the one commit point.
     // FW-32-B (Round A blocker 4) — THE DRAG PIN: the first buffered
     // input of a drag also pins the bounds the drag started under
     // (view.scrubBounds — rendered by timeMachineBar so the beat
@@ -1277,8 +1257,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // focused field (+ caret) and restore it on the new node so
       // typing never breaks. The PALETTE INPUT carries the same
       // preservation (the W-14c query wiring re-renders on every
-      // keystroke; without the restore one typed letter would blur the
-      // input and the next keystroke would land on a detached node).
+      // keystroke; without it one typed letter would blur the input and
+      // the next keystroke would land on a detached node).
       let focusedField: string | null = null;
       let focusedSelection: { readonly start: number; readonly end: number } | null = null;
       let focusedPaletteInput = false;
@@ -1360,8 +1340,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // pointer mid-drag. Re-write the fresh scrubber's value to the
       // buffered position (a native-setter write at the app seam, the
       // same class as the focus restorations above; the pinned bounds
-      // in view.scrubBounds keep min/max identical, so the value lands
-      // where the user dragged it).
+      // keep min/max identical, so the value lands where the user
+      // dragged it).
       if (scrubAt !== null && document.querySelectorAll !== undefined) {
         for (const candidate of document.querySelectorAll('[data-action="tm-scrub"]')) {
           const scrubberElement = candidate as { value?: string };
@@ -1422,7 +1402,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       refresh,
     });
 
-    /** The palette's live results for the current query (§4.14; D4's 100% coverage). FW-37-B (Round F register F-3 — the institutional disqualifier): the desks the index rides are the SESSION'S OWN, ALWAYS — computed INSIDE core/palette.ts with no widening parameter (the FW-34-B "all desks" override is removed at the module level; a wall a caller can widen is not a wall). The Round F evidence (L1 and L3 each switched into another session's desk and read its full blotter; M1: "157 other desks"; L3: "199 other desks") ruled the explicit-disclosure design insufficient — foreign sessions' desks never appear by name in the switcher or the palette (the L12 workspace boundary, now hard). */
+    /** The palette's live results for the current query (§4.14; D4's 100% coverage). FW-37-B (Round F register F-3 — the institutional disqualifier): the desks the index rides are the SESSION'S OWN, ALWAYS — computed INSIDE core/palette.ts with no widening parameter (the FW-34-B "all desks" override is removed at the module level; a wall a caller can widen is not a wall). The Round F evidence (L1 and L3 each read another session's full blotter; M1: "157 other desks"; L3: "199 other desks") ruled explicit disclosure insufficient — foreign desks never appear by name in the switcher or the palette (the L12 boundary, now hard). */
     const refreshPalette = (): void => {
       if (view.palette === null) { paletteResults = []; return; }
       paletteResults = rankPalette(paletteIndex(state, capsulesForPalette), view.palette.query);
@@ -1435,10 +1415,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // machine's own mode + view instant (folded with the chrome's
       // speed state) lands in the session posture the moment it
       // changes — a reload reopens the console VIEWING WHERE THE
-      // ANALYST STOOD (L3's finding: the incident view was lost on
-      // every reload). The change check keeps the storage write off
-      // the no-op paths (a live machine's posture is stable across
-      // beats — viewAt null by the fold's own law).
+      // ANALYST STOOD (L3: the incident view was lost on every
+      // reload). The change check keeps the storage write off the
+      // no-op paths (a live machine's posture is stable across beats
+      // — viewAt null by the fold's own law).
       {
         const foldedTm = postureTimeMachineOf(next.timeMachine.mode, viewAtOfTimeMachine(next.timeMachine), view.playbackSpeed, view.playbackCustomSpeed);
         if (JSON.stringify(foldedTm) !== JSON.stringify(sessionPosture.timeMachine)) {
@@ -1451,10 +1431,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // read in a render path; the timer only clears chrome state). §4.10's own
       // words — toasts are for NEW notices — so the latest notice toasts ONCE
       // (the W-14b re-fire guard: the old layer re-toasted the latest notice on
-      // EVERY state change, which once auto-dismissal worked became an
-      // endless toast loop on every dispatch). D-13 (W-29): the pick is the
-      // CURRENT SCOPE's latest notice — another desk's notice never toasts in
-      // this desk's session (the inbox state keeps them, the surface does not).
+      // EVERY state change — an endless toast loop once auto-dismissal
+      // worked). D-13 (W-29): the pick is the CURRENT SCOPE's latest
+      // notice — another desk's notice never toasts in this desk's
+      // session (the inbox state keeps them, the surface does not).
       const scopedNow = scopedInbox(next.inbox, next.scope).notices;
       const latest = scopedNow.length === 0 ? null : scopedNow[scopedNow.length - 1] as { readonly kind: string; readonly noticeId: string; readonly title: string; readonly at: number };
       if (latest !== null && view.toast === null && next.connection !== 'connecting' && latest.noticeId !== lastToastedNoticeId) {
@@ -1482,7 +1462,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // This is what makes mark-read + mark-all-read + the unread
       // badge survive scope-switch + reload for the same browser: the
       // marks were persisted on the first session, and every later
-      // session (this boot included) re-applies them as the notices
+      // one (this boot included) re-applies them as the notices
       // fold. Each re-applied mark rides the SAME write-through (already
       // stored — no write) and the SAME history chain as a fresh read.
       if (options.noticeReadStorage !== undefined) {
@@ -1567,9 +1547,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // M-persona finding). The press intent is captured HERE at mousedown
     // (the affordance under the pointer); the click handler replays it
     // ONLY when the composed click resolved to no affordance AND the
-    // pressed element left the mounted tree. A normal click resolves by
-    // itself (never double-dispatched); a press dragged away from stays
-    // cancelled as the browser intended.
+    // pressed element left the tree. A normal click resolves by itself
+    // (never double-dispatched); a press dragged away stays cancelled
+    // as the browser intended.
     let pendingPress: PendingPress | null = null;
     /** (The attachedToRoot test + the D-6a machinery live in app/press.ts — extracted by FW-38-B for the payload budget.) */
     document.addEventListener('mousedown', (event) => {
@@ -1596,8 +1576,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // (core/palette.ts's fuzzyScore/rankPalette via refreshPalette —
       // never duplicated here); the selection resets to the top result
       // (the query changed the list; the old index is meaningless). The
-      // render's focus preservation keeps the caret in the input across
-      // the full re-projection.
+      // render's focus preservation keeps the caret in the input.
       const query = paletteQueryOf(event.target);
       if (query !== null) {
         if (view.palette !== null && view.palette.query !== query) {
@@ -1772,8 +1751,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // ARMED playback retunes NOW: the machine's playback-retuned event
       // re-arms it at its CURRENT view instant with the new step (no
       // view jump, the paused flag preserved — the pure transition's own
-      // law). A disarmed machine never receives the event (retuning a
-      // disarmed machine is the machine's own typed error). FW-34-B: a
+      // law). A disarmed machine never receives the event (retuning one
+      // is the machine's own typed error). FW-34-B: a
       // committed select key is the user's EXPLICIT choice of the closed
       // set — it clears any free speed (the select's face and the
       // caption name exactly one effective step, never a stale hybrid).
@@ -1841,7 +1820,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
       // THE SCRUBBER'S COMMIT (the J5 wiring): the `change` event (the
-      // drag's release, or a keyboard arrow's commit) moves the view to
+      // drag's release or a keyboard commit) moves the view to
       // the scrubbed position (an explicit instant: timestamp mode),
       // clamped to the anchor (the view never points after it — the
       // machine's typed law, guarded so the delegated listener never
@@ -1857,11 +1836,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // TAUGHT, never ENFORCED on the commit (the MI-D9 step-back law):
       // a commit below the session open lands where the user dragged,
       // capped only by the anchor — a scope adoption resets every record
-      // and the refetch has not landed yet, so enforcing the fallback
-      // here would clamp a fresh desk's FIRST scrub to the degenerate
-      // [openedAt, anchor] point (the incident erased before the posture
-      // could record it). The drag pin clears here: the commit is the
-      // drag's one end point.
+      // before the refetch lands, and enforcing the fallback here would
+      // clamp a fresh desk's FIRST scrub to the degenerate [openedAt,
+      // anchor] point (the incident erased before the posture could
+      // record it). The drag pin clears here: the commit is the drag's
+      // one end point.
       const scrubber = scrubTargetOf(event.target);
       if (scrubber !== null) {
         const raw = scrubAt ?? scrubValueOf(scrubber);
@@ -1924,8 +1903,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
 
     // The delegated interaction layer: shell navigation (the fifteen
     // targets), the drawer, the theme controls, the refresh action, the
-    // inbox read-all button and the Time Machine controls. Every handler
-    // is a pure state/view update — the model does the rest.
+    // inbox read-all button, the Time Machine controls — every handler
+    // a pure state/view update (the model does the rest).
     //
     // THE DELEGATION LAW (W-10b): the navigation branch acts ONLY on a
     // [data-target] match that is an interactive BUTTON (nav items,
@@ -1943,13 +1922,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      * The beat re-projection replaces the tree ~every 500ms-1s; when it
      * lands between a focused button's keydown and the browser's
      * composed click, the click composes on the DETACHED node and never
-     * bubbles — the activation silently no-ops (L4: a focused Mark-read
-     * + native Enter — "button vanished on the beat, heading stayed '1
-     * unread', action never fired"). The keyboard path dispatches on the
-     * SETTLED state — the live focused element at keydown (its identity
-     * D-10's restore keeps fresh across beats) — and cancels the
-     * browser's click synthesis, so the action fires EXACTLY once, on
-     * the element the user sees.
+     * bubbles — the activation silently no-ops (L4: "button vanished on
+     * the beat, heading stayed '1 unread', action never fired"). The
+     * keyboard path dispatches on the SETTLED state — the live focused
+     * element at keydown (its identity D-10's restore keeps fresh
+     * across beats) — and cancels the browser's click synthesis, so the
+     * action fires EXACTLY once, on the element the user sees.
      */
     const interactionAt = (rawTarget: ClickTarget | null): void => {
       let target = rawTarget?.closest?.('[data-target]');
@@ -1966,9 +1944,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // mid-press, the press intent substitutes for the dead click and
       // the handler's own branches execute it (action-keyed dispatch:
       // the SAME code path a live click takes, flush included — the
-      // replayed action reads the full draft exactly like a landed
-      // click). The pending press is consumed either way: a click that
-      // resolves by itself (or a dead click with no stale press behind
+      // replayed action reads the full draft like a landed click). The
+      // pending press is consumed either way: a click that resolves by
       // it) never replays.
       const press = pendingPress;
       pendingPress = null;
@@ -2013,7 +1990,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           // opens that job's detail sheet, so the palette alone
           // reaches the job's dialog (the J8-spec goal), the same
           // open path a row click takes. Non-entity entries carry no
-          // parsable sheet ref and navigate exactly as before.
+          // parsable sheet ref and navigate as before.
           let openedSheet: SheetRef | null = null;
           if (view.palette !== null) {
             const ref = target.getAttribute('data-palette-ref');
@@ -2048,9 +2025,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           // target; the selected section is untouched by it).
           // FW-38-B (Round G register G-10 — 7 personas): a navigation
           // past an OPEN SHEET closes the sheet — one click navigates AND
-          // closes, never a second click to dismiss the backdrop first
-          // (the pre-fix rail sat under the sheet backdrop, so the nav
-          // click hit the backdrop and only closed the sheet). A palette
+          // closes, never a second to dismiss the backdrop first (the
+          // pre-fix rail sat under the sheet backdrop, so the nav click
+          // hit the backdrop and only closed the sheet). A palette
           // selection that OPENED a sheet (openedSheet) keeps it — that
           // sheet is the selection's own product.
           if (view.sheet !== null && openedSheet === null) view = { ...view, sheet: null };
@@ -2140,7 +2117,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             //   - TIMESTAMP / T-MINUS (a selected past instant — the
             //     scrubber's commit, the Steps' selection): the arm IS
             //     that instant, clamped to [the history floor, the
-            //     anchor] like the scrubber's own commit — the incident
+            //     anchor] like the scrubber's commit — the incident
             //     review plays forward FROM the incident.
             //   - LIVE (no instant selected): the arm IS the range floor
             //     (the history-derived floor the scrubber renders, capped
@@ -2189,11 +2166,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // beat's auto ticks, never the Step control).
         // FW-32-B (Round A blocker 4) — OUTSIDE playback, the Steps step
         // the SELECTED INSTANT (never the t-minus offset): the pre-fix
-        // Step back re-anchored against the live anchor, which advances
-        // EVERY beat (~1s > the 500ms step) — the view moved FORWARD on
-        // every click (M5). Now both controls dispatch an EXPLICIT
-        // timestamp (viewAt ± TIME_MACHINE_STEP_MS), clamped to [the
-        // history floor, the anchor] — the scrubber's own clamp.
+        // Step back re-anchored against the live anchor (advancing EVERY
+        // beat, ~1s > the 500ms step) — the view moved FORWARD on every
+        // click (M5). Now both controls dispatch an EXPLICIT timestamp
+        // (viewAt ± TIME_MACHINE_STEP_MS), clamped to [the history
+        // floor, the anchor] — the scrubber's own clamp.
         if (kind === 'playback-step') {
           const timeMachine = state.timeMachine;
           if (timeMachine.mode === 'playback' && timeMachine.playback !== null && timeMachine.playback.paused) {
@@ -2289,16 +2266,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // the palette list ONLY this session's own desks (+ the shared
         // demo project), no path back to the whole registry. Round F
         // ruled the explicit-disclosure design insufficient (L1/L3 each
-        // switched into another session's desk and read its full
+        // read another session's full blotter); the workspace state
+        // still carries the whole durable
         // blotter); the workspace state still carries the whole durable
         // registry (FW-31-B's win stays — just no longer REACHABLE from
         // the switcher or the palette).
         // FW-34-B (Round C register §3.1) — THE WIZARD'S BACKDROP = THE
         // MOUSE DISMISSAL (L3: the restart-summoned wizard was an
         // a11y-invisible blocker native clicks could not dismiss): a
-        // press on the overlay OUTSIDE the card skips the wizard — the
-        // standard modal dismissal. A press inside the card resolves to
-        // the card's own affordances (the CTA/Skip branches), never here.
+        // press on the overlay OUTSIDE the card skips the wizard (the
+        // standard modal dismissal); a press inside resolves to the
+        // card's own affordances (the CTA/Skip branches), never here.
         if (kind === 'onboarding-backdrop') {
           const insideCard = rawTarget?.closest?.('.onboarding-card');
           if (insideCard === null || insideCard === undefined) {
@@ -2315,8 +2293,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // tradrl_onboarded key keeps its own write inside persistOnboarding)
         // and the COMPLETED state renders NOTHING (view.onboarding = null —
         // the pre-fix completed state rendered an empty div.onboarding-hidden;
-        // null keeps the dismissed overlay out of the DOM entirely, so a
-        // dismissed wizard can never block the page).
+        // null keeps the dismissed overlay out of the DOM, so it can never
+        // block the page).
         if (kind === 'onboarding-next' || kind === 'onboarding-skip') {
           const current = view.onboarding ?? initialOnboarding();
           const next: OnboardingState = kind === 'onboarding-skip' ? skipOnboarding(current) : advanceOnboarding(current);
@@ -2380,18 +2358,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           render();
         }
         // §4.11 the primary flow: step navigation + the two-step confirm.
-        //
         // FW-40-C (the Round H wizard-race cluster — the inline-validation
         // law): a step-advance from a step whose OWN fields are invalid
-        // REFUSES to advance and TEACHES AT THE FIELDS (the outgoing step's
-        // fields all become touched, so their §4.11 messages render inline
-        // exactly where the user stands — S2/M3's finding: "values can be
-        // silently lost ... with no inline error (only Review reveals the
-        // loss)"; L3's late constraint-kind validation surfaced only at
-        // Review). A BACKWARD move (an earlier step — the escape hatch to
-        // go fix something) always advances; the REVIEW step's own gate
-        // (launchDraftProblems — the FIX BEFORE LAUNCHING card) stays the
-        // defense in depth over every field.
+        // REFUSES to advance and TEACHES AT THE FIELDS (the outgoing
+        // step's fields all become touched, so their §4.11 messages
+        // render inline where the user stands — S2/M3: "values can be
+        // silently lost ... with no inline error (only Review reveals
+        // the loss)"). A BACKWARD move (an earlier step — the escape
+        // hatch) always advances; the REVIEW step's own gate
+        // (launchDraftProblems — the FIX BEFORE LAUNCHING card) stays
+        // the defense in depth over every field.
         if (kind !== null && kind.startsWith('launch-step-')) {
           const step = kind.slice('launch-step-'.length);
           if ((LAUNCH_STEPS as readonly string[]).includes(step)) {
@@ -2450,12 +2426,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // FIRST (an invalid objective renders inline in the form's own
         // card, never an API call), then the frozen POST
         // /v1/jobs/research route with the CURRENT project's id (the
-        // same plumbing the launch's kickoff job rides — the same
-        // opaque-spec carrier, the same reducer merge by jobId). The
-        // returned record dispatches job-updated, so the job lands in
-        // the Research list immediately and the beat's poll cadence
-        // advances it (submitted -> running -> complete) like every
-        // other job.
+        // same plumbing the launch's kickoff job rides). The returned
+        // record dispatches job-updated, so the job lands in the
+        // Research list immediately and the beat's poll cadence advances
+        // it (submitted -> running -> complete) like every other job.
         if (kind === 'research-submit-open') {
           if (view.researchSubmit === null) {
             view = { ...view, researchSubmit: { edits: {}, error: null } };
@@ -2538,9 +2512,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // desk's decision here (the reducer's scope gate is the law; this
         // guard is defense in depth). The minted record dispatches
         // outcome-recorded — the SAME record the frozen
-        // /v1/outcomes/query read serves, so the Decisions section
-        // renders it with its evidence + the producing-job backlink, and
-        // a beat's outcomes re-read merges it deduped by outcomeId.
+        // /v1/outcomes/query read serves (rendered with its evidence +
+        // the producing-job backlink; re-reads merge deduped by
+        // outcomeId).
         if (kind === 'job-promote') {
           const jobId = action.getAttribute('data-job-promote');
           if (jobId === null) {
@@ -2691,7 +2665,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           // to a job via the palette alone), the same open path a row
           // click takes; the sheet focus moves to its close button
           // (the sheet trap's entry point). Non-entity entries carry
-          // no parsable sheet ref and navigate exactly as before.
+          // no parsable sheet ref and navigate as before.
           const openedSheet = parseSheetRef(selected.ref);
           if (openedSheet !== null) view = { ...view, sheet: openedSheet };
           // D-16 (W-29 wave 2): an EVIDENCE entry's capsule opens INLINE
@@ -2729,22 +2703,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
       // FW-34-B (Round C register §3.6 — THE MARK-READ INCIDENT, L4) —
-      // THE KEYBOARD ACTIVATION DISPATCHES ON THE SETTLED STATE. A
-      // focused BUTTON's Enter/Space used to ride the browser's click
-      // synthesis; when the ~1s beat re-projection replaced the tree
-      // between keydown and that click, the click composed on the
-      // DETACHED node and never reached the document (L4: a focused
-      // Mark-read + native Enter — "button vanished on the beat, action
-      // never fired"). The activation now runs HERE, synchronously at
-      // keydown, against the LIVE focused element (D-10's restore keeps
-      // focus on the current equivalent node across beats), through the
-      // SAME resolver a click takes — the browser's click synthesis is
-      // cancelled (preventDefault), so the action fires EXACTLY once.
-      // The guard is the click handler's own vocabulary: BUTTONs with a
-      // data-action or data-target (nav items, notice toggles, TM
-      // controls, the wizard's CTA/Skip); text inputs, selects and the
-      // scrubber keep their native key behavior (the file input's Enter
-      // keeps opening the OS picker, the select's its dropdown).
+      // THE KEYBOARD ACTIVATION DISPATCHES ON THE SETTLED STATE (the
+      // beat-replacement race the one-resolver header above documents:
+      // a focused BUTTON's Enter/Space rode the browser's click
+      // synthesis, the click composed on the DETACHED node — "button
+      // vanished on the beat, action never fired"). The activation runs
+      // HERE, synchronously at keydown, against the LIVE focused
+      // element (D-10's restore keeps focus on the current equivalent
+      // node across beats), through the SAME resolver a click takes —
+      // the browser's click synthesis is cancelled (preventDefault), so
+      // the action fires EXACTLY once. The guard is the click handler's
+      // own vocabulary: BUTTONs with a data-action or data-target (nav
+      // items, notice toggles, TM controls, the wizard's CTA/Skip);
+      // text inputs, selects and the scrubber keep their native key
+      // behavior (the file input's Enter keeps opening the OS picker,
+      // the select's its dropdown).
       if ((key === 'Enter' || key === ' ') && document.activeElement !== undefined) {
         // FW-35-B (§3.6 — "a keyboard Mark-read eaten (mouse works)"):
         // a SYNTHETIC activation (a keydown composed on the button
