@@ -460,3 +460,41 @@ Full report: docs/release/ROUND-H-REPORT.md. Next: FW-40 (the register wave) —
 H-2, H-3, H-4, H-5, the wizard race, the g1 seam, M1's Oversight dead-end, and
 the two decisive-for-one-persona items (E-6 for M3, the identity deployment
 configuration for L3). The committee is one fix-wave from the first YES vote.
+
+
+## FW-40 Wave 1 — the register wave's truth surfaces + the identity goes LIVE (2026-10-10, appended post-cut)
+
+Round H's register drove the wave: **H-2** (the Time-Machine point-in-time leak — 4
+independent confirmations), **H-3** (the concentration standing row rendered the
+position COUNT against the fraction bound — a false breach by construction, one row
+over from G-2's fix), **H-7** (the Oversight desk-list not view-instant-projected) —
+all fixed in apps/web (PR #86): the gate-evaluation block and the enforcement
+sentence now ride the SAME L4 point-in-time projection the standing rows use; the
+concentration row reads the fill-derived fraction (exact decimals, honest-unknown
+fallback); the desk-list respects the view instant.
+
+- **The auth-route brute-force guard (PR #87, deploy/vercel):** the identity
+  design's named known gap closed — a bounded in-memory two-bucket throttle (≤5
+  identity failures / ≤30 source attempts per 15 min, the typed 429 with
+  retryAfterMs, successful-login reset, the adopt route untouched, cold-start
+  disclosure) ahead of the account surface going public.
+- **The identity goes LIVE:** the TRADRL_AUTH_TOKEN_KEY configured + the Neon
+  schema healed (the two FW-39-1 auth tables applied; 9/9 coverage verified via the
+  runbook's verify route). The live cascade found and fixed two real defects: the
+  **Neon SQL-over-HTTP proxy now rejects multi-statement queries (42601)** — the
+  DDL runbook's whole-record dispatch broke and was fixed to single-statement
+  execution (PR #89); and a **client↔host token-grammar seam bug** — the client's
+  shape guard rejected the host's v1.<payload>.<hmac> mint always (the dot-free
+  test mocks masked it; red-first proof: 14 tests failed with the production
+  signature pre-fix) — fixed in PR #88 with a host-recipe seam pin.
+- **Live-verified end-to-end:** register → signed-in (the session persisted, the
+  adoption-ceremony surface live) → clean sign-out, on production. **The identity
+  model is operational: L3's YES condition (a configured deployment with a working
+  identity model) is answered for Round I.**
+- The merge-result batteries: 8493+1skip (wave 1), 8495+1skip (E), 8494+1skip (F) —
+  the one failure observed was the documented D-1 environmental flake (the
+  determinism pin's 5s timeout under load; passes 30/30 isolated; the timeout-raise
+  follow-up stays open).
+- Remaining in FW-40: the boot/resume cluster (H-4 the stale view-instant trap,
+  H-5 the cross-surface compile divergence, H-6 the Home counter) and the wizard
+  race cluster (+ H-1 the grammar docs, the g1 export seam).
