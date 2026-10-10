@@ -498,3 +498,59 @@ fallback); the desk-list respects the view instant.
 - Remaining in FW-40: the boot/resume cluster (H-4 the stale view-instant trap,
   H-5 the cross-surface compile divergence, H-6 the Home counter) and the wizard
   race cluster (+ H-1 the grammar docs, the g1 export seam).
+
+### FW-40 wave 2 — the wizard race + the boot/resume cluster (Round H register closed)
+
+- **The wizard race cluster fixed at the root (PR #90, FW-40-C, apps/web):** the
+  round's most-frequent friction. (1) **The form-control identity law** in
+  render/dom.ts — the full-replace projection had detached every live form control
+  mid-fill, so staged values lost their input/change events on the detached node;
+  the eligible controls (the delegated form fields + the id-carrying interactive
+  controls, stable ids minted on the wizard's own stepper/confirm controls) are
+  now TRANSPLANTED onto identity-matched fresh projections: the live element
+  persists across every ~500ms beat, the user-edited value survives, late events
+  still reach the document. (2) **The inline step gate** (console.ts +
+  launchStepFields in launch-form.ts): an advance from a step whose own fields are
+  invalid refuses and teaches AT the fields (touched + §4.11 messages where the
+  user stands); backward moves always advance; the Review FIX-BEFORE-LAUNCHING
+  card stays defense in depth. (3) **H-1**: the Constraints hint teaches the FULL
+  grammar — id:domain:subject:kind:bound[:severity], the closed kind set, the
+  optional severity suffix, the evaluated subject list mirrored from the host's
+  own gate parser, and the taught-never-enforced note. (4) **g1**: the export's
+  first goal-loaded event stamps the span-derived horizon label (the FW-37-A/
+  FW-38-A algorithm mirrored into core/launch.ts) — the last "one day" residue.
+- **The boot/resume cluster (PR #91, FW-40-B, apps/web):** (1) **H-4** — the
+  restored view instant is validated against the record on open (pending restore,
+  clamped), and the heal note teaches the trap, retiring on the next TM drive;
+  (2) **H-5** — the compile-divergence reconciliation teaching (event-stream vs
+  state surfaces now explain each other); (3) **H-6** — unreadCountAt, the
+  view-projected unread count: one source of truth for the nav badge, the Home
+  tile, and the Inbox header (live behavior identical; at any selected instant
+  the surfaces agree by construction); (4) **the boot-seam draft persistence** —
+  core/launch-draft-store.ts: the wizard draft survives reload (S2's
+  draft-lost-on-reload), fail-closed parse, storage-seamed, versioned +
+  scope-keyed, clears on launch, investment-not-summon. Includes the
+  boot-resume-plane extraction (console.ts size law: 163,685 B, 155 under the
+  160 KiB line; total budget 1094.2 KiB, re-recorded).
+- **The delivery lineage (fully disclosed):** FW-40-C shipped via a dead worker +
+  two continuations (three honest gate repairs en route: the partner-WIP import
+  pickup, two type-only test gaps, the 160 KiB payment); FW-40-B via THREE dead
+  workers + continuations (the original's uncommitted WIP shipped verbatim; the
+  rebase onto the #90 merge kept both sides' intents; the final continuation ran
+  the gates fresh and caught a REAL defect — an inline object literal in a
+  `value is` predicate outside the no-build loader's erasable subset, which
+  would have killed the real-browser boot — fixed red-first).
+- **Batteries:** #90's merge result is tree-identical to the gated branch head
+  (squash of 4 commits at the unmoved base 397466f; the four documented gates on
+  d2727da = the battery: scoped 728/728, typecheck 0, FULL 8510+1skip+1 flake —
+  the documented D-1 environmental timeout, 30/30 at the extended timeout);
+  #91's merge result is tree-identical to b22fa52 (base 97bd1d1 unmoved; gates:
+  scoped 738/738, typecheck 0, FULL 8536 passed + 1 skip — ZERO failures, D-1
+  quiet; program:check 52/52 + governance pass).
+- **Deployed + live-verified:** dpl_8CLqCZpm6nGEGYpd1XTgf2fnyeqa @ b4b120a
+  (https://tradrl-console.vercel.app). Verified on production: wizard values
+  survive 3 beat re-renders; the step gate advances cleanly on valid fields; the
+  FULL draft (goal + budget steps) survives a page reload (the versioned
+  scope-keyed storage record observed in localStorage); the identity surface
+  still live (Sign in / Create account). The Round H register is CLOSED; Round I
+  (the identity-origin re-measurement) follows.
