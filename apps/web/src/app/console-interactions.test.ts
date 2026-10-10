@@ -3023,6 +3023,46 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     expect(findByData(rig.root, 'data-sheet', 'job:job:a1b2c3d4')).not.toBeNull(); // AND the job's sheet opened — the same open path a row click takes
   });
 
+  it('FW-38-B (G-10): a NAV click with a sheet open navigates AND closes the sheet — ONE click, never a backdrop dismissal first (7 personas\' friction)', async () => {
+    // The pre-fix shape: the nav rail sat UNDER the sheet backdrop, so a
+    // nav click hit the backdrop (data-action sheet-close) — the sheet
+    // closed and the navigation NEVER happened; the second click was the
+    // one that navigated. The CSS half of the law (the rail above the
+    // backdrop) is pinned in shell/affordance-reach.test.ts; THIS is the
+    // handler half: the navigation that now reaches the rail closes the
+    // open sheet itself.
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, jobsSeamTransport().transport, 'prj-a');
+    // open the job sheet through the palette (the same open path a row click takes)
+    clickAction(rig, 'palette-open');
+    typePaletteQuery(rig, 'a1b2c3d4');
+    const item = elementsOf(rig.root).find((element) => element.hasClass('palette-item'));
+    if (item === undefined) throw new Error('no filtered palette item to click');
+    click(rig, item);
+    if (findByData(rig.root, 'data-sheet', 'job:job:a1b2c3d4') === null) throw new Error('the job sheet did not open');
+    // THE PIN — a SECTION nav: one click navigates AND closes the sheet
+    clickNav(rig, 'goal');
+    expect(rig.handle.state().selectedSection).toBe('goal');
+    expect(shellOf(rig.root).getAttribute('data-active-target')).toBe('goal');
+    expect(findByData(rig.root, 'data-sheet', 'job:job:a1b2c3d4')).toBeNull(); // the sheet closed with the navigation
+    // the landing views ride the same law (a HOME nav closes it too)
+    clickAction(rig, 'palette-open');
+    typePaletteQuery(rig, 'a1b2c3d4');
+    const again = elementsOf(rig.root).find((element) => element.hasClass('palette-item'));
+    if (again === undefined) throw new Error('no filtered palette item to re-open the sheet');
+    click(rig, again);
+    if (findByData(rig.root, 'data-sheet', 'job:job:a1b2c3d4') === null) throw new Error('the job sheet did not re-open');
+    clickNav(rig, 'home');
+    expect(shellOf(rig.root).getAttribute('data-active-target')).toBe('home');
+    expect(findByData(rig.root, 'data-sheet', 'job:job:a1b2c3d4')).toBeNull(); // closed again — one click, both effects
+    // and the palette's own sheet-opening product is NEVER clobbered by its own navigation (the openedSheet guard)
+    clickAction(rig, 'palette-open');
+    typePaletteQuery(rig, 'a1b2c3d4');
+    const third = elementsOf(rig.root).find((element) => element.hasClass('palette-item'));
+    if (third === undefined) throw new Error('no filtered palette item for the guard pin');
+    click(rig, third);
+    expect(findByData(rig.root, 'data-sheet', 'job:job:a1b2c3d4')).not.toBeNull(); // the selection's own sheet stays open
+  });
+
   it('a LAUNCHED scope survives the reload: the fresh boot\'s jobs read refills the kickoff job — Research lists it and the palette finds it (no session-local submission anywhere)', async () => {
     const api = jobsSeamTransport();
     // THE RELOAD: a fresh console scoped to the previously-launched project (the prior session's kickoff job lives in the backing's store)
@@ -5320,6 +5360,120 @@ describe('executed boot: FW-37-B F-2 — the consolidated multi-desk oversight s
     click(rig, item); // the modal selection law: navigates AND closes
     expect(findByData(rig.root, 'data-scaffold', 'oversight')).not.toBeNull(); // landed
     expect(findByData(rig.root, 'data-palette-input', 'true')).toBeNull();     // the palette closed
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-38-B (Round G register G-3 + G-4 — the truth wave's UI half, executed
+// through the mounted console): the org-status bundle (G-3 — the per-desk
+// cadence now reads the desk's OWN organization-status snapshot, so the
+// pill renders the ORG operating status) + the RETURN-TO-LIVE RECOVERY
+// (G-4 — L1's durability defect: after Time Machine use a transiently
+// failed re-read left the per-desk reads at honest-absence zeros,
+// persisting in LIVE until a project switch; returning to LIVE now
+// re-reads exactly the DEGRADED desks).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-38-B G-3 + G-4 — the org-status bundle + the return-to-LIVE oversight recovery', () => {
+  /** The G-3/G-4 transport: prj-a + prj-b session-owned; prj-a carries a bound org; /v1/risk/utilization serves both desks UNTIL `degraded` flips (the transient host failure), the org status route serves prj-a's compiled snapshot. */
+  function truthWaveTransport(): { readonly transport: ApiTransport; degrade(): void; heal(): void } {
+    let degraded = false;
+    const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-fw38', data } });
+    const notFound = () => ({ status: 404, headers: {}, body: { requestId: 'req-fw38', error: { code: 'not_found', message: 'no route', status: 404 } } });
+    const projectOf = (id: string, name: string, marker?: 'session-owned' | 'tenant-available', organizationRef: string | null = null): Record<string, unknown> => ({
+      id, tenantId: 'tenant-a', name, executionMode: 'simulation', consoleSessionScope: marker,
+      lifecycle: { projectId: id, status: 'draft', acceptanceCriteriaId: null, organizationRef },
+      lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+      createdAt: T0, updatedAt: T0,
+    });
+    const utilizationOf = (projectId: string) => ({
+      projectId,
+      asOf: '2026-10-09T19:35:00.000Z',
+      bounds: [
+        { constraintId: 'k-capital-budget', metric: 'outcome.capital.budget', boundMax: '2000000', severity: 'blocking', current: 2359999.92, source: 'the risk-limits refusal xgs:ref-1 observed at ... — a point-in-time gate observation', status: 'breach' },
+      ],
+      activeBreaches: [{ kind: 'risk_limits_refusal', submissionId: 'xgs:ref-1', auditId: 'xga:ref-1', stage: 'risk_limits', at: '2026-10-09T19:31:05.000Z', violations: [{ constraintId: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', severity: 'blocking', predicate: { kind: 'limit.max', bound: 2000000 }, observed: '2359999.92' }] }],
+      disclosure: 'the read\'s own disclosure',
+    });
+    const transport: ApiTransport = async (request) => {
+      // decodeURIComponent: the client percent-encodes path params (org%3Aalpha) — the scripted keys match the decoded form
+      const key = `${request.method} ${decodeURIComponent(request.path.split('?')[0])}`;
+      if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+      if (key === 'GET /v1/projects') return ok({ items: [
+        projectOf('prj-a', 'Alpha Desk', 'session-owned', 'org:alpha'),
+        projectOf('prj-b', 'Beta Desk', 'session-owned'),
+        projectOf('prj-demo-console', 'the TradRL demo project', 'tenant-available'),
+      ] });
+      if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Alpha Desk', 'session-owned', 'org:alpha'));
+      if (key === 'GET /v1/projects/prj-b') return ok(projectOf('prj-b', 'Beta Desk', 'session-owned'));
+      if (key === 'GET /v1/projects/prj-a/goal' || key === 'GET /v1/projects/prj-b/goal') return notFound();
+      if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+      if (key === 'POST /v1/outcomes/query') return ok({ items: [] });
+      if (key === 'GET /v1/execution/submissions') return ok({ items: [] });
+      if (key === 'GET /v1/jobs') return ok({ items: [] });
+      // G-3: the per-desk org-status read — prj-a's compiled org answers 'active'
+      if (key === 'GET /v1/organizations/org:alpha/status') return ok({ organizationRef: 'org:alpha', tenant: 'tenant-a', project: 'prj-a', status: 'active', at: T0, instanceRefs: ['ai:director-1'] });
+      // G-4: the standing utilization route serves both desks UNTIL the transient failure flips
+      if (key === 'GET /v1/risk/utilization') {
+        if (degraded) return notFound(); // the transiently failed re-read — the L1 shape
+        return ok(utilizationOf(new URLSearchParams(request.path.split('?')[1] ?? '').get('project') ?? 'prj-a'));
+      }
+      return notFound();
+    };
+    return { transport, degrade: () => { degraded = true; }, heal: () => { degraded = false; } };
+  }
+
+  it('G-3: the cadence reads each desk\'s OWN org-status snapshot and the pill renders the ORG status — never the project-record lifecycle "draft"', async () => {
+    const { transport } = truthWaveTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, transport, 'prj-a');
+    // the bundle carries prj-a's OWN org-status snapshot (paired with prj-a, never a crossed read)
+    const alpha = rig.handle.state().oversight.find((entry) => entry.projectId === 'prj-a');
+    if (alpha === undefined) throw new Error('the prj-a bundle is missing — the plane never landed it');
+    expect(alpha.orgStatus?.status).toBe('active');
+    expect(alpha.orgStatus?.project).toBe('prj-a');
+    // a desk without an org ref folds to the honest absence
+    expect(rig.handle.state().oversight.find((entry) => entry.projectId === 'prj-b')?.orgStatus ?? null).toBeNull();
+    clickNav(rig, 'oversight');
+    const card = findByData(rig.root, 'data-oversight-desk', 'prj-a');
+    if (card === null) throw new Error('the prj-a oversight card is missing');
+    // the pill renders the ORG status; the lifecycle "draft" keeps its own LABELED fact row, never the pill
+    const pillLabels = elementsOf(card).filter((element) => element.hasClass('pill-label')).map((element) => textOf(element));
+    expect(pillLabels).toContain('active');
+    expect(pillLabels).not.toContain('draft');
+    const factLabels = elementsOf(card).filter((element) => element.hasClass('fact-label')).map((element) => textOf(element));
+    expect(factLabels).toContain('project lifecycle');
+    expect(factLabels).toContain('organization status');
+  });
+
+  it('G-4 — THE PIN: scrub -> return to LIVE -> the per-desk reads recover WITHOUT a project switch (the degradation never persists)', async () => {
+    const { transport, degrade, heal } = truthWaveTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, transport, 'prj-a');
+    // healthy at boot: every session-own desk's bundle carries its utilization read
+    for (const desk of ['prj-a', 'prj-b']) {
+      const bootBundle = rig.handle.state().oversight.find((entry) => entry.projectId === desk);
+      if (bootBundle === undefined) throw new Error(`the ${desk} bundle is missing at boot`);
+      expect(bootBundle.utilization).not.toBeNull();
+    }
+    // the transient failure: the next refresh re-reads and REPLACES the good bundles (the L1 shape)
+    degrade();
+    await rig.handle.refresh();
+    const degradedAlpha = rig.handle.state().oversight.find((entry) => entry.projectId === 'prj-a');
+    if (degradedAlpha === undefined) throw new Error('the prj-a bundle is missing after the degraded refresh');
+    expect(degradedAlpha.utilization).toBeNull(); // the honest-absence zeros — the pre-fix PERSISTED here
+    // the Time Machine scrub (timestamp mode) — L1's reproduction window
+    scrubTo(rig, rig.handle.state().timeMachine.anchorAt - 500);
+    expect(rig.handle.state().timeMachine.mode).toBe('timestamp');
+    // the host heals; the user returns to LIVE — the recovery re-reads exactly the degraded desks
+    heal();
+    clickAction(rig, 'tm-mode-live');
+    await settle();
+    await settle();
+    expect(rig.handle.state().timeMachine.mode).toBe('live');
+    for (const desk of ['prj-a', 'prj-b']) {
+      const recovered = rig.handle.state().oversight.find((entry) => entry.projectId === desk);
+      if (recovered === undefined) throw new Error(`the ${desk} bundle is missing after the return to LIVE`);
+      expect(recovered.utilization).not.toBeNull(); // THE PIN: recovered without a project switch
+    }
   });
 });
 

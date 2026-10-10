@@ -28,6 +28,7 @@
 // identical serialized bytes.
 
 import { oversightRowsOf, oversightScopeNoteOf, type OversightDeskRow } from '../core/oversight';
+import type { StandingRow } from '../core/standing';
 import type { WorkspaceState } from '../core/workspace';
 import type { ShellView } from './shell';
 import { emptyState, loadingState, statusPill } from './components';
@@ -43,31 +44,88 @@ function oversightFactRow(label: string, value: string): VNode {
   ]);
 }
 
-/** The budget rows' fact pairs of a desk (capital + risk first, the fold's own order; every other bound after, verbatim). */
-function budgetFactRowsOf(row: OversightDeskRow): VNode[] {
-  if (row.budgets.length === 0) {
-    return [oversightFactRow('budgets on record', row.read === null ? 'no read on record for this desk yet' : 'none declared in this desk\'s standing read')];
+/**
+ * FW-38-B (G-3): the org-status pill's tone — the boundary's own
+ * vocabulary mapped to the shell's tones, DEFENSIVELY: a status the
+ * console does not know by name (the parallel wave's 'entry-blocked',
+ * or any future value) renders as itself with the warn tone, never
+ * re-decided, never swallowed.
+ */
+function orgStatusToneOf(orgStatus: string): 'live' | 'idle' | 'warn' {
+  if (orgStatus === 'active') return 'live';
+  if (orgStatus === 'forming') return 'idle';
+  return 'warn'; // suspended / terminated / entry-blocked / an unknown value — the blocked/abnormal family
+}
+
+/** One bound's fact rows — the fill-derived standing book vs the bound, the last gate observation LABELED (and withheld before its observed instant — G-5), the boundary's own non-observation number when the fills cannot produce one. */
+function standingFactRowsOf(row: StandingRow): VNode[] {
+  const facts: VNode[] = [
+    oversightFactRow(`${row.metric} (bound)`, row.boundMax.length === 0 ? 'no max-side bound declared' : formatNumberGrouped(Number(row.boundMax))),
+    oversightFactRow(`${row.metric} (standing — fill-derived book)`, row.standing === null
+      ? 'unknown — no fill-derived number on file'
+      : `${formatNumberGrouped(row.standing)} · ${row.standingStatus} (the desk\'s own fills at this view instant, never a gate observation)`),
+  ];
+  if (row.observation !== null) {
+    facts.push(oversightFactRow(`${row.metric} (last gate observation)`, row.observation.withheldAtView
+      ? `withheld — observed at ${row.observation.observedAtText}, after this view instant (L4; never rendered before its observed instant)`
+      : `${row.observation.value === null ? 'unknown — no defensible number on file' : formatNumberGrouped(row.observation.value)} · ${row.observation.status} — the refused candidate's projection (what the gate last refused), never the standing book`));
   }
-  return row.budgets.map((budget) => [
-    oversightFactRow(`${budget.metric} (bound)`, budget.boundMax.length === 0 ? 'no max-side bound declared' : formatNumberGrouped(Number(budget.boundMax))),
-    oversightFactRow(`${budget.metric} (standing)`, budget.current === null ? 'unknown — no defensible number on file' : `${formatNumberGrouped(budget.current)} · ${budget.status}`),
-  ]).flat();
+  if (row.served !== null) {
+    facts.push(oversightFactRow(`${row.metric} (served read)`, `${formatNumberGrouped(row.served.value)} · ${row.served.status} (the boundary's own ${row.standing === null ? 'non-fill-derived' : 'fill-derived'} computation on file)`));
+  }
+  return facts;
+}
+
+/** The standing rows' fact pairs of a desk (G-2: the fill-derived book first, capital + risk, every other bound after — the fold's own order). */
+function standingFactRowsOfDesk(row: OversightDeskRow): VNode[] {
+  if (row.standing.length === 0) {
+    return [oversightFactRow('standing rows', row.read === null ? 'no read on record for this desk yet' : 'none declared in this desk\'s standing read')];
+  }
+  return row.standing.map((bound) => standingFactRowsOf(bound)).flat();
 }
 
 /** ONE DESK CARD — the oversight row, in the product's own card language. */
 function oversightDeskCard(row: OversightDeskRow, viewAt: number, simulated: boolean): VNode {
-  const statusTone = row.status === 'active' ? 'live' : row.status === 'paused' || row.status === 'draft' ? 'idle' : 'warn';
+  // FW-38-B (Round G register G-3 — 6+ personas): the pill renders the
+  // desk's ORG operating status (compiled/active/entry-blocked/…),
+  // NEVER the project-record lifecycle "draft" — the lifecycle keeps
+  // its own labeled fact row below. No org snapshot on record = the
+  // honest "not compiled" absence, never a fabricated status; an
+  // unknown status value renders verbatim (orgStatusToneOf's defensive
+  // arm).
+  const pill = row.orgStatus === null
+    ? statusPill('idle', 'org not compiled', 'check-pill')
+    : statusPill(orgStatusToneOf(row.orgStatus), row.orgStatus, 'check-pill');
+  // FW-38-B (G-8's UI half — L2 + M3, the dead-desk silence): when the
+  // utilization read carries the desk-level ENTRY-BLOCKED status (the
+  // FW-38-A runtime contract, consumed defensively — absent on any
+  // backing that predates it), the card renders the cause LOUDLY, the
+  // first explanation surface a desk that never enters has: "this desk
+  // cannot enter: <reason>" with the named constraint beside it. The
+  // teaching reason is the runtime's own entry arithmetic ("the first
+  // candidate is 100% of the projected book … and 1 > 0.25, so no
+  // candidate can ever be admissible until the constraint is revised")
+  // — rendered verbatim, never re-written here. A silent desk with
+  // entryBlocked null renders NOTHING here: no structural cause is on
+  // record, and one is never fabricated.
+  const entryBlockedNote = row.entryBlocked === null ? [] : [v('p', { class: 'card-note decision-rationale', 'data-entry-blocked': row.projectId }, [
+    `this desk cannot enter: ${row.entryBlocked.reason}`,
+    ` (${row.entryBlocked.subject} · ${row.entryBlocked.predicateKind} bound ${row.entryBlocked.bound}, ${row.entryBlocked.severity} — constraint ${row.entryBlocked.constraintId})`,
+  ])];
   return v('div', { class: `card oversight-desk${row.demo ? ' oversight-desk-demo' : ''}`, 'data-oversight-desk': row.projectId }, [
     v('div', { class: 'card-title' }, [row.name]),
-    statusPill(statusTone, row.status, 'check-pill'),
+    pill,
     ...(row.demo ? [v('span', { class: 'badge badge-simulated', 'data-demo-tag': 'true', title: 'the shared demo project — every session\'s teaching desk' }, ['DEMO'])] : []),
     // FW-36-B (E-8, part 1) law at the oversight surface: EVERY desk row
     // carries the visible SIMULATED tag on the demo adapter — a copied
     // row ("fills 12 · breaches 1") never reads as a production desk.
     ...(simulated ? [v('span', { class: 'badge badge-simulated', 'data-simulated-tag': 'true', title: 'this row is simulated demo data — the console runs on the demo adapter' }, ['SIMULATED'])] : []),
+    ...entryBlockedNote,
     oversightFactRow('project', row.projectId),
     oversightFactRow('execution mode', row.executionMode),
-    ...budgetFactRowsOf(row),
+    oversightFactRow('project lifecycle', row.status),
+    ...(row.orgStatus === null ? [] : [oversightFactRow('organization status', row.orgStatus)]),
+    ...standingFactRowsOfDesk(row),
     oversightFactRow('fills on record (view instant)', String(row.fills)),
     oversightFactRow('refusals (gateway-stopped)', String(row.refusals)),
     oversightFactRow('decisions on record (view instant)', String(row.decisions)),
@@ -78,7 +136,9 @@ function oversightDeskCard(row: OversightDeskRow, viewAt: number, simulated: boo
       : []),
     ...(row.asOf === null
       ? [v('p', { class: 'hint' }, ['No standing utilization read is on record for this desk — nothing here is fabricated; the row serves when the host route answers this project.'])]
-      : [v('p', { class: 'hint' }, [`Standing read as of ${row.asOf} — the current instant, not projected to the view instant (point-in-time risk is not computable from the records on file).`])]),
+      : [v('p', { class: 'hint', 'data-oversight-asof': row.projectId }, [row.standingAsOf === null
+          ? `No fill or refusal observation is on record at this view instant — the standing rows above derive from nothing on record. The read itself was captured at ${row.asOf} (the read-capture instant, not the data's as-of).`
+          : `Standing book as of ${formatInstantUtc(row.standingAsOf)} — the data's own as-of: the newest fill or refusal observation the rows above derive from. The read itself was captured at ${row.asOf} (the read-capture instant, not the data's as-of).`])]),
   ]);
 }
 

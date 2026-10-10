@@ -53,6 +53,7 @@ import { scopedInbox, unreadCount, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
 import { viewAtOf, watchEventsOf, historyFloorOf, type WorkspaceState } from '../core/workspace';
 import { parseInstantUtc } from '../core/format';
+import { standingReadFoldOf, type StandingRow } from '../core/standing';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
 import type { WatchEvent } from '../core/watch';
 import { timelineBucketsOf, formatTimeUtc, type TimelineEntry } from '../core/timeline';
@@ -1370,7 +1371,16 @@ function latestLimitsEvaluationsOf(submissions: readonly GatewaySubmissionRecord
 function riskEnforcementSentenceOf(state: WorkspaceState): string {
   const evaluations = latestLimitsEvaluationsOf(state.submissions);
   if (evaluations.length === 0) {
-    return 'Which of these bind at the pre-trade gate is stated by the boundary\u2019s own evaluations, not by this list: the notional/budget subjects (book.notional, capital.budget, order.notional) and the realized-cumulative subjects (risk.budget, risk.maxDrawdown) bind where derivable; every other class is taught, not enforced. The boundary\u2019s per-constraint verdicts render below once the blotter serves them.';
+    // FW-38-B (Round G register G-9 — L2 + M3): the EMPTY-BLOTTER branch
+    // renders the CURRENT truth — NO observations yet — never the stale
+    // pre-FW-37 taxonomy fallback ("the notional/budget subjects ... bind
+    // where derivable; every other class is taught, not enforced"), a
+    // hardcoded string that contradicted the boundary's own cards the
+    // moment the gate binds every declared class (L2's rebuilt taxonomy:
+    // BOUND AT GATE all five, taught none). What binds derives from the
+    // LIVE limitsEvaluation rows — say exactly that, and say that none
+    // are on file yet.
+    return 'No gate evaluations are on file for this scope yet — nothing has been observed, so no class reads as binding or taught here; the boundary\'s own per-constraint verdicts render below the moment the blotter serves its first observation.';
   }
   const binding = evaluations.filter((row) => row.verdict !== 'not_gate_evaluable').map((row) => row.constraintId);
   const taught = evaluations.filter((row) => row.verdict === 'not_gate_evaluable').map((row) => row.constraintId);
@@ -1643,20 +1653,66 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       // says so); faking it would violate the anti-deception law.
       const utilization = state.riskUtilization;
       if (utilization !== null) {
+        // FW-38-B (Round G register G-2 + G-5 + G-12 — the truth wave, the
+        // round's top friction at 9 scopes): THE STANDING ROWS ARE THE
+        // FILL-DERIVED BOOK. The pre-fix panel rendered the read's own
+        // `current` as the standing utilization — and the boundary's read
+        // puts the LAST GATE OBSERVATION (the refused candidate's own
+        // projection) at precedence 1, so every compliant desk with one
+        // refusal on file read as a standing BREACH at 38-445x
+        // overstatement (L2: 15,033.7494 projected vs a 33.75 book), and
+        // the position standing read "unknown" while the blotter showed
+        // open fills. Now: the standing number + the breach stamp derive
+        // from THIS desk's own FILLS (core/standing.ts's fold over the
+        // L4-projected blotter — the same rows the Execution section
+        // renders at this view instant); the gate's projection stays
+        // visible but ONLY labeled as the last gate observation (never
+        // the standing book), and it NEVER renders before its own
+        // observed instant (G-5 — the same parseInstantUtc projection the
+        // breach rows below ride since FW-37-B); the footer cites the
+        // DATA'S OWN AS-OF (the newest fill or non-withheld observation
+        // the rows derive from), never the read-capture instant (G-12 —
+        // the served asOf is the capture; it is named separately, labeled
+        // as what it is).
+        const standingFold = standingReadFoldOf(utilization, projectToView(state.submissions, viewAt, availabilityOfSubmission), viewAt);
+        // FW-38-B (G-8's UI half — L2 + M3, the dead-desk silence): when
+        // the read carries the desk-level ENTRY-BLOCKED status (the
+        // FW-38-A runtime contract, PR #81, consumed defensively — an
+        // origin that predates the field serves nothing and NOTHING
+        // renders here), the Risk panel — the risk manager's one glance —
+        // names the cause LOUDLY before the standing rows: a desk that
+        // can never enter reads 0 fills / 0 refusals / 0 decisions, and
+        // THIS is why. null = no structural cause on record (never
+        // fabricated).
+        const entryBlockedNote = utilization.entryBlocked == null ? [] : [v('p', { class: 'card-note decision-rationale', 'data-risk-entry-blocked': 'true' }, [
+          `this desk cannot enter: ${utilization.entryBlocked.reason}`,
+          ` (${utilization.entryBlocked.subject} · ${utilization.entryBlocked.predicateKind} bound ${utilization.entryBlocked.bound}, ${utilization.entryBlocked.severity} — constraint ${utilization.entryBlocked.constraintId})`,
+        ])];
         rows.push(v('div', { class: 'card', 'data-risk-utilization': 'bounds' }, [
-          v('div', { class: 'card-title' }, ['Standing utilization']),
-          ...utilization.bounds.map((bound) => v('div', { class: 'decision-block', 'data-risk-bound': bound.constraintId }, [
+          v('div', { class: 'card-title' }, ['Standing utilization (the fill-derived book)']),
+          ...entryBlockedNote,
+          ...standingFold.rows.map((row) => v('div', { class: 'decision-block', 'data-risk-bound': row.constraintId }, [
             v('div', { class: 'stream-checks' }, [
-              v('span', { class: 'stream-label' }, [`${bound.severity} ${bound.constraintId} · ${bound.metric}`]),
-              statusPill(bound.status === 'ok' ? 'live' : bound.status === 'breach' ? 'warn' : 'idle', bound.status, 'check-pill'),
+              v('span', { class: 'stream-label' }, [`${row.metric} (bound ${row.boundMax.length === 0 ? 'none declared' : formatNumberGrouped(Number(row.boundMax))})`]),
+              // G-2: the pill is the FILL-DERIVED book's own verdict vs
+              // the bound — never the gate's, never the read's re-decided
+              // stamp over the projection.
+              statusPill(row.standingStatus === 'ok' ? 'live' : row.standingStatus === 'breach' ? 'warn' : 'idle', row.standingStatus, 'check-pill'),
             ]),
             ...factRows([
-              ['bound max', bound.boundMax === null ? 'none declared (no max-side numeric bound)' : formatNumberGrouped(Number(bound.boundMax))],
-              ['current', bound.current === null ? 'unknown — no defensible number on file' : formatNumberGrouped(bound.current)],
+              ['bound max', row.boundMax.length === 0 ? 'none declared (no max-side numeric bound)' : formatNumberGrouped(Number(row.boundMax))],
+              ['standing (fill-derived book)', row.standing === null ? 'unknown — no fill-derived number on file' : `${formatNumberGrouped(row.standing)} · ${row.standingStatus}`],
+              ...(row.observation === null ? [] : [row.observation.withheldAtView
+                ? ['last gate observation', `withheld — observed at ${row.observation.observedAtText}, after this view instant (L4; never rendered before its observed instant)`] as const
+                : ['last gate observation', `${row.observation.value === null ? 'unknown — no defensible number on file' : formatNumberGrouped(row.observation.value)} · ${row.observation.status} (the refused candidate's projection — what the gate last refused, never the standing book)`] as const]),
+              ...(row.served === null ? [] : [['served read', `${formatNumberGrouped(row.served.value)} · ${row.served.status}`]] as const),
             ]),
-            v('p', { class: 'hint', 'data-risk-source': bound.constraintId }, [bound.source]),
+            v('p', { class: 'hint', 'data-risk-source': row.constraintId }, [row.standingBasis]),
+            ...(row.observation !== null && !row.observation.withheldAtView ? [v('p', { class: 'hint', 'data-risk-observation': row.constraintId }, [row.observation.source])] : []),
           ])),
-          v('p', { class: 'hint' }, [`Standing read as of ${utilization.asOf} — the current instant, not projected to the view instant (point-in-time risk is not computable from the records on file).`]),
+          v('p', { class: 'hint', 'data-risk-asof': 'true' }, [standingFold.dataAsOf === null
+            ? `No fill or refusal observation is on record at this view instant — the standing rows above derive from nothing on record. The read itself was captured at ${utilization.asOf} (the read-capture instant, not the data's as-of).`
+            : `Standing book as of ${formatInstantUtc(standingFold.dataAsOf)} — the data's own as-of: the newest fill or refusal observation the rows above derive from. The read itself was captured at ${utilization.asOf} (the read-capture instant, not the data's as-of); point-in-time risk beyond the records' as-of is not computable from the records on file.`]),
         ]));
         rows.push(v('div', { class: 'card', 'data-risk-utilization': 'breaches' }, [
           // FW-37-B (Round F register F-6 — M2 found, M3 reproduced): the
@@ -1701,14 +1757,21 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
                   // candidate's own projection (the pre-trade arithmetic
                   // the gate refused — e.g. a projected book of 184,859.99
                   // against an actual book of 4,860). It is now labeled
-                  // unmistakably as the PROJECTION, and the STANDING book
-                  // on file (the matching bound's own current) renders
-                  // beside it — the breach card can no longer read as a
-                  // false standing breach.
-                  const standing = utilization.bounds.find((bound) => bound.constraintId === violation.constraintId);
+                  // unmistakably as the PROJECTION.
+                  //
+                  // FW-38-B (Round G register G-2 — L1: "the breach card's
+                  // 'standing book on file' then cites this same projection
+                  // — the two agree with each other, neither is the book"):
+                  // the book beside the projection is now the FILL-DERIVED
+                  // standing (the same core/standing.ts fold the standing
+                  // rows ride), never the read's own `current` — which at
+                  // precedence 1 IS the projection. The two can never
+                  // "agree with each other" again: the book is the desk's
+                  // own fills at this view instant.
+                  const standingRow = standingFold.rows.find((row) => row.constraintId === violation.constraintId) ?? null;
                   return v('div', { class: 'decision-block' }, [
                     factRow(`violation ${violation.constraintId}`, `${violation.subject} ${violationKind} bound vs projected ${violation.observed} (the refused candidate's own projection — what the gate refused, not the standing book)`),
-                    ...(standing === undefined || standing.current === null ? [] : [factRow('standing book on file', `${formatNumberGrouped(standing.current)} · ${standing.status} (the standing utilization row above)`)]),
+                    ...(standingRow === null || standingRow.standing === null ? [] : [factRow('standing book (fill-derived)', `${formatNumberGrouped(standingRow.standing)} · ${standingRow.standingStatus} — the desk's own fills at this view instant, never the gate's projection`)]),
                   ]);
                 })),
                 ...(breach.rationale === undefined ? [] : [v('p', { class: 'card-note decision-rationale' }, [breach.rationale])]),

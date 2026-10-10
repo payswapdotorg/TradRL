@@ -41,6 +41,8 @@ import { runWorkspaceExport } from '../core/export-flow';
 import type { WorkspaceScope } from '../core/tenant';
 import { DEMO_PROJECT_ID, isLaunchpadScope, LAUNCHPAD_PROJECT_ID, sessionOwnDesksOf } from '../core/tenant';
 import type { OversightDeskRead } from '../core/oversight';
+import { readOversightPlane, recoverOversightPlane } from './oversight-plane';
+import { attachedToRoot, type PendingPress } from './press';
 import type { ThemeName, ThemeStorage } from '../core/theme';
 import { persistTheme } from '../core/theme';
 import { isShellTarget } from '../core/nav';
@@ -158,20 +160,6 @@ export interface ConsoleHandle {
 export interface ClickTarget {
   closest?(selector: string): { getAttribute(name: string): string | null; readonly tagName: string } | null;
   readonly tagName: string;
-}
-
-/**
- * A captured press affordance (D-6a, W-25C — the beat-render click
- * race): the element the pointer pressed at MOUSEDOWN (the resolved
- * `[data-action]` / `BUTTON[data-target]`) plus which delegated
- * vocabulary it resolved to. The click handler replays it only when
- * the composed click itself resolved to NO affordance and the beat
- * re-projection replaced the pressed element mid-press.
- */
-export interface PendingPress {
-  readonly kind: 'action' | 'target';
-  readonly element: { getAttribute(name: string): string | null; readonly tagName: string };
-  readonly key: string;
 }
 
 /** The delegated-click listener's minimal event shape. */
@@ -427,6 +415,23 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     dispatch(event);
   }
 
+  /**
+   * FW-38-B: the oversight plane's injected seams (the export-flow.ts
+   * pattern — app/oversight-plane.ts owns the cadence, this console
+   * owns the closure state, read LIVE at use time). The plane rides
+   * the same frozen routes, dispatch and injected instants this
+   * console's own reads ride.
+   */
+  function oversightPlaneSeams() {
+    return {
+      client,
+      dispatch,
+      nowMs: () => instants.nowMs(),
+      directory: () => state.projectDirectory,
+      bundles: () => state.oversight,
+    };
+  }
+
   async function refresh(): Promise<void> {
     // The scope THIS bundle reads for, captured before the first await:
     // a mid-flight adoption (a launch, a switch) supersedes it, the
@@ -531,48 +536,24 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
       });
       // FW-37-B (Round F register F-2 — the consolidated oversight
-      // surface): THE OVERSIGHT READ CADENCE. One bundle per SESSION-OWN
+      // surface) + FW-38-B (Round G register G-3 — the org-status bundle
+      // field): THE OVERSIGHT READ CADENCE, one bundle per SESSION-OWN
       // desk (core/tenant.ts's sessionOwnDesksOf — the session's own
       // launched projects plus the shared demo desk; another session's
       // desks NEVER enter, the L12 workspace boundary the switcher and
-      // the palette ride since this same wave), each collected through
-      // the SAME frozen routes every section rides (the standing
-      // risk-utilization read, the execution blotter, the decision
-      // stream) and dispatched as the cross-desk `oversight-read` event
-      // the fold renders. Degrades SILENTLY per desk, exactly like the
+      // palette ride since FW-37-B), each collected through the SAME
+      // frozen routes every section rides (the standing risk-utilization
+      // read, the execution blotter, the decision stream, and — new this
+      // wave — the desk's own org-status snapshot, G-3) and dispatched as
+      // the cross-desk `oversight-read` event the fold renders. The whole
+      // plane lives in app/oversight-plane.ts (the export-flow.ts
+      // extraction pattern — console.ts's 160 KiB single-file payload
+      // budget); it degrades SILENTLY per desk, exactly like the
       // goal/utilization reads: a desk without records on the host is
       // the host's answer (the fold renders the honest "no read on
       // record" row — never a fabricated number, never a degradation
       // note for a route the host never promised that desk).
-      for (const desk of sessionOwnDesksOf(state.projectDirectory, DEMO_PROJECT_ID)) {
-        const deskId = desk.id;
-        try {
-          let utilization: Awaited<ReturnType<ConsoleClient['risk']['utilization']>> | null = null;
-          try {
-            utilization = await client.risk.utilization(deskId);
-          } catch {
-            utilization = null; // the host's honest answer for this desk — the fold names the absence
-          }
-          let submissions: readonly (Awaited<ReturnType<ConsoleClient['execution']['submissions']>>['items'][number])[] = [];
-          try {
-            submissions = [...(await client.execution.submissions(deskId)).items];
-          } catch {
-            submissions = [];
-          }
-          let decisions: readonly (Awaited<ReturnType<ConsoleClient['outcomes']['query']>>['items'][number])[] = [];
-          try {
-            decisions = [...(await client.outcomes.query({ project: deskId, at: instants.nowMs() })).items];
-          } catch {
-            decisions = [];
-          }
-          const bundle: OversightDeskRead = { projectId: deskId, utilization, submissions, decisions, readAt: instants.nowMs() };
-          dispatch({ kind: 'oversight-read', at: instants.nowMs(), read: bundle });
-        } catch {
-          // a desk whose bundle could not compose at all keeps its prior
-          // bundle (or its honest absence) — the oversight surface degrades
-          // per desk, never crashes the bundle.
-        }
-      }
+      await readOversightPlane(oversightPlaneSeams());
       const projectId = bundleScope;
       if (projectId === LAUNCHPAD_PROJECT_ID) return;
       // THE BUNDLE'S OWN ORG-REF CAPTURE (D-7, W-27 — the org-status
@@ -1552,16 +1533,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // over nothing interactive, element never replaced) stays cancelled
     // exactly as the browser intended.
     let pendingPress: PendingPress | null = null;
-    /** Whether an element still belongs to the mounted tree — a beat re-projection detaches the whole previous projection, so a mid-press replacement leaves the pressed element orphaned (its parent chain no longer reaches the mount root). */
-    const attachedToRoot = (element: unknown): boolean => {
-      let node: unknown = element;
-      while (node !== null && node !== undefined) {
-        if (node === root) return true;
-        const parentNode = (node as { readonly parentNode?: unknown }).parentNode;
-        node = parentNode !== null && parentNode !== undefined ? parentNode : (node as { readonly parent?: unknown }).parent;
-      }
-      return false;
-    };
+    /** (The attachedToRoot test + the D-6a machinery live in app/press.ts — extracted by FW-38-B for the payload budget.) */
     document.addEventListener('mousedown', (event) => {
       pointerDown = true;
       // D-6a: capture the press intent — the nearest [data-action]
@@ -1962,7 +1934,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // it) never replays.
       const press = pendingPress;
       pendingPress = null;
-      if (press !== null && !navResolved && actionKind === null && sheetRef === null && !attachedToRoot(press.element)) {
+      if (press !== null && !navResolved && actionKind === null && sheetRef === null && !attachedToRoot(root, press.element)) {
         if (press.kind === 'action') {
           action = press.element;
           actionKind = press.key;
@@ -2033,6 +2005,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           // exactly like home/inbox/settings (the workspace-level
           // consolidated multi-desk view — the Overview group's second
           // target; the selected section is untouched by it).
+          // FW-38-B (Round G register G-10 — 7 personas): a navigation
+          // past an OPEN SHEET closes the sheet — one click navigates AND
+          // closes, never a second click to dismiss the backdrop first
+          // (the pre-fix rail sat under the sheet backdrop, so the nav
+          // click hit the backdrop and only closed the sheet). A palette
+          // selection that OPENED a sheet (openedSheet) keeps it — that
+          // sheet is the selection's own product.
+          if (view.sheet !== null && openedSheet === null) view = { ...view, sheet: null };
           if (id === 'home' || id === 'oversight' || id === 'inbox' || id === 'settings') {
             view = { ...view, accountView: id, drawerOpen: false };
             render();
@@ -2080,7 +2060,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           const noticeId = action.getAttribute('data-notice-read');
           if (noticeId !== null) dispatch({ kind: 'notice-read', at: instants.nowMs(), noticeId }); // renders via onState
         }
-        if (kind === 'view-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
+        if (kind === 'view-live') {
+          dispatch({ kind: 'view-live', at: instants.nowMs() });
+          // FW-38-B (Round G register G-4 — L1): the RETURN-TO-LIVE
+          // recovery — a degraded per-desk read (no utilization, an
+          // empty blotter) re-reads on the way back to LIVE, so a
+          // transiently failed re-read never persists until a project
+          // switch. Bounded + user-triggered (the healthy desks never
+          // re-read, the recovery never loops on its own).
+          void recoverOversightPlane(oversightPlaneSeams());
+        }
         if (kind === 'view-tminus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
         // §4.8 + R10 (W-25C): the playback control's THREE faces — the
         // same button arms playback (from any other mode), PAUSES it
@@ -2141,7 +2130,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         // §4.8: the Time Machine mode select + playback stepping (pure dispatches —
         // the state machine owns the transitions; the L4 projection is upstream).
-        if (kind === 'tm-mode-live') dispatch({ kind: 'view-live', at: instants.nowMs() });
+        if (kind === 'tm-mode-live') {
+          dispatch({ kind: 'view-live', at: instants.nowMs() });
+          // FW-38-B (G-4): the same return-to-LIVE recovery on the mode
+          // select's LIVE arm (the pin: scrub -> return to LIVE -> the
+          // reads recover without a project switch).
+          void recoverOversightPlane(oversightPlaneSeams());
+        }
         if (kind === 'tm-mode-t-minus') dispatch({ kind: 'view-tminus', at: instants.nowMs(), tMinusMs: 60_000 });
         if (kind === 'tm-mode-timestamp') dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: state.timeMachine.anchorAt - 60_000 });
         // MI-D9 — THE MANUAL STEPS. Pre-fix, BOTH controls were wired to

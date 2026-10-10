@@ -46,7 +46,19 @@
   flex-direction: column;
   background: var(--sidebar);
   border-right: 1px solid var(--sidebar-border);
-  z-index: 20;
+  /* FW-38-B (Round G register G-10 — 7 personas): the nav rail stays
+     INTERACTIVE while a sheet is open. The pre-fix rail sat at z-index 20
+     — UNDER the job sheet's fixed backdrop (40) — so every nav click
+     while a sheet was open hit the backdrop: the sheet closed, the
+     navigation did not happen, and the persona needed a SECOND click
+     ("the job-sheet backdrop blocks nav clicks until an explicit
+     Close"). The rail now sits BETWEEN the sheet (41) and the toasts
+     (60): the backdrop dims the content but never covers the rail, and
+     the nav handler closes the open sheet itself (one click navigates
+     AND closes). The rail never overlaps the sheet on any >=768px
+     viewport (256px + 28rem = 704px), and the mobile drawer keeps its
+     own pre-change stacking (z-index 20 in the <768px block below). */
+  z-index: 45;
   /* D-10 (W-29): THE SIDEBAR IS THE ONE SCROLL CONTAINER. The whole
      column — brand row, search affordance, the nav, the connection
      zone — flows as one scrollable document: a wheel anywhere over
@@ -293,8 +305,14 @@
   }
   .menu-button:hover { background: var(--muted); }
   .menu-icon { width: 20px; height: 20px; }
-  /* The drawer: the sidebar slides in (300ms, the charter's curve). */
+  /* The drawer: the sidebar slides in (300ms, the charter's curve).
+     z-index 20 is the pre-FW-38-B mobile stacking, restated on purpose:
+     the desktop rail's G-10 lift (z-index 45 above the sheet backdrop)
+     is a DESKTOP law — the mobile drawer keeps painting under the sheet
+     + backdrop pair exactly as before (the sheet is full-width at this
+     width; a lifted drawer would cover the open record's own surface). */
   .shell-sidebar {
+    z-index: 20;
     transform: translateX(-100%);
     transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
     box-shadow: none;
@@ -535,8 +553,10 @@
    the bar's tallest wrapped layout (the modes row + the controls row +
    the notice line + the FW-33-B speed-caption line + padding); manual
    scrolling was always able to move content past a top-sticky bar,
-   and the z-index ladder keeps every overlay above it (sheet 40/41,
-   toasts 60, palette 70/71, the onboarding overlay 80). */
+   and the z-index ladder keeps every overlay above it (sheet 40/41, the
+   desktop nav rail 45 — the G-10 lift, above the sheet backdrop but
+   never the sheet itself; toasts 60, palette 70/71, the onboarding
+   overlay 80). */
 :root { --tm-bar-reserve: 124px; }
 html { scroll-padding-top: calc(var(--tm-bar-reserve) + 8px); }
 @media (max-width: 767px) {
@@ -1151,6 +1171,36 @@ details.list-row > summary::-webkit-details-marker { display: none; }
 .confirm-cancel { border: 1px solid var(--border); background: var(--card); color: var(--foreground); }
 .confirm-go { background: var(--primary); color: var(--primary-foreground); }
 .confirm-go:hover, .confirm-cancel:hover { filter: brightness(0.97); }
+
+/* FW-38-B (Round G register G-7 — 3-6/6 launches, the highest-frequency
+   friction left; verified live on the deployed console): the primary
+   flow's action affordances RIDE THE FOLD. The "Next: <step>" row (and
+   the review step's arm/confirm controls) sit at the END of a long
+   card; whenever the card straddles the fold the buttons' click points
+   sit BELOW the viewport — a click there resolves to the inert root
+   (<html>) and the delegated resolver, rightly, finds no affordance:
+   the press SILENTLY NO-OPS (the reproduction: the button's bottom
+   27px below the fold, five consecutive clicks all landing on <html>,
+   step unchanged, no error, nothing disabled). The row is STICKY within
+   the wizard card: whenever any part of the card is on screen its
+   actions are IN the viewport, so the primary flow's affordances are
+   never below the fold — a fully-visible card renders the row in its
+   natural place (sticky only bites when the row would otherwise leave
+   the viewport). */
+.launch-wizard .tm-playback,
+.launch-wizard .confirm-arm,
+.launch-wizard .confirm-inline {
+  position: sticky;
+  bottom: 12px;
+  z-index: 5;
+}
+.launch-wizard .tm-playback {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px;
+  box-shadow: 0 12px 24px rgb(0 0 0 / 0.08);
+}
 
 /* ---------------------------------------------------------------------------
    §4.13/§4.14 THE DISCOVERABILITY LAYER (T051) — the command palette
