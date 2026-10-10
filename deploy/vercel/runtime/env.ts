@@ -26,6 +26,15 @@ export interface ApiDeploymentEnv {
   readonly apiInternalToken: string | null;
   /** The internal credential's service principal name. */
   readonly apiInternalPrincipal: string | null;
+  /**
+   * The PRINCIPAL AUTH token-signing key (FW-39-1, optional): the HMAC
+   * key the host-owned /v1/auth/* routes sign + verify principal session
+   * tokens with (Node platform crypto — the zero-dep law). When ABSENT the
+   * auth routes answer the typed not-available 503 (R46 — the surface
+   * requires configuration, never a fallback key derived from another
+   * credential). NAMES only in errors, never values.
+   */
+  readonly authTokenKey: string | null;
   /** The explicit backing override (`TRADRL_DEPLOY_BACKING`): the raw string, `null` when unset (validated at the composition seam — fail-closed). */
   readonly deployBacking: string | null;
   /** The durable-provider keys PRESENT in the source (NAMES only, never values) — the auto-resolution input for the backing. */
@@ -54,6 +63,7 @@ export const API_ENV_KEYS = {
   apiDeveloperPrincipal: 'TRADRL_API_DEVELOPER_PRINCIPAL',
   apiInternalToken: 'TRADRL_API_INTERNAL_TOKEN',
   apiInternalPrincipal: 'TRADRL_API_INTERNAL_PRINCIPAL',
+  authTokenKey: 'TRADRL_AUTH_TOKEN_KEY',
   deployBacking: 'TRADRL_DEPLOY_BACKING',
 } as const;
 
@@ -107,6 +117,7 @@ export function readApiEnv(env: EnvSource = process.env): ApiDeploymentEnv {
     apiDeveloperPrincipal: read(env, API_ENV_KEYS.apiDeveloperPrincipal),
     apiInternalToken: read(env, API_ENV_KEYS.apiInternalToken),
     apiInternalPrincipal: read(env, API_ENV_KEYS.apiInternalPrincipal),
+    authTokenKey: read(env, API_ENV_KEYS.authTokenKey),
     deployBacking: read(env, API_ENV_KEYS.deployBacking),
     durableProviderKeysPresent: DURABLE_PROVIDER_ENV_KEYS.filter((key) => read(env, key) !== null),
     providers: readProviderEnv(env),

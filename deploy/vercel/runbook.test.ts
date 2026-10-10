@@ -437,7 +437,7 @@ describe('deploy/vercel — the W-28 runbook: the verify route (information_sche
     }
   });
 
-  it('the coverage summary is correct for the present/missing mix: the demo project\'s INSERTed tables present before any apply; tradrl_jobs absent; ALL 7 present after apply', async () => {
+  it('the coverage summary is correct for the present/missing mix: the demo project\'s INSERTed tables present before any apply; tradrl_jobs absent; ALL 9 present after apply (FW-39-1: the two auth tables included)', async () => {
     const providers = fakeProviders();
     const deployment = composeInstance(runbookSource(), providers.fetchLike);
     expect(deployment.ok).toBe(true);
@@ -446,8 +446,10 @@ describe('deploy/vercel — the W-28 runbook: the verify route (information_sche
     // Neon — the demo world's knowledge, outcomes, post-mortems, project
     // record, project goal, project event all INSERT; the demo project's
     // JOBS are excluded from the durable write-through — they stay
-    // per-instance by design). The verify route therefore reports 6/7
-    // tables present before any apply (tradrl_jobs absent).
+    // per-instance by design). The verify route therefore reports 6/9
+    // tables present before any apply (tradrl_jobs + FW-39-1's two auth
+    // tables absent — nothing registers a principal before the auth routes
+    // are called, and the runbook step has not run).
     expect((await drive(deployment, streamingRequest({ method: 'GET', url: '/v1/meta', headers: DEV_BEARER }))).status).toBe(200);
     const beforeApply = await drive(deployment, streamingRequest({ method: 'GET', url: '/internal/deploy/ddl/verify', headers: INTERNAL_BEARER }));
     expect(beforeApply.status).toBe(200);
@@ -464,27 +466,30 @@ describe('deploy/vercel — the W-28 runbook: the verify route (information_sche
     // the durable write-through — they stay per-instance; no row ever
     // landed in the tradrl_jobs table on the demo project's behalf).
     expect(beforeMap.get('tradrl_jobs')).toBe(false);
-    expect(beforeData.coverage).toBe('6/7 tables present');
+    expect(beforeData.coverage).toBe('6/9 tables present');
+    // FW-39-1: the identity substrate's two tables are ABSENT before any apply (no register call, no DDL).
+    expect(beforeMap.get('tradrl_auth_principals')).toBe(false);
+    expect(beforeMap.get('tradrl_auth_revocations')).toBe(false);
 
     // AFTER APPLY: every DDL record creates its table; the verify reports
-    // 7/7 tables present (the honest coverage summary).
+    // 9/9 tables present (the honest coverage summary).
     const apply = await drive(deployment, streamingRequest({ method: 'POST', url: '/internal/deploy/ddl/apply', headers: INTERNAL_BEARER }));
     expect(apply.status).toBe(200);
     const afterApply = await drive(deployment, streamingRequest({ method: 'GET', url: '/internal/deploy/ddl/verify', headers: INTERNAL_BEARER }));
     expect(afterApply.status).toBe(200);
     const afterData = (afterApply.body as { data: { tables: readonly { table: string; exists: boolean }[]; coverage: string } }).data;
     expect(afterData.tables.every((entry) => entry.exists)).toBe(true);
-    expect(afterData.coverage).toBe('7/7 tables present');
+    expect(afterData.coverage).toBe('9/9 tables present');
   });
 
-  it('on a fresh database (no boot world, no INSERTs): the verify reports 0/7 tables present before any apply; 7/7 after', async () => {
+  it('on a fresh database (no boot world, no INSERTs): the verify reports 0/9 tables present before any apply; 9/9 after', async () => {
     const providers = fakeProviders();
     const deployment = composeInstance(runbookSource(), providers.fetchLike);
     expect(deployment.ok).toBe(true);
     if (!deployment.ok) return;
     expect(deployment.durable).not.toBeNull();
     // BEFORE THE BOOT WORLD: settle the projection over an empty durable
-    // store (no INSERTs, no DDL). The verify route reports 0/7 tables
+    // store (no INSERTs, no DDL). The verify route reports 0/9 tables
     // present — the honest coverage summary against an empty database
     // (the runbook's whole point: the Lead calls verify FIRST to see
     // the gap, THEN apply to heal it).
@@ -493,16 +498,16 @@ describe('deploy/vercel — the W-28 runbook: the verify route (information_sche
     expect(direct.ok).toBe(true);
     if (direct.ok) {
       expect(direct.tables.every((entry) => entry.exists === false)).toBe(true);
-      expect(direct.coverage).toBe('0/7 tables present');
+      expect(direct.coverage).toBe('0/9 tables present');
     }
-    // AFTER APPLY: 7/7 tables present.
+    // AFTER APPLY: 9/9 tables present.
     const applied = await deployment.durable!.runbook.applyDdl();
     expect(applied.ok).toBe(true);
     const verified = await deployment.durable!.runbook.verifyDdl();
     expect(verified.ok).toBe(true);
     if (verified.ok) {
       expect(verified.tables.every((entry) => entry.exists === true)).toBe(true);
-      expect(verified.coverage).toBe('7/7 tables present');
+      expect(verified.coverage).toBe('9/9 tables present');
     }
   });
 });
@@ -594,9 +599,9 @@ describe('deploy/wire/smoketest — the W-28 fake extension (the W-27 precedent:
     const before = await deployment.durable!.runbook.verifyDdl();
     expect(before.ok).toBe(true);
     if (before.ok) {
-      // The fresh, no-boot-world database: 0/7 tables present (no INSERTs,
+      // The fresh, no-boot-world database: 0/9 tables present (no INSERTs,
       // no DDL).
-      expect(before.coverage).toBe('0/7 tables present');
+      expect(before.coverage).toBe('0/9 tables present');
     }
 
     // APPLY: the fake receives the DDL statements and answers the DML
@@ -616,7 +621,7 @@ describe('deploy/wire/smoketest — the W-28 fake extension (the W-27 precedent:
     expect(verified.ok).toBe(true);
     if (verified.ok) {
       expect(verified.tables.every((entry) => entry.exists === true)).toBe(true);
-      expect(verified.coverage).toBe('7/7 tables present');
+      expect(verified.coverage).toBe('9/9 tables present');
     }
   });
 });

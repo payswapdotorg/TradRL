@@ -155,7 +155,7 @@ import type {
 import { canonicalJson, isJobRecord } from '../../../services/api/src/index';
 import { fakeJobSubmission } from '../../../services/api/src/fixtures';
 import { DEMO_PROJECT_ID, demoSeedJobPrimingLatch, launchWorldOfSpec, withDerivedGoalHorizonLabel, OUTCOME_DURABLE_LANE_FIELD, type OutcomeDurableWriteLane, type OutcomeLearningPortWithDurableLane } from './demo';
-import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonProjectStore, ownerSessionOf, type GoalSetRecord, type NeonStoreDeps, type SessionProjectRow } from '../../adapters/neon/stores';
+import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonPrincipalStore, NeonProjectStore, ownerPrincipalOf, ownerSessionOf, type GoalSetRecord, type NeonStoreDeps, type SessionProjectRow } from '../../adapters/neon/stores';
 import { executeNeonStatement, type NeonConfig } from '../../adapters/neon/client';
 import { NEON_DDL_RECORDS } from '../../adapters/neon/schema';
 import type { ServedKnowledgeMirror } from '../../adapters/neon/mirrors';
@@ -440,6 +440,36 @@ export interface DurableBackingHandle {
    */
   stampSessionOwner(tenant: string, projectId: string, session: string): Promise<{ readonly stamped: boolean }>;
   /**
+   * THE PRINCIPAL CREDENTIAL STORE (FW-39-1, the identity wave 1): the
+   * principals registry + the token revocation list the host-owned auth
+   * routes (runtime/auth-routes.ts) compose over — the SAME Neon
+   * SQL-over-HTTP client the durable stores compose over, no new
+   * dependency. Schema-level surface (the tradrl_auth_principals +
+   * tradrl_auth_revocations tables — additive DDL, the W-28 runbook
+   * precedent); L12 by construction (every statement scopes the seam's
+   * credential tenant as bind parameter 1).
+   */
+  readonly principals: NeonPrincipalStore;
+  /**
+   * THE PRINCIPAL-OWNERSHIP STAMP (FW-39-1): merge the additive
+   * `ownerPrincipal` field into the project's goal-set row payload (the
+   * SAME opaque-column precedent as `ownerSession`/`world` — BESIDE
+   * `ownerSession`, never replacing it: lineage preserved) and queue the
+   * durable write onto the SAME pending drain the create's own writes
+   * ride (the ordering law — the caller drains before the response; a
+   * failed write is the typed 503 + the re-projection). Called by the
+   * host's create-stamp (a create whose request carried a VALID principal
+   * token) and by the adoption route (POST /v1/auth/adopt — the calling
+   * session's OWN desks only, the visibility law at the ROUTE). IDEMPOTENT:
+   * a row already carrying the same owner writes NOTHING and reports
+   * `changed: false` (the adoption route's per-desk honest response
+   * consumes the bit — the deviation from stampSessionOwner's shape is
+   * deliberate: a NEW seam, born with its own contract). A foreign tenant
+   * is refused (L12); a row with no goal set on record is unstamped
+   * (fail-closed, disclosed — the common path is exact).
+   */
+  stampPrincipalOwner(tenant: string, projectId: string, principalId: string): Promise<{ readonly stamped: boolean; readonly changed: boolean }>;
+  /**
    * THE SESSION-LISTING READ (FW-MI-A, MI-D1): the tenant's project rows
    * LEFT JOINed with their goal-set rows (NeonProjectStore's
    * projectSessionRowsOf — one round trip). FRESH BY CONSTRUCTION: the
@@ -616,6 +646,9 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   const outcomeStore = new NeonOutcomeLearningStore(neonDeps);
   const projectStore = new NeonProjectStore(neonDeps);
   const jobStore = new NeonJobStore(neonDeps);
+  // FW-39-1 (the identity wave 1): the principal credential store — the
+  // same Neon deps, the same SQL-over-HTTP client (no new dependency).
+  const principalStore = new NeonPrincipalStore(neonDeps);
 
   // The mutable projection state. `current` swaps ATOMICALLY at the end of
   // a successful projection (the event loop makes the swap synchronous);
@@ -1570,6 +1603,35 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     return projectStore.projectSessionRowsOf(deps.tenant);
   }
 
+  /**
+   * THE PRINCIPAL-OWNERSHIP STAMP (FW-39-1): merge the additive
+   * `ownerPrincipal` into the project's goal-set row (the `ownerSession`
+   * stamp's exact pattern — the live overlay first, else a fresh store
+   * read; the write queues onto the SAME pending drain) and report the
+   * idempotency bit (`changed` — false when the row already carried this
+   * owner, no write queued). See the handle interface for the full law.
+   */
+  async function stampPrincipalOwner(tenant: string, projectId: string, principalId: string): Promise<{ readonly stamped: boolean; readonly changed: boolean }> {
+    if (tenant !== deps.tenant) return { stamped: false, changed: false }; // L12 — the stamp keys on the seam's credential tenant, never a request value
+    // The merge source: the live overlay first (a create's own stamp or an
+    // earlier adoption just set it), else a fresh store read (the
+    // cross-instance adoption — the row lives in the durable truth only);
+    // a failed read there skips the stamp (fail-closed, disclosed, never a
+    // thrown failure on the response path).
+    let existing: GoalSetRecord | null = liveGoalSets.get(projectId) ?? null;
+    if (existing === null) {
+      const read = await projectStore.goalSetOf(deps.tenant, projectId);
+      if (!read.ok) return { stamped: false, changed: false };
+      existing = read.value;
+    }
+    if (existing === null) return { stamped: false, changed: false }; // no goal set on record — nothing to stamp (the project cannot reconstruct either)
+    if (ownerPrincipalOf(existing) === principalId) return { stamped: true, changed: false }; // idempotent — the durable truth already carries this owner
+    const merged: GoalSetRecord = { ...existing, ownerPrincipal: principalId }; // BESIDE ownerSession — lineage preserved
+    liveGoalSets.set(projectId, merged);
+    pending.push({ label: 'goalset.principal.put', run: () => projectStore.putGoalSet(deps.tenant, projectId, merged) });
+    return { stamped: true, changed: true };
+  }
+
   /** THE FRESH TENANT-WIDE JOBS READ (FW-31-B): the durable tables, never the projection — the staleness heal's data source. */
   async function freshJobRecordsOfTenant(): Promise<StoreResult<readonly JobRecord[]>> {
     const rows = await jobStore.jobRecordsOfTenant(deps.tenant);
@@ -1615,6 +1677,8 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     beginJobHydration,
     endJobHydration,
     stampSessionOwner,
+    principals: principalStore,
+    stampPrincipalOwner,
     sessionProjectRows,
     freshJobRecordsOfTenant,
     organizationBoundAtOf,

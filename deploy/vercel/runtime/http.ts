@@ -30,6 +30,7 @@
 
 import type { ApiRequest, ApiResponse } from '../../../services/api/src/contracts';
 import { CONSOLE_SESSION_HEADER } from './session-routes';
+import { PRINCIPAL_TOKEN_HEADER } from './auth-routes';
 
 /**
  * The function's mount path: the prebuilt .func lives at
@@ -153,7 +154,7 @@ export type WrappedApiRequest =
 /** Build the ApiRequest the T041 pipeline consumes (the path recovered, the headers forwarded — everything untrusted). */
 export async function toApiRequest(request: FunctionRequest): Promise<WrappedApiRequest> {
   const method = (request.method ?? 'GET').toUpperCase();
-  const headers: { authorization?: string; 'idempotency-key'?: string; 'x-tradrl-console-session'?: string } = {};
+  const headers: { authorization?: string; 'idempotency-key'?: string; 'x-tradrl-console-session'?: string; 'x-tradrl-principal-token'?: string } = {};
   const authorization = firstHeader(request, 'authorization');
   if (authorization !== undefined) headers.authorization = authorization;
   const idempotencyKey = firstHeader(request, 'idempotency-key');
@@ -164,6 +165,12 @@ export async function toApiRequest(request: FunctionRequest): Promise<WrappedApi
   // extra key; only the host's additive routes read it).
   const consoleSession = firstHeader(request, CONSOLE_SESSION_HEADER);
   if (consoleSession !== undefined) headers[CONSOLE_SESSION_HEADER] = consoleSession;
+  // FW-39-1 (the identity wave 1): the principal token rides the wrapped
+  // request through to the host-owned auth routes + the session marker fold
+  // + the create-stamp (runtime/auth-routes.ts — the same extra-key law as
+  // the console session header: the frozen boundary ignores it).
+  const principalToken = firstHeader(request, PRINCIPAL_TOKEN_HEADER);
+  if (principalToken !== undefined) headers[PRINCIPAL_TOKEN_HEADER] = principalToken;
   let body: unknown = undefined;
   if (method !== 'GET' && method !== 'HEAD') {
     const parsed = await readJsonBody(request);
