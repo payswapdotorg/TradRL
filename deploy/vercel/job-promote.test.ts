@@ -351,15 +351,89 @@ describe('runtime/job-promote — the mint, the registry and the seam wrapper (u
     expect(passedThrough.ok).toBe(false);
   });
 
-  it('the route unit: non-matching paths and methods fall through (null — the pre-FW-32-A behavior)', () => {
+  it('the route unit: non-matching paths and methods fall through (null — the pre-FW-32-A behavior)', async () => {
     const registry = createPromotionRegistry();
     const input = {
       verifyDeveloperAuthorization: (authorization: string | undefined) => (authorization === 'Bearer tok' ? { tenant: 'tenant-promote', principal: 'p' } : null),
       jobs: () => [JOB],
       promotions: registry,
     };
-    expect(serveJobPromoteRoute(input, { method: 'GET', path: '/v1/jobs/job:promote01/promote', headers: {} }, 1)).toBeNull();
-    expect(serveJobPromoteRoute(input, { method: 'POST', path: '/v1/jobs', headers: {} }, 2)).toBeNull();
-    expect(serveJobPromoteRoute(input, { method: 'POST', path: '/v1/execution/requests', headers: {} }, 3)).toBeNull();
+    expect(await serveJobPromoteRoute(input, { method: 'GET', path: '/v1/jobs/job:promote01/promote', headers: {} }, 1)).toBeNull();
+    expect(await serveJobPromoteRoute(input, { method: 'POST', path: '/v1/jobs', headers: {} }, 2)).toBeNull();
+    expect(await serveJobPromoteRoute(input, { method: 'POST', path: '/v1/execution/requests', headers: {} }, 3)).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // FW-39-3 (the identity wave 3 — the audit stamp): the ACTOR fields on the
+  // minted decision — additive, non-digested, the honest absence on
+  // anonymous promotions, and the registry's first-mint attribution.
+  // -------------------------------------------------------------------------
+  it('FW-39-3: an ANONYMOUS promote mints the pre-wave-3 shape byte-identically — NO actor fields (the honest absence)', () => {
+    const anonymous = mintPromotedDecision('tenant-promote', JOB, 1_700_000_100_000);
+    expect('actorPrincipal' in anonymous).toBe(false);
+    expect('actorAt' in anonymous).toBe(false);
+    expect(promotedDecisionIsValid(anonymous)).toBe(true);
+  });
+
+  it('FW-39-3: a promote whose request carried a VALID principal token stamps the actor — the principal id + the mint\'s OWN observed instant (L4: never backdated)', async () => {
+    const registry = createPromotionRegistry();
+    const resolveValid = async () => ({ kind: 'valid', token: { principalId: 'prn-actor-1', name: 'alice', tenant: 'tenant-promote', expiresAt: 1_700_000_200_000, tokenId: 'jti-1' } }) as const;
+    const input = {
+      verifyDeveloperAuthorization: (authorization: string | undefined) => (authorization === 'Bearer tok' ? { tenant: 'tenant-promote', principal: 'p' } : null),
+      jobs: () => [JOB],
+      promotions: registry,
+      resolvePrincipalToken: resolveValid,
+    };
+    const before = Date.now();
+    const response = await serveJobPromoteRoute(input, { method: 'POST', path: '/v1/jobs/job:promote01/promote', headers: { authorization: 'Bearer tok' } }, 7);
+    const after = Date.now();
+    expect(response).not.toBeNull();
+    if (response === null) return;
+    expect(response.status).toBe(200);
+    const decision = ((response.body as { data: { decision: PromotedDecisionRecord } }).data).decision;
+    expect(decision.actorPrincipal).toBe('prn-actor-1');
+    expect(typeof decision.actorAt).toBe('number');
+    expect(decision.actorAt).toBeGreaterThanOrEqual(before); // the stamp's OWN observed instant — never backdated
+    expect(decision.actorAt).toBeLessThanOrEqual(after);
+    expect(decision.actorAt).toBe(decision.asOf); // the mint observed the promotion and its actor at the same instant
+    expect(promotedDecisionIsValid(decision)).toBe(true); // the additive fields pass the boundary's own structural guard
+  });
+
+  it('FW-39-3: an absent/invalid token mints the ANONYMOUS shape; a DEGRADED revocation read FAILS CLOSED (the typed 503 — the auth routes\' own law)', async () => {
+    const registry = createPromotionRegistry();
+    const resolveAbsent = async () => ({ kind: 'absent-or-invalid' }) as const;
+    const base = {
+      verifyDeveloperAuthorization: (authorization: string | undefined) => (authorization === 'Bearer tok' ? { tenant: 'tenant-promote', principal: 'p' } : null),
+      jobs: () => [JOB],
+    };
+    const absent = await serveJobPromoteRoute({ ...base, promotions: registry, resolvePrincipalToken: resolveAbsent }, { method: 'POST', path: '/v1/jobs/job:promote01/promote', headers: { authorization: 'Bearer tok' } }, 8);
+    expect(absent).not.toBeNull();
+    if (absent !== null) {
+      expect(absent.status).toBe(200);
+      expect((((absent.body as { data: { decision: PromotedDecisionRecord } }).data).decision).actorPrincipal).toBeUndefined(); // the honest absence
+    }
+    const degraded = await serveJobPromoteRoute({ ...base, promotions: createPromotionRegistry(), resolvePrincipalToken: async () => ({ kind: 'degraded', error: { code: 'store_unavailable', message: 'the revocation list is unreachable' } }) as const }, { method: 'POST', path: '/v1/jobs/job:promote01/promote', headers: { authorization: 'Bearer tok' } }, 9);
+    expect(degraded).not.toBeNull();
+    if (degraded !== null) {
+      expect(degraded.status).toBe(503); // fail closed — never a silently unattributable consequential write
+      expect((degraded.body as { error: { code: string } }).error.code).toBe('unavailable');
+    }
+  });
+
+  it('FW-39-3: the registry keeps the FIRST mint\'s actor verbatim — a re-promotion never re-attributes', async () => {
+    const registry = createPromotionRegistry();
+    const resolveAlice = async () => ({ kind: 'valid', token: { principalId: 'prn-alice', name: 'alice', tenant: 'tenant-promote', expiresAt: 1_700_000_200_000, tokenId: 'jti-a' } }) as const;
+    const resolveBob = async () => ({ kind: 'valid', token: { principalId: 'prn-bob', name: 'bob', tenant: 'tenant-promote', expiresAt: 1_700_000_200_000, tokenId: 'jti-b' } }) as const;
+    const base = {
+      verifyDeveloperAuthorization: (authorization: string | undefined) => (authorization === 'Bearer tok' ? { tenant: 'tenant-promote', principal: 'p' } : null),
+      jobs: () => [JOB],
+    };
+    const first = await serveJobPromoteRoute({ ...base, promotions: registry, resolvePrincipalToken: resolveAlice }, { method: 'POST', path: '/v1/jobs/job:promote01/promote', headers: { authorization: 'Bearer tok' } }, 10);
+    expect(first).not.toBeNull();
+    const replay = await serveJobPromoteRoute({ ...base, promotions: registry, resolvePrincipalToken: resolveBob }, { method: 'POST', path: '/v1/jobs/job:promote01/promote', headers: { authorization: 'Bearer tok' } }, 11);
+    expect(replay).not.toBeNull();
+    if (first === null || replay === null) return;
+    expect(((replay.body as { data: { decision: PromotedDecisionRecord; replay: boolean } }).data).replay).toBe(true);
+    expect(((replay.body as { data: { decision: PromotedDecisionRecord } }).data).decision.actorPrincipal).toBe('prn-alice'); // the first mint's actor stands
   });
 });

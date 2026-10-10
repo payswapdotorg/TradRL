@@ -117,7 +117,7 @@ describe('the boot validation (readBoot)', () => {
     expect(h.panel()?.surface).toBe('checking'); // painted synchronously before the answer
     await pending;
     expect(h.requests[0]?.path).toBe('/v1/auth/whoami');
-    expect(h.requests[0]?.headers.authorization).toBe('Bearer tok-principal-0123456789abcdef');
+    expect(h.requests[0]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef'); // FW-39-3: the principal-token header, never authorization
     expect(h.panel()?.surface).toBe('authenticated');
     expect(h.panel()?.principalName).toBe('desk.owner');
     expect(h.panel()?.adoption?.map((row) => row.projectId)).toEqual(['prj-own-1']); // the ceremony's rows (demo excluded)
@@ -219,7 +219,7 @@ describe('the adoption ceremony + logout', () => {
     await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
     expect(h.requests[1]?.path).toBe('/v1/auth/adopt');
     expect(h.requests[1]?.body).toEqual({}); // parameterless per the contract — no widening parameter
-    expect(h.requests[1]?.headers.authorization).toBe('Bearer tok-principal-0123456789abcdef');
+    expect(h.requests[1]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef'); // FW-39-3: the principal-token header, never authorization
     expect(h.requests[1]?.headers['x-tradrl-console-session']).toBe('session-0123456789abcdef');
     expect(h.panel()?.adoption?.[0]).toMatchObject({ projectId: 'prj-own-1', status: 'adopted' });
     expect(h.toasts[1]?.title).toBe('Desk adopted');

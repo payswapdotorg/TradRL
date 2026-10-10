@@ -133,8 +133,36 @@ describe('the console boot payload budgets (the no-build console\'s boot transfe
   //   restore, the MI-D9 manual steps, the J3/D-6a press wiring, the
   //   change-commit buffer — every law kept, the wording tightened). No
   //   budget raise: the byte total stays under its own line untouched.
+  // Re-recorded (FW-39-3, the identity wave 3; numbers re-measured by the
+  //   continuation worker — the predecessor's draft note under-recorded by
+  //   exactly 50 bytes on both totals): 51 files, 1,053,572 bytes total
+  //   (1028.9 of the 1088 KiB budget — 59.1 KiB headroom). The true
+  //   base (main @ 3038ea5, the merged waves 1+2) measured 51 files /
+  //   1,048,088 bytes — 488 bytes of headroom, so ANY honest wave-3
+  //   addition crossed the line. The byte budget is CONSCIOUSLY raised
+  //   1024 -> 1088 KiB per this file's own protocol ("growing past one is
+  //   a CONSCIOUS decision"). The additions, itemized (net bytes, measured):
+  //   the export disclosure (workspace.ts +1,487 — the EXPORT_ACTOR_RULE
+  //   prose + the per-record actor fields on the events/capsules/watch/gateway
+  //   records + the manifest's actorRule + the actor seam threading, paid
+  //   down by tightening the file's own historical comment blocks); the
+  //   audit stamp's client half (principal.ts +2,851 — the
+  //   PRINCIPAL_TOKEN_HEADER mirror + the live token state + the
+  //   header-carrying transport + the auth client's header-contract fix:
+  //   the token now rides x-tradrl-principal-token beside the boundary
+  //   credential, never `authorization`); the account plane's live-token
+  //   write-throughs (account-plane.ts +1,021); the export orchestration
+  //   seam (export-flow.ts +402). src/app/console.ts measures 162,958
+  //   of the 163,840-byte single-file budget — NET −277 BYTES vs the
+  //   wave-2 base's 163,235 (ZERO growth, the wave's own binding
+  //   constraint): the principal-transport wiring + the export's actor
+  //   seam are paid for by compressing the file's own
+  //   historical comment blocks (the W-22/D-15 stored-scope restore, the
+  //   W-17a beat block, the FW-33-B playback clamp — every law kept, the
+  //   wording tightened). No new files: the wave rides the extraction
+  //   pattern's existing modules.
   const FILE_COUNT_BUDGET = 64; // each source is one boot fetch — the fetch count stays bounded
-  const TOTAL_BYTES_BUDGET = 1024 * 1024; // 1024 KiB — the whole boot transfer (raised from 896 KiB at FW-37-B — see the note above)
+  const TOTAL_BYTES_BUDGET = 1088 * 1024; // 1088 KiB — the whole boot transfer (raised from 1024 KiB at FW-39-3 — see the note above)
   const LARGEST_FILE_BUDGET = 160 * 1024; // 160 KiB — one fetch + one strip pass (raised from 128 KiB at FW-34-B — see the note above)
 
   it('the payload is the copy spec\'s set on the real tree: index.html + non-test sources, NO test sources, the loader\'s critical path present', () => {

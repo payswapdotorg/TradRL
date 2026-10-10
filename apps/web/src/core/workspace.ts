@@ -3,24 +3,22 @@
 // THE LAW (Work Order T042): "The workspace model: the twelve UX.md
 // sections ... as a typed project workspace state — each section fed
 // by the T041 API read routes"; "Determinism: identical inputs ->
-// identical bytes. Tests must pin this (workspace state transitions,
-// availability projection, notice folding)"; "Append-only +
-// chain-verified wherever history is retained."
+// identical bytes. Tests must pin this"; "Append-only + chain-verified
+// wherever history is retained."
 //
 // This module is the PURE heart of the console: one typed state, one
 // event union, one total reducer, one append-only chain-verified
 // history. No DOM, no clock, no transport — the app layer feeds it
 // events (every one stamped with an INJECTED instant), the render
-// layer projects it. Identical event sequences produce byte-
-// identical states (serializeWorkspace pins it).
+// layer projects it. Identical event sequences produce byte-identical
+// states (serializeWorkspace pins it).
 //
 // THE CHAIN (R9a — export integrity, real since chain format v2):
 // every history entry retains the EXACT EVENT it was linked from
 // (`payload`), and the chain is a real SHA-256 hash chain over
-// canonical JSON — the published rules (also embedded verbatim in
-// every export, so anyone holding the file can recompute every
-// digest and every link, and any single-field tamper breaks
-// verification):
+// canonical JSON — the published rules (embedded verbatim in every
+// export, so anyone holding the file can recompute every digest and
+// link, and any single-field tamper breaks verification):
 //
 //   digest    = sha256Hex(canonicalJson({ seq, tenantId, projectId,
 //                 payload }))            — the entry's chained record
@@ -28,14 +26,13 @@
 //                                   — fixed-width 64-hex concatenation
 //   genesis   = 64 zero hex chars (the head before the first entry)
 //
-// (Chain format v1 — the pre-R9a form — linked 8-hex FNV-1a digests
-// of events it did not retain, so its exports could never be
-// re-derived; v2 keeps nothing from it. The state is ephemeral —
-// rebuilt from API reads each boot — so no runtime migration was
-// needed; pre-fix EXPORTS simply do not verify and the verifier says
-// so. Export composition REBUILDS the chain over the exported
-// payloads, so every export produced after this fix verifies
-// end-to-end regardless of runtime history format.)
+// (Chain v1 — the pre-R9a form — linked 8-hex FNV-1a digests of events
+// it did not retain, so its exports could never be re-derived; v2
+// keeps nothing from it. The state is ephemeral — rebuilt from API
+// reads each boot — so no runtime migration; pre-fix EXPORTS simply do
+// not verify. Export composition REBUILDS the chain over the exported
+// payloads, so every post-fix export verifies end-to-end regardless
+// of runtime history format.)
 //
 // Spec anchors: R36 (project-centric UX), R39, L4 (view-time
 // projection consumes timeMachine.viewAt), L11/L9 (the chain), L12
@@ -290,28 +287,24 @@ export const CHAIN_LINK_RULE = 'chainHead = sha256Hex(previousChainHead + digest
 /**
  * THE PUBLISHED CANONICAL RULE (MI-D7, chain format v2): the byte-exact
  * canonical-JSON grammar every digest input is serialized under — the
- * third published rule, embedded verbatim in every export beside the
- * digest and link rules. WHY IT EXISTS: the pre-MI-D7 digest rule said
- * only "canonicalJson recursively sorts object keys", and an independent
- * verifier's reasonable reading of that (Python json.dumps' DEFAULT
- * ensure_ascii=True) escaped the file's one non-ASCII payload string —
- * an em dash, U+2014, in the demo outcome's decisionRationale
- * (deploy/vercel/runtime/demo.ts:319, the only non-ASCII character the
- * seeded records serve into an event payload), carried by an
- * outcomes-loaded event — as \u2014, recomputing a different SHA-256
- * for exactly that event and reading exactly like "payload mutated
- * after sealing without re-hash" (M5's seq-179 finding; the eight other
- * professionals' 142-268-link chains verified clean — consistent with
- * raw-UTF-8 verifiers and/or ASCII-only payload sessions). No code path
- * mutates a sealed entry (the reducer is append-only), and the export
- * verifies end to end under the raw-UTF-8 form — the file was
- * internally consistent the whole time; the RULE was underdetermined.
- * This rule closes every degree of freedom a reimplementer could take
- * (string escaping, number formatting, key collation), so any verifier
- * implementing the
- * documented grammar — Python with ensure_ascii=False, jq, Node
- * JSON.stringify plus the key sort — recomputes every digest. (Aligned
- * with RFC 8785 JCS in string, number and key-order form.)
+ * third published rule, embedded verbatim in every export. WHY IT
+ * EXISTS: the pre-MI-D7 digest rule said only "canonicalJson
+ * recursively sorts object keys", and an independent verifier's
+ * reasonable reading (Python json.dumps' DEFAULT ensure_ascii=True)
+ * escaped the file's one non-ASCII payload string (an em dash in the
+ * demo outcome's decisionRationale, carried by an outcomes-loaded
+ * event) as \u2014, recomputing a different SHA-256 for exactly that
+ * event — reading exactly like "payload mutated after sealing" (M5's
+ * seq-179 finding; the eight other professionals' chains verified
+ * clean). No code path mutates a sealed entry (the reducer is
+ * append-only) and the export verified end-to-end under the raw-UTF-8
+ * form — the file was internally consistent; the RULE was
+ * underdetermined. This rule closes every degree of freedom a
+ * reimplementer could take (string escaping, number formatting, key
+ * collation), so any verifier implementing the documented grammar —
+ * Python with ensure_ascii=False, jq, Node JSON.stringify plus the key
+ * sort — recomputes every digest. (Aligned with RFC 8785 JCS in
+ * string, number and key-order form.)
  */
 export const CHAIN_CANONICAL_RULE = 'canonicalJson: UTF-8 JSON; object keys recursively sorted by UTF-16 code unit; strings in JSON minimal escaping (only double-quote, backslash and U+0000-U+001F escaped; every other character, including ALL non-ASCII, stays RAW UTF-8 and is never backslash-u-escaped; Python verifiers MUST pass ensure_ascii=False — the json.dumps default escapes non-ASCII and will NOT match); numbers in ECMAScript Number::toString form (0.00001, never 1e-05 — Python repr switches to exponent form, implement the decimal form explicitly); arrays keep their order; null for null or absent values (apps/web/src/core/digest.ts canonicalJson; string/number/key-order forms aligned with RFC 8785 JCS)';
 
@@ -404,19 +397,17 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
 
   } else if (selector === 'project-adopted') {
       // The launch flow's bridge: the workspace ADOPTS the created
-      // project's id. From the launchpad scope (no project yet — the
-      // shipped shell's default) this is the first adoption; from a
-      // PROJECT-SCOPED boot (the deployed shell: TRADRL_CONSOLE_PROJECT_ID
-      // scopes it to the seeded demo project, which the boot read cadence
-      // loads) the launch SUPERSEDES the prior project — the console is
-      // project-centric (R36) and the workspace is ONE project's world
-      // (L12), so the prior project's records leave the sections and the
-      // created project's world becomes the workspace's (the history
-      // chain keeps everything, append-only; the session's folded notices
-      // stay — they happened). Every record ingested after the adoption
-      // must carry the adopted project (the gate enforces it); the prior
-      // project's records are foreign from here on (a re-ingest is the
-      // typed cross-scope error).
+      // project's id. From the launchpad scope this is the first adoption;
+      // from a PROJECT-SCOPED boot (the deployed shell: TRADRL_CONSOLE_PROJECT_ID
+      // scopes it to the seeded demo project) the launch SUPERSEDES the
+      // prior project — the console is project-centric (R36) and the
+      // workspace is ONE project's world (L12), so the prior project's
+      // records leave the sections and the created project's world becomes
+      // the workspace's (the history chain keeps everything, append-only;
+      // the session's folded notices stay — they happened). Every record
+      // ingested after the adoption must carry the adopted project (the
+      // gate enforces it); the prior project's records are foreign from
+      // here on (a re-ingest is the typed cross-scope error).
       if (event.projectId.length === 0) throw new Error('reduceWorkspace: project-adopted requires the created project id');
       if (state.project !== null && state.project.id === event.projectId) {
         // Re-adopting the project the workspace already carries: an
@@ -474,18 +465,17 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         : state.launch.progress;
       // D-11 (W-29): THE PHASE FOLLOWS THE RECORD, NOT THE OBSERVER. The
       // pre-fix law transitioned launch.phase ONLY on the dedicated
-      // launch-completed / launch-failed events, which app/console.ts
-      // dispatches from pollJobs — and pollJobs SKIPS jobs already
-      // terminal in state, so the common race (the beat's jobs-list read
-      // serves the kickoff job already complete: job-updated(complete),
-      // no poll observation of the transition) left phase='launching'
-      // FOREVER — Home kept the "A launch is in progress" banner and hid
-      // the launch-entry buttons until a page reload (M4's finding: a
-      // second launch required a reload). The reducer now closes the
-      // loop itself: a tracked job's TERMINAL record closes the launch,
-      // whatever path carried the record in. The dedicated events stay
-      // (idempotent for the poll path — setting the same phase twice
-      // changes nothing).
+      // launch-completed/failed events, which app/console.ts dispatches
+      // from pollJobs — and pollJobs SKIPS jobs already terminal in
+      // state, so the common race (the beat's jobs-list read serves the
+      // kickoff job already complete: job-updated(complete), no poll
+      // observation of the transition) left phase='launching' FOREVER —
+      // Home kept the "A launch is in progress" banner and hid the
+      // launch-entry buttons until a reload (M4's finding: a second launch
+      // required a reload). The reducer now closes the loop itself: a
+      // tracked job's TERMINAL record closes the launch, whatever path
+      // carried the record in. The dedicated events stay (idempotent for
+      // the poll path — setting the same phase twice changes nothing).
       let launch = tracked ? { ...state.launch, progress } : state.launch;
       if (tracked && state.launch.phase === 'launching') {
         if (event.job.status === 'complete') {
@@ -594,20 +584,15 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       // J03 release blocker): the app observed a fresh live instant (the
       // beat cadence / the launch seam) and the anchor follows it —
       // exactly what advanceAnchor exists for ("the app observes a fresh
-      // injected instant"). Before this event the anchor only moved on
-      // the user's Time Machine clicks, so a LIVE session's view instant
-      // stayed pinned at the BOOT instant forever: every datum that
-      // became available after boot (the just-created project, the
-      // kickoff job) was post-view-time and the L4 projection refused it
-      // — every launch on the deployed origin ended "Launch (failed)"
-      // with the typed AvailabilityViolationError. The anchor is the
-      // ceiling for every view: in live mode the view IS the anchor (the
-      // world as of NOW); a T-x offset rides the fresh anchor ("x before
-      // now" stays true as now advances); playback's ceiling rises with
-      // it (a tick still never passes the anchor — the pure machine's
-      // typed law, unchanged). The app layer dispatches this only with an
-      // observed instant BEYOND the current anchor (the anchor never
-      // regresses).
+      // injected instant"). Before this event the anchor only moved on the
+      // user's TM clicks, so a LIVE session's view stayed pinned at the
+      // BOOT instant: every post-boot datum was post-view-time and the L4
+      // projection refused it — every launch ended "Launch (failed)".
+      // The anchor is the ceiling for every view: live mode's view IS the
+      // anchor; a T-x offset rides the fresh anchor; playback's ceiling
+      // rises with it (a tick never passes the anchor — the pure
+      // machine's typed law). The app dispatches this only with an
+      // observed instant BEYOND the current anchor (never regresses).
       return { ...withHistory, timeMachine: advanceAnchor(withHistory.timeMachine, event.at) };
 
   } else if (selector === 'playback-start') {
@@ -616,23 +601,20 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
   } else if (selector === 'playback-tick') {
       // FW-33-B (Round B blocker 5) — THE SEAM'S OWN ANCHOR CLAMP: the
       // pure machine's tick keeps its typed law (a view instant may
-      // never point after the anchor — core/timemachine.ts), but the
-      // EVENT SEAM must be total for every dispatch path: the manual
-      // Step nudge while PLAYING dispatches a tick unguarded, and a
-      // RETUNED playback (a faster disclosed speed) crosses the
-      // remaining span in one step — pre-FW-33-B that tick was the
-      // typed future-inspection error thrown through the reducer (an
-      // unhandled error on the user's own click path; the Lead-triaged
-      // failure: the view instant 1700000006000 > anchor
-      // 1700000002000). A tick whose step would CROSS the anchor now
-      // CLAMPS AT IT (the machine's stopPlaybackAtAnchor): playback
-      // lands at "now" — a final partial step — and STOPS, paused,
-      // never a throw. The boundary keeps the machine's own law: a
-      // tick arriving with the view ALREADY AT the anchor (the
-      // zero-span arm) is still the typed error (W-17a's pinned
-      // ceiling — the app layer's beat skips that dispatch). A PAUSED
-      // playback's tick no-ops first (the freeze law), and a disarmed
-      // machine's tick is still the typed input error.
+      // never point after the anchor), but the EVENT SEAM must be total
+      // for every dispatch path: the manual Step nudge while PLAYING
+      // dispatches a tick unguarded, and a RETUNED playback (a faster
+      // disclosed speed) crosses the remaining span in one step —
+      // pre-FW-33-B that tick was the typed future-inspection error
+      // thrown through the reducer (an unhandled error on the user's
+      // own click path). A tick whose step would CROSS the anchor now
+      // CLAMPS AT IT (stopPlaybackAtAnchor): playback lands at "now" —
+      // a final partial step — and STOPS, paused, never a throw. A tick
+      // arriving with the view ALREADY AT the anchor (the zero-span
+      // arm) is still the typed error (W-17a's pinned ceiling — the
+      // beat skips that dispatch). A PAUSED playback's tick no-ops
+      // first (the freeze law); a disarmed machine's tick is still the
+      // typed input error.
       const machine = advanceAnchor(withHistory.timeMachine, event.at);
       const playback = machine.playback;
       if (machine.mode === 'playback' && playback !== null && !playback.paused) {
@@ -707,24 +689,21 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       return { ...withHistory, degraded: Object.freeze(notes.slice(-DEGRADED_RETENTION)), connection: 'degraded' };
   } else if (selector === 'launch-draft-started') {
       // FW-37-B (Round F register F-5 — the post-switch launch no-op,
-      // 5/9 personas): a NEW draft is a FRESH flow. The pre-fix arm
-      // kept the CONCLUDED launch's own scope binding (projectId /
-      // jobId / progress) and only flipped phase+draft — correct on the
-      // desk that just launched (projectId === scope, the wizard
-      // renders), but after a project SWITCH the render layer's
-      // launchOfScope guard (model.ts, D-15: the slice renders only
-      // within its OWN scope) saw a FOREIGN projectId and folded the
-      // slice to the quiet initial state — the state machine had
-      // accepted the draft (phase 'draft') while the wizard rendered
-      // NOWHERE and the launch panel kept its idle card: "Start the
-      // primary flow" silently no-oped until a full reload (M1's 8
-      // attempts; reload fixes it because a fresh boot's slice carries
-      // projectId null). The arm now resets the slice exactly like a
-      // fresh flow: the new draft is pre-project (projectId null — the
-      // same shape a blank boot starts from, and the same reset
-      // 'launch-reset' performs), so an open draft renders on every
-      // desk (the scope-independent law D-15 already states) and the
-      // handler, the state and the render agree on every path.
+      // 5/9 personas): a NEW draft is a FRESH flow. The pre-fix arm kept
+      // the CONCLUDED launch's own scope binding (projectId / jobId /
+      // progress) and only flipped phase+draft — correct on the desk that
+      // just launched, but after a project SWITCH the render layer's
+      // launchOfScope guard (model.ts, D-15: the slice renders only within
+      // its OWN scope) saw a FOREIGN projectId and folded the slice to the
+      // quiet initial state — the machine had accepted the draft (phase
+      // 'draft') while the wizard rendered NOWHERE and the launch panel
+      // kept its idle card: "Start the primary flow" silently no-oped
+      // until a full reload (M1's 8 attempts). The arm now resets the
+      // slice exactly like a fresh flow: the new draft is pre-project
+      // (projectId null — the same shape a blank boot starts from, and
+      // the same reset 'launch-reset' performs), so an open draft renders
+      // on every desk (the scope-independent law D-15 already states) and
+      // the handler, the state and the render agree on every path.
       return { ...withHistory, launch: { phase: 'draft', draft: event.draft, step: 'goal', projectId: null, jobId: null, progress: [], error: null } };
 
   } else if (selector === 'launch-draft-edited') {
@@ -879,6 +858,18 @@ export const EXPORT_FORMAT_VERSION = 2;
  */
 export const EXPORT_SIMULATED_FLAG_RULE = 'simulated flag: every record this export composes — each events[] chain entry, each capsules[] record, each decisions.watch and decisions.gateway record — carries an explicit \'simulated\': true|false field stating whether the console that produced the export ran on the fake/demo adapter (true) or a real API (false); the value is environment truth, identical for every record of one export. DELIBERATELY NON-DIGESTED: the published digest rule covers exactly {seq,tenantId,projectId,payload}, so the flag rides each chain entry as envelope data beside its digest/chainHead (exactly like the entry\'s own kind/at fields) and as a top-level additive field on each capsule/watch/gateway record — the chain and every digest verify identically with or without it, and pre-flag documents verify unchanged (the format version stays 2). The workspace block mirrors the console\'s internal state verbatim and carries no per-record flags; the events\' payloads stay THE EXACT EVENTS AS APPLIED, never modified.';
 
+/**
+ * FW-39-3 (the identity wave 3) — THE PUBLISHED ACTOR RULE, embedded
+ * verbatim in every export's manifest (the simulatedFlagRule precedent):
+ * what the per-record `actor` field means and its placement OUTSIDE every
+ * digest. The actor is the EXPORT-COMPOSITION truth (the account that
+ * produced the file) — never a per-record write attribution; the
+ * who-did-what of record creation is the host's own audit stamps
+ * (ownerPrincipal/ownerPrincipalAt on the goal-set row,
+ * actorPrincipal/actorAt on promoted decisions), never fabricated here.
+ */
+export const EXPORT_ACTOR_RULE = 'actor field: when present, each events[] chain entry, each capsules[] record and each decisions.watch/decisions.gateway record carries an \'actor\' string naming the ACCOUNT (the named principal, unique within the tenant) whose console session composed this export — the acting principal observed at composition time, identical for every record of one export. It is the export\'s own provenance, NOT a per-record write attribution: records whose writes predate the account (including the shared demo desk\'s seeds) keep their unstamped truth; the host\'s own audit stamps on its durable records are the who-did-what of record creation. DELIBERATELY NON-DIGESTED: the published digest rule covers exactly {seq,tenantId,projectId,payload}, so the actor rides as envelope data exactly like the simulated flag — the chain and every digest verify identically with or without it, and pre-actor documents verify unchanged (the format version stays 2). Absent on every record = composed by an anonymous session — the honest absence, never a fabricated actor.';
+
 /** The chain descriptor every export carries (the published algorithm, verbatim). */
 export interface ExportChainDescriptor {
   readonly algorithm: string;
@@ -908,15 +899,21 @@ export interface ExportChainEntry {
   readonly digest: string;
   readonly chainHead: string;
   /**
-   * FW-36-B (Round E register E-8, part 2): the structured per-record
-   * simulated flag — an explicit `true|false` on every exported event
-   * entry. ADDITIVE (optional — pre-E-8 documents carry none and verify
-   * unchanged); DELIBERATELY NON-DIGESTED (the published digest rule
-   * covers exactly {seq,tenantId,projectId,payload}, so the flag rides
-   * as envelope data beside digest/chainHead — the chain verifies
-   * identically with or without it). See EXPORT_SIMULATED_FLAG_RULE.
+   * FW-36-B (E-8, part 2): the structured per-record simulated flag —
+   * `true|false` on every exported event entry. ADDITIVE + DELIBERATELY
+   * NON-DIGESTED (the digest rule covers exactly
+   * {seq,tenantId,projectId,payload}; the flag rides as envelope data
+   * beside digest/chainHead). See EXPORT_SIMULATED_FLAG_RULE.
    */
   readonly simulated?: boolean;
+  /**
+   * FW-39-3: the per-record ACTOR disclosure — the account name of the
+   * principal whose console session composed this export. ADDITIVE +
+   * NON-DIGESTED (the simulated flag's exact placement class); absent
+   * on every record of an anonymous export (the honest absence). See
+   * EXPORT_ACTOR_RULE.
+   */
+  readonly actor?: string;
 }
 
 /**
@@ -925,20 +922,22 @@ export interface ExportChainEntry {
  * the additive flag — the digest never covers capsules; they are
  * envelope records of the document).
  */
-export type ExportedCapsule = EvidenceCapsule & { readonly simulated?: boolean };
+export type ExportedCapsule = EvidenceCapsule & { readonly simulated?: boolean; readonly actor?: string };
 
 /**
  * FW-36-B (E-8, part 2): one exported WATCH record carrying the
  * structured per-record simulated flag (envelope record — not chained).
+ * FW-39-3: the additive `actor` rides the same placement class.
  */
-export type ExportedWatchEvent = WatchEvent & { readonly simulated?: boolean };
+export type ExportedWatchEvent = WatchEvent & { readonly simulated?: boolean; readonly actor?: string };
 
 /**
  * FW-36-B (E-8, part 2): one exported GATEWAY submission record carrying
  * the structured per-record simulated flag (envelope record — not
  * chained; the events' payloads keep the exact records as applied).
+ * FW-39-3: the additive `actor` rides the same placement class.
  */
-export type ExportedGatewaySubmission = GatewaySubmissionRecord & { readonly simulated?: boolean };
+export type ExportedGatewaySubmission = GatewaySubmissionRecord & { readonly simulated?: boolean; readonly actor?: string };
 
 /** The workspace state as exported (everything but the history — the history IS the events chain). */
 export type ExportedWorkspaceState = Omit<WorkspaceState, 'history'>;
@@ -962,14 +961,20 @@ export interface ExportManifest {
    */
   readonly chainScopeNote?: string;
   /**
-   * FW-36-B (Round E register E-8, part 2): THE PUBLISHED SIMULATED-FLAG
-   * RULE, embedded verbatim (the EXPORT_SIMULATED_FLAG_RULE constant) —
-   * the per-record flag's semantics + its digest-rule placement, so a
-   * reader of the manifest alone knows what every record's `simulated`
-   * field means and why it is not part of any digest. ADDITIVE: pre-E-8
-   * v2 documents carry no such field and still verify.
+   * FW-36-B (E-8, part 2): THE PUBLISHED SIMULATED-FLAG RULE, verbatim
+   * (the EXPORT_SIMULATED_FLAG_RULE constant) — the per-record flag's
+   * semantics + digest-rule placement. ADDITIVE: pre-E-8 v2 documents
+   * carry no such field and still verify.
    */
   readonly simulatedFlagRule?: string;
+  /**
+   * FW-39-3: THE PUBLISHED ACTOR RULE, verbatim (the EXPORT_ACTOR_RULE
+   * constant) — the per-record `actor` field's semantics (the composing
+   * account, never a per-record write attribution) + its placement
+   * OUTSIDE every digest. ADDITIVE: pre-FW-39-3 v2 documents carry no
+   * such field and still verify.
+   */
+  readonly actorRule?: string;
 }
 
 /** THE EXPORT DOCUMENT — everything the console knows about the workspace. */
@@ -985,14 +990,12 @@ export interface WorkspaceExportDocument {
    * scope's project launched with, as the host goal route serves it (the
    * ADDITIVE `world` sibling of the goal in the bundle — the same shape,
    * the same precedence: the frozen GoalStatement itself stays untouched).
-   * L5's P19 finding: the world spec was NOWHERE in the export file (the
-   * goal object carries no world fields, launch.draft was null) — the
-   * launch config was unrecoverable downstream. Null when the scope has no
-   * world on record (the demo scope — its seeded goal carries no world
-   * fields; a pre-W-28 launch) — the honest absence, never a fabricated
-   * world. ADDITIVE by construction: v2 readers that do not know the field
-   * ignore it (verifyWorkspaceExport accepts documents with and without
-   * it — the format version stays 2).
+   * L5's P19 finding: the world spec was NOWHERE in the export file — the
+   * launch config was unrecoverable downstream. Null when the scope has
+   * no world on record (the demo scope; a pre-W-28 launch) — the honest
+   * absence, never a fabricated world. ADDITIVE by construction: v2
+   * readers that do not know the field ignore it (the format version
+   * stays 2).
    */
   readonly launchWorld: ProjectGoalWorldSpec | null;
   readonly workspace: ExportedWorkspaceState;
@@ -1014,23 +1017,26 @@ export interface WorkspaceExportDocument {
  * Compose the workspace export (pure, deterministic). The chain is
  * REBUILT over the exact exported events under the published v2
  * rules — so every export verifies end-to-end regardless of the
- * runtime history's format (after this change they agree by
- * construction; the rebuild is the structural guarantee). An entry
- * that lacks its payload is a loud error, never a fake digest.
+ * runtime history's format (the rebuild is the structural guarantee).
+ * An entry that lacks its payload is a loud error, never a fake
+ * digest.
  *
- * FW-36-B (Round E register E-8, part 2): the composition gains the
- * STRUCTURED PER-RECORD SIMULATED FLAG — every events[] chain entry,
- * every capsules[] record, every decisions.watch and decisions.gateway
- * record carries an explicit `simulated: true|false`. The value is
- * ENVIRONMENT truth (the `simulated` seam the app layer passes from
- * the boot options — the same flag the SIMULATED badges render); it
- * is placed OUTSIDE the digest input on every record (the published
- * digest rule covers exactly {seq,tenantId,projectId,payload} and is
- * UNCHANGED), so the chain and every digest verify identically with
- * or without the flag — the digest-rule decision, documented in the
- * file itself as EXPORT_SIMULATED_FLAG_RULE.
+ * FW-36-B (E-8, part 2): the composition gains the STRUCTURED
+ * PER-RECORD SIMULATED FLAG — every events[] chain entry, capsules[]
+ * record and decisions.watch/gateway record carries an explicit
+ * `simulated: true|false` (environment truth, identical for every
+ * record of one export), placed OUTSIDE the digest input (the digest
+ * rule is UNCHANGED) — documented in-file as EXPORT_SIMULATED_FLAG_RULE.
+ *
+ * FW-39-3: the composition gains the per-record ACTOR disclosure on
+ * the same placement class — the account name of the principal whose
+ * console session composed the export (null = anonymous: NO actor
+ * field anywhere, the honest absence), published as EXPORT_ACTOR_RULE.
+ * The digest rule stays byte-identical — the chain-equivalence law
+ * (the same records verify identically with and without actor fields)
+ * holds by construction and is pinned by test.
  */
-export function composeWorkspaceExport(state: WorkspaceState, simulated = false): WorkspaceExportDocument {
+export function composeWorkspaceExport(state: WorkspaceState, simulated = false, actor: string | null = null): WorkspaceExportDocument {
   const events: ExportChainEntry[] = [];
   let priorHead = CHAIN_GENESIS;
   for (const entry of state.history) {
@@ -1042,8 +1048,9 @@ export function composeWorkspaceExport(state: WorkspaceState, simulated = false)
     // E-8, part 2: the flag rides as a NON-DIGESTED sibling of the
     // payload (the entry's own digest/chainHead/kind class) — the
     // digest rule is untouched, so the rebuilt chain is byte-identical
-    // to a pre-flag export's chain over the same events.
-    events.push({ seq: entry.seq, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload, digest, chainHead, simulated });
+    // to a pre-flag export's chain over the same events. FW-39-3: the
+    // actor rides the same envelope class (absent when anonymous).
+    events.push({ seq: entry.seq, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload, digest, chainHead, simulated, ...(actor === null ? {} : { actor }) });
     priorHead = chainHead;
   }
 
@@ -1062,15 +1069,15 @@ export function composeWorkspaceExport(state: WorkspaceState, simulated = false)
     ...state.knowledge.map((knowledge) => capsuleFromKnowledge(state.scope, knowledge)),
     ...state.submissions.map((submission) => capsuleFromSubmission(state.scope, submission)),
     ...capsulesFromJobs(state.scope, state.jobs),
-  ].map((capsule) => ({ ...capsule, simulated }));
+  ].map((capsule) => ({ ...capsule, simulated, ...(actor === null ? {} : { actor }) }));
 
   // R9b: the decisions — the seven-lens watch records (agent,
   // capability, evidence, proposal, challenge, risk checks, decision)
   // plus the gateway's own submission records, exactly as the
   // Decisions section renders them.
   const decisions = {
-    watch: watchEventsOf(state).map((event) => ({ ...event, simulated })),
-    gateway: [...state.submissions].map((submission) => ({ ...submission, simulated })),
+    watch: watchEventsOf(state).map((event) => ({ ...event, simulated, ...(actor === null ? {} : { actor }) })),
+    gateway: [...state.submissions].map((submission) => ({ ...submission, simulated, ...(actor === null ? {} : { actor }) })),
   };
 
   // R9b: the read-state — which notices the user has read (the
@@ -1127,6 +1134,9 @@ export function composeWorkspaceExport(state: WorkspaceState, simulated = false)
     // what every record's `simulated` field means and how it relates to
     // the digest rules).
     simulatedFlagRule: EXPORT_SIMULATED_FLAG_RULE,
+    // FW-39-3 (the identity wave 3): the published actor rule rides the
+    // manifest on every export — the same self-describing discipline.
+    actorRule: EXPORT_ACTOR_RULE,
   };
 
   return {
@@ -1158,10 +1168,11 @@ export function composeWorkspaceExport(state: WorkspaceState, simulated = false)
  * applies to the export too). FW-36-B (E-8, part 2): the `simulated`
  * seam threads through ADDITIVELY — the app layer's export action passes
  * the boot options' own flag (the same truth the SIMULATED badges render);
- * the default (false) keeps every existing caller's shape.
+ * the default (false) keeps every existing caller's shape. FW-39-3: the
+ * `actor` seam threads the same way (null = anonymous — no actor field).
  */
-export function serializeWorkspaceExport(state: WorkspaceState, simulated = false): string {
-  return canonicalJson(composeWorkspaceExport(state, simulated));
+export function serializeWorkspaceExport(state: WorkspaceState, simulated = false, actor: string | null = null): string {
+  return canonicalJson(composeWorkspaceExport(state, simulated, actor));
 }
 
 /**

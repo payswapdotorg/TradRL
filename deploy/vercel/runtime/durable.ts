@@ -451,22 +451,26 @@ export interface DurableBackingHandle {
    */
   readonly principals: NeonPrincipalStore;
   /**
-   * THE PRINCIPAL-OWNERSHIP STAMP (FW-39-1): merge the additive
-   * `ownerPrincipal` field into the project's goal-set row payload (the
-   * SAME opaque-column precedent as `ownerSession`/`world` — BESIDE
-   * `ownerSession`, never replacing it: lineage preserved) and queue the
-   * durable write onto the SAME pending drain the create's own writes
-   * ride (the ordering law — the caller drains before the response; a
-   * failed write is the typed 503 + the re-projection). Called by the
-   * host's create-stamp (a create whose request carried a VALID principal
-   * token) and by the adoption route (POST /v1/auth/adopt — the calling
-   * session's OWN desks only, the visibility law at the ROUTE). IDEMPOTENT:
-   * a row already carrying the same owner writes NOTHING and reports
-   * `changed: false` (the adoption route's per-desk honest response
-   * consumes the bit — the deviation from stampSessionOwner's shape is
-   * deliberate: a NEW seam, born with its own contract). A foreign tenant
-   * is refused (L12); a row with no goal set on record is unstamped
-   * (fail-closed, disclosed — the common path is exact).
+   * THE PRINCIPAL-OWNERSHIP STAMP (FW-39-1; FW-39-3 adds the observed
+   * instant): merge the additive `ownerPrincipal` + `ownerPrincipalAt`
+   * fields into the project's goal-set row payload (the SAME opaque-column
+   * precedent as `ownerSession`/`world` — BESIDE `ownerSession`, never
+   * replacing it: lineage preserved) and queue the durable write onto the
+   * SAME pending drain the create's own writes ride (the ordering law — the
+   * caller drains before the response; a failed write is the typed 503 +
+   * the re-projection). Called by the host's create-stamp (a create whose
+   * request carried a VALID principal token) and by the adoption route
+   * (POST /v1/auth/adopt — the calling session's OWN desks only, the
+   * visibility law at the ROUTE). IDEMPOTENT: a row already carrying the
+   * same owner writes NOTHING and reports `changed: false` — the FIRST
+   * observed instant stands, never re-stamped (the adoption route's
+   * per-desk honest response consumes the bit). FW-39-3 — THE L4 LAW: the
+   * instant is the SEAM'S OWN observation (`deps.instants` at stamp time —
+   * never a request value, never backdated; for an adoption over a
+   * pre-account row it names the ADOPTION instant, the honest observation
+   * of when this ownership began, never a fabricated create-time actor). A
+   * foreign tenant is refused (L12); a row with no goal set on record is
+   * unstamped (fail-closed, disclosed — the common path is exact).
    */
   stampPrincipalOwner(tenant: string, projectId: string, principalId: string): Promise<{ readonly stamped: boolean; readonly changed: boolean }>;
   /**
@@ -1604,12 +1608,16 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
   }
 
   /**
-   * THE PRINCIPAL-OWNERSHIP STAMP (FW-39-1): merge the additive
-   * `ownerPrincipal` into the project's goal-set row (the `ownerSession`
-   * stamp's exact pattern — the live overlay first, else a fresh store
-   * read; the write queues onto the SAME pending drain) and report the
-   * idempotency bit (`changed` — false when the row already carried this
-   * owner, no write queued). See the handle interface for the full law.
+   * THE PRINCIPAL-OWNERSHIP STAMP (FW-39-1; FW-39-3 the observed instant):
+   * merge the additive `ownerPrincipal` + `ownerPrincipalAt` into the
+   * project's goal-set row (the `ownerSession` stamp's exact pattern — the
+   * live overlay first, else a fresh store read; the write queues onto the
+   * SAME pending drain) and report the idempotency bit (`changed` — false
+   * when the row already carried this owner, no write queued; the FIRST
+   * observed instant stands). FW-39-3 — THE L4 LAW: the instant is the
+   * SEAM'S OWN observation (`deps.instants.next()` at stamp time — never a
+   * request value, never backdated). See the handle interface for the
+   * full law.
    */
   async function stampPrincipalOwner(tenant: string, projectId: string, principalId: string): Promise<{ readonly stamped: boolean; readonly changed: boolean }> {
     if (tenant !== deps.tenant) return { stamped: false, changed: false }; // L12 — the stamp keys on the seam's credential tenant, never a request value
@@ -1625,8 +1633,11 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
       existing = read.value;
     }
     if (existing === null) return { stamped: false, changed: false }; // no goal set on record — nothing to stamp (the project cannot reconstruct either)
-    if (ownerPrincipalOf(existing) === principalId) return { stamped: true, changed: false }; // idempotent — the durable truth already carries this owner
-    const merged: GoalSetRecord = { ...existing, ownerPrincipal: principalId }; // BESIDE ownerSession — lineage preserved
+    if (ownerPrincipalOf(existing) === principalId) return { stamped: true, changed: false }; // idempotent — the durable truth already carries this owner (and its FIRST observed instant)
+    // FW-39-3: the stamp carries its OWN observed instant (the seam's clock
+    // at stamp time — the L4 law: never a request value, never backdated).
+    const observedAt = deps.instants.next();
+    const merged: GoalSetRecord = { ...existing, ownerPrincipal: principalId, ownerPrincipalAt: observedAt }; // BESIDE ownerSession — lineage preserved
     liveGoalSets.set(projectId, merged);
     pending.push({ label: 'goalset.principal.put', run: () => projectStore.putGoalSet(deps.tenant, projectId, merged) });
     return { stamped: true, changed: true };

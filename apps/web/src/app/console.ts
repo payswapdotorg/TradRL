@@ -38,6 +38,7 @@ import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
 import { historyFloorOf, openWorkspace, reduceWorkspace, verifyWorkspaceExportReport, type ExportVerificationReport } from '../core/workspace';
 import { isPlaybackSpeedKey, parsePlaybackCustomSpeed, playbackCustomStepMsOf, playbackStepMsOf, TIME_MACHINE_STEP_MS, viewAtOf as viewAtOfTimeMachine } from '../core/timemachine';
 import { runWorkspaceExport } from '../core/export-flow';
+import { createPrincipalHeaderState, withPrincipalHeaders } from '../core/principal';
 import type { WorkspaceScope } from '../core/tenant';
 import { DEMO_PROJECT_ID, isLaunchpadScope, LAUNCHPAD_PROJECT_ID, sessionOwnDesksOf } from '../core/tenant';
 import type { OversightDeskRead } from '../core/oversight';
@@ -250,7 +251,13 @@ type ActivationCandidate = ClickTarget | null;
 
 /** Boot the console (every seam injected; DOM-free until mount). */
 export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
-  const transport = options.transport ?? createFetchTransport(options.baseUrl, options.fetchLike);
+  // FW-39-3 (the audit stamp's client half): the live principal-token state —
+  // the account plane writes it at every session transition, the wrapped
+  // transport reads it per request, so the console's own consequential
+  // writes (launch create, research promote) carry the acting principal's
+  // token and the host's audit stamps fire; anonymous boots add no header.
+  const principalHeaders = createPrincipalHeaderState();
+  const transport = withPrincipalHeaders(options.transport ?? createFetchTransport(options.baseUrl, options.fetchLike), principalHeaders, options.token);
   const instants: InstantSource = options.instants ?? { nowMs: systemNowMs };
   const scheduler: TickScheduler | undefined = options.scheduler;
   const client: ConsoleClient = createConsoleClient({ transport, token: options.token, ...(options.clientHeaders === undefined ? {} : { headers: options.clientHeaders }) });
@@ -466,29 +473,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       await read('GET /v1/projects', async () => {
         const records = await client.projects.listAll();
         dispatch({ kind: 'projects-listed', at: instants.nowMs(), records: [...records] });
-        // THE STORED-SCOPE RESTORE (R6b/R6c, W-22) — D-15 (W-29 wave 2):
-        // the boot-captured stored scope restores ONLY at generation 0
-        // (never over a user-initiated switch — the twice-reproduced
-        // switcher-rebind race; and exactly once). A stored id present
-        // in the directory and differing from the booted scope is
-        // ADOPTED (the launch's own reset+switch; this bundle's
-        // captured-scope reads drop through the dispatchIfCurrent guard
-        // and the beat refetches for the adopted scope). A stale id
-        // (deleted upstream) is cleared — the env pin holds, exactly
-        // the pre-W-22 boot.
+        // THE STORED-SCOPE RESTORE (R6b/R6c, W-22 — D-15/W-29): the
+        // boot-captured stored scope restores ONLY at generation 0, exactly
+        // once (never over a user switch — the switcher-rebind race). A
+        // stored id in the directory differing from the booted scope is
+        // ADOPTED (the launch's reset+switch); a stale id (deleted
+        // upstream) is cleared — the env pin holds (pre-W-22 behavior).
         // FW-34-B (§3.1) — THE TIME-MACHINE POSTURE RESTORE, same pass,
-        // AFTER the scope branch (the adoption re-opens the machine at
-        // live; the posture then re-lands the analyst instant): when the
-        // stored posture left the machine at a selected instant (a
-        // scrubbed timestamp, a T-x lens, a paused playback) and the
-        // machine STILL sits at its boot 'live' mode, the console
-        // REOPENS VIEWING THAT INSTANT (L3: the incident view was lost
-        // on every reload — mode+speed reset to LIVE/1x). A user who
-        // touched the TM before the listing landed left 'live' already
-        // — their choice stands, never overwritten (the D-15
-        // discipline). Clamped to [floor, anchor] exactly like the
-        // scrubber's own commit — never a throw, never a fabricated
-        // instant; a 'live' stored posture restores nothing.
+        // AFTER the scope branch: when the stored posture left the machine
+        // at a selected instant (scrubbed / t-x / paused) and the machine
+        // STILL sits at its boot 'live' mode, the console REOPENS VIEWING
+        // THAT INSTANT (L3: the incident view was lost on every reload). A
+        // user who touched the TM before the listing landed left 'live'
+        // already — their choice stands (D-15). Clamped to [floor, anchor]
+        // exactly like the scrubber's commit — never a fabricated instant.
         const stored = sessionPosture.scopeProjectId ?? bootStoredScope;
         if (stored !== null && scopeGeneration === 0 && stored !== state.scope.projectId) { // the early-return-free form of the W-22/D-15 guards (the TM restore below must run on EVERY path, never skipped by a scope-branch return)
           if (records.some((record) => record.id === stored)) {
@@ -718,24 +716,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
 
   async function beat(): Promise<void> {
     // THE LIVE VIEW INSTANT FOLLOWS THE OBSERVED NOW (the W-17a fix —
-    // the v0.1.0 release blocker). W-16's release acceptance measured
-    // it live: the LIVE readout stayed pinned at the BOOT instant for
-    // 4+ minutes while wall-clock advanced — the console never
-    // re-observed the live anchor after boot (advanceAnchor only ran
-    // on the user's Time Machine clicks), so every datum that became
-    // available after boot (the just-created project, the kickoff job)
-    // was post-view-time and the L4 projection's typed error killed
-    // the primary flow at every launch ("Launch (failed)"; no
-    // POST /v1/jobs/research ever fired; submitted -> running ->
-    // complete never rendered). The beat is the scheduler boundary —
-    // the one seam core/clock.ts sanctions for observing the system
-    // instant — so each beat re-samples now from the injected source
-    // and moves the anchor forward (timemachine.ts's own law: "the app
-    // observes a fresh injected instant"). In LIVE mode the view IS
-    // the anchor (§4.8 "Viewing the live world…"); a T-x offset rides
-    // the fresh anchor ("x before now" stays true as now advances);
-    // playback's ceiling rises with it (a tick still never passes the
-    // anchor — the guard below). Monotonic by construction: a beat
+    // the v0.1.0 release blocker): W-16 measured the LIVE readout pinned
+    // at the BOOT instant while wall-clock advanced (advanceAnchor only
+    // ran on TM clicks), so every post-boot datum hit the L4 projection's
+    // typed error and killed the launch flow. The beat is the scheduler
+    // boundary — the one seam core/clock.ts sanctions — so each beat
+    // re-samples now and moves the anchor forward (timemachine.ts's own
+    // law). In LIVE mode the view IS the anchor; a T-x offset rides the
+    // fresh anchor; playback's ceiling rises with it (a tick never passes
+    // the anchor — the guard below). Monotonic by construction: a beat
     // whose observed instant is not past the current anchor dispatches
     // nothing (the anchor never regresses).
     const observed = instants.nowMs();
@@ -744,20 +733,18 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     }
     // §4.8 controlled playback: the beat advances armed playback ONE
     // controlled step — never past the anchor, and NEVER while PAUSED
-    // (R10, W-25C: the freeze is the pure machine's own law —
-    // tickPlayback no-ops on a paused state — and the beat also skips
-    // the dispatch so a paused session's history chain carries no
-    // no-op tick entries). FW-33-B (Round B blocker 5): a beat whose
-    // step would CROSS the anchor dispatches into the SEAM'S OWN ANCHOR
-    // CLAMP (reduceWorkspace's playback-tick -> stopPlaybackAtAnchor):
-    // playback LANDS at "now" — a final partial step — and stops there,
-    // paused, the honest end state for the faster disclosed speeds
-    // (whose steps cross the remaining span in one beat; the pre-fix
-    // guard left a "playing" playback frozen one step short of "now"
+    // (R10, W-25C: the freeze is the pure machine's own law; the beat
+    // also skips the dispatch so a paused history carries no no-op
+    // ticks). FW-33-B (Round B blocker 5): a beat whose step would CROSS
+    // the anchor dispatches into the SEAM'S OWN ANCHOR CLAMP
+    // (playback-tick -> stopPlaybackAtAnchor): playback LANDS at "now" —
+    // a final partial step — and stops there, paused (the honest end
+    // state for speeds whose steps cross the remaining span in one beat;
+    // the pre-fix guard left a "playing" playback frozen one step short
     // with no disclosed end state). A beat arriving with the view
-    // ALREADY AT the anchor (the zero-span arm) still skips the
-    // dispatch — that tick is the pure machine's typed law, and the
-    // beat loop must not spray unhandled rejections.
+    // ALREADY AT the anchor still skips the dispatch (the zero-span arm
+    // is the pure machine's typed law; the loop must not spray
+    // unhandled rejections).
     const timeMachine = state.timeMachine;
     if (timeMachine.mode === 'playback' && timeMachine.playback !== null && !timeMachine.playback.paused) {
       const viewAt = timeMachine.playback.fromAt + timeMachine.playback.ticks * timeMachine.playback.stepMs;
@@ -1376,6 +1363,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     const accountPlane = createAccountPlane({
       transport,
       headers: options.clientHeaders,
+      principalHeaders,
       storage: options.scopeStorage ?? null,
       demoProjectId: DEMO_PROJECT_ID,
       directory: () => state.projectDirectory,
@@ -2335,6 +2323,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           runWorkspaceExport({
             state: () => state,
             simulated: () => view.simulated,
+            // FW-39-3 (the export disclosure): the acting principal's
+            // account name — disclosed additively on every record via the
+            // published actorRule; null (anonymous) = the honest absence.
+            actor: () => { const account = view.account; return account !== null && account !== undefined && account.surface === 'authenticated' ? account.principalName : null; },
             // E-9: the current scope's read bundle has COMPLETED (the
             // launchpad has nothing to read — always ready).
             scopeReadsComplete: () => state.scope.projectId === LAUNCHPAD_PROJECT_ID || state.scope.projectId === lastFetchedScope,
