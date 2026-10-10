@@ -368,3 +368,47 @@ E-6 (the closed research world — decisive for M3), E-7 (pricing), F-12.
 **Next: FW-38-A the truth wave (G-2/G-3/G-5/G-9/G-12/G-4) + FW-38-B the capture wave
 (G-1/G-6/G-8/G-7/G-10) + the G-11 identity-model design order; Round H re-measures
 on the FW-38 origin.**
+
+## The identity waves — G-11's Phase-1 answer shipped (2026-10-10, appended post-cut)
+
+**FW-39-1 (PR #84) + FW-39-2 (PR #83), merged as b6d4e9a + 3038ea5, deployed
+tradrl-console-bw3722jok.** The design (merged as PR #80,
+`docs/design/IDENTITY-MODEL.md` — option (c): named principals, 3 waves, M
+effort) is now live in its first two waves:
+
+- **The substrate (deploy/vercel):** a `principals` registry (salted scrypt KDF
+  verifier — Node platform crypto, zero-dep; the passphrase NEVER persists, the
+  verifier never crosses the wire) + a durable revocation list; host-owned
+  auth routes (`POST /v1/auth/register|login|logout`, `GET /v1/auth/whoami`)
+  minting scoped, expiring, revocable HMAC tokens; the additive `ownerPrincipal`
+  create-stamp + the `'principal-owned'` marker (invisible to the shipped
+  console); and the adopt route — the CALLING session's own desks re-stamp
+  additively, idempotent, per-desk, the request body IGNORED (no widening
+  parameter — the FW-37-B lesson applied at birth). Under the DEMO backing:
+  the typed not-available (R46 — an account must never silently cold-start
+  reset); known honest gap: no host-side brute-force throttling yet (the scrypt
+  KDF is the cost lever).
+- **The surface (apps/web):** `core/principal.ts` (the token store + auth
+  client + whoami cache — pure + storage-seamed, coded defensively against the
+  documented contract), the Settings account section with the ADOPTION CEREMONY
+  (per-desk adopt buttons + toasts), a first-run offer AFTER onboarding (never
+  inside it — the demo flow untouched, pinned byte-unchanged), the copy-honesty
+  ride-along ("remembered on this device" for anonymous sessions), and the
+  honest demo-not-available teaching state. **console.ts net −13 bytes** (the
+  extraction pattern held; boot transfer 1,048,088 of 1,048,576 — 488 bytes
+  headroom, recorded per the budget file's protocol).
+- **The union battery (D-023 law):** 559 files / **8440 passed + 1 skipped** —
+  exactly the 8371 floor + 20 (substrate) + 49 (surface) pins, zero conflicts
+  at the client↔routes seam; typecheck 0 errors; check.mjs 52/52; governance
+  passed.
+- **Dispatch disclosure:** both waves were dispatched via the Lead's Task lane
+  (the z.ai account quota outage froze the replay lane) with the SAME work
+  orders, gates, and honesty laws; both workers died to LLM-backend drops and
+  were completed by continuation workers (all inheritance disclosed in the
+  PRs; every gate re-run, nothing inherited by claim).
+
+**What this closes:** the G-11 restart-orphan posture (durable DATA /
+ephemeral SESSION / absent IDENTITY / orphaned access) now has its Phase-1
+answer — a logged-in principal's desks survive a browser restart via adoption.
+Wave 3 (the audit stamp + the export disclosure) remains. Round H's remaining
+personas are the first to measure the identity origin.
