@@ -76,6 +76,7 @@ import {
 import { missingApiEnvKeys, readApiEnv, resolveDeployBacking, DEPLOY_BACKING_VALUES, type ApiDeploymentEnv, type DeployBacking } from './env';
 import { buildDurableBacking, neonStoreDepsOf, type DurableBackingHandle, type DurableSeamDeps } from './durable';
 import { buildDurableActivation, type DurableActivation } from './durable-world';
+import { authThrottlePolicyOf, buildAuthThrottle } from './auth-throttle';
 import { buildAuthSurface, type AuthSurface } from './auth-routes';
 import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
@@ -309,6 +310,14 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     return { ok: false, code: 'deploy_not_configured', missing: [`TRADRL_DEPLOY_BACKING (must be exactly "demo" or "durable"; got an unrecognized value)`] };
   }
   const backing = resolveDeployBacking(env);
+  // FW-40-D — THE AUTH-ROUTE BRUTE-FORCE GUARD'S BOUNDS: an invalid
+  // explicit throttle value is a host misconfiguration — fail closed
+  // naming the KEY and the legal shape, never a value (the deployBacking
+  // precedent; a typo can never silently widen the guard to its default).
+  const throttlePolicy = authThrottlePolicyOf(env);
+  if (!throttlePolicy.ok) {
+    return { ok: false, code: 'deploy_not_configured', missing: [...throttlePolicy.problems] };
+  }
   // Non-null is guaranteed by missingApiEnvKeys for the developer keys.
   const token = env.apiDeveloperToken as string;
   const tenant = env.apiDeveloperTenant as string;
@@ -552,12 +561,20 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
   // nulls that teach the typed not-available; under the DURABLE seam the
   // credential store + the adoption seam ride the handle's own surfaces
   // (the same Neon SQL-over-HTTP client — no new dependency).
+  // FW-40-D: the surface's input now also carries THE BRUTE-FORCE GUARD —
+  // ONE throttle per composition (in-memory, per instance: a cold start
+  // clears it, acceptable for a throttle — the scrypt KDF remains the
+  // cost floor), over the same injected clock (tests advance the clock
+  // and the windows roll) and the env-configured bounds (defaults sane:
+  // 5 identity failures / 30 source attempts per 15 min).
   const authNow: () => number = seam.instants !== undefined ? seam.instants.next : () => Date.now();
+  const authThrottle = buildAuthThrottle(throttlePolicy.policy, authNow);
   const authSurfaceOf = (handle: DurableDeploymentHandle | null): AuthSurface => buildAuthSurface({
     verifyDeveloperAuthorization,
     principals: handle === null ? null : handle.principals,
     tokenKey: env.authTokenKey,
     now: authNow,
+    throttle: authThrottle,
     adoption: handle === null ? null : {
       sessionRowsOf: (tenant: string) => handle.sessionProjectRows(),
       stampPrincipalOwner: (tenant: string, project: string, principal: string) => handle.stampPrincipalOwner(tenant, project, principal),

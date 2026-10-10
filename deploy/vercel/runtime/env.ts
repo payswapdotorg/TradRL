@@ -35,6 +35,18 @@ export interface ApiDeploymentEnv {
    * credential). NAMES only in errors, never values.
    */
   readonly authTokenKey: string | null;
+  /**
+   * The auth-route brute-force guard's WINDOW length (FW-40-D, optional —
+   * raw string): `TRADRL_AUTH_THROTTLE_WINDOW_MS`, the fixed window both
+   * throttle buckets use (ms). Absent = the 15-minute default; a
+   * malformed value FAILS CLOSED at the composition seam (the key is
+   * named, never the value — a typo can never silently widen the guard).
+   */
+  readonly authThrottleWindowMs: string | null;
+  /** The guard's per-IDENTITY failure bound (`TRADRL_AUTH_THROTTLE_IDENTITY_FAILURES`, raw string; absent = 5). */
+  readonly authThrottleIdentityFailures: string | null;
+  /** The guard's per-SOURCE attempt bound (`TRADRL_AUTH_THROTTLE_SOURCE_ATTEMPTS`, raw string; absent = 30). */
+  readonly authThrottleSourceAttempts: string | null;
   /** The explicit backing override (`TRADRL_DEPLOY_BACKING`): the raw string, `null` when unset (validated at the composition seam — fail-closed). */
   readonly deployBacking: string | null;
   /** The durable-provider keys PRESENT in the source (NAMES only, never values) — the auto-resolution input for the backing. */
@@ -64,6 +76,9 @@ export const API_ENV_KEYS = {
   apiInternalToken: 'TRADRL_API_INTERNAL_TOKEN',
   apiInternalPrincipal: 'TRADRL_API_INTERNAL_PRINCIPAL',
   authTokenKey: 'TRADRL_AUTH_TOKEN_KEY',
+  authThrottleWindowMs: 'TRADRL_AUTH_THROTTLE_WINDOW_MS',
+  authThrottleIdentityFailures: 'TRADRL_AUTH_THROTTLE_IDENTITY_FAILURES',
+  authThrottleSourceAttempts: 'TRADRL_AUTH_THROTTLE_SOURCE_ATTEMPTS',
   deployBacking: 'TRADRL_DEPLOY_BACKING',
 } as const;
 
@@ -118,6 +133,9 @@ export function readApiEnv(env: EnvSource = process.env): ApiDeploymentEnv {
     apiInternalToken: read(env, API_ENV_KEYS.apiInternalToken),
     apiInternalPrincipal: read(env, API_ENV_KEYS.apiInternalPrincipal),
     authTokenKey: read(env, API_ENV_KEYS.authTokenKey),
+    authThrottleWindowMs: read(env, API_ENV_KEYS.authThrottleWindowMs),
+    authThrottleIdentityFailures: read(env, API_ENV_KEYS.authThrottleIdentityFailures),
+    authThrottleSourceAttempts: read(env, API_ENV_KEYS.authThrottleSourceAttempts),
     deployBacking: read(env, API_ENV_KEYS.deployBacking),
     durableProviderKeysPresent: DURABLE_PROVIDER_ENV_KEYS.filter((key) => read(env, key) !== null),
     providers: readProviderEnv(env),
