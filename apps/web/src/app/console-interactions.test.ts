@@ -56,7 +56,7 @@ import { bootConsole, readStoredScopeProject, SCOPE_STORAGE_KEY } from './consol
 import { bootFromShell } from '../index';
 import type { LaunchDraft } from '../core/launch';
 import { toCreateProjectInput } from '../core/launch';
-import type { GatewaySubmissionRecord, JobRecord, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
+import type { GatewaySubmissionRecord, GoalStatement, JobRecord, OutcomeRecord, PostMortemRecord, ServedKnowledge } from '../api/contracts';
 import { capsuleFromJob, capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission } from '../core/evidence';
 import { historyFloorOf, serializeWorkspaceExport, verifyWorkspaceExport, viewAtOf } from '../core/workspace';
 import { loadModuleGraph, type LoaderBindings } from '../loader/strip-types';
@@ -6049,7 +6049,7 @@ describe('executed boot: FW-40-C — the wizard race cluster (the beat-value car
     // (b) THE CHAIN LAW: an OLD export (a pre-FW-40-C stale-label goal event
     // composed into the SAME history shape) still verifies END TO END — the
     // digest/chain rules are untouched, only the label's VALUE changed
-    const staleGoal = { ...(first.payload.goal as object), horizon: { ...first.payload.goal.horizon, label: 'one day' } };
+    const staleGoal = { ...(first.payload.goal as unknown as GoalStatement), horizon: { ...first.payload.goal.horizon, label: 'one day' } };
     rig.handle.dispatch({ kind: 'goal-loaded', at: T0 + 6_000, goal: staleGoal, constraintSet: toCreateProjectInput(VALID_DRAFT, { projectId: 'prj-old', goalId: 'goal-old', constraintSetId: 'cs-old' }, 'tenant-a', T0).constraintSet });
     const oldDoc = JSON.parse(serializeWorkspaceExport(rig.handle.state(), true));
     expect(verifyWorkspaceExport(oldDoc)).toEqual({ ok: true }); // the old bytes still verify — byte-compatible rules
