@@ -40,8 +40,14 @@ function envelopeError(status: number, code: string, message: string): SdkRespon
   return { status, headers: {}, body: { requestId: 'req-test', error: { code, message, status } } };
 }
 
-const MINT = { token: 'tok-principal-0123456789abcdef', principal: { id: 'prn-1', name: 'desk.owner' } };
-const STORED = JSON.stringify({ token: 'tok-principal-0123456789abcdef', name: 'desk.owner' });
+// THE HOST'S REAL MINT GRAMMAR (FW-40-E — the seam the dot-free mocks
+// masked): `v1.<base64url(canonical-json claims)>.<base64url(hmac-sha256)>`
+// — the exact shape deploy/vercel/runtime/auth-routes.ts's
+// mintPrincipalToken mints. The mock mint + the stored session both ride
+// this shape so the scripted answers can never diverge from the wire.
+const TOKEN = 'v1.eyJzdWIiOiJwcm4tMSIsIm5hbWUiOiJkZXNrLm93bmVyIn0.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789_-AbCdEfGhI';
+const MINT = { token: TOKEN, principal: { id: 'prn-1', name: 'desk.owner' } };
+const STORED = JSON.stringify({ token: TOKEN, name: 'desk.owner' });
 
 function directoryRow(id: string, marker: 'session-owned' | 'principal-owned' | 'tenant-available'): ProjectRecord {
   return {
@@ -117,7 +123,7 @@ describe('the boot validation (readBoot)', () => {
     expect(h.panel()?.surface).toBe('checking'); // painted synchronously before the answer
     await pending;
     expect(h.requests[0]?.path).toBe('/v1/auth/whoami');
-    expect(h.requests[0]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef'); // FW-39-3: the principal-token header, never authorization
+    expect(h.requests[0]?.headers['x-tradrl-principal-token']).toBe(TOKEN); // FW-39-3: the principal-token header, never authorization
     expect(h.panel()?.surface).toBe('authenticated');
     expect(h.panel()?.principalName).toBe('desk.owner');
     expect(h.panel()?.adoption?.map((row) => row.projectId)).toEqual(['prj-own-1']); // the ceremony's rows (demo excluded)
@@ -219,7 +225,7 @@ describe('the adoption ceremony + logout', () => {
     await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
     expect(h.requests[1]?.path).toBe('/v1/auth/adopt');
     expect(h.requests[1]?.body).toEqual({}); // parameterless per the contract — no widening parameter
-    expect(h.requests[1]?.headers['x-tradrl-principal-token']).toBe('tok-principal-0123456789abcdef'); // FW-39-3: the principal-token header, never authorization
+    expect(h.requests[1]?.headers['x-tradrl-principal-token']).toBe(TOKEN); // FW-39-3: the principal-token header, never authorization
     expect(h.requests[1]?.headers['x-tradrl-console-session']).toBe('session-0123456789abcdef');
     expect(h.panel()?.adoption?.[0]).toMatchObject({ projectId: 'prj-own-1', status: 'adopted' });
     expect(h.toasts[1]?.title).toBe('Desk adopted');

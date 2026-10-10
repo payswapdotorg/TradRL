@@ -123,9 +123,23 @@ export interface PrincipalStorage {
   setItem(key: string, value: string): void;
 }
 
-/** Guard: a well-formed principal token (the url-safe class the host mints; generous — the host's own grammar is the authority). */
+/**
+ * Guard: a well-formed principal token. THE HOST'S OWN GRAMMAR IS THE
+ * AUTHORITY (this file's own law — FW-40-E): the host mints the
+ * versioned dotted form `v1.<base64url(canonical-json claims)>.
+ * <base64url(hmac-sha256)>` (deploy/vercel/runtime/auth-routes.ts,
+ * mintPrincipalToken) — a claims payload of roughly 200-400 base64url
+ * chars (the full claims object: sub, name, tid, iat, exp, jti, scope)
+ * and an HMAC of exactly 43 base64url chars. The bounds below are
+ * GENEROUS, never tighter than the host's real output (a 128-char
+ * principal name mints a ~410-char payload and must still pass);
+ * everything else is rejected: empty values, the DOT-FREE shape this
+ * client once guessed (never the host's grammar — the seam FW-40-E
+ * closed), wrong versions, extra segments, and any non-url-safe byte
+ * (`=`, `+`, `/` — the character class is base64url only).
+ */
 export function isPrincipalToken(value: unknown): value is string {
-  return typeof value === 'string' && /^[A-Za-z0-9_-]{16,512}$/.test(value);
+  return typeof value === 'string' && /^v1\.[A-Za-z0-9_-]{8,1024}\.[A-Za-z0-9_-]{16,128}$/.test(value);
 }
 
 /** The stored principal session (the token + the whoami-cached name). */
