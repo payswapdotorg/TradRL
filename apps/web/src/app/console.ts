@@ -42,6 +42,11 @@ import type { WorkspaceScope } from '../core/tenant';
 import { DEMO_PROJECT_ID, isLaunchpadScope, LAUNCHPAD_PROJECT_ID, sessionOwnDesksOf } from '../core/tenant';
 import type { OversightDeskRead } from '../core/oversight';
 import { readOversightPlane, recoverOversightPlane } from './oversight-plane';
+// FW-39-2 (identity Wave 2): the account surface's whole cadence — the
+// app/oversight-plane.ts extraction pattern (the payload-budget law:
+// this file rides the 160 KiB single-file line, so the account code
+// lives in its own module and this file adds only the wiring).
+import { createAccountPlane } from './account-plane';
 import { attachedToRoot, type PendingPress } from './press';
 import type { ThemeName, ThemeStorage } from '../core/theme';
 import { persistTheme } from '../core/theme';
@@ -462,40 +467,28 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         const records = await client.projects.listAll();
         dispatch({ kind: 'projects-listed', at: instants.nowMs(), records: [...records] });
         // THE STORED-SCOPE RESTORE (R6b/R6c, W-22) — D-15 (W-29 wave 2):
-        // the persisted scope was captured ONCE at boot (bootStoredScope);
-        // the restore applies ONLY while NO scope move has happened this
-        // session (the generation guard — the Lead's twice-reproduced
-        // switcher-rebind race: a user-initiated switch that lands during
-        // or immediately after boot must NEVER be overwritten by the
-        // async rehydration, and the rehydration itself must run exactly
-        // once, never again on a later beat-triggered refresh). When a
-        // stored project id exists in the directory and differs from the
-        // booted scope, the workspace ADOPTS it (the same reset+switch
-        // transition a launch rides; this bundle's captured-scope reads
-        // then drop through the dispatchIfCurrent guard and the beat
-        // refetches for the adopted scope). A stored id that no longer
-        // exists is stale — cleared and ignored, falling back to the env
-        // pin EXACTLY as the pre-W-22 boot behaved.
-        // FW-34-B (Round C register §3.1) — THE TIME-MACHINE POSTURE
-        // RESTORE, in the SAME listing pass but AFTER the scope branch
-        // (the scope adoption is a reset+switch transition that RE-OPENS
-        // the machine at live — the TM posture then re-lands the
-        // analyst view instant on the adopted scope own machine; a
-        // browser may carry a TM posture with no scope posture at all:
-        // the demo-scope analyst who scrubbed an incident and reloaded):
-        // when the stored posture left the machine at a selected instant
-        // (a scrubbed timestamp, a T-x lens, a paused playback — all fold
-        // to an explicit instant) and the machine STILL sits at its boot
-        // 'live' mode, the console REOPENS VIEWING THAT INSTANT (L3's
-        // finding: an incident review that reloads the page lost the
-        // view it was reviewing — mode+speed reset to LIVE/1x on every
-        // reload). A user who touched the Time Machine before the
-        // listing landed left 'live' already — their choice stands,
-        // never overwritten (the D-15 discipline, the TM's own form).
-        // The restore clamps to [the history floor, the anchor] exactly
-        // like the scrubber's own commit — never a throw, never a
-        // fabricated instant. A 'live' stored posture restores nothing
-        // (the anchor follows the observed now — that IS the live mode).
+        // the boot-captured stored scope restores ONLY at generation 0
+        // (never over a user-initiated switch — the twice-reproduced
+        // switcher-rebind race; and exactly once). A stored id present
+        // in the directory and differing from the booted scope is
+        // ADOPTED (the launch's own reset+switch; this bundle's
+        // captured-scope reads drop through the dispatchIfCurrent guard
+        // and the beat refetches for the adopted scope). A stale id
+        // (deleted upstream) is cleared — the env pin holds, exactly
+        // the pre-W-22 boot.
+        // FW-34-B (§3.1) — THE TIME-MACHINE POSTURE RESTORE, same pass,
+        // AFTER the scope branch (the adoption re-opens the machine at
+        // live; the posture then re-lands the analyst instant): when the
+        // stored posture left the machine at a selected instant (a
+        // scrubbed timestamp, a T-x lens, a paused playback) and the
+        // machine STILL sits at its boot 'live' mode, the console
+        // REOPENS VIEWING THAT INSTANT (L3: the incident view was lost
+        // on every reload — mode+speed reset to LIVE/1x). A user who
+        // touched the TM before the listing landed left 'live' already
+        // — their choice stands, never overwritten (the D-15
+        // discipline). Clamped to [floor, anchor] exactly like the
+        // scrubber's own commit — never a throw, never a fabricated
+        // instant; a 'live' stored posture restores nothing.
         const stored = sessionPosture.scopeProjectId ?? bootStoredScope;
         if (stored !== null && scopeGeneration === 0 && stored !== state.scope.projectId) { // the early-return-free form of the W-22/D-15 guards (the TM restore below must run on EVERY path, never skipped by a scope-branch return)
           if (records.some((record) => record.id === stored)) {
@@ -508,19 +501,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         if (state.timeMachine.mode === 'live' && bootStoredTimeMachine.mode !== 'live' && bootStoredTimeMachine.viewAt !== null) {
           const anchor = state.timeMachine.anchorAt;
-          // FW-34-B (Round C register §3.1) — the restore's floor clamp is
-          // the RECORD-DERIVED floor ONLY (the MI-D9 step-back law: the
-          // session-open fallback floor is TAUGHT by the scrubber's range,
-          // never ENFORCED on a commit). The restart moment is exactly the
-          // case that demands it: the boot bundle's own listing adoption
-          // resets every record (project null — the refetch has not landed
-          // yet), so the session fold would return the SESSION OPEN instant
-          // and a stored instant below it would clamp UP to it (the degenerate
-          // [openedAt, anchor] range erasing the analyst's incident view on
-          // every restart — the exact residual this restore exists to close).
-          // With the project's own history on record the clamp holds exactly
-          // like the scrubber's commit; with none on hand the view restores
-          // at its stored instant, capped only by the anchor.
+          // FW-34-B (§3.1) — the restore's floor clamp is the
+          // RECORD-DERIVED floor ONLY (the MI-D9 step-back law: the
+          // session-open fallback floor is TAUGHT, never ENFORCED). The
+          // restart moment demands it: the boot listing adoption resets
+          // every record, so the session fold returns the SESSION OPEN
+          // instant and a stored instant below it would clamp UP — the
+          // degenerate [openedAt, anchor] range erasing the analyst's
+          // incident view on every restart. With history on record the
+          // clamp holds like the scrubber's commit; without it the view
+          // restores at its stored instant, capped only by the anchor.
           const history = historyFloorOf(state);
           const floor = history.derived === 'records' ? Math.min(history.floorAt, anchor) : null;
           const clamped = floor === null ? Math.min(bootStoredTimeMachine.viewAt, anchor) : Math.min(Math.max(bootStoredTimeMachine.viewAt, floor), anchor);
@@ -1031,7 +1021,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     const focusKeyOf = (element: unknown): { readonly attr: string; readonly value: string } | null => {
       const candidate = element as FieldEventTarget | null | undefined;
       if (candidate === null || candidate === undefined || typeof candidate.getAttribute !== 'function') return null;
-      for (const attr of ['data-row', 'data-notice-read', 'data-capsule-open', 'data-palette-ref', 'data-launch-field', 'data-research-field', 'data-palette-input', 'data-action', 'data-target']) {
+      for (const attr of ['data-row', 'data-notice-read', 'data-capsule-open', 'data-palette-ref', 'data-launch-field', 'data-research-field', 'data-account-field', 'data-palette-input', 'data-action', 'data-target']) {
         const value = candidate.getAttribute(attr);
         if (value !== null) return { attr, value };
       }
@@ -1375,6 +1365,38 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     /** The evidence capsules for the palette (the Evidence section's own fold). */
     const capsulesForPalette = capsuleFromOutcomeList;
 
+    // FW-39-2 (identity Wave 2): THE ACCOUNT PLANE (app/account-plane.ts
+    // — the oversight-plane extraction pattern). Register/login/logout +
+    // the adoption ceremony, injected-seamed: the auth client rides the
+    // SAME transport as the frozen-route client (with the session
+    // headers — adopt's "calling session" law); the token store rides
+    // the scope storage seam (the posture record's own precedent); the
+    // panel rides the shell view's account field. An anonymous browser
+    // pays ZERO auth calls (the demo flow untouched).
+    const accountPlane = createAccountPlane({
+      transport,
+      headers: options.clientHeaders,
+      storage: options.scopeStorage ?? null,
+      demoProjectId: DEMO_PROJECT_ID,
+      directory: () => state.projectDirectory,
+      getPanel: () => view.account ?? null,
+      setPanel: (panel) => { view = { ...view, account: panel }; },
+      render,
+      showToast: (toast) => {
+        view = { ...view, toast };
+        render();
+        if (scheduler !== undefined) {
+          scheduler.schedule(5000, () => {
+            if (view.toast === toast) {
+              view = { ...view, toast: null };
+              render();
+            }
+          });
+        }
+      },
+      refresh,
+    });
+
     /** The palette's live results for the current query (§4.14; D4's 100% coverage). FW-37-B (Round F register F-3 — the institutional disqualifier): the desks the index rides are the SESSION'S OWN, ALWAYS — computed INSIDE core/palette.ts with no widening parameter (the FW-34-B "all desks" override is removed at the module level; a wall a caller can widen is not a wall). The Round F evidence (L1 and L3 each switched into another session's desk and read its full blotter; M1: "157 other desks"; L3: "199 other desks") ruled the explicit-disclosure design insufficient — foreign sessions' desks never appear by name in the switcher or the palette (the L12 workspace boundary, now hard). */
     const refreshPalette = (): void => {
       if (view.palette === null) { paletteResults = []; return; }
@@ -1511,27 +1533,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // as clicks. Edits BUFFER in the view (launchEdits) and commit on
     // the next action (the flush) — never synchronously on focusout
     // while a click is in flight (the re-render between mousedown and
-    // mouseup would drop the click), and never on a click that lands
-    // on a non-action element (the re-render would steal the focus
-    // the browser just moved into the next input).
+    // mouseup would drop the click).
     //
     // THE PENDING PRESS (D-6a, W-25C — the beat-render click race): the
-    // 500ms-1s beat re-projection rebuilds the WHOLE tree; when it
-    // lands between mousedown and mouseup, the browser composes the
-    // click on a common ANCESTOR of the replaced pair, and
-    // closest('[data-action]') from that ancestor resolves to NOTHING
-    // — the user's click silently no-ops (the M-persona finding:
-    // three clicks on "Next: world", nothing disabled, nothing fired;
-    // the stepper tab was the only reliable path). The press intent is
-    // captured HERE, at mousedown (the affordance under the pointer);
-    // the click handler below replays it ONLY when the composed click
-    // resolved to no affordance AND the pressed element left the
-    // mounted tree (the beat replaced it mid-press). A normal click —
-    // same element, still attached, or released over another
-    // interactive element — resolves by itself and is never
-    // double-dispatched; a press the user dragged away from (released
-    // over nothing interactive, element never replaced) stays cancelled
-    // exactly as the browser intended.
+    // beat re-projection rebuilds the WHOLE tree; when it lands between
+    // mousedown and mouseup, the browser composes the click on a common
+    // ANCESTOR of the replaced pair, and closest('[data-action]') from
+    // that ancestor resolves to NOTHING — the user's click silently
+    // no-ops (the M-persona finding). The press intent is captured
+    // HERE, at mousedown (the affordance under the pointer); the click
+    // handler below replays it ONLY when the composed click resolved
+    // to no affordance AND the pressed element left the mounted tree
+    // (the beat replaced it mid-press). A normal click resolves by
+    // itself and is never double-dispatched; a press dragged away from
+    // stays cancelled exactly as the browser intended.
     let pendingPress: PendingPress | null = null;
     /** (The attachedToRoot test + the D-6a machinery live in app/press.ts — extracted by FW-38-B for the payload budget.) */
     document.addEventListener('mousedown', (event) => {
@@ -1640,6 +1655,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         return;
       }
+      if (accountPlane.edit(event.target)) return; // FW-39-2: the account form's J3 edit buffer (buffer only — the render merges it)
       const entry = launchFieldOf(event.target);
       if (entry === null) {
         // D-12 (W-29 wave 2): THE STANDALONE RESEARCH FORM'S EDIT BUFFER —
@@ -1850,11 +1866,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // on the field being LEFT (before focusout) whenever its value
       // changed, and an immediate flush would re-render UNDER the
       // pending focus move, stranding the destination input on a
-      // detached node (the lost-second-field defect — the same class
-      // the focusout guard below closes). The flush belongs to the
-      // focusout (which sees where the focus is going) or to the next
-      // action click; a select committed by keyboard commits at the
-      // same places.
+      // detached node (the lost-second-field defect — the class the
+      // focusout guard below closes). The flush belongs to the
+      // focusout or the next action click.
       view = { ...view, launchEdits: { ...view.launchEdits, [entry.field]: entry.value } };
     });
     document.addEventListener('focusout', (event) => {
@@ -2052,6 +2066,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       }
       if (action !== null && action !== undefined) {
         const kind = actionKind;
+        // FW-39-2 (identity Wave 2): the account surface's branches live
+        // in the plane; an account-* press never falls through to the
+        // shell's own branches (a handled press returns).
+        if (kind !== null && accountPlane.interact(kind, action)) return;
         if (kind === 'notices-read-all') dispatch({ kind: 'notices-read-all', at: instants.nowMs() });
         // §4.10 the per-notice read toggle (the J6 wiring): the
         // workspace's own notice-read event, dispatched by the row's
@@ -2142,28 +2160,22 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // MI-D9 — THE MANUAL STEPS. Pre-fix, BOTH controls were wired to
         // playback-tick / view-tminus(tMinusMs+500): Step while paused
         // no-op'd under the freeze law (a dead control), and Step back
-        // while paused jumped the view FORWARD to (anchor - 500ms) — the
-        // wall-clock end — flipping the mode playback -> t-minus with the
-        // banner reading "Viewing a past instant" at 100% (the
-        // 6/9-professional finding). Now: in PLAYBACK, Step back steps
-        // the view BACK one controlled step and STAYS paused (a new pure
-        // transition, its own append-only event), and Step while paused
-        // is the user's own forward step (staying paused — the freeze
-        // stops the beat's auto ticks, never the Step control).
+        // while paused jumped the view FORWARD to the wall-clock end,
+        // flipping playback -> t-minus (the 6/9-professional finding).
+        // Now: in PLAYBACK, Step back steps BACK one controlled step and
+        // STAYS paused (its own append-only event), and Step while paused
+        // is the user's own forward step (the freeze stops the beat's
+        // auto ticks, never the Step control).
         //
         // FW-32-B (Round A blocker 4) — OUTSIDE playback, the Steps step
         // the SELECTED INSTANT (never the t-minus offset): the pre-fix
-        // Step back dispatched view-tminus(tMinusMs+500), and because the
-        // live anchor advances EVERY beat (~1s > the 500ms step), the
-        // re-anchored view moved FORWARD on every click — M5's finding
-        // (04:25:04 -> 04:28:58 -> 04:29:05: the selected incident
-        // instant lost). Now both controls dispatch an EXPLICIT timestamp
-        // (viewAt ± TIME_MACHINE_STEP_MS), clamped to [the history floor,
-        // the anchor] — the same clamp the scrubber's commit rides — so
-        // the view only ever moves exactly one disclosed step, in the
-        // clicked direction, from wherever the user selected (the t-minus
-        // banner becomes the explicit-instant banner; the projection
-        // notice names it).
+        // Step back re-anchored against the live anchor, which advances
+        // EVERY beat (~1s > the 500ms step), so the view moved FORWARD
+        // on every click — M5's finding (the selected incident instant
+        // lost). Now both controls dispatch an EXPLICIT timestamp
+        // (viewAt ± TIME_MACHINE_STEP_MS), clamped to [the history
+        // floor, the anchor] — the scrubber's own clamp — so the view
+        // moves exactly one disclosed step in the clicked direction.
         if (kind === 'playback-step') {
           const timeMachine = state.timeMachine;
           if (timeMachine.mode === 'playback' && timeMachine.playback !== null && timeMachine.playback.paused) {
@@ -2193,15 +2205,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             dispatch({ kind: 'playback-step-back', at: instants.nowMs() }); // one controlled step back, staying paused, never a mode flip
           } else {
             // FW-32-B: step the SELECTED instant back one disclosed step.
-            // The clamp at the project's own history floor applies only
-            // when the floor is RECORD-DERIVED (the range's own law — the
-            // stepped instant stays inside the span the scrubber renders)
-            // and only while the view sits above it — a view already
-            // deeper than the floor steps freely (a step BACK never moves
-            // the view forward, the exact defect class this control is
-            // shedding). With NO records on hand (the session fallback)
-            // the step is unbounded, exactly the pre-fix T-x depth: the
-            // fallback floor is taught, never enforced.
+            // The history-floor clamp applies only when the floor is
+            // RECORD-DERIVED and the view sits above it (the stepped
+            // instant stays inside the scrubber's rendered span); a view
+            // already deeper steps freely (a step BACK never moves the
+            // view forward — the exact defect class this control sheds).
+            // With NO records (the session fallback) the step is
+            // unbounded, the pre-fix T-x depth: taught, never enforced.
             const selected = viewAtOfTimeMachine(timeMachine);
             const history = historyFloorOf(state);
             const clamped = history.derived === 'records' && selected >= history.floorAt;
@@ -2735,6 +2745,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       event.preventDefault();
       focusables[next].focus();
     });
+
+    // FW-39-2 (identity Wave 2): the boot validation — a stored principal
+    // session is whoami-validated once at mount (the honest 401 clear /
+    // the 503 teaching state); a browser with NO stored session stays
+    // anonymous with zero auth calls (the demo flow untouched).
+    void accountPlane.readBoot();
   }
 
   // The boot read cadence: refresh now, then the scheduler beats.

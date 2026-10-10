@@ -48,13 +48,21 @@ export function isDemoProject(projectId: string): boolean {
 
 /**
  * FW-34-B (Round C register §3.8 — the shared-tenant wall, M1): true
- * when a directory row belongs to THIS session's own desks — the
- * host's additive 'session-owned' marker on GET /v1/projects
+ * when a project id is the session's own desk — the host's additive
+ * 'session-owned' marker on GET /v1/projects
  * (deploy/vercel/runtime/session-routes.ts's CONSOLE_SESSION_SCOPE_FIELD).
  * The UNMARKED fallback is the listing's own honest law: a backing
  * that predates the marker (or a direct SDK read) serves none, and
  * every unmarked row reads as the session's own — the switcher and
  * the palette stay full, never silently empty.
+ *
+ * FW-39-2 (identity Wave 2 — the design §5's marker law, PINNED):
+ * 'principal-owned' (a named principal's desk — adopted, or launched
+ * while signed in) is TREATED AS OWN by this same fold
+ * (`!== 'tenant-available'`), so the switcher/palette/Oversight
+ * surfaces list a signed-in principal's re-attached desks as their
+ * own: the wall census under a principal is own + demo ONLY, with no
+ * widening parameter anywhere (the FW-37-B law, held).
  */
 export function isSessionOwnDesk(project: ProjectRecord): boolean {
   return project.consoleSessionScope !== 'tenant-available';
