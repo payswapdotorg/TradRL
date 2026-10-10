@@ -94,7 +94,7 @@ describe('FW-40-B: the launch draft record (parse + persist round-trip)', () => 
     // the draft's own grammar, field by field (a corrupted field never half-applies)
     expect(parseStoredLaunchDraft(recordOf(SCOPE, draft({ name: 7 as never })))).toBeNull();
     expect(parseStoredLaunchDraft(recordOf(SCOPE, draft({ horizon: { startsAt: 'soon', endsAt: T0 } as never })))).toBeNull();
-    expect(parseStoredLaunchDraft(recordOf(SCOPE, draft({ successCriteria: [{ id: 'sc-1', metric: 7, predicate: { kind: 'limit.min', bound: 0 } as never }] })))).toBeNull();
+    expect(parseStoredLaunchDraft(recordOf(SCOPE, draft({ successCriteria: [{ id: 'sc-1', metric: 7 as never, predicate: { kind: 'limit.min', bound: 0 } as never }] })))).toBeNull();
     expect(parseStoredLaunchDraft(recordOf(SCOPE, draft({ evaluation: { blindRef: 'b', walkForwardRef: 'w', regimeRef: 'r', adversarialRequired: 'yes' as never } })))).toBeNull();
     expect(parseStoredLaunchDraft(recordOf(SCOPE, draft({ constraints: [{ id: 'c-1', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: 'max 0.2' as never, severity: 'blocking' }] })))).toBeNull();
     expect(parseStoredLaunchDraft(recordOf(SCOPE, draft({ capitalBudget: 10000 as never })))).toBeNull();
