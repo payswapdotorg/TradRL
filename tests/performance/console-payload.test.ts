@@ -109,6 +109,30 @@ describe('the console boot payload budgets (the no-build console\'s boot transfe
   //   to give bytes back). NB: src/app/console.ts now measures 163,488 of the
   //   163,840-byte (160 KiB) single-file budget — 322 bytes of headroom; the
   //   next wave that grows it crosses that one too.
+  // Re-recorded (FW-39-2, the identity wave 2): 51 files, 1,048,088 bytes total
+  //   (1023.5 of the 1024 KiB budget — 488 bytes of headroom). The true base
+  //   (main @ 99f9a90) measured 48 files / 995,580 bytes (972.2 KiB) — the
+  //   FW-38-A/B truth waves grew the boot transfer ~44 KiB past this file's
+  //   last recorded 951,325 without re-recording it. FW-39-2 adds +52,508
+  //   bytes through the EXTRACTION pattern the budget exists to encourage —
+  //   three NEW modules (src/core/principal.ts 21,255 + src/render/account.ts
+  //   9,954 + src/app/account-plane.ts 17,002 — the token store + auth client
+  //   + whoami cache, the account surface's VNodes, and the interaction
+  //   plane) plus the thin composition seams (shell.ts +2,089 for the account
+  //   row + the copy-honesty folds + the optional ShellView field; model.ts
+  //   +1,036 for the Home first-run offer's gate; flow.ts +130 for the
+  //   'account' form vocabulary + the password input type; contracts.ts
+  //   +608 for the additive 'principal-owned' marker vocabulary; tenant.ts
+  //   +447 for the marker-law doc). src/app/console.ts measures 163,235 of
+  //   the 163,840-byte single-file budget — NET −13 BYTES vs the base's
+  //   163,248 (ZERO growth, the wave's own binding constraint): the
+  //   ~2.3 KiB of account wiring (the plane's construction + the one
+  //   interaction hook + the J3 edit-buffer hook + the boot validation call
+  //   + the focus-restore vocabulary entry) is paid for by compressing the
+  //   file's own historical comment blocks (the W-22/D-15 stored-scope
+  //   restore, the MI-D9 manual steps, the J3/D-6a press wiring, the
+  //   change-commit buffer — every law kept, the wording tightened). No
+  //   budget raise: the byte total stays under its own line untouched.
   const FILE_COUNT_BUDGET = 64; // each source is one boot fetch — the fetch count stays bounded
   const TOTAL_BYTES_BUDGET = 1024 * 1024; // 1024 KiB — the whole boot transfer (raised from 896 KiB at FW-37-B — see the note above)
   const LARGEST_FILE_BUDGET = 160 * 1024; // 160 KiB — one fetch + one strip pass (raised from 128 KiB at FW-34-B — see the note above)

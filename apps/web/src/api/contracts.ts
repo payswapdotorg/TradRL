@@ -155,8 +155,18 @@ export interface ProjectRecord {
    * (or a direct SDK read) serves none — the console then treats every
    * row as the session's own (the listing's own honest fallback, never a
    * silently empty switcher).
+   *
+   * FW-39-2 (identity Wave 2 — docs/design/IDENTITY-MODEL.md §5 Wave 1's
+   * documented vocabulary extension, mirrored here additively):
+   * 'principal-owned' = a named principal's desk (adopted through
+   * POST /v1/auth/adopt, or launched while signed in) — which the
+   * existing client fold core/tenant.ts's isSessionOwnDesk ALREADY
+   * reads as own (`!== 'tenant-available'`), so wave 1's serving is
+   * invisible to the pre-wave console and wave 2's surfaces list
+   * these rows as the session's own desks (the wall census under a
+   * principal: own + demo only).
    */
-  readonly consoleSessionScope?: 'session-owned' | 'tenant-available';
+  readonly consoleSessionScope?: 'session-owned' | 'principal-owned' | 'tenant-available';
 }
 
 /** The lifecycle events. */

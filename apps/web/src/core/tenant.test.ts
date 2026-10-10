@@ -118,12 +118,32 @@ describe('tenant: the project gate', () => {
 
 describe('FW-34-B: the session-desks law (isSessionOwnDesk + the folds)', () => {
   /** A directory row carrying the given session-scope marker. */
-  const row = (id: string, marker?: 'session-owned' | 'tenant-available') => ({ id, consoleSessionScope: marker }) as never as Parameters<typeof isSessionOwnDesk>[0];
+  const row = (id: string, marker?: 'session-owned' | 'principal-owned' | 'tenant-available') => ({ id, consoleSessionScope: marker }) as never as Parameters<typeof isSessionOwnDesk>[0];
 
   it('the marker splits the rows: session-owned and UNMARKED are the session own; tenant-available is another session desk', () => {
     expect(isSessionOwnDesk(row('prj-a'))).toBe(true); // UNMARKED = the honest fallback (a backing that predates the marker)
     expect(isSessionOwnDesk(row('prj-a', 'session-owned'))).toBe(true);
     expect(isSessionOwnDesk(row('prj-a', 'tenant-available'))).toBe(false);
+  });
+
+  it('FW-39-2 (identity Wave 2 — the design §5 marker law, PINNED): a principal-owned row is TREATED AS OWN — the wall census under a principal is own + demo only', () => {
+    // Wave 1's additive vocabulary extension: an adopted desk (or one
+    // launched while signed in) serves 'principal-owned'. The existing
+    // fold already reads it as own, so the re-attached desk lists in
+    // the switcher/palette/Oversight for the signed-in session, and the
+    // wall census under a principal stays OWN + DEMO ONLY — the
+    // FW-37-B law held, no widening parameter anywhere.
+    expect(isSessionOwnDesk(row('prj-principal-1', 'principal-owned'))).toBe(true);
+    const directory = [
+      row('prj-demo-console', 'tenant-available'),
+      row('prj-principal-1', 'principal-owned'),
+      row('prj-own-1', 'session-owned'),
+      row('prj-foreign-1', 'tenant-available'),
+    ];
+    // the census is OWN + DEMO ONLY (directory order preserved): the principal's re-attached desk,
+    // the session's own desk, the shared demo desk — the foreign session's desk is the hidden set
+    expect(sessionOwnDesksOf(directory, DEMO_PROJECT_ID).map((entry) => entry.id)).toEqual(['prj-demo-console', 'prj-principal-1', 'prj-own-1']);
+    expect(otherSessionsDesksOf(directory, DEMO_PROJECT_ID).map((entry) => entry.id)).toEqual(['prj-foreign-1']);
   });
 
   it('the default listing folds the session own desks + the shared demo project (whatever its marker says)', () => {

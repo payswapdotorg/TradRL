@@ -589,16 +589,16 @@ export function labeledInput(options: {
   readonly label: string;
   readonly name: string;
   readonly value: string;
-  readonly type?: 'text' | 'number' | 'datetime-local';
+  readonly type?: 'text' | 'password' | 'number' | 'datetime-local';
   readonly placeholder?: string;
   readonly hint?: string;
   readonly validation?: FieldValidation;
   readonly required?: boolean;
-  readonly vocabulary?: 'launch' | 'research';
+  readonly vocabulary?: 'launch' | 'research' | 'account';
 }): VNode[] {
   const invalid = options.validation?.touched === true && (options.validation?.message.length ?? 0) > 0;
-  const idPrefix = options.vocabulary === 'research' ? 'research' : 'launch';
-  const fieldAttr = options.vocabulary === 'research' ? 'data-research-field' : 'data-launch-field';
+  const idPrefix = options.vocabulary === 'research' ? 'research' : options.vocabulary === 'account' ? 'account' : 'launch';
+  const fieldAttr = options.vocabulary === 'research' ? 'data-research-field' : options.vocabulary === 'account' ? 'data-account-field' : 'data-launch-field';
   return [
     v('div', { class: `field${invalid ? ' field-invalid' : ''}`, 'data-field': options.name }, [
       v('label', { class: 'field-label', for: `${idPrefix}-${options.name}` }, [options.label, ...(options.required === true ? [' *'] : [])]),

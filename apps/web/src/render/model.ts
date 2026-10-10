@@ -62,6 +62,10 @@ import { activeTargetOf, defaultShellView, heroPanel, renderAppShell, settingsPa
 // panel — its own render module (the payload-budget extraction pattern;
 // the twelve UX.md sections' own panels stay untouched in this file).
 import { oversightPanel } from './oversight';
+// FW-39-2 (identity Wave 2): the account surface's render halves — the
+// Home first-run offer (the composition gate lives in homePanel) and
+// the anonymous-default fold (the same extraction pattern).
+import { accountInviteCard, accountPanelOf } from './account';
 // The onboarding wizard's only render is renderAppShell's §4.13 modal
 // overlay (render/shell.ts) — this model never imports it (the W-10b
 // double-render fix: one wizard, one copy, one place).
@@ -970,8 +974,18 @@ export function homeFresh(state: WorkspaceState): boolean {
  * (§4.12), the ErrorState when the API is unreachable with nothing
  * known, and a quiet hint when there is no activity yet.
  */
-function homePanel(state: WorkspaceState, viewAt: number): VNode {
+function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNode {
   const fresh = homeFresh(state);
+  // FW-39-2 (identity Wave 2 — the design §5 Wave 2's own words): A
+  // FIRST-RUN OFFER AFTER ONBOARDING, NEVER INSIDE IT. The invitation
+  // renders on Home for ANONYMOUS sessions only, and the gate is the
+  // composition law itself: the open wizard (view.onboarding) never
+  // carries it (the demo flow stays untouched — the no-change pin),
+  // and an authenticated or teaching state never offers what it
+  // already has or cannot serve. The card's bytes live in
+  // render/account.ts; its button rides the EXISTING delegated
+  // navigation (data-target="settings").
+  const invite = view.onboarding === null && accountPanelOf(view).surface === 'anonymous' ? accountInviteCard() : null;
   // THE HERO'S LAUNCH AFFORDANCE (the J3 entry, Home shape): the
   // primary flow's own CTA when nothing is running; a resume hint
   // while the wizard is open (the wizard renders in the launch panel
@@ -1065,6 +1079,7 @@ function homePanel(state: WorkspaceState, viewAt: number): VNode {
     : timelineList(buckets);
   return v('section', { class: 'panel home', 'data-section': 'home' }, [
     hero,
+    ...(invite === null ? [] : [invite]),
     tiles,
     organization,
     v('div', { class: 'home-block' }, [v('h2', { class: 'section-heading' }, ['Recent activity']), activity]),
@@ -2061,7 +2076,7 @@ export function renderConsoleModel(state: WorkspaceState, at: number, view: Shel
     const viewAt = viewAtOf(state);
     const activeTarget = activeTargetOf(state, view);
     const main: VNode = activeTarget === 'home'
-      ? homePanel(state, viewAt)
+      ? homePanel(state, viewAt, view)
       : activeTarget === 'inbox'
         ? inboxPanel(state, viewAt)
         : activeTarget === 'oversight'

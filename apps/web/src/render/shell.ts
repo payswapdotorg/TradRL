@@ -28,6 +28,8 @@ import type { PlaybackSpeedKey } from '../core/timemachine';
 import { notificationBell, toastRecord } from './flow';
 import { paletteAffordance, paletteOverlay, fuzzyScore } from '../core/palette';
 import { onboardingPanel, onboardingReopenAffordance, type OnboardingState } from '../core/onboarding';
+import { accountPanelOf, accountSettingsBody, rememberedScopeCopy } from './account';
+import type { AccountPanelState } from '../core/principal';
 import { v, type VNode } from './vtree';
 
 /** The shell's view state — everything the chrome renders that is not workspace state. */
@@ -115,6 +117,18 @@ export interface ShellView {
   readonly playbackCustomSpeed: string;
   /** FW-34-B: the free speed's named refusal (null when the committed text is valid or empty) — rendered inline beside the control, never a silent clamp. */
   readonly playbackCustomSpeedError: string | null;
+  /**
+   * FW-39-2 (identity Wave 2 — docs/design/IDENTITY-MODEL.md §5): the
+   * ACCOUNT SURFACE's chrome state (core/principal.ts's own record —
+   * the register/login forms, the adoption ceremony, the teaching
+   * state). OPTIONAL by design: undefined is the anonymous default (a
+   * fresh browser — the demo flow's own shape, byte-for-byte; the
+   * render folds it through render/account.ts's accountPanelOf), and
+   * the account PLANE (app/account-plane.ts) is the only writer — the
+   * shell's view literal in app/console.ts stays untouched (the
+   * payload-budget law: zero console.ts growth).
+   */
+  readonly account?: AccountPanelState;
 }
 
 /** A reference to the record a detail sheet shows (§4.5a). */
@@ -371,7 +385,7 @@ export function heroPanel(cta?: VNode): VNode {
 }
 
 /** One Settings row: a title + plain-language description + the value/control (D7 — every row explains itself). */
-function settingsRow(title: string, description: string, body: readonly VNode[]): VNode {
+export function settingsRow(title: string, description: string, body: readonly VNode[]): VNode {
   return v('div', { class: 'card settings-row', 'data-settings': title.toLowerCase() }, [
     v('div', { class: 'card-title' }, [title]),
     v('p', { class: 'card-note' }, [description]),
@@ -483,9 +497,16 @@ function exportVerifyCard(result: { readonly fileName: string; readonly report: 
 }
 
 export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
+  // FW-39-2 (identity Wave 2 — the copy honesty ride-along): the
+  // Theme/Project rows' persistence promise is TRUE for an
+  // authenticated principal and becomes the device-scoped copy for
+  // anonymous sessions (the design's own honesty rider — a promise
+  // must be true or change; per-account POSTURE is Phase 2, the copy
+  // changes now).
+  const remembered = rememberedScopeCopy(accountPanelOf(view));
   return v('section', { class: 'panel', 'data-section': 'settings' }, [
     // D7 row 1 — theme (with the persistence seam write-through)
-    settingsRow('Theme', 'Choose light or dark; your choice is remembered for future visits.', [
+    settingsRow('Theme', `Choose light or dark; your choice is ${remembered}.`, [
       v('div', { class: 'segmented' }, [
         v('button', { class: 'segment', 'data-action': 'theme-light', type: 'button', 'aria-pressed': view.theme === 'light' ? 'true' : 'false' }, ['Light']),
         v('button', { class: 'segment', 'data-action': 'theme-dark', type: 'button', 'aria-pressed': view.theme === 'dark' ? 'true' : 'false' }, ['Dark']),
@@ -531,7 +552,7 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
     // the filtered view: when the filter hides the current project, the
     // disabled current-scope option renders (selected) so the value
     // still mirrors the truth.
-    settingsRow('Project', 'Switch the workspace to another project; every section refetches for the project you choose, and your choice is remembered for future visits. The list is your session\u2019s own projects plus the shared demo project; type to filter by name or id.', [
+    settingsRow('Project', `Switch the workspace to another project; every section refetches for the project you choose, and your choice is ${remembered}. The list is your session\u2019s own projects plus the shared demo project; type to filter by name or id.`, [
       shellFactRow('current project', isLaunchpadScope(state.scope.projectId) ? 'the launchpad (no project yet)' : state.scope.projectId),
       ...(state.projectDirectory.length > 1
         ? [v('input', {
@@ -585,6 +606,17 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
       shellFactRow('billing today', 'none — no payment is collected'),
       shellFactRow('commercial pricing', 'not published yet'),
     ]),
+    // FW-39-2 (identity Wave 2 — docs/design/IDENTITY-MODEL.md §5): THE
+    // ACCOUNT ROW. Register/login (passphrase-first), the adoption
+    // ceremony, logout — every state honest: the demo backing's typed
+    // not-available TEACHES itself ("accounts are not available on this
+    // deployment"), never a silent wall, and the SIMULATED disclosure
+    // rides adjacent (an account never implies real money). The body
+    // lives in render/account.ts (the extraction pattern — the payload
+    // budget law); the anonymous default keeps the demo flow's own
+    // shape (the no-change pin's own law: the wizard never carries
+    // this surface).
+    settingsRow('Account', 'Keep your desks across browser restarts and machines — optional, passphrase-first, and honest about what this deployment serves.', accountSettingsBody(accountPanelOf(view), view.simulated)),
     // D7 row 4 — data export (an action that works: the deterministic serialized workspace record)
     // + MI-D7 (S5's ask): THE IN-UI CHAIN VERIFY — select the downloaded
     // export file here and the console verifies it with the SAME
