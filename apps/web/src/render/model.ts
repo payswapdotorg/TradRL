@@ -1382,9 +1382,17 @@ function latestLimitsEvaluationsOf(submissions: readonly GatewaySubmissionRecord
  * subjects honestly and points at the gate evaluation card — NEVER the
  * pre-fix blanket "enforced at the pre-trade gate" overclaim (S3/M3/L3's
  * reproduction: the export's own verdicts contradicted the card).
+ *
+ * FW-40-A (Round H register H-2 — M2, confirmed by M3 + L2 + L3, 4
+ * findings): the sentence now consumes the SAME VIEW-INSTANT-PROJECTED
+ * evaluations the gate-evaluation card renders (the caller passes the
+ * L4-projected fold — an evaluation never renders before its own
+ * submission's decided instant). The pre-fix sentence read the RAW
+ * blotter, so at a scrubbed TIMESTAMP instant it stated the binding
+ * taxonomy of verdicts that had not happened yet at the instant under
+ * review — the same point-in-time firewall leak the card below rode.
  */
-function riskEnforcementSentenceOf(state: WorkspaceState): string {
-  const evaluations = latestLimitsEvaluationsOf(state.submissions);
+function riskEnforcementSentenceOf(evaluations: readonly LimitsEvaluationRow[]): string {
   if (evaluations.length === 0) {
     // FW-38-B (Round G register G-9 — L2 + M3): the EMPTY-BLOTTER branch
     // renders the CURRENT truth — NO observations yet — never the stale
@@ -1611,6 +1619,24 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       ]);
   } else if (selector === 'risk') {
       const rows: VNode[] = [];
+      // FW-40-A (Round H register H-2 — THE top new-surface defect, 4
+      // independent confirmations: M2, M3, L2, L3): the gate-evaluation
+      // truth surface consumes the SAME L4 POINT-IN-TIME PROJECTION the
+      // standing rows, the breach panel and the Execution blotter ride.
+      // The pre-fix card (and the enforcement sentence inside the
+      // constraint-set card) read the RAW blotter — so at a scrubbed
+      // TIMESTAMP instant the "Gate evaluation (per constraint)" block
+      // rendered FUTURE gate verdicts at a PAST instant (L3's exact
+      // reproduction: verdicts observed 17:33:27.861Z rendered at view
+      // instant 17:33:00.000Z) while the standing rows BESIDE it
+      // correctly withheld the same observation. Now the fold is over
+      // the VIEW-INSTANT-PROJECTED submissions: a verdict never renders
+      // before the instant the gateway decided it (its submission's own
+      // routed/refused instant — availabilityOfSubmission), and at a
+      // pre-observation instant the card stays absent + the sentence
+      // teaches the honest no-observations-yet truth (G-9's branch,
+      // true AT that view instant).
+      const evaluations = latestLimitsEvaluationsOf(projectToView(state.submissions, viewAt, availabilityOfSubmission));
       if (state.constraintSet !== null) {
         rows.push(v('div', { class: 'card' }, [
           v('div', { class: 'card-title' }, ['Constraint set']),
@@ -1628,7 +1654,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           // rows (the served blotter's additive limitsEvaluation), and
           // when no evaluation is on file the card says exactly that
           // — never the blanket enforcement claim.
-          v('p', { class: 'hint', 'data-risk-enforcement': 'true' }, [riskEnforcementSentenceOf(state)]),
+          v('p', { class: 'hint', 'data-risk-enforcement': 'true' }, [riskEnforcementSentenceOf(evaluations)]),
         ]));
       }
       // FW-37-B (F-1 UI half): THE GATE EVALUATION CARD — the boundary's
@@ -1636,7 +1662,8 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       // each with its observation basis and the accepted-domains teaching
       // (the note the boundary serves verbatim — previously export-only,
       // invisible in the UI; the E-2 teaching is now IN the product).
-      const evaluations = latestLimitsEvaluationsOf(state.submissions);
+      // H-2 (FW-40-A): the rows are the L4-projected fold computed above —
+      // an observation never renders before its observed instant.
       if (evaluations.length > 0) {
         rows.push(v('div', { class: 'card', 'data-risk-evaluations': 'true' }, [
           v('div', { class: 'card-title' }, ['Gate evaluation (per constraint, the boundary\u2019s own verdicts)']),

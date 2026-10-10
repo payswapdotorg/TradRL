@@ -7,7 +7,7 @@
 //   - budgets are zero-or-positive exact decimals.
 
 import { describe, expect, it } from 'vitest';
-import { isDecimalString, isExactDecimal, isNonNegativeDecimal, renderDecimal, sumExactDecimals } from './decimals';
+import { divideDecimalsFloor, isDecimalString, isExactDecimal, isNonNegativeDecimal, renderDecimal, sumExactDecimals } from './decimals';
 
 describe('decimals: the exact-decimal grammar', () => {
   it('accepts the wire grammar', () => {
@@ -100,5 +100,48 @@ describe('FW-34-B: the exact decimal sum (sumExactDecimals)', () => {
     expect(sumExactDecimals(['12345678.90', '0.01'])).toBe('12345678.91');
     expect(sumExactDecimals(['999999999.99', '0.01'])).toBe('1000000000.00'); // the carry widens the whole part
     expect(sumExactDecimals(['0.001', '0.009'])).toBe('0.010'); // the widest fraction is preserved verbatim
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-40-A (Round H register H-3 — L2's find): the SIZING DIVISION, the
+// console-side mirror of the boundary's own law (deploy/vercel/runtime/
+// project-evidence.ts's divideDecimalsFloor — the FW-36-A sizing
+// discipline). The concentration standing row rides it: the largest
+// single position's notional share of the fill-derived book, floored at
+// the boundary's own six-fraction-digit resolution — never a float,
+// never a non-terminating decimal, never a fabricated fraction.
+// ---------------------------------------------------------------------------
+
+describe('FW-40-A (H-3): divideDecimalsFloor — the sizing division (the boundary\'s own law, mirrored)', () => {
+  it('floors at six fraction digits: the largest canonical decimal <= a/b (L2\'s exact book: 599.976 / 900)', () => {
+    expect(divideDecimalsFloor('599.976', '900')).toBe('0.66664');
+  });
+
+  it('terminating quotients render canonically (trailing fraction zeros stripped) and integers as integers', () => {
+    expect(divideDecimalsFloor('100', '100')).toBe('1');
+    expect(divideDecimalsFloor('1', '4')).toBe('0.25');
+    expect(divideDecimalsFloor('3', '2')).toBe('1.5');
+    expect(divideDecimalsFloor('0', '7')).toBe('0');
+  });
+
+  it('non-terminating quotients floor — the boundary\'s own resolution, never a float, never an infinite decimal', () => {
+    expect(divideDecimalsFloor('1', '3')).toBe('0.333333');
+    expect(divideDecimalsFloor('2', '3')).toBe('0.666666');
+  });
+
+  it('scale differences ride the exact path (fraction- vs whole-scale operands agree by construction)', () => {
+    expect(divideDecimalsFloor('0.5', '2')).toBe('0.25');
+    expect(divideDecimalsFloor('500000', '2000000')).toBe('0.25');
+    expect(divideDecimalsFloor('900.000', '1200.000')).toBe('0.75');
+  });
+
+  it('null on no denominator, on negatives, and on anything outside the exact grammar — the caller folds to the honest unknown, never a fabricated fraction', () => {
+    expect(divideDecimalsFloor('900', '0')).toBeNull();
+    expect(divideDecimalsFloor('-1', '3')).toBeNull();
+    expect(divideDecimalsFloor('1', '-3')).toBeNull();
+    expect(divideDecimalsFloor('abc', '3')).toBeNull();
+    expect(divideDecimalsFloor('1', '1e3')).toBeNull();
+    expect(divideDecimalsFloor('', '3')).toBeNull();
   });
 });

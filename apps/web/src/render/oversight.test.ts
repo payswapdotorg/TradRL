@@ -14,6 +14,7 @@ import type { GatewaySubmissionRecord, OutcomeRecord, ProjectRecord, RiskUtiliza
 import { DEMO_PROJECT_ID } from '../core/tenant';
 import { formatInstantUtc } from '../core/format';
 import { openWorkspace, reduceAll, type WorkspaceState } from '../core/workspace';
+import { desksLaunchedAfterViewOf, oversightRowsOf } from '../core/oversight';
 import { renderConsoleModel } from './model';
 import { defaultShellView, type ShellView } from './shell';
 import { serializeVNode } from './vtree';
@@ -262,5 +263,118 @@ describe('FW-37-B (F-2): the oversight panel render', () => {
     // nav item renders in the panel's own tree (the sidebar is one click away, D1)
     const bytes = oversightBytes(oversightState());
     expect(bytes).toContain('data-target="oversight"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-40-A (Round H register H-3 — L2's find): the concentration standing
+// row on the OVERSIGHT DESK CARD — L2's reproduction noted "The false
+// breach propagates to the Oversight desk card": the pre-fix card
+// rendered the open-position COUNT against the concentration FRACTION
+// bound ("2 · breach" on a compliant book). The card rides the same
+// core/standing.ts fold as the Risk panel — the concentration row now
+// renders the fill-derived FRACTION (the largest single position's
+// notional share of the book), so both surfaces heal together.
+// ---------------------------------------------------------------------------
+
+describe('FW-40-A (H-3): the Oversight desk card\'s concentration row reads the FRACTION — the false breach never propagates here again', () => {
+  it('L2\'s compliant book (2 fills, fraction 0.66664 <= bound 1): the card renders the fraction · ok — never "2 · breach"', () => {
+    const state = reduceAll(oversightState(), [
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-a', utilization: {
+        ...utilizationOf('prj-a'),
+        bounds: [
+          { constraintId: 'k-concentration', metric: 'state.position.concentration', boundMax: '1', severity: 'blocking', current: null, source: 'the standing risk-utilization read serves no concentration current on this backing', status: 'unknown' },
+          { constraintId: 'k-position', metric: 'state.position.grossExposure', boundMax: '2', severity: 'blocking', current: null, source: 'no position or equity store exists on any backing', status: 'unknown' },
+        ],
+        activeBreaches: [],
+      }, submissions: [routedFill('xgs:l2-1', VIEW_AT - 3000, '599.976'), routedFill('xgs:l2-2', VIEW_AT - 2000, '300.024')], decisions: [], readAt: VIEW_AT } },
+    ]);
+    const bytes = oversightBytes(state);
+    const alphaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-a"'), bytes.indexOf('data-oversight-desk="prj-b"'));
+    expect(alphaCard).toContain('state.position.concentration (bound)');
+    expect(alphaCard).toContain('0.66664 · ok'); // the FILL-DERIVED fraction — the largest position's share of the 900 book
+    expect(alphaCard).not.toContain('2 · breach'); // the count-vs-fraction lie, dead on this surface too
+    expect(alphaCard).not.toContain('· breach');  // the compliant book carries no breach stamp anywhere on the card
+    // the count keeps serving its own class beside the fraction (the same two-classes-two-units pin as the Risk panel)
+    expect(alphaCard).toContain('state.position.grossExposure (standing — fill-derived book)');
+    expect(alphaCard).toContain('2 · ok');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-40-A (Round H register H-7 — L3's find): the Oversight desk-list is
+// the VIEW-INSTANT projection. L3's exact reproduction: "the Oversight
+// desk-list renders Desk Two H's full card (bounds + 'organization
+// status active') at an instant 3+ minutes BEFORE its launch; the counts
+// stay honestly 0 but the card's identity fields leak ... the copy
+// discloses that 'every count is the view-instant projection' ... but
+// the desk's existence and status fields are post-instant at a
+// pre-instant view." The desk-list now projects by each desk's OWN
+// launch instant (the project record's createdAt): a desk launched
+// after the view instant does not exist at it — no card, the census
+// counts what existed, and the withholding note names what is held
+// back (L4 — the same projection discipline every count rides).
+// ---------------------------------------------------------------------------
+
+describe('FW-40-A (H-7): the desk-list is the view-instant projection (a desk launched after the view never renders)', () => {
+  /** Beta Desk's launch — 60s after the scrubbed view instant (L3: "a desk launched at 17:36:47 should not render at view instant 17:33:00"). */
+  const LATE_LAUNCH = T0 + 70_000;
+  /** The live anchor — the wall clock has moved past the late launch when the CRO scrubs back. */
+  const NOW = T0 + 80_000;
+
+  /** The workspace with Beta Desk launched at LATE_LAUNCH (Alpha + demo launched at T0, long before the scrubbed instant). */
+  function stateWithLateDesk(): WorkspaceState {
+    return reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: 'prj-a' }, NOW), [
+      { kind: 'connection-changed', at: NOW + 1, status: 'connected' },
+      { kind: 'projects-listed', at: NOW + 1, records: [
+        project('prj-a', 'Alpha Desk', 'session-owned'),
+        { ...project('prj-b', 'Beta Desk', 'session-owned'), createdAt: LATE_LAUNCH, updatedAt: LATE_LAUNCH },
+        project(DEMO_PROJECT_ID, 'the TradRL demo project', 'tenant-available'),
+      ] },
+      { kind: 'oversight-read', at: NOW + 1, read: { projectId: 'prj-a', utilization: utilizationOf('prj-a'), submissions: [], decisions: [], readAt: NOW } },
+      { kind: 'oversight-read', at: NOW + 1, read: { projectId: 'prj-b', utilization: null, submissions: [], decisions: [], readAt: NOW, orgStatus: { organizationRef: 'org:b', tenant: 'tenant-a', project: 'prj-b', status: 'active', at: LATE_LAUNCH, instanceRefs: ['ai:director-1'] } } },
+    ]);
+  }
+
+  const bytesAt = (state: WorkspaceState, at: number): string =>
+    serializeVNode(renderConsoleModel(state, at, { ...defaultShellView(state), simulated: true, accountView: 'oversight' }));
+
+  it('a desk launched at T does NOT render its full card at the T-1min scrubbed view — and the withholding note names what is held back (L4)', () => {
+    const scrubbed = reduceAll(stateWithLateDesk(), [
+      { kind: 'view-timestamp', at: NOW + 2, timestamp: LATE_LAUNCH - 60_000 }, // the Time Machine scrubbed 1 minute before Beta Desk's launch
+    ]);
+    const bytes = bytesAt(scrubbed, NOW + 2);
+    // Beta Desk did not exist at the scrubbed instant — NO card, no identity leak (L3: "the card's identity fields leak ... bounds + 'organization status active'")
+    expect(bytes).not.toContain('data-oversight-desk="prj-b"');
+    expect(bytes).not.toContain('Beta Desk');
+    expect(bytes).not.toContain('org:b');
+    // the desks that DID exist at the instant render as always
+    expect(bytes).toContain('data-oversight-desk="prj-a"');
+    expect(bytes).toContain('data-oversight-desk="' + DEMO_PROJECT_ID + '"');
+    expect(bytes).toContain('Alpha Desk');
+    // the census is the view-instant count, and the withholding note names the held-back desk (never a silent absence)
+    expect(bytes).toContain('2 desks at this view instant');
+    expect(bytes).toContain('data-oversight-withheld-desks="true"');
+    expect(bytes).toContain('1 desk launched after this view instant');
+    expect(bytes).toContain("a desk card never renders before the desk's own launch instant");
+  });
+
+  it('the same desk DOES render its full card once the view instant reaches its launch instant (the projection, not a removal)', () => {
+    const bytes = bytesAt(stateWithLateDesk(), NOW + 2); // live view at the anchor — past Beta Desk's launch
+    expect(bytes).toContain('data-oversight-desk="prj-b"');
+    expect(bytes).toContain('Beta Desk');
+    expect(bytes).toContain('organization status'); // the launch-derived fields render from the launch instant on
+    expect(bytes).toContain('3 desks at this view instant');
+    expect(bytes).not.toContain('data-oversight-withheld-desks'); // nothing is held back once the view reaches the launch
+  });
+
+  it('the fold-level law: oversightRowsOf excludes the not-yet-launched desk and desksLaunchedAfterViewOf counts it (the pure fold under the render)', () => {
+    const state = stateWithLateDesk();
+    const before = oversightRowsOf(state, LATE_LAUNCH - 60_000);
+    expect(before.map((row) => row.projectId)).toEqual(['prj-a', DEMO_PROJECT_ID]); // the directory's own order, launched desks only
+    expect(desksLaunchedAfterViewOf(state.projectDirectory, LATE_LAUNCH - 60_000)).toBe(1);
+    const at = oversightRowsOf(state, LATE_LAUNCH);
+    expect(at.map((row) => row.projectId)).toEqual(['prj-a', 'prj-b', DEMO_PROJECT_ID]); // launched AT the view instant — exists at it
+    expect(desksLaunchedAfterViewOf(state.projectDirectory, LATE_LAUNCH)).toBe(0);
   });
 });

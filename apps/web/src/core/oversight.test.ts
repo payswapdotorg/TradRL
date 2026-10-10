@@ -116,7 +116,7 @@ describe('FW-37-B (F-2): the oversight fold — the desks it aggregates', () => 
     expect(rows.some((row) => row.projectId === 'prj-s1-desk')).toBe(false); // the foreign session's desk is NOT here
     expect(rows.find((row) => row.projectId === DEMO_PROJECT_ID)?.demo).toBe(true); // the demo desk carries its own marker
     expect(rows.find((row) => row.projectId === 'prj-a')?.demo).toBe(false);
-    expect(oversightScopeNoteOf(state)).toContain('3 desks');
+    expect(oversightScopeNoteOf(state, VIEW_AT)).toContain('3 desks');
   });
 
   it('a desk without a read on record folds to its honest absence — never a fabricated number', () => {
@@ -353,5 +353,95 @@ describe('FW-37-B (F-6 helper): parseInstantUtc — the pure inverse of formatIn
     expect(parseInstantUtc('2026-10-09 12:34:56.789Z')).toBeNull();  // no T
     expect(parseInstantUtc('2026-10-09T12:34:56.789+00:00')).toBeNull(); // no offset form
     expect(parseInstantUtc('')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-40-A (Round H register H-3 — L2's find, the escalation-surface lie,
+// one row over from G-2's fix): the position.concentration standing row
+// reads the FILL-DERIVED FRACTION — the largest single position's
+// notional share of the book — or honestly unknown, NEVER the
+// open-position COUNT against a fraction bound. L2's exact reproduction:
+// "the POSITION.CONCENTRATION standing row renders the open-position
+// COUNT against the fraction bound — '2 · breach (the desk's own fills
+// at this view instant, never a gate observation)' — while the gate's
+// own C-4 verdict on the same page passes the true concentration
+// fraction (0.998502 <= 1) and the book is compliant on every class
+// (capital 900/600000, count 2/4, turnover 900/1200, standing fraction
+// 599.976/900 = 0.6664 <= 1). At bound 1 the row is false BY
+// CONSTRUCTION whenever >= 2 fills exist." The same surface-class G-2
+// fixed, one row over.
+// ---------------------------------------------------------------------------
+
+describe('FW-40-A (H-3): the concentration standing row reads the FILL-DERIVED FRACTION — never the count against a fraction bound', () => {
+  /** L2's exact book: 2 compliant fills — 599.976 (the largest) + 300.024, total booked notional 900. */
+  const l2Fills = (): GatewaySubmissionRecord[] => [
+    routedFill('xgs:l2-1', VIEW_AT - 3000, '599.976'),
+    routedFill('xgs:l2-2', VIEW_AT - 2000, '300.024'),
+  ];
+
+  const concentrationRead = (boundMax: string): RiskUtilizationRead => ({
+    projectId: 'prj-a',
+    asOf: formatInstantUtc(VIEW_AT + 60_000),
+    bounds: [
+      { constraintId: 'k-concentration', metric: 'state.position.concentration', boundMax, severity: 'blocking', current: null, source: 'the standing risk-utilization read serves no concentration current on this backing', status: 'unknown' },
+      { constraintId: 'k-position', metric: 'state.position.grossExposure', boundMax: '2', severity: 'blocking', current: null, source: 'no position or equity store exists on any backing', status: 'unknown' },
+    ],
+    activeBreaches: [],
+    disclosure: 'the read\'s own disclosure',
+  });
+
+  it('(a) THE PIN: 2 open positions with fraction 0.66664 <= bound 1 render NOT-a-breach WITH THE FRACTION — L2\'s compliant book never reads "2 · breach" again', () => {
+    const fold = standingReadFoldOf(concentrationRead('1'), l2Fills(), VIEW_AT);
+    const concentration = fold.rows.find((row) => row.constraintId === 'k-concentration');
+    if (concentration === undefined) throw new Error('the concentration row is missing');
+    expect(concentration.standing).toBe(0.66664); // the FILL-DERIVED fraction (599.976 / 900) — never the count 2
+    expect(concentration.standingStatus).toBe('ok'); // 0.66664 <= 1 — NOT a breach (L2's false breach, dead by construction)
+    expect(concentration.standingBasis).toContain('largest single position');
+    expect(concentration.standingBasis).toContain('never the open-position count');
+  });
+
+  it('(b) a TRUE fraction breach renders the breach stamp — the fraction against the fraction bound, exactly as declared', () => {
+    const fold = standingReadFoldOf(concentrationRead('0.5'), l2Fills(), VIEW_AT);
+    const concentration = fold.rows.find((row) => row.constraintId === 'k-concentration');
+    if (concentration === undefined) throw new Error('the concentration row is missing');
+    expect(concentration.standing).toBe(0.66664);
+    expect(concentration.standingStatus).toBe('breach'); // 0.66664 > 0.5 — the honest stamp on a true breach
+  });
+
+  it('(c) the COUNT is never compared against the fraction bound: the same book\'s gross-exposure row keeps the count against its own count bound (two classes, two units, one fold)', () => {
+    const fold = standingReadFoldOf(concentrationRead('1'), l2Fills(), VIEW_AT);
+    const concentration = fold.rows.find((row) => row.constraintId === 'k-concentration');
+    const exposure = fold.rows.find((row) => row.constraintId === 'k-position');
+    if (concentration === undefined || exposure === undefined) throw new Error('a row is missing');
+    expect(concentration.standing).not.toBe(2);              // the count never wears the fraction row
+    expect(concentration.standing).toBe(0.66664);            // the fraction
+    expect(exposure.standing).toBe(2);                       // the count serves ITS OWN class (the gross-exposure bound)
+    expect(exposure.standingStatus).toBe('ok');              // 2 <= 2 — the same compliant book
+    expect(concentration.standingStatus).toBe('ok');         // 0.66664 <= 1 — and the fraction serves its own
+  });
+
+  it('the boundary\'s own construction constants: a sole position\'s fraction is 1 (whatever its size); no fills = honestly unknown, never a fabricated fraction', () => {
+    // the sole fill: 100% of the book by construction — the gate's own entry arithmetic, mirrored
+    const sole = standingReadFoldOf(concentrationRead('1'), [routedFill('xgs:sole', VIEW_AT - 1000, '123.45')], VIEW_AT);
+    const soleRow = sole.rows.find((row) => row.constraintId === 'k-concentration');
+    if (soleRow === undefined) throw new Error('the concentration row is missing');
+    expect(soleRow.standing).toBe(1);
+    expect(soleRow.standingStatus).toBe('ok'); // 1 <= 1 — the sole-position law, honest at the bound
+    // no fills on record: the honest unknown (the page's own honesty law), never a zero fraction, never the count
+    const empty = standingReadFoldOf(concentrationRead('1'), [], VIEW_AT);
+    const emptyRow = empty.rows.find((row) => row.constraintId === 'k-concentration');
+    if (emptyRow === undefined) throw new Error('the concentration row is missing');
+    expect(emptyRow.standing).toBeNull();
+    expect(emptyRow.standingStatus).toBe('unknown');
+    expect(emptyRow.standingBasis).toContain('never the open-position count');
+  });
+
+  it('the book\'s own fold carries the largest single fill (the fraction\'s numerator — exact decimals, never a float)', () => {
+    const book = standingBookOf(l2Fills());
+    expect(book.fills).toBe(2);
+    expect(book.bookedNotional).toBe('900.000');
+    expect(book.largestFillNotional).toBe('599.976');
+    expect(standingBookOf([]).largestFillNotional).toBe('0'); // the honest empty book
   });
 });
