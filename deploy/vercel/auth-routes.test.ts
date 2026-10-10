@@ -37,6 +37,27 @@
 //   - SDK PARITY: a wrong-method /v1/auth path falls through to the
 //     boundary's typed not-found.
 //
+// FW-40-D (the auth-route brute-force guard) pins the work order's five
+// laws + the honest mechanics:
+//   (a) five FAILED registers on one identity -> the SIXTH attempt
+//       answers the typed 429 (the guard consults BEFORE the route);
+//   (b) a SUCCESSFUL LOGIN after four failures RESETS the identity
+//       bucket (legitimate users are not locked out by their own
+//       success);
+//   (c) the ADOPT route is NOT throttled beyond the existing law — it
+//       stays exactly as shipped (no guard, no counting, no parameter);
+//   (d) the 429 is TYPED + DISCLOSED per the R46 vocabulary (the closed
+//       `rate_limited` code, retryAfterMs + the retry-after-ms header,
+//       the reason naming the exhausted budget);
+//   (e) WHOAMI (a read) is not throttled by the failure counter;
+//   + the per-source bucket bounds identity-probing (a fresh name per
+//     attempt), the fixed window rolls with the injected clock, the
+//     bounds are env-configurable and fail CLOSED on a malformed value,
+//     the state is in-memory per instance (a cold start clears it), a
+//     degraded store read charges NEITHER bucket (R46), the authn-401 +
+//     not-available-503 teachings stay louder than the throttle, and a
+//     validation 400 charges nothing (no honest identity to charge).
+//
 // The DURABLE substrate pins (the registry's cold-start survival) live
 // here too — the same fake fetch backs a SECOND composition (a fresh
 // "serverless instance" over the same durable truth).
@@ -503,5 +524,331 @@ describe('deploy/vercel — FW-39-1: the adoption route (the calling session\'s 
     const sdkListing = await drive(instance.deployment, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_B, { [PRINCIPAL_TOKEN_HEADER]: token }) }));
     const sdkItems = (sdkListing.body.data as { items: readonly { id: string; consoleSessionScope?: string }[] }).items;
     expect(sdkItems.find((item) => item.id === 'prn-sdk')?.consoleSessionScope).toBe('principal-owned');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-40-D: the auth-route brute-force guard (the typed 429 throttle closing
+// the identity design's known gap — the work order's five laws + the honest
+// mechanics, over the SAME full-function-handler harness)
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-40-D: the auth-route brute-force guard (the typed 429 throttle)', () => {
+  /** One login attempt through the full handler. */
+  async function login(deployment: Composition, name: string, passphrase: string, extraHeaders: Record<string, string> = {}): Promise<{ status: number; headers: Record<string, string>; body: Record<string, unknown> }> {
+    return drive(deployment, streamingRequest({
+      method: 'POST', url: '/v1/auth/login', headers: { ...BEARER, 'content-type': 'application/json', ...extraHeaders },
+      body: registerBody(name, passphrase),
+    }));
+  }
+
+  /** One register attempt through the full handler. */
+  async function register(deployment: Composition, name: string, passphrase: string, extraHeaders: Record<string, string> = {}): Promise<{ status: number; headers: Record<string, string>; body: Record<string, unknown> }> {
+    return drive(deployment, streamingRequest({
+      method: 'POST', url: '/v1/auth/register', headers: { ...BEARER, 'content-type': 'application/json', ...extraHeaders },
+      body: registerBody(name, passphrase),
+    }));
+  }
+
+  it('(a) five FAILED registers on one identity -> the SIXTH register attempt answers the typed 429; a DIFFERENT identity is untouched (per-identity buckets)', async () => {
+    const providers = fakeProviders();
+    const instance = composeAuthInstance(authSource(), providers.fetchLike);
+    expect(instance.deployment.ok).toBe(true);
+    if (!instance.deployment.ok) return;
+
+    // alice exists; five duplicate-name registers (the typed 409s) are the
+    // five FAILED attempts on that identity.
+    expect((await register(instance.deployment, 'alice', 'correct horse battery staple')).status).toBe(201);
+    for (let index = 0; index < 5; index += 1) {
+      const failed = await register(instance.deployment, 'alice', 'another-passphrase-attempt');
+      expect(failed.status).toBe(409); // each one a FAILED credential attempt (the duplicate-name probe)
+      expect((failed.body.error as { code: string }).code).toBe('conflict');
+    }
+    // The SIXTH register attempt on alice: refused BEFORE the route runs.
+    const sixth = await register(instance.deployment, 'alice', 'yet-another-passphrase');
+    expect(sixth.status).toBe(429);
+    const error = sixth.body.error as { code: string; message: string; retryAfterMs: number };
+    expect(error.code).toBe('rate_limited');
+    expect(error.message).toContain('principal identity'); // WHICH budget is exhausted, disclosed
+    expect(error.message).toContain('5-failed-attempt budget');
+    // The bucket is PER IDENTITY: a different name never sees alice's failures.
+    const bob = await register(instance.deployment, 'bob', 'bob-own-passphrase-fine');
+    expect(bob.status).toBe(201);
+  });
+
+  it('(b) a SUCCESSFUL LOGIN after four failures RESETS the identity bucket — the honest unlock (legitimate users are not locked out by their own success)', async () => {
+    const providers = fakeProviders();
+    const instance = composeAuthInstance(authSource(), providers.fetchLike);
+    expect(instance.deployment.ok).toBe(true);
+    if (!instance.deployment.ok) return;
+    await registeredPrincipal(instance); // alice, passphrase 'correct horse battery staple'
+
+    // Four failures (each allowed — the bucket allows 5).
+    for (let index = 0; index < 4; index += 1) {
+      expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(401);
+    }
+    // The SUCCESSFUL login — the reset.
+    expect((await login(instance.deployment, 'alice', 'correct horse battery staple')).status).toBe(200);
+    // Without the reset, the identity's bucket would sit at 4 and the very
+    // next failure would be attempt #5-allowed-then-locked; WITH the reset,
+    // alice gets a FRESH budget: five more failures all land as 401s...
+    for (let index = 0; index < 5; index += 1) {
+      expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(401);
+    }
+    // ...and only the attempt after those five answers the typed 429.
+    const refused = await login(instance.deployment, 'alice', 'wrong passphrase entirely');
+    expect(refused.status).toBe(429);
+    expect((refused.body.error as { code: string }).code).toBe('rate_limited');
+  });
+
+  it('(c) the ADOPT route is NOT throttled beyond the existing law — it stays exactly as shipped (no guard, no counting, no widening parameter)', async () => {
+    const providers = fakeProviders();
+    const instance = composeAuthInstance(authSource(), providers.fetchLike);
+    expect(instance.deployment.ok).toBe(true);
+    if (!instance.deployment.ok) return;
+    // Session A owns one desk; alice is registered + logged in.
+    const created = await drive(instance.deployment, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: validCreateProjectRequest(TENANT, 'prj-a-1', 'the guard desk'),
+    }));
+    expect(created.status).toBe(201);
+    const { token } = await registeredPrincipal(instance);
+    // Exhaust alice's identity bucket (the guard is live for register)...
+    expect((await register(instance.deployment, 'alice', 'first-failing-register')).status).toBe(409);
+    for (let index = 0; index < 4; index += 1) {
+      expect((await register(instance.deployment, 'alice', `failing-register-${index}`)).status).toBe(409);
+    }
+    const refused = await register(instance.deployment, 'alice', 'the-refused-register');
+    expect(refused.status).toBe(429); // the guard IS live on the credential routes
+    // ...and the adopt route NEVER consults it: the ceremony answers its own
+    // 200 law (per-desk adoption of the CALLING session's own desks).
+    const adopted = await drive(instance.deployment, streamingRequest({
+      method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders(SESSION_A, { [PRINCIPAL_TOKEN_HEADER]: token }),
+    }));
+    expect(adopted.status).toBe(200);
+    expect((adopted.body.data as { adoptions: readonly { projectId: string; adopted: boolean; changed: boolean }[] }).adoptions).toEqual([{ projectId: 'prj-a-1', adopted: true, changed: true }]);
+    // ...not now, not under a hammer: 35 further adopts (past the source
+    // budget the credential routes would have long refused) ALL answer 200
+    // idempotently (changed: false) — the adopt law stays exactly as shipped.
+    for (let index = 0; index < 35; index += 1) {
+      const again = await drive(instance.deployment, streamingRequest({
+        method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders(SESSION_A, { [PRINCIPAL_TOKEN_HEADER]: token }),
+      }));
+      expect(again.status).toBe(200);
+      expect((again.body.data as { adoptions: readonly { adopted: boolean; changed: boolean }[] }).adoptions.every((entry) => entry.adopted && !entry.changed)).toBe(true);
+    }
+  });
+
+  it('(d) the 429 is TYPED + DISCLOSED per the R46 vocabulary — the source bucket: 30 attempts from one client source -> the 31st answers rate_limited with the retry signal + header; a DIFFERENT source has its own budget', async () => {
+    const providers = fakeProviders();
+    const instance = composeAuthInstance(authSource(), providers.fetchLike);
+    expect(instance.deployment.ok).toBe(true);
+    if (!instance.deployment.ok) return;
+    const sourceA = { 'x-forwarded-for': '203.0.113.9' };
+    // 30 failed logins on 30 DISTINCT unknown names (identity-probing: no
+    // per-identity bucket ever trips — each name fails exactly once) from
+    // ONE client source.
+    for (let index = 0; index < 30; index += 1) {
+      const probed = await login(instance.deployment, `probe-name-${index}`, 'a-passphrase-of-length', sourceA);
+      expect(probed.status).toBe(401);
+    }
+    // The 31st attempt from the same source: the typed 429, disclosed.
+    const refused = await login(instance.deployment, 'any-name-at-all', 'a-passphrase-of-length', sourceA);
+    expect(refused.status).toBe(429);
+    const error = refused.body.error as { code: string; message: string; retryAfterMs: number; status: number };
+    expect(error.code).toBe('rate_limited'); // the closed vocabulary's own code
+    expect(error.status).toBe(429);
+    expect(error.message).toContain('client source'); // WHICH budget is exhausted, disclosed
+    expect(error.message).toContain('30-attempt budget');
+    expect(error.message).toContain('900000ms window'); // the 15-minute default window, disclosed
+    expect(error.retryAfterMs).toBe(900000); // the frozen clock: the window's full remainder
+    expect(refused.headers['retry-after-ms']).toBe('900000'); // the envelope's own retry header (the SDK's backoff honors it)
+    // A DIFFERENT client source carries its OWN budget (the platform-forwarded
+    // address is what the host observes — forwarded through the wrap).
+    const otherSource = await login(instance.deployment, 'any-name-at-all', 'a-passphrase-of-length', { 'x-forwarded-for': '198.51.100.7' });
+    expect(otherSource.status).toBe(401); // allowed, failed on credentials — not refused by the throttle
+  });
+
+  it('(e) WHOAMI (a read) is NOT throttled by the failure counter — it answers 200 under a valid token even with the identity bucket exhausted, and never counts toward any budget', async () => {
+    const providers = fakeProviders();
+    const instance = composeAuthInstance(authSource(), providers.fetchLike);
+    expect(instance.deployment.ok).toBe(true);
+    if (!instance.deployment.ok) return;
+    const { token } = await registeredPrincipal(instance);
+    // Exhaust alice's identity bucket with failed logins...
+    for (let index = 0; index < 5; index += 1) {
+      expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(401);
+    }
+    expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(429); // the guard is live
+    // ...and whoami (a read, token-gated) never consults it.
+    const whoami = await drive(instance.deployment, streamingRequest({ url: '/v1/auth/whoami', headers: principalHeaders(token) }));
+    expect(whoami.status).toBe(200);
+    expect(((whoami.body.data as { principal: { name: string } }).principal).name).toBe('alice');
+    // Nor does whoami count toward any budget: a hammer of 35 whoami reads
+    // (past the credential routes' source budget) ALL answer 200.
+    for (let index = 0; index < 35; index += 1) {
+      expect((await drive(instance.deployment, streamingRequest({ url: '/v1/auth/whoami', headers: principalHeaders(token) }))).status).toBe(200);
+    }
+  });
+
+  it('the fixed window ROLLS with the injected clock: the budget clears when the window passes (never a permanent lock)', async () => {
+    const providers = fakeProviders();
+    const instance = composeAuthInstance(authSource(), providers.fetchLike);
+    expect(instance.deployment.ok).toBe(true);
+    if (!instance.deployment.ok) return;
+    await registeredPrincipal(instance);
+    for (let index = 0; index < 5; index += 1) {
+      expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(401);
+    }
+    const refused = await login(instance.deployment, 'alice', 'wrong passphrase entirely');
+    expect(refused.status).toBe(429);
+    expect((refused.body.error as { retryAfterMs: number }).retryAfterMs).toBe(900000); // the whole window remains
+    // Advance the clock PAST the window: the budget clears — the next
+    // attempt is served by the route again (a fresh window, anchored now).
+    instance.advanceTo(T0 + 900_000 + 1);
+    expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(401);
+    // And the new window's retry signal is anchored to the NEW first charge.
+    for (let index = 0; index < 4; index += 1) {
+      expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(401);
+    }
+    const refusedAgain = await login(instance.deployment, 'alice', 'wrong passphrase entirely');
+    expect(refusedAgain.status).toBe(429);
+    expect((refusedAgain.body.error as { retryAfterMs: number }).retryAfterMs).toBe(900_000); // anchored at T0+900001, still frozen there
+  });
+
+  it('the bounds are env-configurable (defaults sane; a tightened bound answers the same typed 429 with its own window)', async () => {
+    const providers = fakeProviders();
+    const instance = composeAuthInstance(authSource({
+      [API_ENV_KEYS.authThrottleIdentityFailures]: '2',
+      [API_ENV_KEYS.authThrottleWindowMs]: '60000',
+    }), providers.fetchLike);
+    expect(instance.deployment.ok).toBe(true);
+    if (!instance.deployment.ok) return;
+    await registeredPrincipal(instance);
+    expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(401);
+    expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(401);
+    const refused = await login(instance.deployment, 'alice', 'wrong passphrase entirely');
+    expect(refused.status).toBe(429);
+    const error = refused.body.error as { message: string; retryAfterMs: number };
+    expect(error.message).toContain('2-failed-attempt budget');
+    expect(error.message).toContain('60000ms window');
+    expect(error.retryAfterMs).toBe(60000);
+  });
+
+  it('an INVALID bound FAILS CLOSED at the composition seam (the typed 503 naming the key — a typo can never silently widen the guard)', async () => {
+    const providers = fakeProviders();
+    const instance = composeAuthInstance(authSource({ [API_ENV_KEYS.authThrottleSourceAttempts]: 'zero' }), providers.fetchLike);
+    expect(instance.deployment.ok).toBe(false); // the composition refuses to boot
+    if (instance.deployment.ok) return;
+    expect(instance.deployment.missing.join(' ')).toContain('TRADRL_AUTH_THROTTLE_SOURCE_ATTEMPTS');
+    expect(instance.deployment.missing.join(' ')).toContain('positive integer');
+    // The full handler serves the typed degraded 503 naming the key.
+    const answer = await drive(instance.deployment, streamingRequest({ url: '/v1/meta', headers: { ...BEARER } }));
+    expect(answer.status).toBe(503);
+    expect((answer.body.error as { code: string; message: string }).code).toBe('deploy_not_configured');
+    expect((answer.body.error as { code: string; message: string }).message).toContain('TRADRL_AUTH_THROTTLE_SOURCE_ATTEMPTS');
+  });
+
+  it('the guard state is IN-MEMORY PER INSTANCE: a fresh composition over the same durable truth clears the buckets (the honest cold-start disclosure)', async () => {
+    const providers = fakeProviders();
+    const first = composeAuthInstance(authSource(), providers.fetchLike);
+    expect(first.deployment.ok).toBe(true);
+    if (!first.deployment.ok) return;
+    await registeredPrincipal(first);
+    for (let index = 0; index < 5; index += 1) {
+      expect((await login(first.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(401);
+    }
+    expect((await login(first.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(429);
+    // A FRESH "serverless instance" (a cold start) over the same durable
+    // truth: the buckets were the dead instance's own — the attempt is
+    // served again (the scrypt KDF remains the cost floor beneath the
+    // throttle; the durable registry itself survived, as FW-39-1 pinned).
+    const second = composeAuthInstance(authSource(), providers.fetchLike);
+    expect(second.deployment.ok).toBe(true);
+    if (!second.deployment.ok) return;
+    const afterColdStart = await login(second.deployment, 'alice', 'wrong passphrase entirely');
+    expect(afterColdStart.status).toBe(401); // allowed — the failure counter died with the instance
+  });
+
+  it('a DEGRADED store read charges NEITHER bucket (R46: a backend outage never locks a user out)', async () => {
+    const providers = fakeProviders();
+    const outage = outageFetch(providers.fetchLike);
+    const instance = composeAuthInstance(authSource(), outage.fetchLike);
+    expect(instance.deployment.ok).toBe(true);
+    if (!instance.deployment.ok) return;
+    await registeredPrincipal(instance);
+    outage.setOutage(true);
+    const degraded = await login(instance.deployment, 'alice', 'wrong passphrase entirely');
+    expect(degraded.status).toBe(503); // the typed degraded state — NOT a credential failure
+    expect((degraded.body.error as { code: string }).code).toBe('unavailable');
+    outage.setOutage(false);
+    // Exactly the five REAL credential failures charge the identity bucket:
+    // the outage's 503 charged nothing (a sixth 401 lands before the 429).
+    for (let index = 0; index < 5; index += 1) {
+      expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(401);
+    }
+    const refused = await login(instance.deployment, 'alice', 'wrong passphrase entirely');
+    expect(refused.status).toBe(429);
+    expect((refused.body.error as { message: string }).message).toContain('5-failed-attempt budget'); // 5, not 6 — the 503 never charged
+  });
+
+  it('the ORDERING law: authn FIRST (the 401) and the not-available teaching (the 503) stay louder than the throttle — a 429 never masks them', async () => {
+    const providers = fakeProviders();
+    const instance = composeAuthInstance(authSource(), providers.fetchLike);
+    expect(instance.deployment.ok).toBe(true);
+    if (!instance.deployment.ok) return;
+    await registeredPrincipal(instance);
+    for (let index = 0; index < 5; index += 1) {
+      expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(401);
+    }
+    expect((await login(instance.deployment, 'alice', 'wrong passphrase entirely')).status).toBe(429); // the throttle is live
+    // A request with a BAD bearer answers the 401 FIRST — even on the
+    // exhausted identity (authn precedes the guard, the W-8 law).
+    const unauthenticated = await drive(instance.deployment, streamingRequest({
+      method: 'POST', url: '/v1/auth/register', headers: { 'content-type': 'application/json' }, body: registerBody('alice', 'whatever-passphrase'),
+    }));
+    expect(unauthenticated.status).toBe(401);
+    expect((unauthenticated.body.error as { code: string }).code).toBe('unauthenticated');
+    // Under the DEMO backing the not-available teaching stays louder than
+    // the throttle: hammering the register route NEVER answers a 429 — the
+    // surface does not exist to protect, so nothing is counted and the
+    // typed 503 keeps teaching the durable-backing requirement.
+    const demo = composeDeployment(readApiEnv({
+      [API_ENV_KEYS.apiDeveloperToken]: TOKEN,
+      [API_ENV_KEYS.apiDeveloperTenant]: TENANT,
+      [API_ENV_KEYS.apiDeveloperPrincipal]: PRINCIPAL,
+      [API_ENV_KEYS.authTokenKey]: AUTH_KEY, // the key IS configured — the backing is the blocker
+    }));
+    expect(demo.ok).toBe(true);
+    if (!demo.ok) return;
+    for (let index = 0; index < 35; index += 1) {
+      const answer = await register(demo, `demo-probe-${index}`, 'a-passphrase-of-length');
+      expect(answer.status).toBe(503);
+      expect((answer.body.error as { code: string }).code).toBe('unavailable');
+      expect((answer.body.error as { message: string }).message).toContain('DURABLE');
+    }
+  });
+
+  it('a validation failure (the typed 400) charges NEITHER bucket — a malformed body has no honest identity to charge', async () => {
+    const providers = fakeProviders();
+    const instance = composeAuthInstance(authSource(), providers.fetchLike);
+    expect(instance.deployment.ok).toBe(true);
+    if (!instance.deployment.ok) return;
+    await registeredPrincipal(instance);
+    // Ten malformed register bodies (a well-formed name, a short passphrase):
+    // each answers the typed 400 and charges nothing.
+    for (let index = 0; index < 10; index += 1) {
+      const malformed = await register(instance.deployment, 'alice', 'short');
+      expect(malformed.status).toBe(400);
+      expect((malformed.body.error as { code: string }).code).toBe('validation_failed');
+    }
+    // The identity bucket is EMPTY: the next WELL-FORMED failing register on
+    // alice (the 409) is served — and it takes the full five 409s to lock.
+    const served = await register(instance.deployment, 'alice', 'a-legit-passphrase-here');
+    expect(served.status).toBe(409);
+    for (let index = 0; index < 4; index += 1) {
+      expect((await register(instance.deployment, 'alice', 'a-legit-passphrase-here')).status).toBe(409);
+    }
+    expect((await register(instance.deployment, 'alice', 'a-legit-passphrase-here')).status).toBe(429);
   });
 });

@@ -70,6 +70,24 @@
 // parameter can steer WHICH desks adopt; the FW-37-B module-level
 // lesson applied here at birth).
 //
+// THE BRUTE-FORCE GUARD (FW-40-D — the known gap below, CLOSED): the
+// register + login routes (the two token-minting, credential-bearing
+// routes) run behind a bounded IN-MEMORY per-identity + per-source
+// rate limit (runtime/auth-throttle.ts — the boundary's own
+// fixed-window pattern; NO external middleware, the zero-dep law). <= 5
+// FAILED credential attempts per principal identity per 15 min, <= 30
+// auth attempts per client source per 15 min (both env-configurable,
+// defaults sane, an invalid value fails closed at the composition
+// seam); over-budget answers the TYPED 429 (`rate_limited`, the closed
+// ApiError vocabulary, retryAfterMs set — the R46 lineage: typed,
+// disclosed, never a silent reset). A SUCCESSFUL LOGIN resets the
+// identity's failure bucket (legitimate users are not locked out by
+// their own success). The state is IN-MEMORY PER INSTANCE (a cold start
+// clears it — acceptable for a throttle; the scrypt KDF remains the
+// cost floor). Logout, whoami, and adopt stay EXACTLY as shipped — no
+// throttle, no counting, and NO widening parameter ever (the adopt law
+// stays frozen).
+//
 // THE ENVELOPE DISCIPLINE: imported from runtime/routes.ts
 // (demoRouteSuccess/demoRouteError/demoRouteRequestId — never
 // duplicated); the same { requestId, data } / { requestId, error } wire
@@ -80,24 +98,27 @@
 // pinned by deploy/vercel/vercel.test.ts, which scans this file too).
 //
 // DOCUMENTED LIMITATIONS (honest, the W-8 precedent): host-owned routes
-// run outside the T041 pipeline's metering/audit tail AND its rate
-// limiter — a login endpoint with no host-side brute-force throttling is
-// the known gap (the scrypt KDF is the cost lever; host-side throttling
-// is a later wave's additive option). The principal token rides a custom
-// header beside the boundary credential (the two-layer model: developer
-// credential = the tenant; the principal token = the user; the console
-// session id = the device correlation). Token theft is bounded by scope
-// + expiry + revocation; the design's §3(c) exposure note applies (the
-// public shell already bakes the tenant credential — no NEW exposure
-// class arises; a stolen principal token is strictly narrower and
-// revocable). The concurrent-register race (two registers of the same
-// name in flight) is caught by the store's UNIQUE index as a typed
-// degraded write; the check-then-insert is the common path.
+// run outside the T041 pipeline's metering/audit tail (the boundary's
+// own rate limiter still never sees these paths). The brute-force gap
+// that note used to carry — "a login endpoint with no host-side
+// throttling" — is CLOSED by the FW-40-D guard above (register + login
+// only; in-memory per instance; the full honest-limitations list lives
+// in runtime/auth-throttle.ts's header). The principal token rides a
+// custom header beside the boundary credential (the two-layer model:
+// developer credential = the tenant; the principal token = the user;
+// the console session id = the device correlation). Token theft is
+// bounded by scope + expiry + revocation; the design's §3(c) exposure
+// note applies (the public shell already bakes the tenant credential —
+// no NEW exposure class arises; a stolen principal token is strictly
+// narrower and revocable). The concurrent-register race (two registers
+// of the same name in flight) is caught by the store's UNIQUE index as
+// a typed degraded write; the check-then-insert is the common path.
 //
 // Zero-dep law: platform APIs only (node:crypto — the r2/upstash
 // adapters' own platform-crypto precedent). Spec anchors: L12 (tenant
 // isolation — the registry is tenant-scoped), L4 (observed instants on
-// every stamp), R46 (the typed degraded/not-available states), the
+// every stamp), R46 (the typed degraded/not-available states), R43 (the
+// typed 429's retryAfterMs — the SDK's backoff honors it), the
 // IDENTITY-MODEL design §3(c)/§5 Wave 1, G-11.
 
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
@@ -114,6 +135,7 @@ import {
 import type { PrincipalCredentialRecord, PrincipalRevocationRecord, SessionProjectRow } from '../../adapters/neon/stores';
 import type { StoreFailure, StoreResult } from '../../adapters/shared';
 import { DEMO_PROJECT_ID } from './demo';
+import { clientSourceOf, type AuthThrottle, type AuthThrottleVerdict } from './auth-throttle';
 import { demoRouteError, demoRouteRequestId, demoRouteSuccess, type VerifyDeveloperAuthorization } from './routes';
 import { consoleSessionOf, projectOfRow } from './session-routes';
 
@@ -190,6 +212,17 @@ export interface AuthRouteInput {
   readonly now: () => number;
   /** The adoption seam (the session rows + the principal-ownership stamp). Null = not-available with the store. */
   readonly adoption: PrincipalAdoptionSeam | null;
+  /**
+   * THE BRUTE-FORCE GUARD (FW-40-D): the bounded in-memory per-identity +
+   * per-source throttle in front of register + login (runtime/
+   * auth-throttle.ts). ALWAYS present — the guard is configuration, not a
+   * backing: its bounds ride the env (defaults sane; invalid values fail
+   * closed at the composition seam), and its state is the instance's own
+   * (in-memory only; a cold start clears it — acceptable for a throttle,
+   * the scrypt KDF remains the cost floor). Logout/whoami/adopt never
+   * consult it.
+   */
+  readonly throttle: AuthThrottle;
 }
 
 /** The COMPLETE input — the invariant the dispatcher enforces before any route runs (the not-available states never reach a route). */
@@ -380,6 +413,22 @@ function authDegraded(requestId: RequestId, operation: string, error: StoreFailu
   return demoRouteError(requestId, apiError('unavailable', `the ${operation} failed (${error.code}): ${error.message} — the auth route answers the typed degraded state (R46)`));
 }
 
+/**
+ * THE TYPED 429 of the brute-force guard (FW-40-D — the R46 lineage:
+ * typed, disclosed, never a silent reset). The closed vocabulary's own
+ * `rate_limited` carries the server's retry signal (retryAfterMs — the
+ * SDK's backoff honors it through the injected transport; the boundary's
+ * own 429 vocabulary, mirrored for the host-owned auth routes). The
+ * message names WHICH budget is exhausted and the honest unlock, never
+ * any credential material.
+ */
+function authThrottled(requestId: RequestId, verdict: Exclude<AuthThrottleVerdict, { readonly ok: true }>): ApiResponse {
+  const message = verdict.kind === 'identity'
+    ? `the principal identity is over its ${verdict.limit}-failed-attempt budget for "auth" in the current ${verdict.windowMs}ms window — retry after the signal (the SDK's backoff honors it; a successful login clears the identity's failure count, and the scrypt KDF remains the cost floor beneath the throttle)`
+    : `the client source is over its ${verdict.limit}-attempt budget for "auth" in the current ${verdict.windowMs}ms window — retry after the signal (the SDK's backoff honors it; the budget clears with the window)`;
+  return demoRouteError(requestId, apiError('rate_limited', message, { retryAfterMs: verdict.retryAfterMs }));
+}
+
 /** The register/login body's validated shape (the typed validation problems carry the broken paths). */
 function credentialBodyOf(body: unknown): { readonly ok: true; readonly name: string; readonly passphrase: string } | { readonly ok: false; readonly problems: readonly ReturnType<typeof problem>[] } {
   if (typeof body !== 'object' || body === null) return { ok: false, problems: Object.freeze([problem('body', 'the request body must be a JSON object carrying name and passphrase')]) };
@@ -399,6 +448,22 @@ function credentialBodyOf(body: unknown): { readonly ok: true; readonly name: st
   }
   if (name === null || passphrase === null) return { ok: false, problems: Object.freeze(problems) };
   return { ok: true, name, passphrase };
+}
+
+/**
+ * The request's CREDENTIAL IDENTITY for the brute-force guard (FW-40-D):
+ * the body's principal name under the SAME law credentialBodyOf applies
+ * (a string of 1..64 characters, surrounding whitespace not counted).
+ * Null when the body carries no well-formed name — a malformed body has
+ * no honest identity to charge, so it can neither trip nor be refused by
+ * the per-identity bucket (the per-source bucket still bounds it).
+ */
+function credentialIdentityOf(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const name = (body as { readonly name?: unknown }).name;
+  if (typeof name !== 'string') return null;
+  const trimmed = name.trim();
+  return trimmed.length >= 1 && trimmed.length <= 64 ? trimmed : null;
 }
 
 /** The served principal identity view (from the token's claims) — NEVER the salt, NEVER the verifier. */
@@ -546,8 +611,39 @@ export async function serveAuthRoute(input: AuthRouteInput, request: AuthRouteRe
   // The guarded narrowing — the three non-null checks above are the runtime
   // invariant; the complete input is what every route below consumes.
   const complete = input as CompleteAuthRouteInput;
-  if (isRegister) return registerRoute(complete, request, requestId, authorization.tenant);
-  if (isLogin) return loginRoute(complete, request, requestId, authorization.tenant);
+  // THE BRUTE-FORCE GUARD (FW-40-D) — register + login ONLY (the two
+  // token-minting, credential-bearing routes; logout/whoami/adopt never
+  // consult it — they stay exactly as shipped, the adopt law frozen).
+  // The guard runs AFTER authn (the 401 stays first — the W-8 law) and
+  // AFTER the honest unavailability (the 503 teaching stays louder than
+  // the throttle: under the DEMO backing / without the signing key
+  // nothing is counted and nothing is refused — the surface does not
+  // exist to protect), and BEFORE the route: an over-budget attempt is
+  // refused without paying the store read or the scrypt KDF.
+  if (isRegister || isLogin) {
+    const scope = { tenant: authorization.tenant, source: clientSourceOf(request.headers), identity: credentialIdentityOf(request.body) };
+    const guard = input.throttle.guard(scope);
+    if (!guard.ok) return authThrottled(requestId, guard);
+    input.throttle.countAttempt(scope); // one ACCEPTED attempt on the source bucket (refused attempts charge nothing — the boundary's own law)
+    const answer = isRegister
+      ? await registerRoute(complete, request, requestId, authorization.tenant)
+      : await loginRoute(complete, request, requestId, authorization.tenant);
+    // The post-route bookkeeping (synchronous, before the answer leaves):
+    // a CREDENTIAL-LAW failure (login's 401, register's 409) charges the
+    // identity bucket; a validation 400 charges nothing (no honest
+    // identity to charge when the body is malformed) and a degraded 503
+    // charges nothing (R46 — a backend outage never locks a user out);
+    // a SUCCESSFUL LOGIN clears the identity's failure bucket (the
+    // honest unlock — the work order's law; a successful register does
+    // not: a name that just registered was free, and its login-probe
+    // failures are cleared by the owner's first successful login).
+    if (scope.identity !== null && (answer.status === 401 || answer.status === 409)) {
+      input.throttle.chargeFailure(scope);
+    } else if (isLogin && answer.status === 200 && scope.identity !== null) {
+      input.throttle.clearFailures(scope);
+    }
+    return answer;
+  }
   if (isLogout) return logoutRoute(complete, request, requestId, authorization.tenant);
   if (isWhoami) return whoamiRoute(complete, request, requestId, authorization.tenant);
   return adoptRoute(complete, request, requestId, authorization.tenant);

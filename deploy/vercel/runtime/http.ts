@@ -154,7 +154,7 @@ export type WrappedApiRequest =
 /** Build the ApiRequest the T041 pipeline consumes (the path recovered, the headers forwarded — everything untrusted). */
 export async function toApiRequest(request: FunctionRequest): Promise<WrappedApiRequest> {
   const method = (request.method ?? 'GET').toUpperCase();
-  const headers: { authorization?: string; 'idempotency-key'?: string; 'x-tradrl-console-session'?: string; 'x-tradrl-principal-token'?: string } = {};
+  const headers: { authorization?: string; 'idempotency-key'?: string; 'x-tradrl-console-session'?: string; 'x-tradrl-principal-token'?: string; 'x-forwarded-for'?: string; 'x-real-ip'?: string } = {};
   const authorization = firstHeader(request, 'authorization');
   if (authorization !== undefined) headers.authorization = authorization;
   const idempotencyKey = firstHeader(request, 'idempotency-key');
@@ -171,6 +171,18 @@ export async function toApiRequest(request: FunctionRequest): Promise<WrappedApi
   // the console session header: the frozen boundary ignores it).
   const principalToken = firstHeader(request, PRINCIPAL_TOKEN_HEADER);
   if (principalToken !== undefined) headers[PRINCIPAL_TOKEN_HEADER] = principalToken;
+  // FW-40-D (the auth-route brute-force guard): the PLATFORM-FORWARDED
+  // client address rides the wrapped request through to the host-owned
+  // auth routes' per-source throttle bucket (runtime/auth-throttle.ts's
+  // clientSourceOf — the same extra-key law: the frozen boundary ignores
+  // both keys; on Vercel the platform overwrites x-forwarded-for with the
+  // connecting address, so the observed source is the platform's own
+  // truth, and when neither header is present the guard's honest
+  // shared no-client-address bucket applies — never a widening).
+  const forwardedFor = firstHeader(request, 'x-forwarded-for');
+  if (forwardedFor !== undefined) headers['x-forwarded-for'] = forwardedFor;
+  const realIp = firstHeader(request, 'x-real-ip');
+  if (realIp !== undefined) headers['x-real-ip'] = realIp;
   let body: unknown = undefined;
   if (method !== 'GET' && method !== 'HEAD') {
     const parsed = await readJsonBody(request);
