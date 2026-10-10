@@ -2098,3 +2098,130 @@ describe('deploy/vercel — FW-38-A (G-1): a pre-wave persisted goal row heals a
     expect(goalBody.goal.horizon.label).toBe('45 days');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-39-1 (the identity wave 1): THE PRINCIPAL SUBSTRATE UNDER DURABLE —
+// the adoption stamp's store truth, the cold-start closure (the G-11
+// restart orphan), and the principal identity never crossing the wire
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-39-1: the principal substrate under durable (the adoption stamp, the cold-start closure)', () => {
+  const SESSION_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; // 32-hex — the console's mint shape
+  const SESSION_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'; // a FRESH session id (the restart)
+
+  function sessionHeaders(session: string, extra: Record<string, string> = {}): Record<string, string> {
+    return { ...BEARER, 'x-tradrl-console-session': session, ...extra };
+  }
+
+  /** The durable env WITH the auth signing key (the wave-1 deployment shape). */
+  function authSource(overrides: Record<string, string | undefined> = {}): Record<string, string | undefined> {
+    return durableSourceWithMachinery({ TRADRL_AUTH_TOKEN_KEY: 'test-auth-hmac-key-fixed', ...overrides });
+  }
+
+  /** Register one principal through the FULL handler; returns the minted token. */
+  async function registerPrincipal(instance: ReturnType<typeof composeInstance>): Promise<string> {
+    const registered = await drive(instance, streamingRequest({
+      method: 'POST', url: '/v1/auth/register', headers: { ...BEARER, 'content-type': 'application/json' },
+      body: { name: 'alice', passphrase: 'correct horse battery staple' },
+    }));
+    expect(registered.status).toBe(201);
+    return ((registered.body as { data: { token: string } }).data).token;
+  }
+
+  it('the adoption stamp is store truth: the goal-set row carries ownerPrincipal BESIDE ownerSession (lineage preserved), and the marker never leaks the identity', async () => {
+    const providers = fakeProviders();
+    const instance = composeInstance(authSource(), providers.fetchLike);
+    expect(instance.ok).toBe(true);
+    if (!instance.ok) return;
+
+    // session A launches a desk; alice registers + adopts it.
+    const created = await drive(instance, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: createProjectBody('prj-session-a-1'),
+    }));
+    expect(created.status).toBe(201);
+    const token = await registerPrincipal(instance);
+    const adopted = await drive(instance, streamingRequest({
+      method: 'POST', url: '/v1/auth/adopt', headers: { ...sessionHeaders(SESSION_A), 'x-tradrl-principal-token': token },
+    }));
+    expect(adopted.status).toBe(200);
+    expect(((adopted.body as { data: { adoptions: readonly { projectId: string; adopted: boolean; changed: boolean }[] } }).data).adoptions).toEqual([
+      { projectId: 'prj-session-a-1', adopted: true, changed: true },
+    ]);
+
+    // THE STORE TRUTH: the row carries BOTH stamps (the additive field beside the session stamp — lineage preserved).
+    const direct = storesOver(providers.fetchLike);
+    const goalSet = await direct.project.goalSetOf(TENANT, 'prj-session-a-1');
+    expect(goalSet.ok).toBe(true);
+    if (!goalSet.ok) return;
+    expect(goalSet.value?.ownerSession).toBe(SESSION_A); // the session stamp SURVIVED the adoption
+    expect(typeof goalSet.value?.ownerPrincipal).toBe('string'); // the principal stamp rode the SAME opaque payload
+    expect((goalSet.value?.ownerPrincipal as string).startsWith('prn-')).toBe(true);
+
+    // The JOIN row (the session listing's own read) decodes both.
+    const rows = await direct.project.projectSessionRowsOf(TENANT);
+    expect(rows.ok).toBe(true);
+    if (!rows.ok) return;
+    const row = rows.value.find((candidate) => (candidate.project as { readonly id?: unknown }).id === 'prj-session-a-1');
+    expect(row?.ownerSession).toBe(SESSION_A);
+    expect(row?.ownerPrincipal).toBe(goalSet.value?.ownerPrincipal);
+  });
+
+  it('THE COLD-START CLOSURE (G-11): a FRESH instance + a FRESH session id + the principal token lists the adopted desk as OWN — the principal identity itself never crossing the wire', async () => {
+    const providers = fakeProviders();
+    const instanceA = composeInstance(authSource(), providers.fetchLike);
+    expect(instanceA.ok).toBe(true);
+    if (!instanceA.ok) return;
+    await drive(instanceA, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: createProjectBody('prj-session-a-1'),
+    }));
+    const token = await registerPrincipal(instanceA);
+    const adopted = await drive(instanceA, streamingRequest({
+      method: 'POST', url: '/v1/auth/adopt', headers: { ...sessionHeaders(SESSION_A), 'x-tradrl-principal-token': token },
+    }));
+    expect(adopted.status).toBe(200);
+
+    // THE COLD INSTANCE (a serverless restart onto fresh memory — the same durable truth).
+    const instanceB = composeInstance(authSource(), providers.fetchLike);
+    expect(instanceB.ok).toBe(true);
+    if (!instanceB.ok) return;
+    // Without the token: the fresh session sees the desk as tenant-available (FW-31-B's registry law).
+    const anonymous = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_B) }));
+    const anonymousItems = ((anonymous.body as { data: { items: readonly { id: string; consoleSessionScope?: string }[] } }).data).items;
+    expect(anonymousItems.find((project) => project.id === 'prj-session-a-1')?.consoleSessionScope).toBe('tenant-available');
+    // With the token: 'principal-owned' — the desk lists as OWN under the fresh session id (the restart orphan, closed).
+    const loggedIn = await drive(instanceB, streamingRequest({ url: '/v1/projects', headers: { ...sessionHeaders(SESSION_B), 'x-tradrl-principal-token': token } }));
+    const loggedInItems = ((loggedIn.body as { data: { items: readonly { id: string; consoleSessionScope?: string; ownerPrincipal?: unknown; ownerSession?: unknown }[] } }).data).items;
+    expect(loggedInItems.find((project) => project.id === 'prj-session-a-1')?.consoleSessionScope).toBe('principal-owned');
+    // THE IDENTITY-NEVER-CROSSES LAW (the ownerSession precedent): only the derived marker serves.
+    expect(loggedInItems.every((project) => project.ownerPrincipal === undefined && project.ownerSession === undefined)).toBe(true);
+    // The whoami on the cold instance: the registry + the revocation list rehydrated (the substrate is durable truth).
+    const whoami = await drive(instanceB, streamingRequest({ url: '/v1/auth/whoami', headers: { ...BEARER, 'x-tradrl-principal-token': token } }));
+    expect(whoami.status).toBe(200);
+    expect(((whoami.body as { data: { principal: { name: string } } }).data).principal.name).toBe('alice');
+  });
+
+  it('the create-stamp under durable: a create carrying BOTH the session header and a valid principal token writes BOTH stamps onto the row (the same drain)', async () => {
+    const providers = fakeProviders();
+    const instance = composeInstance(authSource(), providers.fetchLike);
+    expect(instance.ok).toBe(true);
+    if (!instance.ok) return;
+    const token = await registerPrincipal(instance);
+    const whoami = await drive(instance, streamingRequest({ url: '/v1/auth/whoami', headers: { ...BEARER, 'x-tradrl-principal-token': token } }));
+    expect(whoami.status).toBe(200);
+    const principalId = ((whoami.body as { data: { principal: { id: string } } }).data).principal.id;
+
+    const created = await drive(instance, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A, { 'x-tradrl-principal-token': token }), 'content-type': 'application/json' },
+      body: createProjectBody('prj-both-stamps'),
+    }));
+    expect(created.status).toBe(201);
+    const direct = storesOver(providers.fetchLike);
+    const goalSet = await direct.project.goalSetOf(TENANT, 'prj-both-stamps');
+    expect(goalSet.ok).toBe(true);
+    if (!goalSet.ok) return;
+    expect(goalSet.value?.ownerSession).toBe(SESSION_A); // the session stamp
+    expect(goalSet.value?.ownerPrincipal).toBe(principalId); // the principal stamp, BESIDE it (lineage preserved)
+  });
+});

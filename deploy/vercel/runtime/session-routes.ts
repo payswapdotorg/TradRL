@@ -137,6 +137,7 @@ import {
 } from '../../../services/api/src/index';
 import type { SessionProjectRow, StoreResult } from '../../adapters/neon/stores';
 import type { StoreFailure } from '../../adapters/shared';
+import type { PrincipalResolution, PrincipalTokenVerdict } from './auth-routes';
 import { DEMO_PROJECT_ID, isLaunchWorldRecord, withDerivedGoalHorizonLabel, withDerivedHorizonLabel } from './demo';
 import { matchProjectHydrationPath } from './hydration';
 import { demoRouteError, demoRouteRequestId, demoRouteSuccess, type DemoSubstanceAuthorization, type DemoSubstanceRequest, type VerifyDeveloperAuthorization } from './routes';
@@ -180,6 +181,18 @@ export interface DurableSessionWorld {
 export interface SessionScopeDeployment {
   /** The host auth seam (the composition's registered developer credential). */
   readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization;
+  /**
+   * THE PRINCIPAL TOKEN RESOLVER (FW-39-1, optional): the auth surface's
+   * shared verdict law — a request carrying a VALID principal token gets
+   * its principal context (the 'principal-owned' marker derives from it:
+   * a desk owned by the CALLING principal lists as own even under a FRESH
+   * session id — the G-11 restart-orphan closure). Absent/invalid tokens
+   * see no principal context (indistinguishable, the resolver's own law);
+   * a degraded revocation read degrades the listing (the typed 503 —
+   * never a partial principal view). Optional so existing constructions
+   * stay valid; the router always wires it.
+   */
+  readonly resolvePrincipalToken?: (headers: unknown, tenant: string) => Promise<PrincipalResolution>;
   /** The demo composition's session world (non-null exactly when the composition owns the demo world). */
   readonly demo: DemoSessionWorld | null;
   /** The durable composition's session world (non-null when the seam built; the fresh rows read is live whenever the seam is). */
@@ -241,8 +254,8 @@ export function sessionSeesProject(projectId: string, session: string, ownerOf: 
   return projectId === DEMO_PROJECT_ID || ownerOf(projectId) === session;
 }
 
-/** The session-scope marker served on every listed project (FW-31-B): 'session-owned' — this console session created the project; 'tenant-available' — the tenant's registry carries it, this session did not create it (the shared demo project included). */
-export type ConsoleSessionScopeMarker = 'session-owned' | 'tenant-available';
+/** The session-scope marker served on every listed project (FW-31-B; FW-39-1 extends the vocabulary): 'session-owned' — this console session created the project; 'principal-owned' (FW-39-1) — the CALLING PRINCIPAL owns it (the additive `ownerPrincipal` stamp; the shipped client's `isSessionOwnDesk` fold reads it as own — `!== 'tenant-available'` — so the marker is additive, no client change required); 'tenant-available' — the tenant's registry carries it, this session and principal did not create it (the shared demo project included). */
+export type ConsoleSessionScopeMarker = 'session-owned' | 'principal-owned' | 'tenant-available';
 
 /** The CONSOLE_SESSION_SCOPE field name (the additive marker — FW-31-B; the render surface (FW-32) owns its display). */
 export const CONSOLE_SESSION_SCOPE_FIELD = 'consoleSessionScope';
@@ -281,11 +294,26 @@ function ownerOfScope(scope: ConsoleSessionScope, projectId: string): string | n
 }
 
 /** The project id of one session row (empty when the payload carries none — malformed rows never match a gated id). */
-function projectOfRow(row: SessionProjectRow): string {
+export function projectOfRow(row: SessionProjectRow): string {
   const record = row.project;
   if (typeof record !== 'object' || record === null) return '';
   const id = (record as { readonly id?: unknown }).id;
   return typeof id === 'string' ? id : '';
+}
+
+/**
+ * THE PRINCIPAL CONTEXT RESOLUTION (FW-39-1): resolve the request's
+ * principal token ONCE for a surface that consumes it (the listing + the
+ * detail). No resolver wired / no token presented / an invalid token ->
+ * null (no principal context — the two-valued marker law); a degraded
+ * revocation read -> the typed degraded verdict (the caller serves the
+ * R46 503 — a principal-bearing request never serves a partial view).
+ */
+async function principalContextOf(deployment: SessionScopeDeployment, request: DemoSubstanceRequest, tenant: string): Promise<{ readonly principal: PrincipalTokenVerdict | null } | { readonly degraded: StoreFailure }> {
+  if (deployment.resolvePrincipalToken === undefined) return { principal: null };
+  const resolution = await deployment.resolvePrincipalToken(request.headers, tenant);
+  if (resolution.kind === 'degraded') return { degraded: resolution.error };
+  return { principal: resolution.kind === 'valid' ? resolution.token : null };
 }
 
 /** One 401 (the boundary's own unauthenticated law — the host routes' shared shape). */
@@ -393,11 +421,31 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
     // owned rows marked 'session-owned', every other row (the shared demo
     // project included) 'tenant-available'. The ownerSession identity
     // itself NEVER crosses the wire.
+    //
+    // FW-39-1 (the identity wave 1): a request carrying a VALID principal
+    // token ALSO marks the calling principal's own rows 'principal-owned'
+    // (the additive `ownerPrincipal` stamp — the adoption route's + the
+    // create-stamp's output): a desk adopted into (or created under) the
+    // account lists as OWN even under a FRESH session id — the G-11
+    // restart-orphan closure, served by the marker vocabulary the shipped
+    // client already folds (`isSessionOwnDesk`: !== 'tenant-available').
+    // A degraded revocation read degrades the whole listing (the R46 law
+    // — never a partial principal view); the ownerPrincipal identity
+    // itself NEVER crosses the wire (only the derived marker serves —
+    // the ownerSession precedent).
+    const principalContext = await principalContextOf(deployment, request, authorization.tenant);
+    if ('degraded' in principalContext) return sessionDegraded(requestId, principalContext.degraded);
+    const principal = principalContext.principal;
     const items: unknown[] = [];
     for (const row of scope.rows) {
       if (!isProjectRecord(row.project)) continue; // malformed rows are skipped fail-closed (the projection's own law)
       const owned = row.ownerSession === session;
-      items.push(withSessionScopeMarker(row.project, owned ? 'session-owned' : 'tenant-available'));
+      const marker: ConsoleSessionScopeMarker = owned
+        ? 'session-owned'
+        : principal !== null && row.ownerPrincipal === principal.principalId
+          ? 'principal-owned'
+          : 'tenant-available';
+      items.push(withSessionScopeMarker(row.project, marker));
     }
     return demoRouteSuccess(requestId, deepFreeze({ items: Object.freeze(items) }));
   }
@@ -449,10 +497,21 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
       return demoRouteSuccess(requestId, record);
     }
     // DURABLE (FW-31-B): the registry row IS the gate — the FRESH JOIN
-    // record serves (with its session-scope marker, the listing's twin).
+    // record serves (with its session-scope marker, the listing's twin;
+    // FW-39-1: the 'principal-owned' marker derives from the calling
+    // principal's token exactly as in the listing — the detail + the
+    // listing never disagree on ownership).
+    const principalContext = await principalContextOf(deployment, request, authorization.tenant);
+    if ('degraded' in principalContext) return sessionDegraded(requestId, principalContext.degraded);
+    const principal = principalContext.principal;
     const row = scope.rows.find((candidate) => projectOfRow(candidate) === project);
     if (row === undefined || !isProjectRecord(row.project)) return sessionNotFound(requestId, project);
-    return demoRouteSuccess(requestId, withSessionScopeMarker(row.project, row.ownerSession === session ? 'session-owned' : 'tenant-available'));
+    const marker: ConsoleSessionScopeMarker = row.ownerSession === session
+      ? 'session-owned'
+      : principal !== null && row.ownerPrincipal === principal.principalId
+        ? 'principal-owned'
+        : 'tenant-available';
+    return demoRouteSuccess(requestId, withSessionScopeMarker(row.project, marker));
   }
 
   // THE SESSION GATE on the host-owned project-scoped reads (the jobs list

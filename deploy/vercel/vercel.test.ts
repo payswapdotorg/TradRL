@@ -165,7 +165,7 @@ describe('deploy/vercel — the hosting config: same-origin /v1, no CORS', () =>
     expect(serialized.includes('cors')).toBe(false);
     // The forbidden header family, assembled at runtime so this test's own source stays clean.
     const forbidden = ['access', '-control'].join('').toLowerCase();
-    for (const source of ['api/router.ts', 'runtime/compose.ts', 'runtime/durable.ts', 'runtime/durable-world.ts', 'runtime/env.ts', 'runtime/http.ts', 'runtime/routes.ts', 'runtime/session-routes.ts']) {
+    for (const source of ['api/router.ts', 'runtime/auth-routes.ts', 'runtime/compose.ts', 'runtime/durable.ts', 'runtime/durable-world.ts', 'runtime/env.ts', 'runtime/http.ts', 'runtime/routes.ts', 'runtime/session-routes.ts']) {
       const text = readFileSync(join(VERCEL_DIR, source), 'utf8').toLowerCase();
       expect(text.includes(forbidden)).toBe(false);
     }

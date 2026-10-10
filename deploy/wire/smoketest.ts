@@ -182,6 +182,28 @@ export function fakeProviders(): FakeProviders {
         const sorted = [...scoped].sort((a, b) => (a.params[1] === b.params[1] ? Number(a.params[orderIndex]) - Number(b.params[orderIndex]) : a.params[1] < b.params[1] ? -1 : 1));
         return responder(JSON.stringify({ fields: [{ name: 'project', typeOID: 25 }, { name: 'payload', typeOID: 25 }], rows: sorted.map((row) => [row.params[1], row.params[payloadIndex]]) }));
       }
+      // FW-39-1 (the identity wave 1): the principal credential store's
+      // reads. The auth routes read the registry by NAME and by ID and the
+      // revocation list by TOKEN ID — three parameterized single-row
+      // selects over the same in-memory tables the INSERT handler fills
+      // (tradrl_auth_principals: tenant, principal_id, name, created_at,
+      // payload — name is param column 2, principal_id column 1;
+      // tradrl_auth_revocations: tenant, principal_id, token_id,
+      // revoked_at, payload — token_id is column 2). The fakes match the
+      // live wire (single-cell SELECT envelope, array mode), never the
+      // adapter's expectations. L12: tenant = params[0] ALWAYS.
+      if (parsed.query.startsWith('SELECT payload FROM tradrl_auth_principals WHERE tenant = $1 AND name = $2')) {
+        const rows = (tables.get('tradrl_auth_principals') ?? []).filter((row) => row.params[0] === parsed.params[0] && row.params[2] === parsed.params[1]);
+        return responder(JSON.stringify({ fields: [{ name: 'payload', typeOID: 25 }], rows: rows.map((row) => [row.params[4] ?? null]) }));
+      }
+      if (parsed.query.startsWith('SELECT payload FROM tradrl_auth_principals WHERE tenant = $1 AND principal_id = $2')) {
+        const rows = (tables.get('tradrl_auth_principals') ?? []).filter((row) => row.params[0] === parsed.params[0] && row.params[1] === parsed.params[1]);
+        return responder(JSON.stringify({ fields: [{ name: 'payload', typeOID: 25 }], rows: rows.map((row) => [row.params[4] ?? null]) }));
+      }
+      if (parsed.query.startsWith('SELECT payload FROM tradrl_auth_revocations WHERE tenant = $1 AND token_id = $2')) {
+        const rows = (tables.get('tradrl_auth_revocations') ?? []).filter((row) => row.params[0] === parsed.params[0] && row.params[2] === parsed.params[1]);
+        return responder(JSON.stringify({ fields: [{ name: 'payload', typeOID: 25 }], rows: rows.map((row) => [row.params[4] ?? null]) }));
+      }
       const select = /^SELECT payload FROM (tradrl_\w+)/.exec(parsed.query);
       if (select !== null) {
         const orderIndex = select[1] === 'tradrl_projects' ? 5 : select[1] === 'tradrl_project_goals' ? 1 : 3;

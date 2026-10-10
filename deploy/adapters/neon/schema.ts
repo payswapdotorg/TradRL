@@ -143,6 +143,53 @@ CREATE INDEX IF NOT EXISTS tradrl_jobs_scope
   ON tradrl_jobs (tenant, project, submitted_at);
 `;
 
+/**
+ * The PRINCIPALS registry (FW-39-1, the identity wave 1 — the G-11 restart
+ * orphan's substrate): one row per named principal of a tenant — the
+ * credential store the host-owned auth routes
+ * (deploy/vercel/runtime/auth-routes.ts) register against and verify
+ * logins by. The `payload` column carries the canonical-JSON credential
+ * record `{ principalId, name, salt, verifier, createdAt }` — the verifier
+ * is the SALTED KDF digest of the passphrase (Node platform crypto —
+ * scrypt; the zero-dep law), NEVER the passphrase itself; the salt +
+ * verifier never cross any wire the routes serve. The UNIQUE index on
+ * (tenant, name) enforces one name per tenant at the store layer (the
+ * route's check-then-insert is the common path; the index is the backstop
+ * against the concurrent-register race). PRIMARY KEY leads with `tenant`
+ * (L12 — the schema is the first line).
+ */
+export const AUTH_PRINCIPALS_TABLE_DDL = /* sql */ `
+CREATE TABLE IF NOT EXISTS tradrl_auth_principals (
+  tenant       TEXT   NOT NULL,
+  principal_id TEXT   NOT NULL,
+  name         TEXT   NOT NULL,
+  created_at   BIGINT NOT NULL,
+  payload      TEXT   NOT NULL,
+  PRIMARY KEY (tenant, principal_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS tradrl_auth_principals_name
+  ON tradrl_auth_principals (tenant, name);
+`;
+
+/**
+ * The principal-token REVOCATION list (FW-39-1): one row per REVOKED
+ * token id (jti) — logout writes it; every token-bearing request (whoami,
+ * logout, adopt, the principal marker fold, the create-stamp) checks it.
+ * A revocation is durable truth: it survives cold starts and rehydrates
+ * on every instance (the revocation check reads the durable table, never
+ * an in-memory view — a logged-out token stays dead deployment-wide).
+ */
+export const AUTH_REVOCATIONS_TABLE_DDL = /* sql */ `
+CREATE TABLE IF NOT EXISTS tradrl_auth_revocations (
+  tenant       TEXT   NOT NULL,
+  principal_id TEXT   NOT NULL,
+  token_id     TEXT   NOT NULL,
+  revoked_at   BIGINT NOT NULL,
+  payload      TEXT   NOT NULL,
+  PRIMARY KEY (tenant, token_id)
+);
+`;
+
 /** Every DDL record, in application order (the runbook's §neon paste block). */
 export const NEON_DDL_RECORDS: readonly { readonly table: string; readonly ddl: string }[] = [
   { table: 'tradrl_knowledge', ddl: KNOWLEDGE_TABLE_DDL },
@@ -152,4 +199,6 @@ export const NEON_DDL_RECORDS: readonly { readonly table: string; readonly ddl: 
   { table: 'tradrl_project_events', ddl: PROJECT_EVENT_TABLE_DDL },
   { table: 'tradrl_project_goals', ddl: GOAL_SET_TABLE_DDL },
   { table: 'tradrl_jobs', ddl: JOBS_TABLE_DDL },
+  { table: 'tradrl_auth_principals', ddl: AUTH_PRINCIPALS_TABLE_DDL },
+  { table: 'tradrl_auth_revocations', ddl: AUTH_REVOCATIONS_TABLE_DDL },
 ];

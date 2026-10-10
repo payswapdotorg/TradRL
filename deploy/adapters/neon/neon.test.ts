@@ -19,6 +19,7 @@ import {
   NeonFirmMemoryStore,
   NeonJobStore,
   NeonOutcomeLearningStore,
+  NeonPrincipalStore,
   NeonProjectStore,
   goalSetGetStatement,
   goalSetPutStatement,
@@ -37,8 +38,13 @@ import {
   projectGetStatement,
   projectListStatement,
   projectNextOrdinalStatement,
+  principalByNameStatement,
+  principalByIdStatement,
+  principalPutStatement,
   projectPutStatement,
   projectSessionListStatement,
+  revocationOfStatement,
+  revocationPutStatement,
   statementDigest,
   type BuiltStatement,
 } from './stores';
@@ -133,6 +139,22 @@ function fakeNeon(seed: readonly FakeRow[] = []): { fetchLike: FetchLike; calls:
         return [row.params[6] ?? null, goal === undefined ? null : goal.params[2] ?? null];
       });
       return responder(JSON.stringify({ fields: [{ name: 'project_payload', typeOID: 25 }, { name: 'goal_payload', typeOID: 25 }], rows: joined }));
+    }
+    // FW-39-1 (the identity wave 1): the principal credential store's reads —
+    // by NAME (the name is INSERT column 2), by ID (column 1), and the
+    // revocation list by TOKEN ID (column 2 of tradrl_auth_revocations). The
+    // payload is the last INSERT column (4) of both tables.
+    if (query.startsWith('SELECT payload FROM tradrl_auth_principals WHERE tenant = $1 AND name = $2')) {
+      const found = rows.filter((row) => row.table === 'tradrl_auth_principals' && row.params[0] === params[0] && row.params[2] === params[1]);
+      return responder(JSON.stringify({ fields: [{ name: 'payload', typeOID: 25 }], rows: found.map((row) => [row.params[4]]) }));
+    }
+    if (query.startsWith('SELECT payload FROM tradrl_auth_principals WHERE tenant = $1 AND principal_id = $2')) {
+      const found = rows.filter((row) => row.table === 'tradrl_auth_principals' && row.params[0] === params[0] && row.params[1] === params[1]);
+      return responder(JSON.stringify({ fields: [{ name: 'payload', typeOID: 25 }], rows: found.map((row) => [row.params[4]]) }));
+    }
+    if (query.startsWith('SELECT payload FROM tradrl_auth_revocations WHERE tenant = $1 AND token_id = $2')) {
+      const found = rows.filter((row) => row.table === 'tradrl_auth_revocations' && row.params[0] === params[0] && row.params[2] === params[1]);
+      return responder(JSON.stringify({ fields: [{ name: 'payload', typeOID: 25 }], rows: found.map((row) => [row.params[4]]) }));
     }
     const selectMatch = /^SELECT payload FROM (tradrl_\w+)/.exec(query);
     if (selectMatch !== null) {
@@ -281,8 +303,14 @@ describe('deploy/adapters/neon — L12 tenant scoping', () => {
       { label: 'jobs.read.tenant-wide', statement: jobsOfTenantStatement('tenant-a') },
       { label: 'goalset.put', statement: requireOk(goalSetPutStatement('tenant-a', 'prj_a', { goal: { id: 'goal-1' }, constraintSet: { id: 'cs-1' } })) },
       { label: 'goalset.get', statement: goalSetGetStatement('tenant-a', 'prj_a') },
+      // FW-39-1 (the identity wave 1): the principal credential store's statements.
+      { label: 'principal.put', statement: requireOk(principalPutStatement('tenant-a', { principalId: 'prn-1', name: 'alice', salt: 's'.repeat(16), verifier: 'v'.repeat(64), createdAt: 1 })) },
+      { label: 'principal.byName', statement: principalByNameStatement('tenant-a', 'alice') },
+      { label: 'principal.byId', statement: principalByIdStatement('tenant-a', 'prn-1') },
+      { label: 'revocation.put', statement: requireOk(revocationPutStatement('tenant-a', { principalId: 'prn-1', tokenId: 'jti-1', revokedAt: 1 })) },
+      { label: 'revocation.of', statement: revocationOfStatement('tenant-a', 'jti-1') },
     ];
-    expect(statements.length).toBe(18);
+    expect(statements.length).toBe(23);
     for (const { label, statement } of statements) {
       // The L12 law: the tenant is bind parameter 1 in EVERY statement —
       // `tenant = $1` in reads/scans, `VALUES ($1, ...)` in writes.
@@ -596,14 +624,14 @@ describe('deploy/adapters/neon — the stores', () => {
 describe('deploy/adapters/neon — the DDL records', () => {
   it('every table referenced by the statement builders has a DDL record with a tenant-leading PRIMARY KEY', () => {
     const tables = new Set(NEON_DDL_RECORDS.map((record) => record.table));
-    expect([...tables].sort()).toEqual(['tradrl_jobs', 'tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_project_events', 'tradrl_project_goals', 'tradrl_projects']);
+    expect([...tables].sort()).toEqual(['tradrl_auth_principals', 'tradrl_auth_revocations', 'tradrl_jobs', 'tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_project_events', 'tradrl_project_goals', 'tradrl_projects']);
     for (const record of NEON_DDL_RECORDS) {
       expect(record.ddl).toContain(`CREATE TABLE IF NOT EXISTS ${record.table}`);
       expect(record.ddl).toContain('PRIMARY KEY (tenant');
       expect(record.ddl).toMatch(/tenant\s+TEXT\s+NOT NULL/);
     }
     // Every table the statements reference is covered by a DDL record.
-    const referenced = new Set(['tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_projects', 'tradrl_project_events', 'tradrl_project_goals', 'tradrl_jobs']);
+    const referenced = new Set(['tradrl_knowledge', 'tradrl_outcomes', 'tradrl_post_mortems', 'tradrl_projects', 'tradrl_project_events', 'tradrl_project_goals', 'tradrl_jobs', 'tradrl_auth_principals', 'tradrl_auth_revocations']);
     for (const table of referenced) expect(tables.has(table)).toBe(true);
   });
 
@@ -896,5 +924,106 @@ describe('deploy/adapters/neon — W-30: the per-query abort budget (PROD-504)',
     expect(result.error.code).toBe('neon_unreachable');
     expect(result.error.message).toContain('25ms per-query abort budget');
     expect(Date.now() - startedAt).toBeLessThan(5_000); // degraded within the query's own budget, never the function's
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-39-1: the principal credential store (the identity wave 1)
+// ---------------------------------------------------------------------------
+
+describe('deploy/adapters/neon — FW-39-1: the principal credential store (the registry + the revocation list)', () => {
+  const record = (principalId: string, name: string): { readonly principalId: string; readonly name: string; readonly salt: string; readonly verifier: string; readonly createdAt: number } => ({
+    principalId,
+    name,
+    salt: 'a1b2c3d4e5f60718',
+    verifier: 'f'.repeat(128),
+    createdAt: 1_800_400_000_000,
+  });
+
+  it('the registry round-trip: put -> byName/byId return the record verbatim; absent reads answer null (unknown, indistinguishable); the newest row wins per id (upsert)', async () => {
+    const fake = fakeNeon();
+    const store = new NeonPrincipalStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const alice = record('prn-alice', 'Alice');
+    const put = await store.putPrincipal('tenant-a', alice);
+    expect(put.ok).toBe(true);
+    // by name + by id — both answer the record verbatim.
+    const byName = await store.principalByName('tenant-a', 'Alice');
+    expect(byName.ok).toBe(true);
+    if (byName.ok) expect(byName.value).toEqual(alice);
+    const byId = await store.principalById('tenant-a', 'prn-alice');
+    expect(byId.ok).toBe(true);
+    if (byId.ok) expect(byId.value).toEqual(alice);
+    // Absent reads answer null (the indistinguishable unknown).
+    const unknownName = await store.principalByName('tenant-a', 'Bob');
+    expect(unknownName.ok).toBe(true);
+    if (unknownName.ok) expect(unknownName.value).toBeNull();
+    // A foreign tenant finds NOTHING (L12 — tenant = $1 ALWAYS).
+    const foreign = await store.principalByName('tenant-b', 'Alice');
+    expect(foreign.ok).toBe(true);
+    if (foreign.ok) expect(foreign.value).toBeNull();
+    // The upsert: the same id replaces the row (a renamed principal serves the NEW name by name AND id).
+    const renamed = await store.putPrincipal('tenant-a', { ...alice, name: 'Alice R.' });
+    expect(renamed.ok).toBe(true);
+    const afterRename = await store.principalByName('tenant-a', 'Alice R.');
+    expect(afterRename.ok).toBe(true);
+    if (afterRename.ok) expect(afterRename.value?.name).toBe('Alice R.');
+  });
+
+  it('the revocation list round-trip: put -> of answers the record; an unrevoked token answers null; the same token id twice is a no-op (idempotent upsert); a foreign tenant finds nothing', async () => {
+    const fake = fakeNeon();
+    const store = new NeonPrincipalStore({ config: FAKE_CONFIG, fetchLike: fake.fetchLike, instants });
+    const revocation = { principalId: 'prn-alice', tokenId: 'jti-1', revokedAt: 1_800_400_000_001 };
+    const put = await store.putRevocation('tenant-a', revocation);
+    expect(put.ok).toBe(true);
+    const read = await store.revocationOf('tenant-a', 'jti-1');
+    expect(read.ok).toBe(true);
+    if (read.ok) expect(read.value).toEqual(revocation);
+    // An unrevoked token answers null.
+    const unrevoked = await store.revocationOf('tenant-a', 'jti-2');
+    expect(unrevoked.ok).toBe(true);
+    if (unrevoked.ok) expect(unrevoked.value).toBeNull();
+    // A foreign tenant finds nothing (L12).
+    const foreign = await store.revocationOf('tenant-b', 'jti-1');
+    expect(foreign.ok).toBe(true);
+    if (foreign.ok) expect(foreign.value).toBeNull();
+    // Idempotent: the same token id again is a no-op (the upsert replaces with identical content).
+    const again = await store.putRevocation('tenant-a', revocation);
+    expect(again.ok).toBe(true);
+    const reread = await store.revocationOf('tenant-a', 'jti-1');
+    expect(reread.ok).toBe(true);
+    if (reread.ok) expect(reread.value).toEqual(revocation);
+  });
+
+  it('R46: a degraded Neon read/write is the typed failure — never a throw; a malformed record is the typed malformed_record', async () => {
+    const store = new NeonPrincipalStore({ config: FAKE_CONFIG, fetchLike: async () => { throw new Error('connection refused'); }, instants });
+    const read = await store.principalByName('tenant-a', 'Alice');
+    expect(read.ok).toBe(false);
+    if (!read.ok) expect(read.error.code).toBe('neon_unreachable');
+    const write = await store.putPrincipal('tenant-a', record('prn-alice', 'Alice'));
+    expect(write.ok).toBe(false);
+    // A malformed record is the typed refusal (fail-closed).
+    const malformed = principalPutStatement('tenant-a', { principalId: '', name: 'Alice', salt: 's', verifier: 'v', createdAt: 1 });
+    expect(malformed.ok).toBe(false);
+  });
+
+  it('the additive ownerPrincipal rides the goal-set payload beside ownerSession (the opaque-column precedent; pre-account rows decode without it)', async () => {
+    // A pre-account row (ownerSession only) + an adopted row (both stamps).
+    const seeded = [
+      { table: 'tradrl_projects', params: ['tenant-a', 'prj_old', 'the old desk', 'active', '1', '1', JSON.stringify({ id: 'prj_old' })] },
+      { table: 'tradrl_project_goals', params: ['tenant-a', 'prj_old', JSON.stringify({ goal: { id: 'g' }, constraintSet: { id: 'c' }, ownerSession: 'sess-a' })] },
+      { table: 'tradrl_projects', params: ['tenant-a', 'prj_new', 'the new desk', 'active', '2', '2', JSON.stringify({ id: 'prj_new' })] },
+      { table: 'tradrl_project_goals', params: ['tenant-a', 'prj_new', JSON.stringify({ goal: { id: 'g2' }, constraintSet: { id: 'c2' }, ownerSession: 'sess-a', ownerPrincipal: 'prn-alice' })] },
+    ];
+    const withSeed = fakeNeon(seeded as never);
+    const seededStore = new NeonProjectStore({ config: FAKE_CONFIG, fetchLike: withSeed.fetchLike, instants });
+    const rows = await seededStore.projectSessionRowsOf('tenant-a');
+    expect(rows.ok).toBe(true);
+    if (!rows.ok) return;
+    const oldRow = rows.value.find((row) => (row.project as { readonly id?: unknown }).id === 'prj_old');
+    const newRow = rows.value.find((row) => (row.project as { readonly id?: unknown }).id === 'prj_new');
+    expect(oldRow?.ownerSession).toBe('sess-a');
+    expect(oldRow?.ownerPrincipal).toBeNull(); // the honest absence — pre-account rows carry no principal
+    expect(newRow?.ownerSession).toBe('sess-a'); // lineage preserved
+    expect(newRow?.ownerPrincipal).toBe('prn-alice');
   });
 });

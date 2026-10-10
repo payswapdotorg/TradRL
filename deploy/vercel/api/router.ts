@@ -50,6 +50,7 @@
 // timeout) lives in deploy/vercel/vercel.json.
 
 import { getDeploymentService, type DeploymentComposition } from '../runtime/compose';
+import { serveAuthRoute } from '../runtime/auth-routes';
 import { demoJobsOf } from '../runtime/demo';
 import { serveJobPromoteRoute } from '../runtime/job-promote';
 import { toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
@@ -168,6 +169,27 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
     demoSubstanceSerial++,
   );
 
+  // 3b-2. THE HOST-OWNED PRINCIPAL AUTH ROUTES (FW-39-1, the identity
+  //     wave 1): POST /v1/auth/register | /v1/auth/login | /v1/auth/logout
+  //     | /v1/auth/adopt + GET /v1/auth/whoami — the lightweight credential
+  //     model's host half (named principals, salted KDF verifiers, scoped
+  //     + expiring + revocable HMAC tokens, the adoption ceremony's
+  //     per-desk re-stamp of the calling session's own desks). Served
+  //     BEFORE the boundary wrap — the EXACT W-8 host-route pattern the
+  //     runbook/session/promote routes use; the paths are declared nowhere
+  //     in the frozen T041 route table. Authn first (the developer
+  //     credential — the tenant gate), then the surface's own honest
+  //     unavailability (the typed 503 under the DEMO backing — an account
+  //     must never silently cold-start reset; and without the signing key),
+  //     then the principal token's own law. The adoption stamps queue onto
+  //     the SAME pending drain the create-stamp's do — this path drains
+  //     before the response leaves (the 3c/4/5b ordering law).
+  const authRoute = await serveAuthRoute(
+    deployment.auth.input,
+    wrapped.request,
+    demoSubstanceSerial++,
+  );
+
   // 3c. THE SESSION-SCOPED ROUTES (FW-MI-A, defects MI-D1 + MI-D8): a
   //     request carrying the console session header is served the
   //     SESSION'S view — the demo project + the session's own projects —
@@ -186,6 +208,10 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
   const sessionRoute = await serveSessionScopedRoute(
     {
       verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization,
+      // FW-39-1: the principal token resolver — the listing/detail marker
+      // fold reads the SAME verdict law the auth routes apply (a valid
+      // token marks the calling principal's desks 'principal-owned').
+      resolvePrincipalToken: deployment.auth.resolvePrincipalToken,
       demo: deployment.demo === null ? null : deployment.demo.session,
       durable: durableHandle === null ? null : { sessionProjectRows: () => durableHandle.sessionProjectRows() },
     },
@@ -195,6 +221,25 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
   if (runbookRoute !== null) {
     writeApiResponse(response, runbookRoute);
 
+    return;
+  }
+
+  if (authRoute !== null) {
+    // THE WRITE-THROUGH DRAIN ON THE HOST-ROUTE PATH (FW-39-1 — the 3c/4/
+    // 5b ordering law): the auth routes' own writes are AWAITED store
+    // writes (register/login/logout — confirmed before the response), but
+    // the ADOPTION stamps queue onto the seam's pending drain exactly like
+    // the create-stamp's — this path awaits it BEFORE the response, so a
+    // failed write replaces the answer with the typed 503 (the caller
+    // learns, never a silent divergence).
+    if (deployment.durable !== null) {
+      const drained = await deployment.durable.drain();
+      if (!drained.ok) {
+        writeApiResponse(response, drainedFailureResponse(authRoute, drained.error));
+        return;
+      }
+    }
+    writeApiResponse(response, authRoute);
     return;
   }
 
@@ -362,14 +407,28 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
   //     it, from the first response on). The stamp target decodes from
   //     the boundary's OWN confirmed response — never a request value.
   const session = consoleSessionOf(wrapped.request.headers);
-  if (session !== null) {
-    const created = createdProjectOf(wrapped.request, apiResponse);
-    if (created !== null) {
-      if (deployment.demo !== null) {
-        deployment.demo.recordSessionOwner(created.projectId, session);
-      } else if (deployment.durable !== null) {
-        await deployment.durable.stampSessionOwner(created.tenantId, created.projectId, session);
-      }
+  const created = createdProjectOf(wrapped.request, apiResponse);
+  if (session !== null && created !== null) {
+    if (deployment.demo !== null) {
+      deployment.demo.recordSessionOwner(created.projectId, session);
+    } else if (deployment.durable !== null) {
+      await deployment.durable.stampSessionOwner(created.tenantId, created.projectId, session);
+    }
+  }
+  // 5a-2. THE PRINCIPAL-OWNERSHIP STAMP (FW-39-1, the identity wave 1):
+  //     a successful create-project whose request carried a VALID
+  //     principal token stamps the additive `ownerPrincipal` BESIDE the
+  //     session stamp (lineage preserved — the goal-set row's payload
+  //     carries both; a create without a session header but with a valid
+  //     token stamps the principal alone). The verdict is the auth
+  //     surface's shared resolver (the same law whoami applies); the
+  //     write queues onto the SAME drain (5b), so a failed stamp is the
+  //     typed 503 + the re-projection — the create is unconfirmed, never
+  //     a silent half-stamp.
+  if (created !== null && deployment.durable !== null) {
+    const principalResolution = await deployment.auth.resolvePrincipalToken(wrapped.request.headers, created.tenantId);
+    if (principalResolution.kind === 'valid') {
+      await deployment.durable.stampPrincipalOwner(created.tenantId, created.projectId, principalResolution.token.principalId);
     }
   }
 

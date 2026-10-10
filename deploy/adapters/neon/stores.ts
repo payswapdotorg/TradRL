@@ -300,6 +300,20 @@ export interface GoalSetRecord {
    * UNOWNED, and the session-scoped surfaces serve it to no session.
    */
   readonly ownerSession?: unknown;
+  /**
+   * The owning PRINCIPAL id (FW-39-1, the identity wave 1): the additive
+   * principal-ownership stamp — minted at a create-project whose request
+   * carried a VALID principal token (the auth context), or re-stamped by
+   * the adoption route (POST /v1/auth/adopt). Rides the SAME opaque
+   * payload column (the `ownerSession`/`world` precedent, no schema
+   * change); BESIDE `ownerSession`, never replacing it (lineage
+   * preserved — the session stamp stays for the session marker, the
+   * principal stamp widens ownership to the account). Absent = the row
+   * predates accounts or was created without a principal token. The
+   * identity itself NEVER crosses a read wire (only the derived
+   * 'principal-owned' marker serves — the `ownerSession` precedent).
+   */
+  readonly ownerPrincipal?: unknown;
 }
 
 /**
@@ -341,6 +355,8 @@ export function goalSetGetStatement(tenant: string, projectId: string): BuiltSta
 export interface SessionProjectRow {
   readonly project: unknown;
   readonly ownerSession: string | null;
+  /** The owning PRINCIPAL of the row's goal-set payload (FW-39-1) — null when unowned (the additive `ownerPrincipal` field, decoded beside `ownerSession`). */
+  readonly ownerPrincipal: string | null;
   readonly goalSet: GoalSetRecord | null;
 }
 
@@ -379,6 +395,209 @@ function decodeSessionGoalSet(cell: unknown): GoalSetRecord | null {
 export function ownerSessionOf(goalSet: GoalSetRecord | null): string | null {
   const owner = goalSet?.ownerSession;
   return typeof owner === 'string' && owner.length > 0 ? owner : null;
+}
+
+/**
+ * The owning PRINCIPAL of one decoded goal-set payload (FW-39-1): the
+ * additive `ownerPrincipal` field (a non-empty string) or null when the
+ * row carries none (pre-account, or created without a principal token —
+ * the honest absence, never fabricated). Fail-closed: a malformed field
+ * reads as unowned.
+ */
+export function ownerPrincipalOf(goalSet: GoalSetRecord | null): string | null {
+  const owner = goalSet?.ownerPrincipal;
+  return typeof owner === 'string' && owner.length > 0 ? owner : null;
+}
+
+// ---------------------------------------------------------------------------
+// The principal credential store (FW-39-1, the identity wave 1 — the
+// principals registry + the token revocation list)
+// ---------------------------------------------------------------------------
+
+/**
+ * One PRINCIPAL CREDENTIAL record (FW-39-1): the named account's durable
+ * registration. The `verifier` is the SALTED KDF digest of the passphrase
+ * (the auth module computes it over Node platform crypto — scrypt; the
+ * zero-dep law); the PASSPHRASE ITSELF NEVER PERSISTS, and neither the
+ * salt nor the verifier ever crosses a wire the routes serve (only
+ * `{ id, name }` identity views serve). The record round-trips the
+ * `payload` column as canonical JSON.
+ */
+export interface PrincipalCredentialRecord {
+  readonly principalId: string;
+  readonly name: string;
+  readonly salt: string;
+  readonly verifier: string;
+  readonly createdAt: number;
+}
+
+/** One token REVOCATION record (FW-39-1): a logged-out token id, durable truth. */
+export interface PrincipalRevocationRecord {
+  readonly principalId: string;
+  readonly tokenId: string;
+  readonly revokedAt: number;
+}
+
+/** The principal-registry upsert (FW-39-1; tenant = param 1 — L12). The payload is the credential record as canonical JSON. */
+export function principalPutStatement(scopeTenant: string, record: PrincipalCredentialRecord): StoreResult<BuiltStatement> {
+  if (!isNonEmptyString(record.principalId)) return malformed('the principal record lacks principalId');
+  if (!isNonEmptyString(record.name)) return malformed('the principal record lacks name');
+  if (!isNonEmptyString(record.salt)) return malformed('the principal record lacks salt');
+  if (!isNonEmptyString(record.verifier)) return malformed('the principal record lacks verifier');
+  if (typeof record.createdAt !== 'number') return malformed('the principal record lacks createdAt');
+  return {
+    ok: true,
+    value: {
+      sql: 'INSERT INTO tradrl_auth_principals (tenant, principal_id, name, created_at, payload) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tenant, principal_id) DO UPDATE SET name = EXCLUDED.name, created_at = EXCLUDED.created_at, payload = EXCLUDED.payload',
+      params: [scopeTenant, record.principalId, record.name, String(record.createdAt), canonicalJson(record as unknown as JsonValue)],
+    },
+  };
+}
+
+/** The principal-by-name read (FW-39-1; tenant = $1 ALWAYS — a foreign tenant finds nothing, indistinguishably). */
+export function principalByNameStatement(tenant: string, name: string): BuiltStatement {
+  return { sql: 'SELECT payload FROM tradrl_auth_principals WHERE tenant = $1 AND name = $2', params: [tenant, name] };
+}
+
+/** The principal-by-id read (FW-39-1; tenant = $1 ALWAYS). */
+export function principalByIdStatement(tenant: string, principalId: string): BuiltStatement {
+  return { sql: 'SELECT payload FROM tradrl_auth_principals WHERE tenant = $1 AND principal_id = $2', params: [tenant, principalId] };
+}
+
+/** The revocation upsert (FW-39-1; idempotent by construction — the PK (tenant, token_id) conflict is a no-op). */
+export function revocationPutStatement(scopeTenant: string, record: PrincipalRevocationRecord): StoreResult<BuiltStatement> {
+  if (!isNonEmptyString(record.principalId)) return malformed('the revocation record lacks principalId');
+  if (!isNonEmptyString(record.tokenId)) return malformed('the revocation record lacks tokenId');
+  if (typeof record.revokedAt !== 'number') return malformed('the revocation record lacks revokedAt');
+  return {
+    ok: true,
+    value: {
+      sql: 'INSERT INTO tradrl_auth_revocations (tenant, principal_id, token_id, revoked_at, payload) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tenant, token_id) DO UPDATE SET payload = EXCLUDED.payload',
+      params: [scopeTenant, record.principalId, record.tokenId, String(record.revokedAt), canonicalJson(record as unknown as JsonValue)],
+    },
+  };
+}
+
+/** The revocation read (FW-39-1; tenant = $1 ALWAYS). */
+export function revocationOfStatement(tenant: string, tokenId: string): BuiltStatement {
+  return { sql: 'SELECT payload FROM tradrl_auth_revocations WHERE tenant = $1 AND token_id = $2', params: [tenant, tokenId] };
+}
+
+/** Decode one principal-registry row (a malformed row is the typed malformed failure — fail-closed, never a throw). */
+function decodePrincipalCredential(row: readonly unknown[]): StoreResult<PrincipalCredentialRecord> {
+  const payload = row[0];
+  if (typeof payload !== 'string') return malformed('the stored principal record is not text');
+  try {
+    const value = JSON.parse(payload) as unknown;
+    if (!isRecord(value)) return malformed('the stored principal record is not an object');
+    if (!isNonEmptyString(value.principalId) || !isNonEmptyString(value.name) || !isNonEmptyString(value.salt) || !isNonEmptyString(value.verifier) || typeof value.createdAt !== 'number') {
+      return malformed('the stored principal record lacks its credential fields');
+    }
+    return {
+      ok: true,
+      value: {
+        principalId: value.principalId,
+        name: value.name,
+        salt: value.salt,
+        verifier: value.verifier,
+        createdAt: value.createdAt,
+      },
+    };
+  } catch {
+    return malformed('the stored principal record is not valid JSON');
+  }
+}
+
+/** Decode one revocation row; null when the cell carries nothing readable (fail-closed — an unreadable revocation list entry never blocks a verdict it cannot justify). */
+function decodeRevocation(row: readonly unknown[]): PrincipalRevocationRecord | null {
+  const payload = row[0];
+  if (typeof payload !== 'string') return null;
+  try {
+    const value = JSON.parse(payload) as unknown;
+    if (!isRecord(value) || !isNonEmptyString(value.principalId) || !isNonEmptyString(value.tokenId) || typeof value.revokedAt !== 'number') return null;
+    return { principalId: value.principalId, tokenId: value.tokenId, revokedAt: value.revokedAt };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The durable PRINCIPAL CREDENTIAL STORE (FW-39-1): the registry + the
+ * revocation list the host-owned auth routes compose over. Every statement
+ * scopes by the CALLER's tenant as bind parameter 1 (L12 — a foreign
+ * tenant's registry is invisible, indistinguishably); every failure is the
+ * typed StoreFailure (R46 — never a throw).
+ */
+export class NeonPrincipalStore {
+  private readonly deps: NeonStoreDeps;
+  private readonly fetchLike: FetchLike;
+  private provenance: AdapterProvenance | null = null;
+
+  constructor(deps: NeonStoreDeps) {
+    this.deps = deps;
+    this.fetchLike = deps.fetchLike ?? defaultFetch();
+  }
+
+  lastProvenance(): AdapterProvenance | null {
+    return this.provenance;
+  }
+
+  /** Register (or replace) one principal credential record (tenant-scoped upsert). */
+  async putPrincipal(scopeTenant: string, record: PrincipalCredentialRecord): Promise<StoreResult<{ readonly stored: true }>> {
+    const built = principalPutStatement(scopeTenant, record);
+    if (!built.ok) return built;
+    const executed = await executeNeonStatement(this.deps.config, built.value.sql, built.value.params, this.fetchLike);
+    this.note('putPrincipal', scopeTenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    return { ok: true, value: { stored: true } };
+  }
+
+  /** One principal by NAME (null when the tenant's registry carries none — unknown, indistinguishable). */
+  async principalByName(tenant: string, name: string): Promise<StoreResult<PrincipalCredentialRecord | null>> {
+    const built = principalByNameStatement(tenant, name);
+    const executed = await executeNeonStatement(this.deps.config, built.sql, built.params, this.fetchLike);
+    this.note('principalByName', tenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    const rows = selectRows(executed.value);
+    if (rows.length === 0) return { ok: true, value: null };
+    return decodePrincipalCredential(rows[0] ?? []);
+  }
+
+  /** One principal by ID (null when unknown — indistinguishable). */
+  async principalById(tenant: string, principalId: string): Promise<StoreResult<PrincipalCredentialRecord | null>> {
+    const built = principalByIdStatement(tenant, principalId);
+    const executed = await executeNeonStatement(this.deps.config, built.sql, built.params, this.fetchLike);
+    this.note('principalById', tenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    const rows = selectRows(executed.value);
+    if (rows.length === 0) return { ok: true, value: null };
+    return decodePrincipalCredential(rows[0] ?? []);
+  }
+
+  /** Record one token revocation (idempotent — the same token id twice is a no-op). */
+  async putRevocation(scopeTenant: string, record: PrincipalRevocationRecord): Promise<StoreResult<{ readonly stored: true }>> {
+    const built = revocationPutStatement(scopeTenant, record);
+    if (!built.ok) return built;
+    const executed = await executeNeonStatement(this.deps.config, built.value.sql, built.value.params, this.fetchLike);
+    this.note('putRevocation', scopeTenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    return { ok: true, value: { stored: true } };
+  }
+
+  /** The revocation of one token id (null when the token was never revoked). */
+  async revocationOf(tenant: string, tokenId: string): Promise<StoreResult<PrincipalRevocationRecord | null>> {
+    const built = revocationOfStatement(tenant, tokenId);
+    const executed = await executeNeonStatement(this.deps.config, built.sql, built.params, this.fetchLike);
+    this.note('revocationOf', tenant, executed.ok);
+    if (!executed.ok) return degraded(executed.error.code, executed.error.message);
+    const rows = selectRows(executed.value);
+    if (rows.length === 0) return { ok: true, value: null };
+    return { ok: true, value: decodeRevocation(rows[0] ?? []) };
+  }
+
+  private note(operation: string, tenant: string, ok: boolean): void {
+    this.provenance = { adapter: 'neon', store: 'principal-store', operation, tenant, at: this.deps.instants.next(), outcome: ok ? 'ok' : 'degraded' };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -435,6 +654,10 @@ function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
     // payload column (the additive `ownerSession` field, the W-28 `world`
     // precedent) — carried through verbatim when present; pre-FW-MI-A rows
     // never carry the field (the project reads as UNOWNED, honestly).
+    // FW-39-1 (the identity wave 1): the owning PRINCIPAL rides the same
+    // opaque payload column (the additive `ownerPrincipal` field, the
+    // `ownerSession` precedent) — carried through verbatim when present;
+    // pre-account rows never carry the field (the honest absence).
     return {
       ok: true,
       value: {
@@ -442,6 +665,7 @@ function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
         constraintSet: value.constraintSet,
         ...('world' in value ? { world: value.world } : {}),
         ...('ownerSession' in value ? { ownerSession: value.ownerSession } : {}),
+        ...('ownerPrincipal' in value ? { ownerPrincipal: value.ownerPrincipal } : {}),
       },
     };
   } catch {
@@ -819,6 +1043,7 @@ export class NeonProjectStore implements ProjectStoreMirror {
         rows.push({
           project: JSON.parse(projectCell) as unknown,
           ownerSession: ownerSessionOf(decodeSessionGoalSet(goalCell)),
+          ownerPrincipal: ownerPrincipalOf(decodeSessionGoalSet(goalCell)),
           goalSet: decodeSessionGoalSet(goalCell),
         });
       } catch {

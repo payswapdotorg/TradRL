@@ -95,9 +95,9 @@ function capture(): { response: FunctionResponse; captured: () => CapturedRespon
 /** The bearer headers of the deployment's developer credential. */
 const BEARER = { authorization: `Bearer ${TOKEN}` };
 
-/** The session-scoped headers of one console session. */
-function sessionHeaders(session: string): Record<string, string> {
-  return { ...BEARER, [CONSOLE_SESSION_HEADER]: session };
+/** The session-scoped headers of one console session (FW-39-1: optional extra headers — the principal-token header rides beside). */
+function sessionHeaders(session: string, extra: Record<string, string> = {}): Record<string, string> {
+  return { ...BEARER, [CONSOLE_SESSION_HEADER]: session, ...extra };
 }
 
 /** Drive one request through the FULL function handler; returns the parsed JSON body. */
@@ -283,5 +283,45 @@ describe('deploy/vercel — FW-MI-A: the session-scope routes over the DEMO back
     const bItems = ((await drive(composed, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_B) }))).body.data as { items: readonly { id: string; consoleSessionScope?: string }[] }).items;
     expect(bItems.map((project) => project.id)).toEqual([DEMO_PROJECT_ID]);
     expect(bItems.find((project) => project.id === DEMO_PROJECT_ID)?.consoleSessionScope).toBe('tenant-available');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-39-1 (the identity wave 1): the marker vocabulary extension is
+// INVISIBLE to the demo arm — 'principal-owned' can never serve under the
+// DEMO backing (the auth surface answers the typed not-available; no
+// principal token can exist), so the demo listing stays byte-identical
+// even when a principal-token header rides the request (additive, no
+// client change required — the design §5 Wave 1's invisibility law).
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-39-1: the demo arm\'s marker law stays two-valued (the identity wave is invisible to the demo console)', () => {
+  it('a listing carrying a principal-token header under DEMO serves the EXACT two-valued markers (no principal context can exist — the auth surface is the typed not-available)', async () => {
+    const composed = composeDeployment(apiEnv({ TRADRL_AUTH_TOKEN_KEY: 'a-configured-key-anyway' })); // the key's presence changes nothing under demo — the backing is the blocker
+    expect(composed.ok).toBe(true);
+    if (!composed.ok) return;
+    await drive(composed, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: validCreateProjectRequest(TENANT, 'prj-session-a-1', 'G7 Rates Relative Value'),
+    }));
+
+    // The listing WITH a principal-token header present: byte-identical two-valued markers.
+    const listed = await drive(composed, streamingRequest({
+      url: '/v1/projects',
+      headers: sessionHeaders(SESSION_A, { 'x-tradrl-principal-token': 'v1.some.token.value' }),
+    }));
+    expect(listed.status).toBe(200);
+    const items = (listed.body.data as { items: readonly { id: string; consoleSessionScope?: string }[] }).items;
+    expect(items.find((project) => project.id === 'prj-session-a-1')?.consoleSessionScope).toBe('session-owned');
+    expect(items.find((project) => project.id === DEMO_PROJECT_ID)?.consoleSessionScope).toBe('tenant-available');
+    // 'principal-owned' NEVER serves on this arm (structurally: the demo fold is untouched; the resolver answers no-principal under demo).
+    expect(items.every((project) => project.consoleSessionScope !== 'principal-owned')).toBe(true);
+
+    // The auth routes' own teaching under demo (the loud not-available — pinned in full in auth-routes.test.ts; here the boundary case): a session request that ALSO carries the token header still serves its normal session view.
+    const goalRead = await drive(composed, streamingRequest({
+      url: '/v1/projects/prj-session-a-1/goal?project=prj-session-a-1',
+      headers: sessionHeaders(SESSION_A, { 'x-tradrl-principal-token': 'v1.some.token.value' }),
+    }));
+    expect(goalRead.status).toBe(200); // the session gate passed — the principal header changed nothing (SDK parity)
   });
 });
