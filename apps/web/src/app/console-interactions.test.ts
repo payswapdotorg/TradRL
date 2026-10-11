@@ -6323,8 +6323,8 @@ describe('executed boot: FW-41-C — the client ceremony half (I-3a console + I-
 
   it('I-6 (the boot-restore seam): a stored draft persisted by a PRE-FIX session (a stale label over a 30-day span) re-enters the chain with the SPAN-DERIVED label', async () => {
     const shared = explicitPostureStorage();
-    // hand-seed a stored draft whose label contradicts its span — the bytes a pre-fix session persisted
-    seedDraft(shared, 'prj-compiled', { ...VALID_DRAFT, horizon: { startsAt: T0, endsAt: T0 + 30 * 86_400_000, label: 'one day' } }, 'goal', T0 + 400);
+    // hand-seed a stored draft whose label contradicts its span — the bytes a pre-fix session persisted (the real serializer)
+    persistLaunchDraft(shared, { tenantId: 'tenant-a', projectId: 'prj-compiled' }, { ...VALID_DRAFT, horizon: { startsAt: T0, endsAt: T0 + 30 * 86_400_000, label: 'one day' } } as LaunchDraft, 'goal', T0 + 400);
     const rig = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared });
     expect(rig.handle.state().launch.phase).toBe('draft');
     expect(rig.handle.state().launch.draft?.horizon.label).toBe('30 days'); // RED pre-fix: the stored 'one day' re-entered the chain verbatim
