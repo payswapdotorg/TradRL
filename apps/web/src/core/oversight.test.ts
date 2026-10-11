@@ -445,3 +445,40 @@ describe('FW-40-A (H-3): the concentration standing row reads the FILL-DERIVED F
     expect(standingBookOf([]).largestFillNotional).toBe('0'); // the honest empty book
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-41-C (Round I register I-7 — the served-read sidecar's instant
+// projection, H-2's sibling residue). L1: "the RISK.BUDGET 'served read
+// 0.147 · ok' sidecar renders at the past instant while the standing
+// rows honestly read unknown" — the read's own non-observation
+// `current` (its fill/outcome-derived precedence-2 number) is a
+// CAPTURE that exists only from the read's own serve instant (`asOf`)
+// onward. THE LAW (the G-5 form): a capture that did not exist at the
+// view instant NEVER renders there; an unparseable serve instant
+// withholds too (the L4-conservative choice).
+// ---------------------------------------------------------------------------
+
+describe('FW-41-C (I-7): the served-read sidecar withholds before its own serve instant', () => {
+  it('a served current NEVER renders at a view instant before the read\'s asOf — and renders verbatim with its source AT or after it', () => {
+    const read = utilizationOf('prj-a', []); // asOf = formatInstantUtc(VIEW_AT); the k-turnover bound carries a non-observation current
+    const turnover = read.bounds.find((bound) => bound.constraintId === 'k-turnover');
+    if (turnover === undefined) throw new Error('fixture: no k-turnover bound');
+    expect(turnover.current).not.toBeNull(); // the fixture's served-class bound (no breach cites it — the observation path never fires)
+    // BEFORE the serve instant: the capture did not exist at the view — WITHHELD
+    const before = standingReadFoldOf(read, [], VIEW_AT - 1);
+    expect(before.rows.find((row) => row.constraintId === 'k-turnover')?.served).toBeNull(); // RED pre-fix: the sidecar rendered at ANY view instant (L1's exact finding)
+    // AT the serve instant: the capture exists — the served row renders verbatim with its source
+    const atServe = standingReadFoldOf(read, [], VIEW_AT);
+    expect(atServe.rows.find((row) => row.constraintId === 'k-turnover')?.served).toMatchObject({
+      value: 259374.99,
+      status: 'breach',
+      source: 'the sum of filled notional over the latest UTC trading day on record',
+    });
+  });
+
+  it('an UNPARSEABLE serve instant withholds too (the L4-conservative choice — never a fabricated past-ness)', () => {
+    const read = { ...utilizationOf('prj-a', []), asOf: 'not-an-instant' };
+    const fold = standingReadFoldOf(read, [], VIEW_AT);
+    expect(fold.rows.find((row) => row.constraintId === 'k-turnover')?.served).toBeNull(); // RED pre-fix: rendered (the asOf was never read)
+  });
+});

@@ -115,6 +115,27 @@ describe('palette: D4 — 100% coverage of navigation + the other entity kinds',
     const noticeCount = state.inbox.notices.length;
     expect(index.filter((entry) => entry.kind === 'NOTIFICATION').length).toBe(noticeCount);
   });
+
+  // FW-41-C (Round I register I-8 — M2's find: "after a successful launch
+  // there is NO next-launch affordance in the launched scope — had to
+  // switch to the demo scope to reopen the wizard"): THE PRIMARY FLOW'S
+  // OWN COMMAND, the first entry of every palette open — riding the SAME
+  // delegated action the Home hero rides (data-action="launch-start"),
+  // so the wizard opens from ANY state with no scope switch.
+  it('FW-41-C (I-8): the index's FIRST entry is the primary flow's own command — the ACTION launch entry, present in EVERY scope', () => {
+    const index = paletteIndex(openWorkspace(SCOPE, T0), capsulesOf);
+    const first = index[0];
+    if (first === undefined) throw new Error('the palette index is empty');
+    expect(first.kind).toBe('ACTION'); // RED pre-fix: the index opened with NAVIGATION — no launch command anywhere
+    expect(first.title).toBe('Describe a new goal');
+    expect(first.action).toBe('launch-start'); // the delegated action — the SAME branch the hero's CTA rides
+    expect(first.target).toBeNull(); // an action, never a navigation
+    expect(first.ref).toBe('action:launch-start');
+    // the overlay renders the delegated action on the palette's own button (the click path's carrier)
+    const bytes = render(paletteOverlay({ query: '', results: [first], selected: 0, unread: 0 }));
+    expect(bytes).toContain('data-action="launch-start"'); // RED pre-fix: the button carried no action
+    expect(bytes).toContain('class="palette-badge palette-badge-action"');
+  });
 });
 
 describe('palette: the fuzzy rank (deterministic, grouped)', () => {
@@ -127,12 +148,12 @@ describe('palette: the fuzzy rank (deterministic, grouped)', () => {
     expect(fuzzyScore('experiments', 'expe')).toBeGreaterThan(fuzzyScore('experiments', 'ees')); // a tight prefix run beats a scattered one
   });
 
-  it('an empty query returns everything, grouped in the charter\'s kind order', () => {
+  it('an empty query returns everything, grouped in the charter\'s kind order — the ACTION group first (the primary flow outranks navigation, FW-41-C)', () => {
     const index = paletteIndex(populatedWorkspace(), capsulesOf);
     const ranked = rankPalette(index, '');
     expect(ranked.length).toBe(index.length);
     const kinds = [...new Set(ranked.map((entry) => entry.kind))];
-    expect(kinds).toEqual(['NAVIGATION', 'PROJECT', 'JOB', 'EVIDENCE']); // the fixture's fold yields no notices
+    expect(kinds).toEqual(['ACTION', 'NAVIGATION', 'PROJECT', 'JOB', 'EVIDENCE']); // the fixture's fold yields no notices
   });
 
   it('a query filters and keeps best-first order inside a group (DETERMINISM)', () => {

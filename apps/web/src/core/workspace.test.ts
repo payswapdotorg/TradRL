@@ -1400,3 +1400,90 @@ describe('workspace: FW-32-B — the scrubber history floor (the honest-derivati
     expect(historyFloorOf(state)).toEqual(first);                          // deterministic: the same state, the same floor
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-41-C (Round I register I-3a — the post-launch LIVE hand-off, the
+// reducer half). S2's finding, 4/4 launches: "immediately after every
+// launch the Time Machine sits at an explicit pre-submit instant …
+// hiding the desk's own research job behind 'return to LIVE to see
+// them'". THE LAW: at the launch's completion, a machine holding an
+// EXPLICIT instant BELOW the desk's own record floor hands the view to
+// the desk's floor (or the anchor when lower) — the analyst sees their
+// desk's work the moment it completes. A LIVE machine stays live (the
+// default hand-off); an armed instant INSIDE the desk's history stands
+// (the incident-restore law, D-15); each mode keeps its own semantics.
+// ---------------------------------------------------------------------------
+
+describe('FW-41-C (I-3a): the post-launch hand-off — launchCompletionHandOff at both terminal arms', () => {
+  /** A desk's own world on record: a loaded project + a submitted job — the record floor is the job's submittedAt (T0+20). */
+  function deskOnRecord(): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
+      { kind: 'job-updated', at: T0 + 3, job: jobRecord('submitted') },
+    ]);
+  }
+
+  it('launch-completed with an explicit TIMESTAMP below the desk\'s record floor hands the view to the floor — the desk\'s work is visible the moment the launch completes', () => {
+    let state = deskOnRecord();
+    state = reduceWorkspace(state, { kind: 'anchor-advanced', at: T0 + 100 }); // the anchor drifts past the records (the beat's own law)
+    const floor = historyFloorOf(state);
+    expect(floor.derived).toBe('records'); // the desk has its own history
+    state = reduceWorkspace(state, { kind: 'view-timestamp', at: T0 + 101, timestamp: T0 - 600 }); // an explicit instant BELOW the floor (a stale restore)
+    expect(state.timeMachine.mode).toBe('timestamp');
+    expect(viewAtOf(state)).toBe(T0 - 600); // the stale instant stands pre-completion (D-15: the machine is the analyst's)
+    state = reduceWorkspace(state, { kind: 'launch-completed', at: T0 + 102 });
+    expect(state.launch.phase).toBe('launched');
+    expect(state.timeMachine.mode).toBe('timestamp'); // still an explicit instant — but AT the desk's own floor
+    expect(viewAtOf(state)).toBe(Math.min(floor.floorAt, state.timeMachine.anchorAt)); // THE HAND-OFF (RED pre-fix: still T0-600, the desk's work hidden behind "return to LIVE")
+  });
+
+  it('the boundary law: a LIVE machine stays live, and an armed instant INSIDE the desk\'s history stands (D-15 — the hand-off never overreaches)', () => {
+    // LIVE stays live: the default hand-off hands nothing (the submit seam's own view-live arm)
+    let live = deskOnRecord();
+    live = reduceWorkspace(live, { kind: 'launch-completed', at: T0 + 30 });
+    expect(live.timeMachine.mode).toBe('live');
+    expect(viewAtOf(live)).toBe(live.timeMachine.anchorAt); // at the live edge — the desk's own records render through the L4 projection
+
+    // an armed instant INSIDE the desk's history stands — the incident-restore law (the analyst's choice is theirs)
+    let inHistory = deskOnRecord();
+    inHistory = reduceWorkspace(inHistory, { kind: 'anchor-advanced', at: T0 + 100 });
+    inHistory = reduceWorkspace(inHistory, { kind: 'view-timestamp', at: T0 + 101, timestamp: T0 + 25 }); // inside the records (floor T0+20)
+    inHistory = reduceWorkspace(inHistory, { kind: 'launch-completed', at: T0 + 102 });
+    expect(viewAtOf(inHistory)).toBe(T0 + 25); // unchanged — the hand-off moves ONLY a view that predates the desk's own records
+  });
+
+  it('the D-11 tracked-terminal arm hands off too — the jobs-list read serving the kickoff ALREADY complete closes the launch AND lands the view (the same fold, both arms)', () => {
+    let state = deskOnRecord();
+    state = reduceWorkspace(state, { kind: 'launch-submitted', at: T0 + 4, projectId: 'proj-launched', jobId: 'job-9' });
+    expect(state.launch.phase).toBe('launching');
+    state = reduceWorkspace(state, { kind: 'anchor-advanced', at: T0 + 100 });
+    state = reduceWorkspace(state, { kind: 'view-timestamp', at: T0 + 101, timestamp: T0 - 600 }); // the stale pre-submit instant (S2's exact state)
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 103, job: { ...jobRecord('complete'), jobId: 'job-9' } }); // the terminal record with NO poll observation
+    expect(state.launch.phase).toBe('launched'); // the D-11 law (pre-existing)
+    const floor = historyFloorOf(state);
+    expect(viewAtOf(state)).toBe(Math.min(floor.floorAt, state.timeMachine.anchorAt)); // THE HAND-OFF on this arm too (RED pre-fix: T0-600)
+  });
+
+  it('the mode semantics: a T-MINUS machine re-offsets and an armed PLAYBACK re-arms AT the target (step + paused preserved)', () => {
+    // T-MINUS: the view trails the anchor from the target
+    let tminus = deskOnRecord();
+    tminus = reduceWorkspace(tminus, { kind: 'anchor-advanced', at: T0 + 100 });
+    tminus = reduceWorkspace(tminus, { kind: 'view-tminus', at: T0 + 101, tMinusMs: 60_000 }); // the view far below the floor
+    tminus = reduceWorkspace(tminus, { kind: 'launch-completed', at: T0 + 102 });
+    expect(tminus.timeMachine.mode).toBe('t-minus');
+    const target = Math.min(historyFloorOf(tminus).floorAt, tminus.timeMachine.anchorAt);
+    expect(viewAtOf(tminus)).toBe(target); // RED pre-fix: the view stays 60s behind the anchor — below the desk's own records
+    expect(tminus.timeMachine.tMinusMs).toBe(tminus.timeMachine.anchorAt - target); // the offset re-derived from the target
+
+    // PLAYBACK: re-armed AT the target with its own step (ticks reset — the review starts at the desk's own beginning)
+    let pb = deskOnRecord();
+    pb = reduceWorkspace(pb, { kind: 'anchor-advanced', at: T0 + 100 });
+    pb = reduceWorkspace(pb, { kind: 'playback-start', at: T0 + 101, fromAt: T0 - 600, stepMs: 1_000 }); // armed below the floor
+    pb = reduceWorkspace(pb, { kind: 'launch-completed', at: T0 + 102 });
+    expect(pb.timeMachine.mode).toBe('playback');
+    expect(pb.timeMachine.playback?.fromAt).toBe(Math.min(historyFloorOf(pb).floorAt, pb.timeMachine.anchorAt)); // RED pre-fix: T0-600
+    expect(pb.timeMachine.playback?.ticks).toBe(0);
+    expect(pb.timeMachine.playback?.stepMs).toBe(1_000); // the analyst's chosen step survives the hand-off
+  });
+});

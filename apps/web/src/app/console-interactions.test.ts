@@ -1403,7 +1403,7 @@ describe('executed boot: J8 — the command palette query (the dead input wiring
   it('typing in the palette input FILTERS + RANKS the results through the pure machinery (the input event feeds the query)', async () => {
     const rig = await bootRig({ tradrl_onboarded: 'true' });
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(16); // the opened state: every navigation target (the offline transport loads no entities; FW-37-B added the Oversight target)
+    expect(countByClass(rig.root, 'palette-item')).toBe(17); // the opened state: every navigation target + the primary flow's own ACTION entry (FW-41-C I-8; the offline transport loads no entities)
 
     typePaletteQuery(rig, 'risk'); // the exact live repro: type anything -> the list must change
     expect(countByClass(rig.root, 'palette-item')).toBe(2); // the subsequence matches survive: risk (the tight run) + experiments (the scattered r-i-s-k)
@@ -1440,7 +1440,7 @@ describe('executed boot: J8 — the command palette query (the dead input wiring
     expect(textOf(clear)).toBe('Clear search');
     expect(clear.getAttribute('data-action')).toBe('palette-clear');
     click(rig, clear);
-    expect(countByClass(rig.root, 'palette-item')).toBe(16); // the full list is back (FW-37-B: sixteen navigation targets)
+    expect(countByClass(rig.root, 'palette-item')).toBe(17); // the full list is back (FW-37-B: sixteen navigation targets + FW-41-C's ACTION entry)
     const input = findByData(rig.root, 'data-palette-input', 'true');
     if (input === null) throw new Error('the palette input vanished');
     expect(input.getAttribute('value')).toBe('');
@@ -1450,7 +1450,7 @@ describe('executed boot: J8 — the command palette query (the dead input wiring
     const rig = await bootRig({ tradrl_onboarded: 'true' });
     rig.handle.dispatch({ kind: 'outcomes-loaded', at: T0 + 30, records: [outcomeRecord()] }); // the sanctioned write path
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(17); // 16 navigation (FW-37-B: + Oversight) + the outcome capsule
+    expect(countByClass(rig.root, 'palette-item')).toBe(18); // 16 navigation (FW-37-B: + Oversight) + the outcome capsule + the FW-41-C ACTION entry
     typePaletteQuery(rig, 'evc:');
     const items = elementsOf(rig.root).filter((element) => element.hasClass('palette-item'));
     expect(items.length).toBe(1);
@@ -3004,7 +3004,7 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
     const api = jobsSeamTransport();
     const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(21); // 16 navigation (FW-37-B: + Oversight) + the project + the TWO seeded jobs + the TWO cross-project jump entries (D-16: the directory's other desks)
+    expect(countByClass(rig.root, 'palette-item')).toBe(22); // 16 navigation (FW-37-B: + Oversight) + the project + the TWO seeded jobs + the TWO cross-project jump entries (D-16) + the FW-41-C ACTION entry
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(true); // the JOB group renders in the grouped results
 
     // by ID: the exact job the operator typed
@@ -3131,7 +3131,7 @@ describe('executed boot: D-3 (W-25A) — the jobs seam (the boot read refills st
 
     // the palette carries no JOB entries (16 navigation (FW-37-B: + Oversight) + the project + the two cross-project jump entries — the D-16 directory depth)
     clickAction(rig, 'palette-open');
-    expect(countByClass(rig.root, 'palette-item')).toBe(19);
+    expect(countByClass(rig.root, 'palette-item')).toBe(20); // + the FW-41-C ACTION entry
     expect(elementsOf(rig.root).some((element) => element.hasClass('palette-group-label') && textOf(element) === 'JOB')).toBe(false);
   });
 });
@@ -5740,12 +5740,17 @@ describe('executed boot: FW-40-B — the boot/resume cluster (H-4 the stale view
     expect(viewAtOf(rig.handle.state())).toBe(rig.handle.state().timeMachine.anchorAt); // the live edge — never a pre-project instant
     // and the TM bar teaches the LIVE posture (no stale-instant carry, no heal note — the user drove the machine)
     expect(findByData(rig.root, 'data-tm-heal', 'true')).toBeNull();
-    // the quiet desk teaches its HONEST not-compiled state (H-5c — the divergence fix never fabricates a compile)
+    // the quiet desk teaches its HONEST not-compiled state (H-5c — the divergence fix never fabricates a compile).
+    // FW-41-C (I-3b): at the LIVE view over the in-flight read the surface now teaches PENDING — the seek is
+    // active (the beat keeps re-observing this un-compiled desk's records); the honest terminal empty state
+    // renders at a scrubbed view (the H-4c pin below) or once the seek is not active. Never a fabricated compile.
     await rig.handle.beat(); // the scope-change refetch reads the quiet desk's world
     expect(rig.handle.state().orgSnapshots).toEqual([]);
     clickNav(rig, 'organization');
-    expect(deepTextOf(panelOf(rig, 'organization'))).toContain('No organization snapshots at this view instant.');
-    expect(findByData(rig.root, 'data-beyond-view', '1')).toBeNull(); // nothing hidden at LIVE — the honest empty state, no beyond-view disclosure
+    expect(findByData(rig.root, 'data-hydration-pending', 'true')).not.toBeNull(); // the pending marker (never a compile fabrication)
+    expect(deepTextOf(panelOf(rig, 'organization'))).toContain('Reading the world…');
+    expect(deepTextOf(panelOf(rig, 'organization'))).not.toContain('active observed'); // the compiled status NEVER renders for the quiet desk
+    expect(findByData(rig.root, 'data-beyond-view', '1')).toBeNull(); // nothing hidden at LIVE — no beyond-view disclosure
   });
 
   it('H-4c: an EXPLICIT scrub still renders the honest "viewing one explicit instant" disclosure — the heal fires only for the stale RESTORED instant, never for the analyst\'s own choice', async () => {
@@ -6244,5 +6249,181 @@ describe('executed boot: FW-40-C — the wizard race cluster (the beat-value car
       .filter((entry) => entry.payload?.kind === 'goal-loaded' && (entry.payload.goal?.horizon.label ?? '') === 'one day');
     expect(oldGoalEvents.length).toBe(1); // the stale-label event is IN the chain (the old shape is legal history)...
     expect(verifyWorkspaceExport(oldDoc)).toEqual({ ok: true }); // ...and the chain verifies over it — the law held
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-41-C (Round I register — the client ceremony half's executed pins):
+//   - I-3a (the console half): the boot TM restore applies AT MOST ONCE
+//     per boot — a later listing read can never re-land the stale boot
+//     instant over a live view (S2: 4/4 launches sat at the pre-submit
+//     instant hiding the desk's work);
+//   - I-6 (the launch-DRAFT event class): every draft event is BORN with
+//     the span-derived horizon label — the fresh start, the edit, AND the
+//     boot restore (M1's stale-'one day' find, g1's sibling);
+//   - I-8 (M2's find): the palette carries the primary flow's OWN
+//     command — 'Describe a new goal' opens the wizard from ANY scope,
+//     no scope switch, no reload.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-41-C — the client ceremony half (I-3a console + I-6 draft events + I-8 the palette launch command)', () => {
+  /** A returning browser's posture holding the Time Machine at an explicit in-history instant (the D-15 restore posture). */
+  function explicitPostureStorage(): MapStorage {
+    const storage = new MapStorage();
+    storage.map.set('tradrl_console_posture', JSON.stringify({
+      onboarded: true,
+      scopeProjectId: null,
+      timeMachine: { speed: '1x', freeSpeed: '', mode: 'timestamp', viewAt: T0 + 500 },
+    }));
+    return storage;
+  }
+
+  it('I-3a (console half): the boot TM restore applies EXACTLY ONCE — after the analyst returns to LIVE, a later listing read NEVER re-lands the stored instant over the live view', async () => {
+    const rig = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: explicitPostureStorage() });
+    // the boot's listing read restored the stored instant (the D-15 law, unchanged)
+    expect(rig.handle.state().timeMachine.mode).toBe('timestamp');
+    expect(viewAtOf(rig.handle.state())).toBe(T0 + 500);
+    // the analyst returns to LIVE (their own drive — the machine is theirs)
+    clickAction(rig, 'tm-mode-live');
+    expect(rig.handle.state().timeMachine.mode).toBe('live');
+    // a LATER listing read (any refresh — e.g. the post-launch refetch) must NOT re-land the stored instant
+    await rig.handle.refresh();
+    expect(rig.handle.state().timeMachine.mode).toBe('live'); // RED pre-fix: the restore re-ran on EVERY listing read — the stale instant re-landed over the live view (S2's 4/4)
+    expect(viewAtOf(rig.handle.state())).toBe(rig.handle.state().timeMachine.anchorAt); // at the live edge
+  });
+
+  it('I-6 (the edit seam): the launch-draft-EDITED event is born with the SPAN-DERIVED label — the chain never retains a label that contradicts the span it annotates', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    // the full wizard path (each step's fields must be valid for the move — the FW-40-C first-click law)
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-world');
+    // move the horizon end to a 30-day span (the seed label 'one day' is CORRECT for the seed — stale the moment the end moves)
+    typeField(rig, 'horizonEndsAt', String(T0 + 1000 + 30 * 86_400_000)); // startsAt stays the seed's T0+1000 -> exactly 30 days
+    clickAction(rig, 'launch-step-review'); // the flush commits the edit -> launch-draft-edited
+    const draft = rig.handle.state().launch.draft;
+    if (draft === null) throw new Error('the draft vanished at the review flush');
+    expect(draft.horizon.label).toBe('30 days'); // RED pre-fix: 'one day' — the stale annotation riding the export chain
+    // the EVENT in the chain carries the same derived fact (the export's own entry — M1's find)
+    const edited = rig.handle.state().history.filter((entry) => entry.kind === 'launch-draft-edited');
+    const last = edited[edited.length - 1];
+    if (last === undefined) throw new Error('no launch-draft-edited event in the history');
+    expect((last.payload as { readonly draft: LaunchDraft }).draft.horizon.label).toBe('30 days'); // RED pre-fix: 'one day'
+    expect((last.payload as { readonly draft: LaunchDraft }).draft.horizon.endsAt).toBe(T0 + 1000 + 30 * 86_400_000); // the endpoints ride verbatim
+  });
+
+  it('I-6 (the boot-restore seam): a stored draft persisted by a PRE-FIX session (a stale label over a 30-day span) re-enters the chain with the SPAN-DERIVED label', async () => {
+    const shared = explicitPostureStorage();
+    // hand-seed a stored draft whose label contradicts its span — the bytes a pre-fix session persisted
+    seedDraft(shared, 'prj-compiled', { ...VALID_DRAFT, horizon: { startsAt: T0, endsAt: T0 + 30 * 86_400_000, label: 'one day' } }, 'goal', T0 + 400);
+    const rig = await bootRig({}, bootResumeTransport(), 'prj-compiled', { scopeStorage: shared });
+    expect(rig.handle.state().launch.phase).toBe('draft');
+    expect(rig.handle.state().launch.draft?.horizon.label).toBe('30 days'); // RED pre-fix: the stored 'one day' re-entered the chain verbatim
+    const started = rig.handle.state().history.filter((entry) => entry.kind === 'launch-draft-started');
+    const last = started[started.length - 1];
+    if (last === undefined) throw new Error('no launch-draft-started event in the history');
+    expect((last.payload as { readonly draft: LaunchDraft }).draft.horizon.label).toBe('30 days');
+  });
+
+  it('I-8 (the click path): the palette carries the primary flow\'s OWN command — Describe a new goal starts the wizard from ANY scope, and the palette closes on the start', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    clickAction(rig, 'palette-open');
+    const actionEntry = findByData(rig.root, 'data-palette-ref', 'action:launch-start');
+    if (actionEntry === null) throw new Error('the palette carries no ACTION entry (RED pre-fix: I-8 — no next-launch entry without a scope switch)');
+    expect(actionEntry.getAttribute('data-action')).toBe('launch-start'); // the SAME delegated action the Home hero rides
+    expect(elementsOf(actionEntry).some((element) => textOf(element) === 'ACTION')).toBe(true); // the ACTION kind badge renders
+    click(rig, actionEntry);
+    expect(rig.handle.state().launch.phase).toBe('draft'); // the wizard opened — no scope switch, no reload
+    expect(rig.handle.state().scope.projectId).toBe('prj-a'); // the scope never moved
+    expect(elementsOf(rig.root).some((element) => element.hasClass('palette-backdrop'))).toBe(false); // the palette closed on the start
+  });
+
+  it('I-8 (the keyboard path + the guard): Enter on the ACTION entry fires the same guarded launch-start — and a draft in progress is NEVER wiped', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, sharedDesksTransport());
+    clickAction(rig, 'palette-open');
+    typePaletteQuery(rig, 'describe'); // the ACTION entry is the match
+    rig.doc.fire('keydown', { target: null, key: 'Enter' });
+    expect(rig.handle.state().launch.phase).toBe('draft'); // RED pre-fix: no ACTION entry — Enter did nothing
+    expect(elementsOf(rig.root).some((element) => element.hasClass('palette-backdrop'))).toBe(false);
+    // the guard: a second launch-start with the draft in progress keeps the work (nothing wipes the user's draft)
+    clickNav(rig, 'goal');
+    typeField(rig, 'name', 'Momentum scout');
+    clickAction(rig, 'launch-step-budget');
+    expect(rig.handle.state().launch.draft?.name).toBe('Momentum scout');
+    clickAction(rig, 'palette-open');
+    typePaletteQuery(rig, 'describe');
+    rig.doc.fire('keydown', { target: null, key: 'Enter' });
+    expect(rig.handle.state().launch.draft?.name).toBe('Momentum scout'); // the in-progress guard held
+    expect(rig.handle.state().launch.phase).toBe('draft');
+    expect(elementsOf(rig.root).some((element) => element.hasClass('palette-backdrop'))).toBe(false); // the palette still closes (the command ran)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-41-C (Round I register I-5's CLIENT half — S1's D1, the deep-project
+// org compile stall: "the org never compiled in 15+ min post-launch-
+// complete while every fast project bound within a minute"). The
+// pre-fix client's org-compile poll STOPPED the moment the project
+// record's organization ref bound — but the ref bind + the snapshot
+// report are TWO host writes, and a read landing on a snapshot-less
+// serverless instance was NEVER retried in-session (the watch store is
+// per-instance, back-filled only by the host's 10s staleness heal).
+// THE CLIENT LAW: while the ref is BOUND but no snapshot is on record,
+// every beat re-observes the project + re-reads the org status until
+// the snapshot lands — self-terminating once it does.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-41-C (I-5 client half) — the org-compile poll retries a snapshot-less read', () => {
+  /** A desk whose org ref is bound but whose FIRST org-status read lands on a snapshot-less instance (the 404), the SECOND serves it. */
+  function compileStallTransport(): { readonly transport: ApiTransport; readonly orgReads: { count: number } } {
+    const orgReads = { count: 0 };
+    const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-fw41c', data } });
+    const notFound = () => ({ status: 404, headers: {}, body: { requestId: 'req-fw41c', error: { code: 'not_found', message: 'no snapshot on this instance yet', status: 404 } } });
+    const project = {
+      id: 'prj-stall', tenantId: 'tenant-a', name: 'The Deep Desk', executionMode: 'simulation', consoleSessionScope: 'session-owned',
+      lifecycle: { projectId: 'prj-stall', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:stall-prj-stall' },
+      lineage: { projectId: 'prj-stall', createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+      createdAt: T0, updatedAt: T0,
+    };
+    const transport: ApiTransport = async (request) => {
+      const key = `${request.method} ${(request.path.split('?')[0] ?? request.path)}`;
+      if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+      if (key === 'GET /v1/projects') return ok({ items: [project] });
+      if (key === 'GET /v1/projects/prj-stall') return ok(project);
+      if (key.startsWith('GET /v1/organizations/')) {
+        orgReads.count += 1;
+        if (orgReads.count === 1) return notFound(); // the boot's org read lands on a snapshot-less instance (S1's D1)
+        return ok({ organizationRef: 'org:stall-prj-stall', tenant: 'tenant-a', project: 'prj-stall', status: 'active', at: T0 + 80, instanceRefs: ['ai:director-1'] });
+      }
+      if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+      if (key === 'GET /v1/execution/submissions') return ok({ items: [] });
+      if (key === 'GET /v1/jobs') return ok({ items: [] });
+      return notFound(); // the host-owned goal + risk-utilization routes answer the typed 404
+    };
+    return { transport, orgReads };
+  }
+
+  it('while the ref is BOUND but no snapshot is on record, the beat RE-READS the org status until it lands — a snapshot-less first read is retried in-session (never a 15-minute stall)', async () => {
+    const api = compileStallTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-stall');
+    expect(rig.handle.state().project?.lifecycle.organizationRef).not.toBeNull(); // the ref is bound (the backing's own clock)
+    expect(api.orgReads.count).toBe(1); // the boot's bundle read the org status once — and landed on a snapshot-less instance
+    expect(rig.handle.state().orgSnapshots).toHaveLength(0);
+    await rig.handle.beat(); // the next beat
+    expect(api.orgReads.count).toBe(2); // RED pre-fix: 1 — the poll stopped once the ref bound (the in-session stall)
+    expect(rig.handle.state().orgSnapshots).toHaveLength(1); // the retry landed — the desk compiles without a reload
+    expect(rig.handle.state().orgSnapshots[0]?.status).toBe('active');
+    // self-terminating: once the snapshot is on record, the next beat does NOT re-read the org status
+    await rig.handle.beat();
+    expect(api.orgReads.count).toBe(2); // the seek ended — the dedup branch no longer fires
   });
 });
