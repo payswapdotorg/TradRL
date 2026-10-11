@@ -50,7 +50,8 @@ import {
   type AccountPanelState,
   clearStoredPrincipalSession,
   isAuthUnauthenticatedError,
-  isAuthUnavailableError,
+  isDeploymentAuthUnavailableError,
+  isHostAnswerError,
   persistPrincipalSession,
   readStoredPrincipalSession,
   unavailableAccountPanel,
@@ -149,18 +150,34 @@ export async function readAccountBoot(seams: AccountPlaneSeams, cache: WhoamiCac
     put(seams, { ...authenticatedAccountPanel(answer.name), edits: panelOf(seams).edits, adoption: adoptionRowsOf(seams.directory(), seams.demoProjectId) });
     void seams.refresh(); // the re-attach: the listing re-reads for the signed-in session
   } catch (error) {
-    if (isAuthUnavailableError(error)) {
+    // FW-41-C (I-1's client half — THE ORIGIN LAW): the teaching wrapper
+    // renders ONLY for the deployment's OWN typed not-available (the
+    // host's error envelope — the deployment truly lacks the auth
+    // surface, R46). A route FAILURE (the transport threw, a malformed
+    // answer) is NOT the deployment's state: the session is UNKNOWN —
+    // the stored record STAYS (a network blip never destroys a session;
+    // the next boot re-validates it) and the typed failure renders
+    // inline on the anonymous form (retryable — sign in again, or
+    // reload when the route recovers). The host's own 404 (the
+    // principal is not on record) still clears honestly — the session
+    // is not usable, never a fabricated login.
+    if (isDeploymentAuthUnavailableError(error)) {
       put(seams, unavailableAccountPanel((error as Error).message));
       return;
     }
-    // 401 (the token is not on record), 404 (unknown-vs-foreign), or an
-    // unexpected typed answer: the session is not usable — clear it
-    // honestly and surface the host's own message inline.
-    if (seams.storage !== null) clearStoredPrincipalSession(seams.storage);
-    seams.principalHeaders?.setToken(null); // FW-39-3: the dead token leaves the transport headers
-    cache.clear();
-    const panel = panelOf(seams);
-    put(seams, { ...panel, surface: panel.surface === 'checking' ? 'anonymous' : panel.surface, error: (error as Error)?.message ?? String(error) });
+    if (isAuthUnauthenticatedError(error) || (isHostAnswerError(error) && (error as { readonly family?: string }).family === 'not-found')) {
+      if (seams.storage !== null) clearStoredPrincipalSession(seams.storage);
+      seams.principalHeaders?.setToken(null); // FW-39-3: the dead token leaves the transport headers
+      cache.clear();
+      put(seams, { ...anonymousAccountPanel(), edits: panelOf(seams).edits, error: (error as Error)?.message ?? String(error) });
+      return;
+    }
+    // A route failure while a stored session validates: the session is
+    // unknown, never false — the anonymous form renders with the
+    // failure's own text, and the stored record survives for the next
+    // boot's validation (the pre-fix path collapsed this into the
+    // FALSE teaching wrapper — I-1's 9/9 personas).
+    put(seams, { ...anonymousAccountPanel(), edits: panelOf(seams).edits, error: (error as Error)?.message ?? String(error) });
   }
 }
 
@@ -202,7 +219,14 @@ async function submitCredentials(seams: AccountPlaneSeams, cache: WhoamiCache, r
     seams.showToast({ kind: 'account', title: register ? 'Account created' : 'Signed in', sentence: register ? `Welcome, ${mint.name} — desks you adopt follow this account across restarts.` : `Welcome back, ${mint.name} — this session's desks can now be adopted.` });
     void seams.refresh(); // the re-attach: the listing re-reads for the signed-in session
   } catch (error) {
-    if (isAuthUnavailableError(error)) {
+    // FW-41-C (I-1): the teaching wrapper renders ONLY for the host's
+    // own typed not-available (the deployment lacks the auth surface —
+    // signing in is impossible and the wrapper teaches exactly that).
+    // Any other failure (transport, malformed, 5xx) is the typed
+    // failure INLINE on the form — retryable, never a false
+    // "this console runs without a login" over a deployment that has
+    // accounts.
+    if (isDeploymentAuthUnavailableError(error)) {
       put(seams, unavailableAccountPanel((error as Error).message));
       return;
     }
@@ -271,17 +295,25 @@ async function adoptDesks(seams: AccountPlaneSeams, clickedDeskId: string): Prom
     }
     void seams.refresh(); // the re-attach: the listing re-reads for the adopted desks
   } catch (error) {
-    if (isAuthUnavailableError(error)) {
-      put(seams, unavailableAccountPanel((error as Error).message));
-      return;
-    }
+    // FW-41-C (I-1 — THE LAW, the signed-in path): a route FAILURE
+    // while signed in renders the TYPED FAILURE — the route's own error
+    // text, inline on the standing card + a toast — and NEVER collapses
+    // the signed-in account card. The teaching wrapper is GONE from
+    // this path entirely (a deployment the user SIGNED IN TO has
+    // accounts; even the host's own typed 503 renders as the inline
+    // failure — the route's own words, retryable), and the ceremony's
+    // rows keep their prior states so the adopt buttons stay live for
+    // the retry. Only the typed 401 (the token left the record) ends
+    // the session honestly.
     if (isAuthUnauthenticatedError(error)) {
       if (seams.storage !== null) clearStoredPrincipalSession(seams.storage);
       seams.principalHeaders?.setToken(null); // FW-39-3: the refused token leaves the transport headers
       put(seams, { ...anonymousAccountPanel(), edits: before.edits, error: (error as Error)?.message ?? String(error) });
       return;
     }
-    put(seams, { ...panelOf(seams), busy: false, error: (error as Error)?.message ?? String(error) });
+    const failure = (error as Error)?.message ?? String(error);
+    put(seams, { ...panelOf(seams), busy: false, error: failure });
+    seams.showToast({ kind: 'account', title: 'Adoption failed — try again', sentence: failure });
   }
 }
 

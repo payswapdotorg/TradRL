@@ -22,22 +22,29 @@ import { v, type VNode } from '../render/vtree';
 
 /** One palette entry (a searchable target with a type badge + an action hint). */
 export interface PaletteEntry {
-  /** The entry's kind badge (NAVIGATION / PROJECT / JOB / NOTIFICATION / EVIDENCE). */
-  readonly kind: 'NAVIGATION' | 'PROJECT' | 'JOB' | 'NOTIFICATION' | 'EVIDENCE';
+  /** The entry's kind badge (ACTION / NAVIGATION / PROJECT / JOB / NOTIFICATION / EVIDENCE). */
+  readonly kind: 'ACTION' | 'NAVIGATION' | 'PROJECT' | 'JOB' | 'NOTIFICATION' | 'EVIDENCE';
   /** The searchable title. */
   readonly title: string;
   /** The optional secondary line (a subtitle or a detail). */
   readonly subtitle?: string;
   /** The action: a shell target to navigate to (null = open the entity's own surface). */
   readonly target: ShellTarget | null;
+  /**
+   * FW-41-C (Round I register I-8 — M2's find): an entry's own DELEGATED
+   * ACTION (the primary flow's start), carried as the palette button's
+   * data-action so the console's one resolver fires it exactly like the
+   * hero's own CTA. Absent on every navigation/entity entry.
+   */
+  readonly action?: 'launch-start';
   /** The entity reference (data-palette; e.g. job:job-1, notice:ntc-1). */
   readonly ref: string;
   /** The searchable haystack (title + subtitle, lowercased). */
   readonly haystack: string;
 }
 
-/** The palette's type-badge order (grouped results, charter §4.14). */
-const KIND_ORDER: readonly PaletteEntry['kind'][] = ['NAVIGATION', 'PROJECT', 'JOB', 'NOTIFICATION', 'EVIDENCE'];
+/** The palette's type-badge order (grouped results, charter §4.14) — the ACTION group first (the primary flow outranks navigation). */
+const KIND_ORDER: readonly PaletteEntry['kind'][] = ['ACTION', 'NAVIGATION', 'PROJECT', 'JOB', 'NOTIFICATION', 'EVIDENCE'];
 
 /**
  * Build the palette index from the workspace state: ALL FIFTEEN
@@ -59,17 +66,38 @@ export type CapsulesOf = (state: WorkspaceState) => readonly EvidenceCapsule[];
  * Foreign sessions' desks never appear by name in the palette.
  */
 export function paletteIndex(state: WorkspaceState, capsulesOf: CapsulesOf): readonly PaletteEntry[] {
-  const entries: PaletteEntry[] = SHELL_TARGETS.map((target) => {
+  const entries: PaletteEntry[] = [
+    // FW-41-C (Round I register I-8 — M2's find: "after a successful
+    // launch there is NO next-launch affordance in the launched scope
+    // ... the palette has no launch command — had to switch to the demo
+    // scope to reopen the wizard"): THE PRIMARY FLOW'S OWN COMMAND, the
+    // first entry of every palette open. The button rides the SAME
+    // delegated action the Home hero and the launch panel's idle card
+    // ride (data-action="launch-start"), so the wizard opens from ANY
+    // state — a concluded launch's own scope included — with no scope
+    // switch and no reload (the handler's in-progress guard keeps an
+    // open draft untouched).
+    {
+      kind: 'ACTION',
+      title: 'Describe a new goal',
+      subtitle: 'start the primary flow — launch another desk',
+      target: null,
+      action: 'launch-start',
+      ref: 'action:launch-start',
+      haystack: 'describe a new goal start the primary flow launch another desk wizard',
+    },
+  ];
+  for (const target of SHELL_TARGETS) {
     const group = NAV_GROUPS.find((candidate) => candidate.label !== undefined && candidate.targets.includes(target));
-    return {
-      kind: 'NAVIGATION' as const,
+    entries.push({
+      kind: 'NAVIGATION',
       title: SHELL_TITLES[target],
       subtitle: group?.label,
       target,
       ref: `nav:${target}`,
       haystack: `${SHELL_TITLES[target]} ${group?.label ?? ''}`.toLowerCase(),
-    };
-  });
+    });
+  }
   if (state.project !== null) {
     entries.push({
       kind: 'PROJECT',
@@ -367,6 +395,9 @@ export function paletteOverlay(options: {
           'aria-selected': options.selected === entryPosition ? 'true' : 'false',
           'data-palette-ref': entry.ref,
           ...(entry.target === null ? {} : { 'data-target': entry.target }),
+          // FW-41-C (I-8): an entry's own delegated action — the palette
+          // button fires the SAME resolver branch the hero's CTA rides.
+          ...(entry.action === undefined ? {} : { 'data-action': entry.action }),
         }, [
           v('span', { class: `palette-badge palette-badge-${entry.kind.toLowerCase()}` }, [entry.kind]),
           v('span', { class: 'palette-item-text' }, [

@@ -46,6 +46,7 @@
 import { viewAtOf as viewAtOfTimeMachine } from '../core/timemachine';
 import { historyFloorOf } from '../core/workspace';
 import type { WorkspaceEvent, WorkspaceState } from '../core/workspace';
+import { withSpanDerivedLaunchLabel } from '../core/launch';
 import type { InstantSource } from '../core/clock';
 import type { TmHealNote } from '../render/shell';
 import type { WorkspaceScope } from '../core/tenant';
@@ -174,7 +175,12 @@ export function createBootResumePlane(seams: BootResumeSeams): BootResumePlane {
     showDraft(bootStoredDraft.savedAt); // the hint rides the view BEFORE the render the dispatch triggers
     restoringLaunchDraft = true;
     try {
-      seams.dispatch({ kind: 'launch-draft-started', at: seams.instants.nowMs(), draft: bootStoredDraft.draft });
+      // FW-41-C (I-6): the restored draft's event carries the SPAN-DERIVED
+      // horizon label — a record persisted by a pre-fix session (the seed's
+      // stale 'one day' against a moved horizon end) never re-enters the
+      // chain with its stale annotation (the g1 class law, the draft-event
+      // half; the wizard's own validation remains the semantic teacher).
+      seams.dispatch({ kind: 'launch-draft-started', at: seams.instants.nowMs(), draft: withSpanDerivedLaunchLabel(bootStoredDraft.draft) });
       if (bootStoredDraft.step !== 'goal') seams.dispatch({ kind: 'launch-step-changed', at: seams.instants.nowMs(), step: bootStoredDraft.step });
     } finally {
       restoringLaunchDraft = false;

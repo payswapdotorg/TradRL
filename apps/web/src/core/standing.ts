@@ -63,6 +63,28 @@ import { divideDecimalsFloor, sumExactDecimals } from './decimals';
 import { parseInstantUtc } from './format';
 
 /**
+ * FW-41-C (Round I register I-7 — L1 + M3, H-2's sibling residue): the
+ * SERVED-READ SIDECAR's instant projection. The read's own
+ * non-observation `current` (its outcome/fill-derived precedence-2
+ * number, e.g. a realized-loss risk budget) is a CAPTURE — a value
+ * that exists only from the read's own serve instant (`asOf`)
+ * onward. Pre-fix the sidecar rendered that current-instant capture at
+ * ANY Time-Machine view instant (L1: "the RISK.BUDGET 'served read
+ * 0.147 · ok' sidecar renders at the past instant while the standing
+ * rows honestly read unknown") — the same leak class H-2 closed for
+ * the gate verdicts. THE LAW (the G-5 form): a capture that did not
+ * exist at the view instant NEVER renders there; an unparseable serve
+ * instant withholds too (the L4-conservative choice, the same law the
+ * observation's observedAt rides). The render surfaces consume the
+ * fold's null (the sidecar row simply stays absent at pre-serve
+ * instants) — no render change needed.
+ */
+function servedReadAvailableAtView(utilization: RiskUtilizationRead, viewAt: number): boolean {
+  const servedAt = parseInstantUtc(utilization.asOf);
+  return servedAt !== null && servedAt <= viewAt;
+}
+
+/**
  * THE DESK'S OWN FILL-DERIVED BOOK — the two numbers the work order
  * names (the cumulative booked notional + the open-position count) plus
  * the day-windowed notional (the turnover class's own fold, the same
@@ -196,7 +218,9 @@ export interface StandingRow {
   readonly standingStatus: 'ok' | 'breach' | 'unknown';
   /** The last gate observation (the boundary's precedence-1 `current` when a refusal cites the bound) — rendered ONLY labeled as the observation, never as the standing book; null when no refusal cites the bound. */
   readonly observation: StandingObservation | null;
-  /** The read's own NON-observation number (its fill/outcome-derived precedence-2 `current`, e.g. a realized-loss risk budget) — rendered verbatim with its source when the fill-derived fold has no number for the class; null otherwise. */
+  /**
+   * The read's own NON-observation number (its fill/outcome-derived precedence-2 `current`, e.g. a realized-loss risk budget) — rendered verbatim with its source when the fill-derived fold has no number for the class; null otherwise. FW-41-C (I-7): null TOO while the view instant predates the read's own serve instant (the capture did not exist at the view — the G-5 withholding law; an unparseable serve instant withholds as well).
+   */
   readonly served: { readonly value: number; readonly status: string; readonly source: string } | null;
 }
 
@@ -309,7 +333,7 @@ export function standingReadFoldOf(utilization: RiskUtilizationRead | null, subm
       // L4-conservative choice, the same law breachesAtView rides).
       withheldAtView: citing.at === null || citing.at > viewAt,
     };
-    const served = citing === null && bound.current !== null
+    const served = citing === null && bound.current !== null && servedReadAvailableAtView(utilization, viewAt)
       ? { value: bound.current, status: bound.status, source: bound.source }
       : null;
     return {
