@@ -6882,3 +6882,154 @@ describe('executed boot: FW-43-A — the Oversight cockpit drill-through (the ca
     expect(findByData(rig.root, 'data-scaffold', 'execution')).not.toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-46 (the S2 market-facing surface): THE PRICE-ALERT DECLARATION — the
+// "Declare a price alert" affordance in the Market World section, the
+// host-owned POST /v1/projects/:projectId/alerts route, the
+// alert-declared event, and the alert reaching the EXPORT CHAIN (the
+// note-attached precedent, mirrored).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-46 — the price-alert declaration (the S2 market surface)', () => {
+  /**
+   * An alerts transport wrapper: serves POST /v1/projects/:id/alerts (the
+   * host-owned route — minting the content-addressed record the console's
+   * declare flow consumes) and extends the goal route's bundle with the
+   * declared alerts (the read-back half the boot bundle re-reads). The
+   * mint is DETERMINISTIC over the request envelope (the route's own law).
+   */
+  function alertsTransport(inner: ApiTransport): {
+    readonly transport: ApiTransport;
+    readonly declares: { count: number; projects: string[]; bodies: unknown[] };
+  } {
+    const declares = { count: 0, projects: [] as string[], bodies: [] as unknown[] };
+    const alertsByProject = new Map<string, Record<string, unknown>[]>();
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      const declareMatch = /^\/v1\/projects\/([^/]+)\/alerts$/.exec(path);
+      if (request.method === 'POST' && declareMatch !== null) {
+        declares.count += 1;
+        const project = declareMatch[1] ?? '';
+        declares.projects.push(project);
+        const body = request.body as Record<string, unknown>;
+        declares.bodies.push(body);
+        const alert = {
+          alertId: `alert:fw46-${declares.count}`,
+          tenant: 'tenant-a',
+          project,
+          declaredAt: T0 + 400 + declares.count,
+          market: String(body.market ?? ''),
+          direction: body.direction,
+          level: String(body.level ?? ''),
+        };
+        const existing = alertsByProject.get(project) ?? [];
+        if (!existing.some((entry) => entry.alertId === alert.alertId)) existing.push(alert);
+        alertsByProject.set(project, [...existing]);
+        return { status: 200, headers: {}, body: { requestId: 'req-a', data: { alert } } };
+      }
+      if (request.method === 'GET' && path.startsWith('/v1/projects/') && path.endsWith('/goal')) {
+        const project = path.slice('/v1/projects/'.length, -'/goal'.length);
+        const alerts = alertsByProject.get(project);
+        const served = await inner(request);
+        if (alerts === undefined || alerts.length === 0) return served;
+        const body = (served as { readonly body?: { readonly data?: Record<string, unknown> } }).body;
+        if (body?.data === undefined) return served;
+        return { ...served, body: { ...body, data: { ...body.data, alerts } } };
+      }
+      return inner(request);
+    };
+    return { transport, declares };
+  }
+
+  /** Type into the alert-declare form's field (the note form's own browser semantics, on the data-alert-field vocabulary). */
+  function typeAlertField(rig: Rig, field: string, value: string): void {
+    const input = findByData(rig.root, 'data-alert-field', field);
+    if (input === null) throw new Error(`no alert field ${field} in the current tree`);
+    input.value = value;
+    rig.doc.fire('input', { target: input });
+  }
+
+  it('the declare flow: open -> type (beat-safe) -> POST /v1/projects/:id/alerts with the CURRENT project + the verbatim market/direction/level -> the minted record dispatches alert-declared -> the card list renders AND the alert reaches the export chain; the market view charts the seeded fills honestly', async () => {
+    const api = alertsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'market-world');
+    // THE MARKET VIEW charts the seeded blotter's own fills (the honest series)
+    expect(findByData(rig.root, 'data-market-chart', 'BTC-USD')).not.toBeNull();
+    expect(findByData(rig.root, 'data-market-chart', 'ETH-USD')).not.toBeNull();
+    expect(findByData(rig.root, 'data-market-view', 'live')).not.toBeNull(); // the boundary-taught live card
+    // THE ALERTS CARD, closed
+    expect(findByData(rig.root, 'data-price-alerts', 'closed')).not.toBeNull();
+    clickAction(rig, 'alert-declare-open');
+    expect(findByData(rig.root, 'data-price-alerts', 'open')).not.toBeNull();
+
+    // THE BEAT-SAFE DATA-FIELD PATTERN (the J3 law, the alert form's own vocabulary)
+    typeAlertField(rig, 'market', 'BTC-USD');
+    clickNav(rig, 'market-world'); // re-project the whole tree — the buffered edit survives
+    const marketAfter = findByData(rig.root, 'data-alert-field', 'market');
+    if (marketAfter === null) throw new Error('the alert form vanished on the re-projection');
+    expect(marketAfter.getAttribute('value')).toBe('BTC-USD');
+    typeAlertField(rig, 'level', '61500');
+
+    // SUBMIT: the host-owned route receives the CURRENT project + the verbatim envelope
+    clickAction(rig, 'alert-declare');
+    await settle();
+    expect(api.declares.count).toBe(1); // exactly one POST
+    expect(api.declares.projects).toEqual(['prj-a']); // the CURRENT project
+    expect(api.declares.bodies[0]).toEqual({ market: 'BTC-USD', direction: 'above', level: '61500' }); // the verbatim input, nothing else
+
+    // the minted record dispatched alert-declared — the state fold + the card's list
+    expect(rig.handle.state().alerts.map((alert) => alert.alertId)).toContain('alert:fw46-1');
+    expect(findByData(rig.root, 'data-price-alerts', 'open')).toBeNull(); // success closes the form
+    expect(findByData(rig.root, 'data-price-alerts', 'closed')).not.toBeNull();
+    const alertRow = findByData(rig.root, 'data-alert-row', 'alert:fw46-1');
+    if (alertRow === null) throw new Error('the declared alert row never rendered');
+    expect(textOf(alertRow)).toContain('BTC-USD above 61500'); // the declared envelope renders verbatim
+    expect(textOf(alertRow)).toContain('waiting'); // the seeded BTC-USD fill at 61000.50 does not cross above 61500 — waiting, never a fabricated firing
+    expect(textOf(alertRow)).not.toContain('FIRED');
+
+    // THE ALERTS REACH THE CHAIN: the export carries the alert-declared event with the VERBATIM envelope
+    const doc = JSON.parse(serializeWorkspaceExport(rig.handle.state())) as { events: Array<Record<string, unknown>> };
+    const alertEvents = doc.events.filter((entry) => (entry.payload as { kind?: string } | undefined)?.kind === 'alert-declared');
+    expect(alertEvents.length).toBeGreaterThanOrEqual(1);
+    const payload = alertEvents[0]?.payload as { alert?: { market?: string; direction?: string; level?: string } };
+    expect(payload?.alert?.market).toBe('BTC-USD');
+    expect(payload?.alert?.level).toBe('61500');
+    expect(verifyWorkspaceExport(doc)).toEqual({ ok: true }); // the chain laws hold end to end
+  });
+
+  it('the typed validation gate: an empty market or a non-decimal level renders the inline error and NEVER fires the route (the untrusted-input law — fail-closed, never a half-applied alert)', async () => {
+    const api = alertsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'market-world');
+    clickAction(rig, 'alert-declare-open');
+    typeAlertField(rig, 'level', '61,000.50'); // grouped separators are outside the exact-decimal grammar
+    clickAction(rig, 'alert-declare'); // no market typed
+    await settle();
+    expect(api.declares.count).toBe(0); // the gate fired BEFORE any API call
+    expect(findByData(rig.root, 'data-price-alerts', 'open')).not.toBeNull(); // the form stays open
+    const error = findByData(rig.root, 'data-alert-error', 'market: the market is required (the instrument id the alert watches, e.g. BTC-USD — 1..64 characters)');
+    expect(error).not.toBeNull(); // the typed error renders inline, in the form's own card
+  });
+
+  it('a FIRED alert renders its firing state from the records on file (the seeded ETH-USD fill at 3412.10 crosses a below-3200 alert only if a crossing record exists; a below-3500 alert FIRES against it)', async () => {
+    const api = alertsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'market-world');
+    clickAction(rig, 'alert-declare-open');
+    typeAlertField(rig, 'market', 'ETH-USD');
+    typeAlertField(rig, 'level', '3500');
+    // the direction select defaults to 'above'; the below case needs the change event (the select's own semantics)
+    const direction = findByData(rig.root, 'data-alert-field', 'direction');
+    if (direction === null) throw new Error('the direction select never rendered');
+    direction.value = 'below';
+    rig.doc.fire('change', { target: direction });
+    clickAction(rig, 'alert-declare');
+    await settle();
+    expect(api.declares.bodies[0]).toEqual({ market: 'ETH-USD', direction: 'below', level: '3500' });
+    const row = findByData(rig.root, 'data-alert-row', 'alert:fw46-1');
+    if (row === null) throw new Error('the declared alert row never rendered');
+    expect(textOf(row)).toContain('FIRED'); // the seeded ETH-USD fill at 3412.10 crosses below 3500 — the firing renders from the record on file
+    expect(textOf(row)).toContain('3412.10'); // the observed price, verbatim
+  });
+});

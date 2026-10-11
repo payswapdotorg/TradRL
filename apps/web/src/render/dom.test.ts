@@ -725,3 +725,59 @@ describe('dom: FW-41-B — the select display law (the identity law\'s select-cl
     expect(executionSelectOf(container).value).toBe('shadow'); // the display shows the committed pick
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-46 (the S2 market-facing surface) — THE SVG NAMESPACE LAW: the
+// hand-built market-view chart renders <svg> + its geometry children in
+// the SVG namespace (createElementNS) so the browser paints real SVG —
+// no external chart library, the everything-by-hand law. A document
+// WITHOUT createElementNS (the test stubs, a minimal embedding) degrades
+// to createElement — the projection never throws (R46).
+// ---------------------------------------------------------------------------
+
+describe('dom: projectVNode — the SVG namespace (FW-46, the hand-built chart)', () => {
+  /** A document stub that RECORDS every createElementNS call (namespace + tag). */
+  function namespacedDocument(): { document: import('./dom').ProjectorDocument; created: { readonly namespace: string; readonly tag: string }[] } {
+    const created: { namespace: string; tag: string }[] = [];
+    const document = {
+      createElement(tag: string): StubElement {
+        created.push({ namespace: '(none)', tag });
+        return new StubElement(tag);
+      },
+      createElementNS(namespace: string, tag: string): StubElement {
+        created.push({ namespace, tag });
+        return new StubElement(tag);
+      },
+      createTextNode(text: string): StubText {
+        return new StubText(text);
+      },
+    } as unknown as import('./dom').ProjectorDocument;
+    return { document, created };
+  }
+
+  it('an <svg> subtree projects through createElementNS in the SVG namespace — the svg root AND every geometry child (polyline, circle, text); elements OUTSIDE the subtree stay on createElement', () => {
+    const { document, created } = namespacedDocument();
+    const tree = v('div', { class: 'card' }, [
+      v('svg', { viewBox: '0 0 640 180', 'data-market-svg': 'BTC-USD' }, [
+        v('polyline', { points: '12,14 628,158' }, []),
+        v('circle', { cx: '12', cy: '14', r: '3' }, []),
+      ]),
+      v('p', { class: 'card-note' }, ['the sparse note']),
+    ]);
+    const projected = projectVNode(document, tree) as unknown as StubElement;
+    expect(projected.toSexpr()).toBe('(DIV class="card" (SVG viewBox="0 0 640 180" data-market-svg="BTC-USD" (POLYLINE points="12,14 628,158") (CIRCLE cx="12" cy="14" r="3")) (P class="card-note" "the sparse note"))');
+    const svgCreations = created.filter((entry) => entry.namespace !== '(none)');
+    expect(svgCreations).toEqual([
+      { namespace: 'http://www.w3.org/2000/svg', tag: 'svg' },
+      { namespace: 'http://www.w3.org/2000/svg', tag: 'polyline' },
+      { namespace: 'http://www.w3.org/2000/svg', tag: 'circle' },
+    ]); // the whole subtree rides the SVG namespace
+    expect(created.filter((entry) => entry.namespace === '(none)').map((entry) => entry.tag)).toEqual(['div', 'p']); // the HTML siblings stay on createElement
+  });
+
+  it('a document WITHOUT createElementNS degrades to createElement — the projection never throws (R46; the pre-FW-46 stubs keep working)', () => {
+    const tree = v('svg', { viewBox: '0 0 640 180' }, [v('polyline', { points: '12,14' }, [])]);
+    const projected = projectVNode(stubDocument, tree) as unknown as StubElement;
+    expect(projected.toSexpr()).toBe('(SVG viewBox="0 0 640 180" (POLYLINE points="12,14"))');
+  });
+});

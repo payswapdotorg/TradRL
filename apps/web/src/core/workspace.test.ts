@@ -11,7 +11,7 @@
 //   - section registry completeness (the twelve, selectable, default goal).
 
 import { describe, expect, it } from 'vitest';
-import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ResearchNoteRecord, ServedKnowledge } from '../api/contracts';
+import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, PriceAlertRecord, ProjectGoalWorldSpec, ProjectRecord, ResearchNoteRecord, ServedKnowledge } from '../api/contracts';
 import {
   CHAIN_ALGORITHM,
   CHAIN_CANONICAL_RULE,
@@ -1851,5 +1851,128 @@ describe('FW-45: the research-note ingestion — the fold, the note-attached eve
     const doc = composeWorkspaceExport(state);
     expect(doc.manifest.recordScopeNote).toContain('attached research note'); // the full-record note names the record class
     expect(doc.manifest.derivedEventRule).toContain('attached research note'); // the published rule names it too
+  });
+});
+
+describe('FW-46: the price-alert record class — the fold, the alert-declared event, and the alerts + firings reaching the export chain (the S2 market surface)', () => {
+  /** One declared price alert (the host alert route's minted record). */
+  function priceAlert(overrides: Partial<PriceAlertRecord> = {}): PriceAlertRecord {
+    return {
+      alertId: 'alert:aaaa1111',
+      tenant: 'tenant-a',
+      project: 'proj-a',
+      declaredAt: T0 + 40,
+      market: 'BTC-USD',
+      direction: 'above',
+      level: '60000',
+      ...overrides,
+    } as PriceAlertRecord;
+  }
+
+  /** One routed blotter row carrying fill economics (the firing fold's observed record). */
+  function filledSubmission(overrides: Partial<GatewaySubmissionRecord> & { readonly routedAt: number; readonly filledAt: number; readonly price: string; readonly instrument?: string }): GatewaySubmissionRecord {
+    return {
+      kind: 'routed',
+      submissionId: `xgs:${overrides.routedAt}`,
+      decisionId: 'xd:demo',
+      auditId: 'xga:demo',
+      requestRef: 'gor:demo',
+      venue: 'BROKER-FIX',
+      adapterRef: 'adapter:demo-broker',
+      channelRef: 'chan:demo-main',
+      order: {
+        clientOrderId: 'ord-demo',
+        instrumentId: overrides.instrument ?? 'BTC-USD',
+        venueId: 'BROKER-FIX',
+        side: 'buy',
+        kind: 'limit',
+        quantity: '0.75',
+        price: overrides.price,
+        timeInForce: 'gtc',
+        createdAt: new Date(overrides.routedAt).toISOString(),
+      },
+      fill: { state: 'filled', quantity: '0.75', price: overrides.price, notional: '1', fee: '0.01', filledAt: overrides.filledAt },
+      ...overrides,
+    } as GatewaySubmissionRecord;
+  }
+
+  it('the goal bundle\'s ADDITIVE alerts ride goal-loaded into state.alerts — and an alerts-less read CLEARS (the world/notes law: the fold mirrors THIS scope\'s read-back truth, never a stale one)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 1, project: projectRecord() });
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord(), alerts: [priceAlert()] });
+    expect(state.alerts).toHaveLength(1);
+    expect(state.alerts[0]?.level).toBe('60000'); // the verbatim envelope survives the fold
+    // the re-read without alerts: the fold clears exactly like `world`/`notes` do
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 3, goal: goalRecord(), constraintSet: constraintSetRecord() });
+    expect(state.alerts).toEqual([]);
+  });
+
+  it('alert-declared appends the minted record deduped by alertId (a re-declare mints no duplicate); the scope gate refuses a foreign project\'s alert', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'alert-declared', at: T0 + 40, alert: priceAlert() });
+    expect(state.alerts).toHaveLength(1);
+    state = reduceWorkspace(state, { kind: 'alert-declared', at: T0 + 41, alert: priceAlert() }); // the same alertId — idempotent
+    expect(state.alerts).toHaveLength(1);
+    state = reduceWorkspace(state, { kind: 'alert-declared', at: T0 + 42, alert: priceAlert({ alertId: 'alert:bbbb2222', market: 'ETH-USD', direction: 'below', level: '3200' }) });
+    expect(state.alerts).toHaveLength(2);
+    // L12/the project gate: a foreign project's alert never enters this workspace
+    expect(() => reduceWorkspace(state, { kind: 'alert-declared', at: T0 + 43, alert: priceAlert({ alertId: 'alert:cccc3333', project: 'proj-other' }) })).toThrow();
+  });
+
+  it('THE ALERTS REACH THE CHAIN: the export derives one alert-declared event per alert row — the verbatim envelope IN the event record, stamped at the alert\'s OWN declaredAt, never the export clock', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 1, project: projectRecord() });
+    state = reduceWorkspace(state, {
+      kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord(),
+      alerts: [priceAlert(), priceAlert({ alertId: 'alert:bbbb2222', market: 'ETH-USD', direction: 'below', level: '3200', declaredAt: T0 + 45 })],
+    });
+    const doc = composeWorkspaceExport(state);
+    const alertEvents = doc.events.filter((entry) => entry.payload.kind === 'alert-declared');
+    expect(alertEvents).toHaveLength(2);
+    expect(alertEvents[0]?.derived).toBe(true); // honestly labeled — a record-derived entry
+    expect((alertEvents[0] as { readonly payload: { readonly alert: PriceAlertRecord } }).payload.alert.level).toBe('60000'); // the verbatim envelope is IN the event record
+    expect((alertEvents[0] as { readonly payload: { readonly at: number } }).payload.at).toBe(T0 + 40); // the alert's own declaredAt
+    expect((alertEvents[1] as { readonly payload: { readonly at: number } }).payload.at).toBe(T0 + 45); // each row stamps its own
+    expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state)))).toEqual({ ok: true }); // the same chain laws, end to end
+  });
+
+  it('A FIRED ALERT DERIVES A CHAIN EVENT AT ITS OWN OBSERVED INSTANT: the export derives one alert-fired event per alert whose level a RECORDED fill price crossed — stamped at the observed fill\'s own filledAt, the observed price verbatim; an alert with no crossing observation derives NONE (never a fabricated firing)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 1, project: projectRecord() });
+    state = reduceWorkspace(state, {
+      kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord(),
+      alerts: [priceAlert({ level: '61500', declaredAt: T0 + 40 }), priceAlert({ alertId: 'alert:dddd4444', market: 'SOL-USD', level: '100', declaredAt: T0 + 41 })],
+    });
+    // the observed records: a BTC-USD fill at 62000.00 (crosses the 61500 level), no SOL-USD fill at all
+    state = reduceWorkspace(state, { kind: 'submission-recorded', at: T0 + 50, submission: filledSubmission({ routedAt: T0 + 50, filledAt: T0 + 60, price: '62000.00' }) });
+    const doc = composeWorkspaceExport(state);
+    const firedEvents = doc.events.filter((entry) => entry.payload.kind === 'alert-fired');
+    expect(firedEvents).toHaveLength(1); // the SOL-USD alert never fired — no observation on record
+    const fired = firedEvents[0] as { readonly payload: { readonly alert: PriceAlertRecord; readonly firing: { readonly at: number; readonly observedPrice: string } } };
+    expect(fired.payload.alert.alertId).toBe('alert:aaaa1111');
+    expect(fired.payload.firing.at).toBe(T0 + 60); // the OBSERVED fill's own instant — never the export clock
+    expect(fired.payload.firing.observedPrice).toBe('62000.00'); // the observed price verbatim
+    expect(fired.derived).toBe(true); // honestly labeled — a record-derived entry
+    expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state)))).toEqual({ ok: true });
+  });
+
+  it('the LIVE declare path rides the session\'s own linked history too (both halves, the same law every record rides); an alerts-less scope derives NO alert event (never a fabricated alert)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'alert-declared', at: T0 + 40, alert: priceAlert() });
+    const doc = composeWorkspaceExport(state);
+    expect(doc.events.some((entry) => entry.payload.kind === 'alert-declared' && entry.derived !== true)).toBe(true); // the session's own act
+    expect(doc.events.some((entry) => entry.payload.kind === 'alert-declared' && entry.derived === true)).toBe(true); // the record on file
+    // the fixture-less scope: zero alert events (richState carries no alerts)
+    const richDoc = composeWorkspaceExport(richState());
+    expect(richDoc.events.some((entry) => entry.payload.kind === 'alert-declared')).toBe(false);
+  });
+
+  it('the manifest\'s full-record disclosure names the declared price alerts (the record families list stays TRUE as the record class grows)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 1, project: projectRecord() });
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord(), alerts: [priceAlert()] });
+    const doc = composeWorkspaceExport(state);
+    expect(doc.manifest.recordScopeNote).toContain('declared price alert'); // the full-record note names the record class
+    expect(doc.manifest.derivedEventRule).toContain('declared price alert'); // the published rule names it too
   });
 });

@@ -28,6 +28,7 @@ import {
   composeResearchDeliverableResult,
   declaredConstraintFacts,
   deriveSessionStatistics,
+  type DeliverableAlertRef,
   type DeliverableMandate,
   type DeliverableNoteRef,
   type DeliverableSessionRecords,
@@ -1018,5 +1019,62 @@ describe('deploy/vercel — FW-45: the deliverable\'s provenance names the attac
     });
     expect(unwired.summary as string).toContain('no research notes attached to this project on record'); // the optional source degrades to the same honest sentence
     expect(unwired.notes).toEqual({ count: 0, refs: [] } as never);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-46 (the S2 market-facing surface): the deliverable REFERENCES THE
+// DECLARED PRICE ALERTS — the research job's provenance block names the
+// desk's declared price alerts (count + envelopes), the same law the
+// research notes ride (named and carried in the chain; firing is
+// evaluated only against recorded prices, never claimed as live).
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-46: the deliverable\'s provenance names the declared price alerts', () => {
+  const ALERTS: readonly DeliverableAlertRef[] = [
+    { alertId: 'alert:aaaa1111', market: 'BTC-USD', direction: 'above', level: '61500' },
+    { alertId: 'alert:bbbb2222', market: 'ETH-USD', direction: 'below', level: '3200' },
+  ];
+
+  it('a project with declared alerts composes a summary that NAMES them — the count, every envelope, and where they live (the goal-set row + the workspace export\'s alert-declared events)', () => {
+    const payload = composeResearchDeliverableResult({
+      project: 'prj-alerts-launch',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      notes: [],
+      alerts: ALERTS,
+    });
+    const summary = payload.summary as string;
+    expect(summary).toContain('2 declared price alerts'); // the count
+    expect(summary).toContain('BTC-USD above 61500'); // every envelope, verbatim
+    expect(summary).toContain('ETH-USD below 3200');
+    expect(summary).toContain('alert-declared'); // where the records live — the chain, honestly named
+    // the structured field carries the same refs (text and fields can never disagree)
+    expect(payload.alerts).toEqual({ count: 2, refs: ALERTS, statement: expect.any(String) } as never);
+  });
+
+  it('a project with NO alerts on record composes the honest absence — never a fabricated reference; an UNWIRED source (the pre-FW-46 caller) composes the same absence', () => {
+    const absent = composeResearchDeliverableResult({
+      project: 'prj-alerts-launch',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      notes: [],
+      alerts: [],
+    });
+    expect(absent.summary as string).toContain('no price alerts declared on this project on record');
+    const unwired = composeResearchDeliverableResult({
+      project: 'prj-alerts-launch',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      notes: [],
+    });
+    expect(unwired.summary as string).toContain('no price alerts declared on this project on record'); // the optional source degrades to the same honest sentence
+    expect(unwired.alerts).toEqual({ count: 0, refs: [] } as never);
   });
 });
