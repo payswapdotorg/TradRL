@@ -1596,7 +1596,7 @@ describe('FW-41-C (I-3b): the hydration PENDING marker — "Reading the world…
     ]);
   }
 
-  it('the LIVE view over the in-flight read teaches PENDING on the Organization section — never the terminal empty state (RED pre-fix: "reads 'Not compiled yet' with no pending marker")', () => {
+  it('the LIVE view over the in-flight read teaches PENDING on the Organization section — never the terminal empty state (the register: reads Not-compiled-yet with no pending marker)', () => {
     const state = reduceAll(hydratingWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'organization' }]);
     const bytes = serializeConsoleModel(state, T0 + 50);
     expect(bytes).toContain('data-hydration-pending="true"'); // the marker the register asked for

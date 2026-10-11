@@ -122,7 +122,7 @@ describe('palette: D4 — 100% coverage of navigation + the other entity kinds',
   // OWN COMMAND, the first entry of every palette open — riding the SAME
   // delegated action the Home hero rides (data-action="launch-start"),
   // so the wizard opens from ANY state with no scope switch.
-  it('FW-41-C (I-8): the index's FIRST entry is the primary flow's own command — the ACTION launch entry, present in EVERY scope', () => {
+  it('FW-41-C (I-8): the index FIRST entry is the primary flow own command — the ACTION launch entry, present in EVERY scope', () => {
     const index = paletteIndex(openWorkspace(SCOPE, T0), capsulesOf);
     const first = index[0];
     if (first === undefined) throw new Error('the palette index is empty');
