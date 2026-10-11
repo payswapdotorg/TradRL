@@ -17,7 +17,7 @@
 //      the last known world, never a blank.
 
 import { describe, expect, it } from 'vitest';
-import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ResearchNoteRecord, ServedKnowledge } from '../api/contracts';
 import type { LaunchDraft } from '../core/launch';
 import { systemNowMs } from '../core/clock';
 import { AvailabilityViolationError, CrossTenantRenderError, PolicyEnforcementError, WallClockReadError } from '../core/errors';
@@ -1703,5 +1703,98 @@ describe('FW-42-B (J-3): the Home tile\'s Project line resolves during the boot-
     const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'home' }));
     expect(bytes).toContain(`<dt>Project</dt><dd>${SCOPE.projectId}</dd>`);
     expect(bytes).not.toContain('resolving your desk…'); // a fresh boot (no stored scope) NEVER carries the marker — the demo flow untouched
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-45 (the E-6 research-world MVP, M3's decisive item): the research-note
+// ingestion surface. THE LAWS pinned here:
+//   - the boundary teaching renders VERBATIM at the point of ingestion
+//     (never a claim of ingestion capabilities that do not exist);
+//   - the notes list is the SCOPE'S OWN records, L4-projected at the view
+//     instant (a note attached after the view instant never renders);
+//   - the affordance renders ONLY inside a project scope (the launchpad
+//     keeps the wizard as the only path — the D-12 law);
+//   - the Data-sources hint teaches the honest boundary (M3's seam a).
+// ---------------------------------------------------------------------------
+
+describe('FW-45: the research-note ingestion surface (the E-6 MVP — boundary-taught, L4-projected, scope-gated)', () => {
+  /** The deployment's own boundary sentence — VERBATIM at the point of ingestion (the honesty law). */
+  const BOUNDARY = 'SIMULATED ingestion: the note is stored verbatim and referenced by this project\'s records — no external data is fetched, no live feed exists in this deployment; the honest boundary of the research world as this deployment serves it.';
+
+  /** One attached research note of this scope. */
+  function note(overrides: Partial<ResearchNoteRecord> = {}): ResearchNoteRecord {
+    return {
+      noteId: 'note:aaaa1111', tenant: 'tenant-a', project: 'proj-a', attachedAt: T0 + 40,
+      title: 'Factset export notes', text: 'fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4',
+      ...overrides,
+    } as ResearchNoteRecord;
+  }
+
+  it('the Research section renders the notes card — the boundary teaching VERBATIM, the closed affordance, and the scope\'s own notes (titles + instants)', () => {
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'section-selected', at: T0 + 50, section: 'research' as never },
+      { kind: 'note-attached', at: T0 + 40, note: note() },
+      { kind: 'view-live', at: T0 + 50 }, // the live anchor T0+50 — the note (T0+40) is knowable at the view instant
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain(BOUNDARY); // the boundary teaching, verbatim at the point of ingestion
+    expect(bytes).toContain('data-note-attach="closed"'); // the affordance card
+    expect(bytes).toContain('data-action="note-attach-open"'); // with its single primary action
+    expect(bytes).toContain('Factset export notes'); // the note's title renders from its own record
+    expect(bytes).toContain('note:aaaa1111'); // the note id — the record's own identity
+  });
+
+  it('the open form carries the title field + the note paste target (the untrusted-input gate renders the typed error inline)', () => {
+    const state = reduceAll(populatedWorkspace(), [{ kind: 'section-selected', at: T0 + 50, section: 'research' as never }, { kind: 'view-live', at: T0 + 50 }]);
+    const open = { ...defaultShellView(state), noteAttach: { edits: {}, error: null } as never };
+    let bytes = serializeVNode(renderConsoleModel(state, T0 + 50, open));
+    expect(bytes).toContain('data-note-attach="open"');
+    expect(bytes).toContain('data-note-field="title"');
+    expect(bytes).toContain('data-note-field="text"');
+    expect(bytes).toContain('data-action="note-attach"');
+    expect(bytes).toContain('data-action="note-attach-cancel"');
+    // the typed validation error renders inline, and the user's text stays (the honest failure surface)
+    const errored = { ...defaultShellView(state), noteAttach: { edits: { title: 'A title' }, error: 'the note text is required — paste the note\'s own text (this deployment stores it verbatim; it fetches nothing)' } as never };
+    bytes = serializeVNode(renderConsoleModel(state, T0 + 50, errored));
+    expect(bytes).toContain('data-note-attach="open"');
+    expect(bytes).toContain('the note text is required');
+    expect(bytes).toContain('value="A title"'); // the buffered edit survives the error render
+  });
+
+  it('the notes list is L4-PROJECTED: a note attached after the view instant is hidden (never a future note rendered)', () => {
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'section-selected', at: T0 + 50, section: 'research' as never },
+      { kind: 'note-attached', at: T0 + 40, note: note() },
+      { kind: 'view-live', at: T0 + 50 }, // the live anchor T0+50 — the view instant
+    ]);
+    // a note whose OWN attachedAt (T0+60) is beyond the view instant (T0+50) never projects (L4's own law)
+    const stateWithFutureNote = reduceAll(state, [{ kind: 'note-attached', at: T0 + 60, note: note({ noteId: 'note:ffff6666', attachedAt: T0 + 60, title: 'Tomorrow\'s note' }) }]);
+    const bytes = serializeConsoleModel(stateWithFutureNote, T0 + 50);
+    expect(bytes).toContain('Factset export notes'); // the T0+40 note renders at the T0+50 view instant
+    expect(bytes).not.toContain('Tomorrow\'s note'); // the T0+60 note is beyond the view instant — hidden, never a future note
+  });
+
+  it('the notes card never renders on the launchpad (no project exists — the wizard is the only path, the D-12 law)', () => {
+    const launchpad = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: '(launchpad)' }, T0), [
+      { kind: 'section-selected', at: T0 + 4, section: 'research' as never },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(launchpad, T0 + 50);
+    expect(bytes).not.toContain('data-note-attach');
+    expect(bytes).not.toContain(BOUNDARY);
+  });
+
+  it('M3\'s seam (a) answered: the Data-sources hint teaches what research and external mean in THIS deployment — external is accepted, stored, and honestly not fetched (no live feed exists)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'launch-draft-started', at: T0 + 2, draft: blankDraftOfD11() as never },
+      { kind: 'launch-step-changed', at: T0 + 3, step: 'markets' as never },
+      { kind: 'section-selected', at: T0 + 4, section: 'goal' as never },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    // the hint names the two vocabularies honestly: what each MEANS in this deployment
+    expect(bytes).toContain('research = the internal simulated researcher and your attached research notes');
+    expect(bytes).toContain('external = accepted and stored as a declaration only — no external data is fetched in this deployment (no live feed exists)');
   });
 });
