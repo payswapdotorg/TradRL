@@ -48,7 +48,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import type { ApiTransport } from '../api/transport';
+import type { ApiTransport, SdkResponse } from '../api/transport';
 import type { InstantSource, TickScheduler } from '../core/clock';
 import { formatInstantUtc } from '../core/format';
 import type { ConsoleHandle } from './console';
