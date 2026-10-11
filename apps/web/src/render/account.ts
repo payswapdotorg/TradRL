@@ -19,7 +19,11 @@
 //     future visits" is TRUE for an authenticated principal and becomes
 //     the device-scoped "remembered on this device" for anonymous
 //     sessions (the design's honesty rider; per-account POSTURE is
-//     Phase 2, the copy changes now);
+//     Phase 2, the copy changes now). FW-42-B (the Round J copy-lag):
+//     the switcher's LIST copy rides the same fold — "your projects"
+//     under a signed-in principal (the account scope the Round J pure
+//     test proved), the session-scoped sentence for an anonymous
+//     session (honest for it);
 //   - THE SIMULATED DISCLOSURE, adjacent to the account rows: an
 //     account never implies real money (the design §3(c) audit rider).
 //
@@ -50,6 +54,23 @@ export function accountPanelOf(view: AccountViewField): AccountPanelState {
  */
 export function rememberedScopeCopy(panel: AccountPanelState): string {
   return panel.surface === 'authenticated' ? 'remembered for future visits' : 'remembered on this device';
+}
+
+/**
+ * FW-42-B (the Round J copy-lag — 6/6 pure testers): the switcher's
+ * LIST-SCOPE disclosure. The Round J pure test (clear localStorage →
+ * reload → same-account sign-in) proved the desks follow the ACCOUNT
+ * across browsers while every list surface said "your session's own
+ * projects" — the copy undersold the fixed behavior. THE LAW: a
+ * signed-in principal reads "your projects" (every desk that follows
+ * the account, from any browser); an anonymous session keeps the
+ * session-scoped sentence — honest for it (this device's storage is
+ * the only thing that remembers an anonymous session's projects).
+ */
+export function switcherListScopeCopy(panel: AccountPanelState): string {
+  return panel.surface === 'authenticated'
+    ? 'your projects — every desk that follows your account, from any browser —'
+    : 'your session\u2019s own projects';
 }
 
 /** The SIMULATED disclosure adjacent to the account rows (an account never implies real money — the demo marking rides the surface). */

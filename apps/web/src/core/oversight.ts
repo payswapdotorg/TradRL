@@ -246,8 +246,24 @@ export function oversightRowsOf(state: WorkspaceState, viewAt: number): readonly
   });
 }
 
-/** The fold's own one-line scope disclosure (rendered with the panel — what the surface covers, stated). The census is the VIEW-INSTANT count (H-7): the desks that existed at the instant under review, never the listing's full total. */
-export function oversightScopeNoteOf(state: WorkspaceState, viewAt: number): string {
+/**
+ * The fold's own one-line scope disclosure (rendered with the panel — what the surface covers, stated). The census is the VIEW-INSTANT count (H-7): the desks that existed at the instant under review, never the listing's full total.
+ *
+ * FW-42-B (the Round J copy-lag — 6/6 pure testers): the listing is
+ * ACCOUNT-scoped under a signed-in principal (the Round J pure test —
+ * clear localStorage → reload → one sign-in listed every desk that
+ * follows the account, whatever browser launched it), so the
+ * authenticated note says "your desks"; an anonymous session keeps the
+ * exact session-scoped sentence — honest for it (this device's storage
+ * is the only thing that remembers an anonymous session's desks). The
+ * L12 wall clause ("other sessions' desks never appear here") holds in
+ * both postures: a desk that follows the calling account is that
+ * principal's desk, never "another session's".
+ */
+export function oversightScopeNoteOf(state: WorkspaceState, viewAt: number, authenticated = false): string {
   const desks = desksExistingAtViewOf(state.projectDirectory, viewAt);
-  return `One governed view of this session's own desks in workspace ${state.scope.tenantId} — ${desks.length} desk${desks.length === 1 ? '' : 's'} at this view instant (the session's own launched projects plus the shared demo desk). Other sessions' desks in this workspace never appear here; every count is the view-instant projection of each desk's own records, and a desk launched after this view instant does not exist at it.`;
+  const count = `${desks.length} desk${desks.length === 1 ? '' : 's'} at this view instant`;
+  return authenticated
+    ? `One governed view of your desks in workspace ${state.scope.tenantId} — ${count} (every desk that follows your account, whatever browser launched it, plus the shared demo desk). Other sessions' desks in this workspace never appear here; every count is the view-instant projection of each desk's own records, and a desk launched after this view instant does not exist at it.`
+    : `One governed view of this session's own desks in workspace ${state.scope.tenantId} — ${count} (the session's own launched projects plus the shared demo desk). Other sessions' desks in this workspace never appear here; every count is the view-instant projection of each desk's own records, and a desk launched after this view instant does not exist at it.`;
 }

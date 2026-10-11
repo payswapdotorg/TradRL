@@ -38,6 +38,7 @@ import {
   accountPanelOf,
   accountSettingsBody,
   rememberedScopeCopy,
+  switcherListScopeCopy,
 } from './account';
 import {
   anonymousAccountPanel,
@@ -266,5 +267,36 @@ describe('the wall census under a principal (own + demo only — the marker law 
   it('the account panel fold defaults the absent field to the anonymous surface (never a half surface)', () => {
     expect(accountPanelOf({}).surface).toBe('anonymous');
     expect(accountPanelOf({ account: authenticatedAccountPanel('desk.owner') }).principalName).toBe('desk.owner');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-42-B (the Round J copy-lag — 6/6 pure testers): the switcher's LIST
+// copy under a signed-in principal tells the ACCOUNT-SCOPED truth. The
+// Round J pure test proved the desks follow the ACCOUNT (a wiped context +
+// one sign-in listed every desk — "your session's own projects" undersold
+// it, 6/6 noted). THE LAW: an authenticated principal reads "your
+// projects"; an anonymous session keeps the exact session-scoped bytes
+// (honest for it — the device's storage is the only thing that remembers
+// an anonymous session's projects).
+// ---------------------------------------------------------------------------
+
+describe('FW-42-B (the copy-lag): the switcher list copy is account-scoped under a signed-in principal', () => {
+  it('authenticated: "your projects" + the account-following wording — never the session-scoped undersell', () => {
+    const bytes = serializeVNode(settingsPanel(stateAt(), view({ account: authenticatedAccountPanel('desk.owner') })));
+    expect(bytes).toContain('The list is your projects — every desk that follows your account, from any browser — plus the shared demo project');
+    expect(bytes).not.toContain('your session\u2019s own projects'); // the undersell is gone under a principal
+  });
+
+  it('anonymous keeps the exact pre-fix bytes (the session-scoped copy is HONEST for it)', () => {
+    const bytes = serializeVNode(settingsPanel(stateAt(), view()));
+    expect(bytes).toContain('The list is your session\u2019s own projects plus the shared demo project');
+    expect(bytes).not.toContain('every desk that follows your account');
+  });
+
+  it('the fold itself: authenticated vs anonymous (the rememberedScopeCopy precedent)', () => {
+    expect(switcherListScopeCopy(authenticatedAccountPanel('desk.owner'))).toBe('your projects — every desk that follows your account, from any browser —');
+    expect(switcherListScopeCopy(anonymousAccountPanel())).toBe('your session\u2019s own projects');
+    expect(switcherListScopeCopy(unavailableAccountPanel('x'))).toBe('your session\u2019s own projects'); // the teaching posture is not a signed-in principal
   });
 });

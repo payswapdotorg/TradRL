@@ -17,6 +17,7 @@ import { openWorkspace, reduceAll, type WorkspaceState } from '../core/workspace
 import { desksLaunchedAfterViewOf, oversightRowsOf } from '../core/oversight';
 import { renderConsoleModel } from './model';
 import { defaultShellView, type ShellView } from './shell';
+import { authenticatedAccountPanel } from '../core/principal';
 import { serializeVNode } from './vtree';
 
 const T0 = 1_700_000_000_000;
@@ -376,5 +377,56 @@ describe('FW-40-A (H-7): the desk-list is the view-instant projection (a desk la
     const at = oversightRowsOf(state, LATE_LAUNCH);
     expect(at.map((row) => row.projectId)).toEqual(['prj-a', 'prj-b', DEMO_PROJECT_ID]); // launched AT the view instant — exists at it
     expect(desksLaunchedAfterViewOf(state.projectDirectory, LATE_LAUNCH)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-42-B (the Round J copy-lag — 6/6 pure testers): the Oversight PANEL's
+// copy under a signed-in principal says "your desks" (the account scope the
+// pure test proved — the desks follow the account across browsers); the
+// anonymous session keeps the exact session-scoped bytes. Same law on the
+// scope note, the single-desk teaching note, and the honest empty state.
+// ---------------------------------------------------------------------------
+
+describe('FW-42-B (the copy-lag): the Oversight panel copy is account-scoped under a signed-in principal', () => {
+  const signedIn = { account: authenticatedAccountPanel('desk.owner') } as Partial<ShellView>;
+
+  it('the scope note reads "your desks" under a principal — the session-scoped undersell is gone', () => {
+    const bytes = oversightBytes(oversightState(), signedIn);
+    expect(bytes).toContain('One governed view of your desks in workspace tenant-a');
+    expect(bytes).toContain('every desk that follows your account, whatever browser launched it');
+    expect(bytes).not.toContain("this session's own desks");
+  });
+
+  it('the single-desk teaching note names the account-following desks under a principal', () => {
+    const single = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: DEMO_PROJECT_ID }, T0), [
+      { kind: 'projects-listed', at: T0 + 1, records: [project(DEMO_PROJECT_ID, 'the TradRL demo project', 'tenant-available')] },
+    ]);
+    const bytes = oversightBytes(single, signedIn);
+    expect(bytes).toContain('data-oversight-single="true"');
+    expect(bytes).toContain('this view consolidates every desk that follows your account');
+    expect(bytes).not.toContain('every desk this session owns');
+  });
+
+  it('the honest empty state names "your desks" under a principal', () => {
+    const empty = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: 'prj-a' }, VIEW_AT), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+    ]);
+    const bytes = oversightBytes(empty, signedIn);
+    expect(bytes).toContain('No desks readable yet.');
+    expect(bytes).toContain('your desks appear here the moment the directory read answers');
+    expect(bytes).not.toContain('the desks this session owns appear here');
+  });
+
+  it('the anonymous panel keeps the byte-identical session-scoped copy (the signed-out honesty pin)', () => {
+    const multi = oversightBytes(oversightState());
+    expect(multi).toContain("One governed view of this session's own desks");
+    expect(multi).not.toContain('every desk that follows your account');
+    const single = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: DEMO_PROJECT_ID }, T0), [
+      { kind: 'projects-listed', at: T0 + 1, records: [project(DEMO_PROJECT_ID, 'the TradRL demo project', 'tenant-available')] },
+    ]);
+    const singleBytes = oversightBytes(single);
+    expect(singleBytes).toContain('this view consolidates every desk this session owns'); // the single-desk note's own posture is unchanged
+    expect(singleBytes).not.toContain('every desk that follows your account');
   });
 });
