@@ -101,12 +101,20 @@ function oversightDeskCard(row: OversightDeskRow, viewAt: number, simulated: boo
   // desk's ORG operating status (compiled/active/entry-blocked/…),
   // NEVER the project-record lifecycle "draft" — the lifecycle keeps
   // its own labeled fact row below. No org snapshot on record = the
-  // honest "not compiled" absence, never a fabricated status; an
-  // unknown status value renders verbatim (orgStatusToneOf's defensive
-  // arm).
-  const pill = row.orgStatus === null
-    ? statusPill('idle', 'org not compiled', 'check-pill')
-    : statusPill(orgStatusToneOf(row.orgStatus), row.orgStatus, 'check-pill');
+  // honest absence (FW-44-A: "not compiled" only when the record says
+  // so), never a fabricated status; an unknown status value renders
+  // verbatim (orgStatusToneOf's defensive arm).
+  // FW-44-A (Round L register L-1): the pill's "not compiled" is the
+  // DURABLE RECORD's own claim (a null organizationRef on the project
+  // record) — never the absence of an answer. A desk the record shows
+  // COMPILED with no status snapshot on file (the status read has not
+  // answered) renders its org status UNKNOWN — the S1 window's
+  // "org not compiled" on long-compiled desks, dead at the pill.
+  const pill = row.orgStatus !== null
+    ? statusPill(orgStatusToneOf(row.orgStatus), row.orgStatus, 'check-pill')
+    : row.orgCompiled
+      ? statusPill('idle', 'org status unknown', 'check-pill')
+      : statusPill('idle', 'org not compiled', 'check-pill');
   // FW-38-B (G-8's UI half — L2 + M3, the dead-desk silence): when the
   // utilization read carries the desk-level ENTRY-BLOCKED status (the
   // FW-38-A runtime contract, consumed defensively — absent on any
@@ -135,7 +143,11 @@ function oversightDeskCard(row: OversightDeskRow, viewAt: number, simulated: boo
     oversightFactRow('project', row.projectId),
     oversightFactRow('execution mode', row.executionMode),
     oversightFactRow('project lifecycle', row.status),
-    ...(row.orgStatus === null ? [] : [oversightFactRow('organization status', row.orgStatus)]),
+    ...(row.orgStatus === null
+      ? (row.orgCompiled
+        ? [oversightFactRow('organization status', 'unknown — this desk\'s organization is compiled on the durable record, but no status snapshot is on file (the status read has not answered)')]
+        : [])
+      : [oversightFactRow('organization status', row.orgStatus)]),
     ...standingFactRowsOfDesk(row),
     // FW-43-A (M1/L1's ask): the per-desk NET-EXPOSURE column — the
     // gross booked notional of the open positions, the fill-derived

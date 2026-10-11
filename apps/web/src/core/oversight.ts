@@ -60,6 +60,17 @@
 //   at a pre-launch view) and the panel names what is withheld (L4 —
 //   the same projection discipline every count rides).
 //
+// FW-44-A (Round L register L-1 — S1's find): the READ-ABSENCE FOLD.
+//   A read-absence window's present-but-EMPTY bundle (every route
+//   answered nothing — app/oversight-plane.ts's catch arms) used to
+//   fold as POSITIVE zeros ("fills 0", "net 0") and the roll-up summed
+//   the gap as knowns — the fabricated-sum class. THE LAW: a zero is
+//   a POSITIVE claim only a CONFIRMED read may make; an all-empty
+//   bundle is the honest absence (confirmedDeskReadOf below), and the
+//   org pill's "not compiled" is the durable record's own claim (a
+//   null organizationRef — the row's orgCompiled), never the absence
+//   of a status answer.
+//
 // This module is PURE: identical (state, viewAt) -> identical rows.
 // No DOM, no clock, no transport.
 
@@ -81,6 +92,11 @@ import type { WorkspaceState } from './workspace';
  * does not apply to it (exactly like the project directory — the
  * workspace stays ONE project's world; this is the cross-desk monitor
  * over the session's OWN desks).
+ *
+ * FW-44-A (L-1): the bundle's content is its CONFIRMATION — the
+ * all-empty shape the plane composes when every route answers nothing
+ * is NOT a read on record (confirmedDeskReadOf folds it to the honest
+ * absence; its empty arrays never fold as positive zeros).
  */
 export interface OversightDeskRead {
   /** The desk (project) this bundle was read for. */
@@ -129,8 +145,10 @@ export interface OversightDeskRow {
    */
   readonly entryBlocked: RiskUtilizationEntryBlocked | null;
   readonly executionMode: string;
-  /** The desk's read bundle (null when no read is on record — the honest pre-read absence). */
+  /** The desk's read bundle (null when no CONFIRMED read is on record — the pre-read absence OR the all-empty unconfirmed bundle, FW-44-A: never a positive zero). */
   readonly read: OversightDeskRead | null;
+  /** FW-44-A (L-1): the durable record's own compile claim (a non-null organizationRef) — "not compiled" is THIS fact, never the absence of a status answer; a compiled desk with no snapshot renders UNKNOWN. */
+  readonly orgCompiled: boolean;
   /** FW-38-B (G-2 + G-5): the standing rows — the fill-derived book vs each bound, with the last gate observation labeled (and withheld before its observed instant); [] when no read is on record. */
   readonly standing: readonly StandingReadFold['rows'][number][];
   /** The fills on record AT THE VIEW INSTANT (routed rows with fill economics — never a fabricated position count). */
@@ -222,7 +240,7 @@ export interface OversightAggregateRow {
   readonly decisions: number | null;
   /** The sum of the desks' view-instant active breaches, or null when any desk's standing read is not on record. */
   readonly breaches: number | null;
-  /** The desks whose bundle is not on record (the blotter-field unknowns' cause, named — never a silent absence). */
+  /** The desks whose bundle is not on record OR not confirmed (the all-empty read-absence shape, FW-44-A) — the blotter-field unknowns' cause, named — never a silent absence. */
   readonly desksWithoutRead: number;
   /** The bundled desks whose standing read is not on record (the breach-field unknown's cause, named). */
   readonly desksWithoutStandingRead: number;
@@ -260,6 +278,28 @@ export function desksLaunchedAfterViewOf(directory: readonly ProjectRecord[], vi
 }
 
 /**
+ * FW-44-A (Round L register L-1 — S1's find): the fold's READ
+ * CONFIRMATION gate. A bundle is a read ON RECORD only when at least
+ * one route CONFIRMED something — a standing utilization read, a
+ * submission, a decision, or an org-status snapshot. The all-empty
+ * bundle (every route answered nothing — the plane's read-absence
+ * shape) is NOT a read on record: a zero is a POSITIVE claim only a
+ * CONFIRMED read may make, so the fold returns the honest absence
+ * (null) and the aggregate counts the desk in desksWithoutRead —
+ * never a fabricated sum over the gap. The G-4 recovery still re-reads
+ * exactly these desks (it works on the raw bundles), and a confirmed
+ * re-read replaces the bundle and the desk's numbers return.
+ */
+export function confirmedDeskReadOf(read: OversightDeskRead | null): OversightDeskRead | null {
+  if (read === null) return null;
+  const confirmed = read.utilization !== null
+    || read.submissions.length > 0
+    || read.decisions.length > 0
+    || (read.orgStatus ?? null) !== null;
+  return confirmed ? read : null;
+}
+
+/**
  * THE FOLD: every session-own desk's oversight row at the view
  * instant. Pure and total — a desk without a read on record folds to
  * its honest absence row (the render names it, never a fabricated
@@ -275,7 +315,11 @@ export function oversightRowsOf(state: WorkspaceState, viewAt: number): readonly
   // view). The per-desk counts below keep their own record-level L4
   // projection (a desk that existed may still show honestly-0 counts).
   return desksExistingAtViewOf(state.projectDirectory, viewAt).map((desk): OversightDeskRow => {
-    const read = state.oversight.find((candidate) => candidate.projectId === desk.id) ?? null;
+    // FW-44-A (L-1): the CONFIRMED bundle or the honest absence — an
+    // all-empty bundle is not a read on record, so its [] never folds
+    // as a positive zero (the S1 window's zeros + understated roll-up,
+    // dead at the gate).
+    const read = confirmedDeskReadOf(state.oversight.find((candidate) => candidate.projectId === desk.id) ?? null);
     // L4: the per-desk counts are the VIEW-INSTANT projections of the
     // desk's own records (a post-availability fact never renders — the
     // same law every section rides).
@@ -329,6 +373,7 @@ export function oversightRowsOf(state: WorkspaceState, viewAt: number): readonly
       orgStatus: read?.orgStatus?.status ?? null,
       entryBlocked: read?.utilization?.entryBlocked ?? null,
       executionMode: desk.executionMode,
+      orgCompiled: desk.lifecycle.organizationRef !== null,
       read,
       standing: standing.rows,
       fills: totals.fills,
@@ -360,6 +405,8 @@ type CockpitCountOf = (row: OversightDeskRow) => number | null;
  */
 export function oversightAggregateOf(state: WorkspaceState, viewAt: number): OversightAggregateRow {
   const rows = oversightRowsOf(state, viewAt);
+  // FW-44-A (L-1): the unconfirmed bundles are already folded to the
+  // honest absence by the rows — they count here, never sum as zeros.
   const desksWithoutRead = rows.filter((row) => row.read === null).length;
   const desksWithoutStandingRead = rows.filter((row) => row.read !== null && row.read.utilization === null).length;
   // THE HONEST GRANULARITY: the blotter-derived fields are one family

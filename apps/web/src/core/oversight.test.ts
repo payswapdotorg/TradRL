@@ -689,3 +689,120 @@ describe('FW-43-A: the cross-desk aggregate fold (the headline)', () => {
     expect(later.netExposureTotal).toBe('1159.005'); // 100.00 + 50.005 + 999 + 10 — exact, never float
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-44-A (Round L register L-1 — S1's find, one stable 5-poll window): the
+// read-absence fold. During S1's read-absence window 3 desks' cards rendered
+// LITERAL ZEROS ("fills 0", "net 0", "org not compiled" — contradicting the
+// durable compile record and the desks' own live blotters) and the aggregate
+// summed them as KNOWNS — the roll-up read 66,451.725 against the true
+// 67,505.475, understated by exactly the desks' true values (1,053.75), with
+// NO unknown marker on the money fields (only the breaches field went
+// unknown). The other 8 personas' read-absence windows propagated unknown
+// correctly — the absence shape that slipped past the fold was the
+// PRESENT-BUT-EMPTY bundle: app/oversight-plane.ts's readDeskBundle composes
+// exactly this shape when every per-desk route answers nothing in the window
+// (each catch arm's null/[]), and the fold's only absence test was
+// `read === null` — so the empty bundle's [] folded through blotterTotalsOf
+// as POSITIVE zeros and the roll-up summed the gap.
+//
+// THE LAW (FW-44-A): a zero is a POSITIVE claim ("this desk has nothing on
+// record") that only a CONFIRMED read may make. A bundle is a read ON
+// RECORD only when at least one of its routes CONFIRMED something — a
+// standing utilization read, a submission, a decision, or an org-status
+// snapshot. The all-empty bundle is the honest absence: the row folds to the
+// same no-read-on-record shape the pre-read absence rides, and the aggregate
+// counts the desk in desksWithoutRead (never a fabricated sum over the gap).
+// ---------------------------------------------------------------------------
+
+describe('FW-44-A (Round L register L-1 — S1\'s find): the read-absence fold — an unconfirmed read never folds a positive zero', () => {
+  /**
+   * The S1 window's exact bundle shape: PRESENT on record but NOTHING
+   * confirmed — no standing read, no submission, no decision, no org
+   * snapshot (every route answered nothing for this desk in the window).
+   */
+  const unconfirmedBundle = (): OversightDeskRead => ({ projectId: 'prj-b', utilization: null, submissions: [], decisions: [], readAt: VIEW_AT });
+
+  /**
+   * S1's arithmetic mirror, small: prj-a confirmed with a true 100.00
+   * book, the demo desk a CONFIRMED empty read (the standing read
+   * answered; the empty blotter is its own positive claim), and prj-b
+   * the unconfirmed window desk whose TRUE book is 1,053.75 (pinned by
+   * the recovery test below — the register's exact understatement).
+   */
+  function s1WindowState(): WorkspaceState {
+    return reduceAll(oversightWorkspace(), [
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-a', utilization: utilizationOf('prj-a', []), submissions: [routedFill('xgs:a-1', VIEW_AT - 1000, '100.00')], decisions: [], readAt: VIEW_AT } },
+      { kind: 'oversight-read', at: VIEW_AT, read: unconfirmedBundle() },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: DEMO_PROJECT_ID, utilization: utilizationOf(DEMO_PROJECT_ID, []), submissions: [], decisions: [], readAt: VIEW_AT } },
+    ]);
+  }
+
+  it('THE S1 SHAPE: a present-but-empty bundle folds the row to the honest absence — read null, EVERY cockpit field null (never fills 0 / net 0 as knowns)', () => {
+    const row = oversightRowsOf(s1WindowState(), VIEW_AT).find((candidate) => candidate.projectId === 'prj-b');
+    if (row === undefined) throw new Error('prj-b is not in the fold');
+    expect(row.read).toBeNull(); // the all-empty bundle is NOT a read on record — the fold never treats an unconfirmed read as a positive zero
+    expect(row.cockpit).toEqual({
+      openPositions: null, netExposure: null, feeTotal: null,
+      fills: null, refusals: null, decisions: null, breaches: null,
+    });
+  });
+
+  it('THE FABRICATED SUM, DEAD: the roll-up reads UNKNOWN on every blotter field and names the unconfirmed desk — never the understated known sum S1 saw', () => {
+    const aggregate = oversightAggregateOf(s1WindowState(), VIEW_AT);
+    // pre-fix: netExposureTotal '100.00' — prj-a's true 100.00 + prj-b's
+    // FABRICATED 0 + the demo desk's confirmed 0, a KNOWN sum understated
+    // by exactly prj-b's true 1,053.75 (the register's 66,451.725-vs-
+    // 67,505.475 class). The law: unknown, never a sum over the gap.
+    expect(aggregate.netExposureTotal).toBeNull();
+    expect(aggregate.openPositions).toBeNull();
+    expect(aggregate.fills).toBeNull();
+    expect(aggregate.refusals).toBeNull();
+    expect(aggregate.decisions).toBeNull();
+    expect(aggregate.breaches).toBeNull();
+    expect(aggregate.desksWithoutRead).toBe(1);      // prj-b — the unconfirmed bundle counts as no read, NAMED
+    expect(aggregate.desksWithoutStandingRead).toBe(0);
+  });
+
+  it('a CONFIRMED empty read keeps its positive zeros — the standing read answered, so the empty blotter is the host\'s own claim (the demo-desk shape)', () => {
+    const row = oversightRowsOf(s1WindowState(), VIEW_AT).find((candidate) => candidate.projectId === DEMO_PROJECT_ID);
+    if (row === undefined) throw new Error('the demo desk is not in the fold');
+    expect(row.read).not.toBeNull();
+    expect(row.cockpit).toEqual({
+      openPositions: 0, netExposure: '0', feeTotal: '0',
+      fills: 0, refusals: 0, decisions: 0, breaches: 0,
+    });
+  });
+
+  it('any ONE confirmed element makes the bundle a read (per-field honesty: a confirmed org snapshot, a single submission, or a single decision each carries the desk past the absence gate)', () => {
+    const orgOnly: OversightDeskRead = { projectId: 'prj-b', utilization: null, submissions: [], decisions: [], readAt: VIEW_AT, orgStatus: { organizationRef: 'org:b', tenant: 'tenant-a', project: 'prj-b', status: 'forming', at: VIEW_AT - 1000, instanceRefs: [] } };
+    const orgRow = oversightRowsOf(reduceAll(oversightWorkspace(), [{ kind: 'oversight-read', at: VIEW_AT, read: orgOnly }]), VIEW_AT).find((candidate) => candidate.projectId === 'prj-b');
+    if (orgRow === undefined) throw new Error('prj-b is not in the fold');
+    expect(orgRow.read).not.toBeNull();              // the org route confirmed the desk
+    expect(orgRow.orgStatus).toBe('forming');
+    expect(orgRow.cockpit.netExposure).toBe('0');    // the confirmed bundle's empty blotter stays a positive 0
+    expect(orgRow.cockpit.breaches).toBeNull();      // the standing read still did not answer — per-field honesty
+    const oneFill: OversightDeskRead = { projectId: 'prj-b', utilization: null, submissions: [routedFill('xgs:b-1', VIEW_AT - 1000, '1053.75')], decisions: [], readAt: VIEW_AT };
+    const fillRow = oversightRowsOf(reduceAll(oversightWorkspace(), [{ kind: 'oversight-read', at: VIEW_AT, read: oneFill }]), VIEW_AT).find((candidate) => candidate.projectId === 'prj-b');
+    if (fillRow === undefined) throw new Error('prj-b is not in the fold');
+    expect(fillRow.read).not.toBeNull();             // the blotter route confirmed the desk
+    expect(fillRow.cockpit.netExposure).toBe('1053.75');
+    expect(fillRow.cockpit.breaches).toBeNull();
+    const oneDecision: OversightDeskRead = { projectId: 'prj-b', utilization: null, submissions: [], decisions: [decision('b-1', VIEW_AT - 500)], readAt: VIEW_AT };
+    const decisionRow = oversightRowsOf(reduceAll(oversightWorkspace(), [{ kind: 'oversight-read', at: VIEW_AT, read: oneDecision }]), VIEW_AT).find((candidate) => candidate.projectId === 'prj-b');
+    if (decisionRow === undefined) throw new Error('prj-b is not in the fold');
+    expect(decisionRow.read).not.toBeNull();         // the decision stream confirmed the desk
+    expect(decisionRow.cockpit.decisions).toBe(1);
+  });
+
+  it('THE RECOVERY (the register: "recovered on reload"): a confirmed re-read replaces the unconfirmed bundle and the desk\'s true book returns to the roll-up at exact decimals', () => {
+    const recovered = reduceAll(s1WindowState(), [
+      { kind: 'oversight-read', at: VIEW_AT + 1, read: { projectId: 'prj-b', utilization: utilizationOf('prj-b', []), submissions: [routedFill('xgs:b-true', VIEW_AT - 2000, '1053.75')], decisions: [], readAt: VIEW_AT + 1 } },
+    ]);
+    const aggregate = oversightAggregateOf(recovered, VIEW_AT);
+    expect(aggregate.netExposureTotal).toBe('1153.75'); // 100.00 + 1053.75 + 0 — exact, the true book restored (never the pre-fix understated 100.00)
+    expect(aggregate.fills).toBe(2);
+    expect(aggregate.desksWithoutRead).toBe(0);
+    expect(aggregate.breaches).toBe(0);                 // every standing read now on record too
+  });
+});
