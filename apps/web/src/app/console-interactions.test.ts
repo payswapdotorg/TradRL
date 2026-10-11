@@ -6051,15 +6051,126 @@ describe('executed boot: FW-40-B — the boot-seam draft persistence (the wizard
     clickAction(rig, 'confirm-arm-launch');
     clickAction(rig, 'confirm-launch');
     await settle();
-    expect(rig.handle.state().launch.phase).toBe('launching'); // the submit fired (the record still holds the draft mid-flight — the honest recovery path)
+    expect(rig.handle.state().launch.phase).toBe('launching'); // the submit fired
+    // FW-42-B (J-2): the record is ALREADY cleared at the acceptance — the
+    // draft became a project server-side (the create + the research submit
+    // landed); a snapshot surviving the acceptance is M2's double-launch
+    // hazard (the pre-fix law kept it until the poll observed 'complete' —
+    // a later snapshot beat or a missed poll resurrected it on every scope
+    // open)
+    expect(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY)).toBe(''); // CLEARED AT THE ACCEPTANCE (RED pre-J-2: the record survived mid-flight)
     expect(scheduler.fireNext()).toBe(true); // beat 1 -> poll 1 -> running
     await settle();
     expect(scheduler.fireNext()).toBe(true); // beat 2 -> poll 2 -> complete
     await settle();
     expect(rig.handle.state().launch.phase).toBe('launched');
-    expect(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY)).toBe(''); // CLEARED on the successful launch
+    expect(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY)).toBe(''); // still cleared — the launch's own conclusion re-clears (defense in depth)
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-42-B (Round J register J-2 — the stale post-launch draft, M2's 1 hit
+// in ~47 launches; S1's deliberate 6s-pause probe was clean — a race). A
+// draft snapshot saved ~6s before the confirm SURVIVED the launch and
+// restored on every scope open — a double-launch hazard. THE LAW: the
+// draft store's clear-on-launch is ATOMIC WITH THE CONFIRM ACCEPTANCE —
+// the clear fires when the launch is accepted ('launch-submitted': the
+// host created the project and took the research job), never at a later
+// snapshot beat ('launch-completed' rides the poll cadence — a scope
+// switch away mid-launch skipped it entirely, and the write-through
+// re-persisted the draft out of the state machine's own still-held copy
+// on any later draft event). A draft must NEVER outlive its launch.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-42-B (J-2) — the draft clear is atomic with the launch acceptance', () => {
+  /** Boot + drive the full valid wizard through the real UI (every commit persists — the record holds the whole draft at review). */
+  async function armedWizardRig(overrides: { scheduler?: ScriptedScheduler; instants?: InstantSource } = {}): Promise<{ rig: Rig; shared: MapStorage; demo: ReturnType<typeof deployedClockLaunchTransport> }> {
+    const demo = deployedClockLaunchTransport();
+    const scheduler = overrides.scheduler ?? new ScriptedScheduler();
+    let nowMs = T0;
+    const instants: InstantSource = overrides.instants ?? { nowMs: () => (nowMs += 50) };
+    const shared = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, demo.transport, 'prj-a', { scheduler, instants, scopeStorage: shared });
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-review');
+    return { rig, shared, demo };
+  }
+
+  it('J-2 THE LAW: the snapshot saved before the confirm never outlives the ACCEPTANCE — the store clears at launch-submitted, not at the later poll beat', async () => {
+    const scheduler = new ScriptedScheduler();
+    const { rig, shared } = await armedWizardRig({ scheduler });
+    expect(parseStoredLaunchDraft(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY) ?? null)?.draft.name).toBe('Momentum scout'); // M2's shape: the ~6s-before-the-confirm snapshot, on record
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch');
+    await settle();
+    expect(rig.handle.state().launch.phase).toBe('launching'); // the host ACCEPTED (create + research submit landed)
+    expect(rig.handle.state().launch.error).toBeNull();
+    expect(draftStored(shared)).toBe(false); // RED pre-fix: the record survived the acceptance — the clear only fired at launch-completed (the later poll beat, or NEVER on a mid-launch scope switch)
+  });
+
+  it('J-2 the resurrection guard: a draft event landing AFTER the launch never re-persists (the write-through is phase-gated — a concluded launch is not an open wizard)', async () => {
+    const scheduler = new ScriptedScheduler();
+    const { rig, shared } = await armedWizardRig({ scheduler });
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch');
+    await settle();
+    expect(scheduler.fireNext()).toBe(true); // poll 1 -> running
+    await settle();
+    expect(scheduler.fireNext()).toBe(true); // poll 2 -> complete
+    await settle();
+    expect(rig.handle.state().launch.phase).toBe('launched');
+    expect(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY)).toBe(''); // cleared at the acceptance, still cleared at the conclusion
+    // THE STALE-FLUSH SHAPE: the reducer keeps the draft in state after a
+    // launch (only 'launch-reset' clears it) — a late draft event (a
+    // buffered flush, a stray beat) must NEVER re-persist it
+    rig.handle.dispatch({ kind: 'launch-draft-edited', at: T0 + 9000, draft: { ...VALID_DRAFT, name: 'Ghost draft' } });
+    expect(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY)).toBe(''); // RED pre-fix: the ghost draft resurrects into the store (the write-through fired on draft !== null alone)
+    // ...and the next reload restores NOTHING (the double-launch hazard is dead)
+    const rig2 = await bootRig({ tradrl_onboarded: 'true' }, bootResumeTransport(), 'prj-a', { scopeStorage: shared });
+    expect(rig2.handle.state().launch.phase).toBe('idle');
+    expect(rig2.handle.state().launch.draft).toBeNull();
+    expect(findByData(rig2.root, 'data-draft-restored', 'true')).toBeNull();
+  });
+
+  it('J-2 the honest recovery edge: a submit the host REFUSED (pre-acceptance) keeps the draft — the retry is the wizard\'s own path', async () => {
+    // bootResumeTransport 404s the create: 'launch-failed' fires with NO
+    // 'launch-submitted' — the launch was never accepted, the draft lives
+    const shared = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, bootResumeTransport(), 'prj-a', { scopeStorage: shared });
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-review');
+    clickAction(rig, 'confirm-arm-launch');
+    clickAction(rig, 'confirm-launch');
+    await settle();
+    expect(rig.handle.state().launch.phase).toBe('failed'); // the host refused the create
+    expect(parseStoredLaunchDraft(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY) ?? null)?.draft.name).toBe('Momentum scout'); // the draft SURVIVES a refused submit — the retry is honest
+  });
+});
+
+/** True when the draft store still carries a record (the J-2 tests' one read). */
+function draftStored(shared: MapStorage): boolean {
+  return parseStoredLaunchDraft(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY) ?? null) !== null;
+}
 
 
 // ---------------------------------------------------------------------------

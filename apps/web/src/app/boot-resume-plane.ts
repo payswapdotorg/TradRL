@@ -31,9 +31,17 @@
 //     user is never clobbered, the D-15 law); the write-through
 //     persists every committed edit/step under the CURRENT scope (the
 //     store records INVESTMENT — a merely opened blank wizard never
-//     persists); a SUCCESSFUL LAUNCH or an explicit RESET clears the
-//     record (best-effort, the posture seam's law; the restore's own
-//     dispatches never re-write). Full rationale:
+//     persists) and is PHASE-GATED to the OPEN wizard (phase 'draft' —
+//     FW-42-B, Round J register J-2: the reducer keeps the draft in
+//     state after a launch, so a late draft event over a concluded
+//     launch must never re-persist it); THE LAUNCH'S ACCEPTANCE clears
+//     the record (launch-submitted — the host took the create + the
+//     research job; FW-42-B, J-2: a snapshot surviving the acceptance
+//     is M2's double-launch hazard, and the later poll-beat clear could
+//     be missed entirely by a mid-launch scope switch), with the
+//     conclusion (launch-completed) and an explicit RESET re-clearing
+//     as defense in depth (best-effort, the posture seam's law; the
+//     restore's own dispatches never re-write). Full rationale:
 //     core/launch-draft-store.ts.
 //   - BOTH restored disclosures (the TM bar's heal note, the wizard
 //     card's draft-restored hint) are HELD here pre-mount and ride the
@@ -201,18 +209,31 @@ export function createBootResumePlane(seams: BootResumeSeams): BootResumePlane {
     afterReduce(event) {
       // THE DRAFT WRITE-THROUGH + CLEAR: a committed wizard edit or step
       // move persists the draft + step under the CURRENT scope (the
-      // store records INVESTMENT, never a mere open); a SUCCESSFUL
-      // LAUNCH or an explicit RESET clears the record (best-effort, the
-      // posture seam's law; the restore's own dispatches never
-      // re-write).
+      // store records INVESTMENT, never a mere open); the launch's
+      // ACCEPTANCE clears the record — FW-42-B (Round J register J-2):
+      // the clear must be ATOMIC with the confirm acceptance
+      // ('launch-submitted': the host created the project and took the
+      // research job — the draft became a desk server-side), never at a
+      // later snapshot beat (the pre-fix 'launch-completed' clear rode
+      // the poll cadence, which a mid-launch scope switch skips
+      // entirely — M2's record survived and restored on every scope
+      // open). The conclusion and an explicit reset re-clear as defense
+      // in depth (best-effort, the posture seam's law; the restore's own
+      // dispatches never re-write).
       if (seams.storage === undefined) return;
-      if (event.kind === 'launch-completed' || event.kind === 'launch-reset') {
+      if (event.kind === 'launch-submitted' || event.kind === 'launch-completed' || event.kind === 'launch-reset') {
         clearStoredLaunchDraft(seams.storage);
         return;
       }
       if (restoringLaunchDraft) return;
       if (event.kind !== 'launch-draft-edited' && event.kind !== 'launch-step-changed') return;
       const state = seams.state();
+      // FW-42-B (J-2) THE RESURRECTION GUARD: the write-through serves the
+      // OPEN wizard only (phase 'draft'). The reducer keeps the draft in
+      // state after a launch (only 'launch-reset' clears it), so a draft
+      // event landing over a launching/launched/failed launch is a stale
+      // flush — never a re-persist. A draft must NEVER outlive its launch.
+      if (state.launch.phase !== 'draft') return;
       if (state.launch.draft !== null) persistLaunchDraft(seams.storage, state.scope, state.launch.draft, state.launch.step, seams.instants.nowMs());
     },
     landRestoredView(viewAt) {
