@@ -1,23 +1,21 @@
 // @tradrl/web-console — the app orchestrator.
 //
 // The glue layer between the injected seams and the pure core:
-//   - builds the mirrored client over the INJECTED transport adapter
-//     (the browser fetch binding in production, a scripted transport
-//     in tests);
+//   - builds the mirrored client over the INJECTED transport (the
+//     browser fetch binding in production, a scripted one in tests);
 //   - feeds the pure workspace state machine with events stamped at
 //     INJECTED instants (never a wall-clock read in a render path);
-//   - drives the read cadence (negotiation, project/knowledge/
-//     outcome/post-mortem/org reads, job polling) with graceful
-//     degradation on every failure (never a crash on an unreachable
-//     API — the last known world + the degradation note);
-//   - composes the primary flow's launch (project create + kickoff
-//     job submission + progress) through the API routes;
-//   - mounts the render model into a DOM root and re-projects on
-//     every state change (the model enforces the laws; this layer
-//     only wires events).
-// Spec anchors: R36, R39, R46 (graceful provider degradation), L12,
-// L20, COMPETITIVE-ADOPTION.md (the console orchestrates; it never
-// locks in — every read goes through the boundary).
+//   - drives the read cadence (negotiation, project/knowledge/outcome/
+//     post-mortem/org reads, job polling) with graceful degradation on
+//     every failure (never a crash on an unreachable API — the last
+//     known world + the degradation note);
+//   - composes the primary flow's launch (create + kickoff + progress)
+//     through the API routes;
+//   - mounts the render model into a DOM root and re-projects on every
+//     state change (the model enforces the laws; this layer wires).
+// Spec anchors: R36, R39, R46 (graceful degradation), L12, L20,
+// COMPETITIVE-ADOPTION.md (the console orchestrates; every read goes
+// through the boundary).
 
 import type { ApiTransport, FetchLike } from '../api/transport';
 import { createFetchTransport } from '../api/transport';
@@ -474,21 +472,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       });
       // THE PROJECT DIRECTORY + THE STORED-SCOPE RESTORE (R6b/R6c,
       // W-22): the tenant's readable projects list once per bundle (the
-      // scope switcher's data) and the validation surface for the
-      // persisted scope. THE STORED-SCOPE RESTORE (D-15/W-29): the
-      // boot-captured stored scope restores ONLY at generation 0, exactly
-      // once (never over a user switch — the switcher-rebind race); a
-      // stored id in the directory differing from the booted scope is
-      // ADOPTED (the launch's reset+switch); a stale id (deleted
-      // upstream) is cleared — the env pin holds.
-      // FW-34-B (§3.1) — THE TIME-MACHINE POSTURE RESTORE, same pass,
-      // AFTER the scope branch: when the stored posture left the machine
-      // at a selected instant (scrubbed / t-x / paused) and the machine
-      // STILL sits at its boot 'live' mode, the console REOPENS VIEWING
-      // THAT INSTANT (L3: the incident view was lost on every reload);
-      // a user who touched the TM first left 'live' already — their
-      // choice stands (D-15). Clamped to [floor, anchor] like the
-      // scrubber's commit — never a fabricated instant.
+      // switcher's data) and the validation surface for the persisted
+      // scope. THE STORED-SCOPE RESTORE (D-15/W-29): the boot-captured
+      // stored scope restores ONLY at generation 0, exactly once (never
+      // over a user switch — the switcher-rebind race); a stored id in
+      // the directory differing from the booted scope is ADOPTED (the
+      // launch's reset+switch); a stale id (deleted upstream) is
+      // cleared — the env pin holds.
+      // FW-34-B (§3.1) — THE TM POSTURE RESTORE, same pass, AFTER the
+      // scope branch: when the stored posture left the machine at a
+      // selected instant (scrubbed / t-x / paused) and the machine STILL
+      // sits at its boot 'live' mode, the console REOPENS VIEWING THAT
+      // INSTANT (L3: the incident view was lost on every reload); a user
+      // who touched the TM first left 'live' already — their choice
+      // stands (D-15). Clamped to [floor, anchor] like the scrubber's
+      // commit — never a fabricated instant.
       await read('GET /v1/projects', async () => {
         const records = await client.projects.listAll();
         dispatch({ kind: 'projects-listed', at: instants.nowMs(), records: [...records] });
@@ -551,18 +549,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // already read false at the mount's own view literal).
         resume.scopeResolutionSettled();
       });
-      // FW-37-B (F-2) + FW-38-B (G-3 — the org-status bundle field): THE
-      // OVERSIGHT READ CADENCE, one bundle per SESSION-OWN desk
-      // (core/tenant.ts's sessionOwnDesksOf — the session's launched
-      // projects + the shared demo desk; another session's desks NEVER
-      // enter, the L12 boundary), collected through the SAME frozen
-      // routes every section rides and dispatched as the cross-desk
-      // `oversight-read` event. The plane lives in
+      // FW-37-B (F-2) + FW-38-B (G-3): THE OVERSIGHT READ CADENCE — one
+      // bundle per SESSION-OWN desk (the L12 boundary), read through the
+      // SAME frozen routes every section rides and dispatched as the
+      // cross-desk `oversight-read` event. The plane lives in
       // app/oversight-plane.ts (the extraction pattern — console.ts's
-      // payload budget); it degrades SILENTLY per desk, like the goal
-      // read: a desk without records is the host's answer (the honest
-      // "no read on record" row — never a fabricated number, never a
-      // degradation note for a route the host never promised that desk).
+      // payload budget; the cadence + per-desk silent-degradation laws
+      // are its own header); a desk without records is the host's
+      // answer (the honest "no read on record" row — never a fabricated
+      // number).
       await readOversightPlane(oversightPlaneSeams());
       const projectId = bundleScope;
       if (projectId === LAUNCHPAD_PROJECT_ID) return;
@@ -592,8 +587,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // is HOST-OWNED and demo-backing-only (a typed 404 everywhere
       // else — every launched project included), so on ANY failure
       // NOTHING dispatches — the honest pre-fix absence (never a
-      // fabricated goal, never a degradation note for an unhosted
-      // route).
+      // fabricated goal, never a degradation note).
       try {
         const bundle = await client.projects.goal(projectId);
         // D-8 (W-28): the bundle's ADDITIVE `world` (the scope's persisted
@@ -643,22 +637,19 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           dispatchIfCurrent(projectId, { kind: 'submission-recorded', at: instants.nowMs(), submission });
         }
       });
-      // THE JOBS LIST READ (D-3, the W-25A fix — the seam the Lead
-      // verified broken live): the backing serves the project's job
-      // records at GET /v1/jobs?project=… (the W-25A host route — the
-      // SAME store the per-id GET reads), but the console never READ
-      // them: state.jobs populated ONLY from session-local events
-      // (job-submitted on the launch kickoff, job-updated from pollJobs
-      // of jobs ALREADY in state), so on boot/reload/scope-switch
-      // it reset to [] and NEVER refilled — the Research
-      // section and the palette's JOB group stayed empty forever ("JOB:
-      // not searchable in any scope"). The read follows the bundle's
-      // own pattern, one collection over the W-22 blotter seam; each
-      // served row dispatches the EXISTING job-updated event, whose
-      // reducer arm merges deduped by jobId (the launch kickoff's
-      // record rides the same merge — a re-refresh never duplicates,
-      // and the read runs BEFORE pollJobs so the served non-terminal
-      // jobs join the poll cadence immediately).
+      // THE JOBS LIST READ (D-3, the W-25A fix): the backing serves the
+      // project's job records at GET /v1/jobs?project=… (the SAME store
+      // the per-id GET reads), but the console never READ them:
+      // state.jobs populated ONLY from session-local events, so on
+      // boot/reload/scope-switch it reset to [] and NEVER refilled —
+      // the Research section and the palette's JOB group stayed empty
+      // forever. The read follows the bundle's own pattern, one
+      // collection over the W-22 blotter seam; each served row
+      // dispatches the EXISTING job-updated event, whose reducer arm
+      // merges deduped by jobId (the launch kickoff's record rides the
+      // same merge — a re-refresh never duplicates; the read runs
+      // BEFORE pollJobs so the served non-terminal jobs join the poll
+      // cadence immediately).
       await read('GET /v1/jobs', async () => {
         const page = await client.jobs.list(projectId);
         for (const job of page.items) {
@@ -669,17 +660,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // the risk manager's one glance): the FW-31-A host-owned route
       // serves per-bound standing utilization (boundMax + current + the
       // honest ok/breach/unknown verdict) plus the active-breach
-      // aggregation (bound-vs-observed, audit refs, instants) — the
-      // utilization panel's payload. It rides
-      // the bundle's own cadence (the goal read above) and, like it,
-      // degrades SILENTLY: the route is HOST-OWNED
-      // and project-scoped (a project without goal records answers the
-      // typed 404 — the host's answer, not a console failure), so on ANY
-      // failure NOTHING dispatches: no read event, no degraded-read note,
-      // no offline flip — the section renders its honest teaching note
-      // (never a fabricated meter). THE L4 LAW: a current-instant
-      // standing read (its own asOf); the panel never fakes
-      // point-in-time risk.
+      // aggregation — the utilization panel's payload. It rides the
+      // bundle's own cadence (the goal read above) and, like it,
+      // degrades SILENTLY: the route is HOST-OWNED and project-scoped
+      // (a project without records answers the typed 404 — the host's
+      // answer, not a console failure), so on ANY failure NOTHING
+      // dispatches: no read event, no degraded-read note, no offline
+      // flip — the section renders its honest teaching note (never a
+      // fabricated meter). THE L4 LAW: a current-instant standing read
+      // (its own asOf); the panel never fakes point-in-time risk.
       try {
         const utilization = await client.risk.utilization(projectId);
         dispatchIfCurrent(projectId, { kind: 'risk-utilization-loaded', at: instants.nowMs(), read: utilization });
@@ -779,22 +768,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     } else if (scopeNow !== LAUNCHPAD_PROJECT_ID && state.project !== null
       && (state.project.lifecycle.organizationRef === null || orgSnapshotMissingFor(state.project.lifecycle.organizationRef))) {
       // THE ORG-COMPILE POLL (R6a's second half): the backing binds the
-      // organization ref on its OWN clock, so the one refetch above can
-      // still miss the compiled snapshot. While the CURRENT project
-      // record carries no organization ref, each beat re-observes the
-      // project; the moment the ref flips, the org-status read runs and
-      // the Organization section renders the compiled snapshot — no
-      // reload. Self-terminating (the org-snapshot dedup keeps repeats
-      // idempotent). D-7 (W-27): the read pairs the ref with the
-      // RE-OBSERVED record of THIS scope — never the mutable
+      // org ref on its OWN clock, so the one refetch above can still
+      // miss the compiled snapshot. While the CURRENT project record
+      // carries no ref, each beat re-observes the project; the moment it
+      // flips, the org-status read runs and the Organization section
+      // renders the compiled snapshot — no reload. Self-terminating
+      // (the org-snapshot dedup). D-7 (W-27): the read pairs the ref
+      // with the RE-OBSERVED record of THIS scope, never the mutable
       // state.project (a mid-beat scope move could cross the pair).
       // FW-41-C (I-5, S1's D1 compile stall): pre-fix the branch STOPPED
       // once the ref bound — a read landing on a snapshot-less serverless
       // instance (the bind + the snapshot report are TWO writes; the
-      // watch store is per-instance, back-filled only by the host's 10s
-      // staleness heal) was NEVER retried in-session. The branch now also
-      // runs while the ref is BOUND but no snapshot is on record — the
-      // beat re-reads the org status until it lands.
+      // watch store is per-instance, healed only by the host's 10s
+      // staleness pass) was NEVER retried in-session. The branch now
+      // also runs while the ref is BOUND but no snapshot is on record —
+      // the beat re-reads until it lands.
       await read('GET /v1/projects/:id', async () => {
         const project = await client.projects.get(scopeNow);
         dispatchIfCurrent(scopeNow, { kind: 'project-loaded', at: instants.nowMs(), project });
@@ -1156,17 +1144,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // THE SCRUB BUFFER (the J5 wiring — the J3 pointer discipline): a
     // drag fires `input` per pointer move; those BUFFER here and never
     // dispatch (a re-render under the pointer replaces the range input
-    // mid-drag and the browser silently drops the drag). The `change`
-    // event (the release / the keyboard commit) is the one commit point.
+    // mid-drag and the browser drops the drag). The `change` event (the
+    // release / the keyboard commit) is the one commit point.
     // FW-32-B (Round A blocker 4) — THE DRAG PIN: the first buffered
     // input of a drag also pins the bounds the drag started under
-    // (view.scrubBounds — rendered by timeMachineBar so the beat
+    // (view.scrubBounds — timeMachineBar renders them so the beat
     // re-projection keeps the SAME min/max; the anchor advances every
     // beat, and without the pin the range re-anchors continuously
-    // mid-drag). The render() below also re-writes the fresh
-    // scrubber's value to the buffered position, so the re-projected
-    // thumb stays where the user dragged it. The pin clears at the
-    // change-commit (the drag's one commit point).
+    // mid-drag). The render() below also re-writes the fresh scrubber's
+    // value to the buffered position, so the re-projected thumb stays
+    // where the user dragged it. The pin clears at the change-commit.
     let scrubAt: number | null = null;
     /** Parse the scrubber's live value (NaN-safe: a garbage value commits nothing). */
     const scrubValueOf = (element: FieldEventTarget): number | null => {
@@ -1544,12 +1531,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // beat re-projection rebuilds the WHOLE tree; when it lands between
     // mousedown and mouseup, the browser composes the click on a common
     // ANCESTOR of the replaced pair, and closest('[data-action]') from
-    // that ancestor resolves to NOTHING — the click silently no-ops (the
+    // that ancestor resolves to NOTHING — the click no-ops (the
     // M-persona finding). The press intent is captured HERE at mousedown
     // (the affordance under the pointer); the click handler replays it
     // ONLY when the composed click resolved to no affordance AND the
     // pressed element left the tree. A normal click resolves by itself
-    // (never double-dispatched); a press dragged away stays cancelled
+    // (never double-dispatched); a dragged-away press stays cancelled
     // as the browser intended.
     let pendingPress: PendingPress | null = null;
     /** (The attachedToRoot test + the D-6a machinery live in app/press.ts — extracted by FW-38-B for the payload budget.) */
@@ -1825,15 +1812,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // FW-32-B (Round A blocker 4): the clamp's floor is the PROJECT'S
       // OWN EVENT HISTORY (historyFloorOf — the earliest record instant
       // on hand), never the session start: pre-session history stays
-      // reachable across every load/reload. With no records the fold
-      // returns the session open instant (derived: 'session') — TAUGHT
-      // by the range note, never ENFORCED on the commit (the MI-D9
-      // step-back law): a commit below the session open lands where the
-      // user dragged, capped only by the anchor — a scope adoption
-      // resets every record before the refetch lands, and enforcing the
-      // fallback here would clamp a fresh desk's FIRST scrub to the
-      // degenerate [openedAt, anchor] point. The drag pin clears here:
-      // the commit is the drag's one end point.
+      // reachable across loads. With no records the fold returns the
+      // session open instant (derived: 'session') — TAUGHT by the range
+      // note, never ENFORCED on the commit (the MI-D9 step-back law):
+      // a commit below the session open lands where the user dragged,
+      // capped only by the anchor — a scope adoption resets every
+      // record before the refetch lands, and enforcing the fallback
+      // here would clamp a fresh desk's FIRST scrub to the degenerate
+      // [openedAt, anchor] point.
       const scrubber = scrubTargetOf(event.target);
       if (scrubber !== null) {
         const raw = scrubAt ?? scrubValueOf(scrubber);
@@ -1896,8 +1882,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
 
     // The delegated interaction layer: shell navigation (the fifteen
     // targets), the drawer, the theme controls, the refresh action, the
-    // inbox read-all button, the Time Machine controls — every handler
-    // a pure state/view update (the model does the rest).
+    // inbox read-all, the Time Machine controls — every handler a pure
+    // state/view update (the model does the rest).
     //
     // THE DELEGATION LAW (W-10b): the navigation branch acts ONLY on a
     // [data-target] match that is an interactive BUTTON (nav items,
@@ -1908,15 +1894,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // run (the J1 hard block).
     /**
      * FW-34-B (§3.6, L4) — THE ONE INTERACTION RESOLVER: the delegated
-     * click handler's whole body, lifted so the KEYBOARD path runs the
+     * click handler's body, lifted so the KEYBOARD path runs the
      * IDENTICAL branches. The beat re-projection replaces the tree
      * ~every 500ms-1s; when it lands between a focused button's keydown
-     * and the browser's composed click, the click composes on the
-     * DETACHED node and never bubbles (L4: "button vanished on the
-     * beat"). The keyboard path dispatches on the SETTLED state — the
-     * live focused element at keydown (its identity D-10's restore
-     * keeps fresh) — and cancels the browser's click synthesis, so the
-     * action fires EXACTLY once, on the element the user sees.
+     * and the composed click, the click lands on the DETACHED node and
+     * never bubbles (L4: "button vanished on the beat"). The keyboard
+     * path dispatches on the SETTLED state — the live focused element
+     * at keydown (its identity D-10's restore keeps fresh) — and
+     * cancels the click synthesis, so the action fires EXACTLY once,
+     * on the element the user sees.
      */
     const interactionAt = (rawTarget: ClickTarget | null): void => {
       let target = rawTarget?.closest?.('[data-target]');
@@ -2016,9 +2002,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           // past an OPEN SHEET closes the sheet — one click navigates AND
           // closes, never a second to dismiss the backdrop first (the
           // pre-fix rail sat under the sheet backdrop, so the nav click
-          // hit the backdrop and only closed the sheet). A palette
-          // selection that OPENED a sheet (openedSheet) keeps it — that
-          // sheet is the selection's own product.
+          // only closed the sheet). A palette selection that OPENED a
+          // sheet (openedSheet) keeps it — the selection's own product.
           if (view.sheet !== null && openedSheet === null) view = { ...view, sheet: null };
           if (id === 'home' || id === 'oversight' || id === 'inbox' || id === 'settings') {
             view = { ...view, accountView: id, drawerOpen: false };
@@ -2097,12 +2082,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           } else if (timeMachine.mode === 'playback' && timeMachine.playback !== null && timeMachine.playback.paused) {
             dispatch({ kind: 'playback-resumed', at: instants.nowMs() }); // renders via onState
           } else {
-            // FW-34-B (Round C register §3.2 — the live-edge anchor,
-            // L1/M5/S5/L3): THE ARM PLAYS FORWARD FROM WHERE THE ANALYST
-            // STANDS (the pre-fix arm was ALWAYS a computed instant —
-            // max(openedAt, floor) — discarding L3's scrub, never
-            // reaching L1's launch-to-now arc). The arm follows the
-            // machine's own mode:
+            // FW-34-B (§3.2 — the live-edge anchor, L1/M5/S5/L3): THE
+            // ARM PLAYS FORWARD FROM WHERE THE ANALYST STANDS (the
+            // pre-fix arm was ALWAYS a computed instant — max(openedAt,
+            // floor) — discarding L3's scrub, never reaching L1's
+            // launch-to-now arc). The arm follows the machine's mode:
             //   - TIMESTAMP / T-MINUS (a selected past instant — the
             //     scrubber's commit, the Steps' selection): the arm IS
             //     that instant, clamped to [the history floor, the
@@ -2110,8 +2094,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             //     review plays forward FROM the incident.
             //   - LIVE (no instant selected): the arm IS the range floor
             //     (the history-derived floor the scrubber renders, capped
-            //     at the anchor) — the launch-to-now arc replays from the
-            //     start. The never-below-the-floor law holds by
+            //     at the anchor) — the launch-to-now arc replays from
+            //     the start. The never-below-the-floor law holds by
             //     construction; the FW-33-B anchor clamp still lands a
             //     crossing tick AT "now", paused.
             const anchor = state.timeMachine.anchorAt;
@@ -2147,8 +2131,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (kind === 'tm-mode-timestamp') dispatch({ kind: 'view-timestamp', at: instants.nowMs(), timestamp: state.timeMachine.anchorAt - 60_000 });
         // MI-D9 — THE MANUAL STEPS. Pre-fix, BOTH controls were wired to
         // playback-tick / view-tminus(tMinusMs+500): Step while paused
-        // no-op'd under the freeze law, and Step back while paused jumped
-        // the view FORWARD to the wall-clock end (the 6/9-professional
+        // no-op'd under the freeze law; Step back while paused jumped the
+        // view FORWARD to the wall-clock end (the 6/9-professional
         // finding). Now: in PLAYBACK, Step back steps BACK one controlled
         // step and STAYS paused (its own append-only event); Step while
         // paused is the user's own forward step (the freeze stops the
@@ -2206,6 +2190,28 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           }
         }
         if (kind === 'refresh') void refreshWithShell();
+        // FW-43-A: THE OVERSIGHT DRILL-THROUGH — a desk card's Open
+        // affordance (or its ACTIVE breach count) adopts that desk and
+        // lands on its Execution blotter (Risk for the breach drill):
+        // the same reset+switch transition the switcher rides, the
+        // beat's scope-change refetch reads the opened desk's whole
+        // world, and the CURRENT desk's own affordance skips the
+        // adoption entirely (no record churn — the switcher's no-op law).
+        if (kind === 'oversight-open-desk') {
+          const deskId = action.getAttribute('data-oversight-open') ?? '';
+          const section = action.getAttribute('data-oversight-section') ?? '';
+          if (deskId.length > 0 && isSectionId(section)) {
+            if (deskId !== state.scope.projectId) {
+              dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: deskId }); // renders via onState
+              dispatch({ kind: 'view-live', at: instants.nowMs() }); // H-4: the opened desk views LIVE, never the prior desk's instant
+            }
+            dispatch({ kind: 'section-selected', at: instants.nowMs(), section }); // renders via onState
+            view = { ...view, accountView: 'section', drawerOpen: false };
+            render();
+            focusMainContent();
+            return;
+          }
+        }
         // §4.14 the command palette
         if (kind === 'palette-open') {
           view = { ...view, palette: { query: '', selected: 0 } };
@@ -2250,22 +2256,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             render();
           }
         }
-        // FW-37-B (Round F register F-3): the FW-34-B 'switcher-all-desks'
-        // and 'palette-all-desks' expanders are REMOVED — the switcher and
+        // FW-37-B (F-3): the FW-34-B 'switcher-all-desks' and
+        // 'palette-all-desks' expanders are REMOVED — the switcher and
         // the palette list ONLY this session's own desks (+ the shared
         // demo project), no path back to the whole registry. Round F
         // ruled the explicit-disclosure design insufficient (L1/L3 each
-        // read another session's full blotter); the workspace state
-        // still carries the whole durable
-        // blotter); the workspace state still carries the whole durable
-        // registry (FW-31-B's win stays — just no longer REACHABLE from
-        // the switcher or the palette).
-        // FW-34-B (Round C register §3.1) — THE WIZARD'S BACKDROP = THE
-        // MOUSE DISMISSAL (L3: the restart-summoned wizard was an
-        // a11y-invisible blocker native clicks could not dismiss): a
-        // press on the overlay OUTSIDE the card skips the wizard (the
-        // standard modal dismissal); a press inside resolves to the
-        // card's own affordances (the CTA/Skip branches), never here.
+        // read another session's full blotter); the state still carries
+        // the whole durable registry (FW-31-B's win stays — just no
+        // longer REACHABLE from the switcher or the palette).
+        // FW-34-B (§3.1) — THE WIZARD'S BACKDROP = THE MOUSE DISMISSAL
+        // (L3: the restart-summoned wizard was an a11y-invisible blocker
+        // native clicks could not dismiss): a press on the overlay
+        // OUTSIDE the card skips the wizard (the standard modal
+        // dismissal); a press inside resolves to the card's own
+        // affordances (the CTA/Skip branches), never here.
         if (kind === 'onboarding-backdrop') {
           const insideCard = rawTarget?.closest?.('.onboarding-card');
           if (insideCard === null || insideCard === undefined) {
@@ -2499,17 +2503,16 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           })();
           return;
         }
-        // FW-32-A (Round A blocker 2): THE RESEARCH→DECISION PROMOTION —
-        // the completed research job's "Propose as decision" affordance
-        // (the job sheet's own button, render/model.ts). The call rides
-        // the HOST-OWNED consequential route (POST /v1/jobs/:jobId/promote
-        // — idempotent per job, typed 401/404/409); the scope is captured
+        // FW-32-A (blocker 2): THE RESEARCH→DECISION PROMOTION — the
+        // completed research job's "Propose as decision" affordance (the
+        // job sheet's own button, render/model.ts). The call rides the
+        // HOST-OWNED consequential route (POST /v1/jobs/:jobId/promote —
+        // idempotent per job, typed 401/404/409); the scope is captured
         // at the click so a mid-flight desk switch never lands another
-        // desk's decision here (the reducer's scope gate is the law; this
-        // guard is defense in depth). The minted record dispatches
+        // desk's decision here (the reducer's scope gate is the law;
+        // this guard is defense in depth). The minted record dispatches
         // outcome-recorded — the SAME record the frozen
-        // /v1/outcomes/query read serves (rendered with its evidence +
-        // the producing-job backlink; re-reads merge deduped by
+        // /v1/outcomes/query read serves (re-reads merge deduped by
         // outcomeId).
         if (kind === 'job-promote') {
           const jobId = action.getAttribute('data-job-promote');
@@ -2710,13 +2713,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         return;
       }
-      // FW-34-B (Round C register §3.6 — THE MARK-READ INCIDENT, L4) —
-      // THE KEYBOARD ACTIVATION DISPATCHES ON THE SETTLED STATE (the
-      // beat-replacement race the one-resolver header above documents:
-      // a focused BUTTON's Enter/Space rode the browser's click
-      // synthesis, the click composed on the DETACHED node — "button
-      // vanished on the beat, action never fired"). The activation runs
-      // HERE, synchronously at keydown, against the LIVE focused
+      // FW-34-B (§3.6 — THE MARK-READ INCIDENT, L4): THE KEYBOARD
+      // ACTIVATION DISPATCHES ON THE SETTLED STATE (the beat-replacement
+      // race the one-resolver header documents: a focused BUTTON's
+      // Enter/Space rode the browser's click synthesis, the click
+      // composed on the DETACHED node — "button vanished on the beat").
+      // The activation runs HERE, at keydown, against the LIVE focused
       // element (D-10's restore keeps focus on the current equivalent
       // node across beats), through the SAME resolver a click takes —
       // the browser's click synthesis is cancelled (preventDefault), so
@@ -2724,8 +2726,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // own vocabulary: BUTTONs with a data-action or data-target (nav
       // items, notice toggles, TM controls, the wizard's CTA/Skip);
       // text inputs, selects and the scrubber keep their native key
-      // behavior (the file input's Enter keeps opening the OS picker,
-      // the select's its dropdown).
+      // behavior (the file input's Enter keeps the OS picker, the
+      // select's its dropdown).
       if ((key === 'Enter' || key === ' ') && document.activeElement !== undefined) {
         // FW-35-B (§3.6 — "a keyboard Mark-read eaten (mouse works)"):
         // a SYNTHETIC activation (a keydown composed on the button

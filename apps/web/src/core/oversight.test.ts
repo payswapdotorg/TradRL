@@ -671,7 +671,7 @@ describe('FW-43-A: the cross-desk aggregate fold (the headline)', () => {
       { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-b', utilization: null, submissions: [routedFill('xgs:b-1', VIEW_AT - 1000, '10')], decisions: [], readAt: VIEW_AT } },
       { kind: 'oversight-read', at: VIEW_AT, read: { projectId: DEMO_PROJECT_ID, utilization: utilizationOf(DEMO_PROJECT_ID, []), submissions: [], decisions: [], readAt: VIEW_AT } },
     ]), VIEW_AT);
-    expect(aggregate.netExposureTotal).toBe('110');  // every blotter answered
+    expect(aggregate.netExposureTotal).toBe('110.00'); // every blotter answered (100.00 + 10 + 0, padded to the widest fraction — exact)
     expect(aggregate.openPositions).toBe(2);
     expect(aggregate.fills).toBe(2);
     expect(aggregate.breaches).toBeNull();           // prj-b's standing read never answered

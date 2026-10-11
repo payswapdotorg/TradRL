@@ -211,7 +211,11 @@ describe('FW-37-B (F-2): the oversight panel render', () => {
   it('every desk row carries the visible SIMULATED tag on the demo adapter, and the demo desk carries its own DEMO chip (the E-8 law at the new surface)', () => {
     const bytes = oversightBytes(oversightState());
     const tags = bytes.match(/data-simulated-tag="true"/g) ?? [];
-    expect(tags.length).toBe(3); // one per desk row
+    // FW-43-A pin update, justified: the count was 3 (one per desk
+    // card); the cockpit wave added the CROSS-DESK AGGREGATE ROW, and
+    // the E-8 law covers it too — a copied roll-up ("net exposure
+    // 160.005 · 3 breaches") must never read as a production book.
+    expect(tags.length).toBe(4); // one per desk row + the aggregate roll-up
     expect(bytes).toContain('data-demo-tag="true"'); // the shared teaching desk's own chip
     // a live console renders no SIMULATED tag (the mirror law)
     const live = oversightBytes(oversightState(), { simulated: false });
@@ -503,9 +507,9 @@ describe('FW-43-A: the per-desk net-exposure + simulated P&L columns', () => {
     expect(alphaCard).toContain('100.00 across 1 open position');
     expect(alphaCard).toContain('the same data the standing rows ride');
     // the simulated P&L basis: the booked notional + fees to date, honestly labeled
-    expect(alphaCard).toContain('simulated P&L basis (booked notional + fees to date)');
+    expect(alphaCard).toContain('simulated P&amp;L basis (booked notional + fees to date)');
     expect(alphaCard).toContain('booked notional 100.00 · fees 0.10');
-    expect(alphaCard).toContain('NOT a market P&L');
+    expect(alphaCard).toContain('NOT a market P&amp;L');
     expect(alphaCard).toContain('no mark-to-market exists on the records this console holds');
     expect(alphaCard).toContain('refusals 0 stopped'); // the honest derived figures named (the refusal count beside the money)
   });
@@ -515,7 +519,7 @@ describe('FW-43-A: the per-desk net-exposure + simulated P&L columns', () => {
     const demoCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-demo-console"'));
     expect(demoCard).toContain('net exposure (gross booked notional)');
     expect(demoCard).toContain('unknown — no read on record for this desk yet');
-    expect(demoCard).toContain('simulated P&L basis (booked notional + fees to date)');
+    expect(demoCard).toContain('simulated P&amp;L basis (booked notional + fees to date)');
     expect(demoCard).toContain('unknown — no read on record for this desk yet');
     expect(demoCard).toContain('fills on record (view instant)');
     expect(demoCard).toContain('unknown — no read on record for this desk yet');

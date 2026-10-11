@@ -5379,8 +5379,8 @@ describe('executed boot: FW-37-B F-2 — the consolidated multi-desk oversight s
     expect(findByData(rig.root, 'data-oversight-desk', 'prj-demo-console')).not.toBeNull();
     expect(findByData(rig.root, 'data-oversight-desk', 'prj-s1-desk')).toBeNull(); // never another session's desk
     expect(findByData(rig.root, 'data-scaffold', 'oversight')).not.toBeNull();     // the scaffold renders (H1 + subtitle + badge)
-    // the per-row SIMULATED tag rides every desk card (the E-8 law at the new surface — the rig boots simulated)
-    expect(countByData(rig.root, 'data-simulated-tag', 'true')).toBe(3);
+    // the per-row SIMULATED tag rides every desk card + the FW-43-A aggregate roll-up (the E-8 law at the new surface — the rig boots simulated)
+    expect(countByData(rig.root, 'data-simulated-tag', 'true')).toBe(4);
     // the launch panel stays AWAY from the oversight view (the cross-desk monitor, not a desk's working surface)
     expect(findByData(rig.root, 'data-section', 'launch')).toBeNull();
   });

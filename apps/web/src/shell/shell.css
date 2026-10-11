@@ -511,6 +511,14 @@
 }
 .row-action.notice-read-toggle:hover { filter: brightness(0.97); }
 
+/* FW-43-A (the Oversight cockpit): the drill-through affordances — the
+   per-desk Open button (.oversight-open) + the inline breach-count
+   drill (.oversight-drill). Both ride the .tm-button base (border,
+   cursor, and the mobile 44px touch floor the floor block's own
+   .tm-button rule carries), compacted for the card's fact rows. */
+.oversight-open { margin-top: 8px; }
+.oversight-drill { padding: 3px 9px; font-size: 0.75rem; }
+
 .row-actions { display: grid; gap: 8px; justify-items: start; }
 
 .inbox-empty { color: var(--muted-foreground); font-style: italic; font-size: 0.8125rem; }
