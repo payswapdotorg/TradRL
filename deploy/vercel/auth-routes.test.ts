@@ -525,6 +525,123 @@ describe('deploy/vercel — FW-39-1: the adoption route (the calling session\'s 
     const sdkItems = (sdkListing.body.data as { items: readonly { id: string; consoleSessionScope?: string }[] }).items;
     expect(sdkItems.find((item) => item.id === 'prn-sdk')?.consoleSessionScope).toBe('principal-owned');
   });
+
+  // -------------------------------------------------------------------------
+  // FW-41-A (the Round I register's I-1 — 9/9 personas, THE headline): the
+  // adopt-route seam, held to THE SHIPPED CLIENT'S DOCUMENTED CONTRACT. The
+  // client's parser (apps/web/src/core/principal.ts `outcomesOf` — the
+  // client half's own law, quoted verbatim below as the host's contract)
+  // requires the adopt answer to carry the `desks` array with { projectId,
+  // adopted, already } entries. The pre-fix host answered `adoptions` with
+  // { projectId, adopted, changed }: the parser found no `desks` key and
+  // threw the typed 'the adopt route answered without its per-desk
+  // response', which the account plane rendered as the FALSE 'Accounts are
+  // not available on this deployment' note to a SIGNED-IN user — AND the
+  // target set (the calling SESSION's own desks only) answered EMPTY on
+  // every subsequent sign-in's fresh session id, so the ceremony's rows
+  // never folded: 'the ceremony STILL lists the desk as waiting-to-adopt on
+  // every subsequent sign-in — the adoption never persists' (L3).
+  // -------------------------------------------------------------------------
+
+  /**
+   * The shipped client's adopt-answer parser law (apps/web/src/core/
+   * principal.ts `outcomesOf`, quoted): a non-array `desks` key is the
+   * typed 'the adopt route answered without its per-desk response' — the
+   * exact failure every persona's seat rendered as the false not-available
+   * note. The entries fold per desk: `adopted` (or `already`) marks the
+   * desk adopted; `already` alone keeps the honest idempotent bit.
+   */
+  function clientOutcomesOf(data: unknown): readonly { readonly projectId: string; readonly adopted: boolean; readonly already: boolean }[] {
+    if (typeof data !== 'object' || data === null || !Array.isArray((data as { readonly desks?: unknown }).desks)) {
+      throw new Error('the adopt route answered without its per-desk response');
+    }
+    const desks = (data as { readonly desks: readonly unknown[] }).desks;
+    const outcomes: { readonly projectId: string; readonly adopted: boolean; readonly already: boolean }[] = [];
+    for (const entry of desks) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const record = entry as { readonly projectId?: unknown; readonly adopted?: unknown; readonly already?: unknown };
+      if (typeof record.projectId !== 'string' || record.projectId.length === 0) continue;
+      outcomes.push({ projectId: record.projectId, adopted: record.adopted === true || record.already === true, already: record.already === true });
+    }
+    return outcomes;
+  }
+
+  it('FW-41-A (I-1): the adopt answer carries the per-desk response THE SHIPPED CLIENT\'S PARSER accepts — the `desks` array with { projectId, adopted, already } entries (the seam that rendered the false not-available note)', async () => {
+    const { instance, token } = await adoptionScenario();
+    // THE CLIENT'S EXACT REQUEST (account-plane adoptDesks): POST, the
+    // session + principal-token headers, an EMPTY body (parameterless —
+    // the no-widening-parameter law), the same content-type the client sends.
+    const adopted = await drive(instance.deployment, streamingRequest({
+      method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders(SESSION_A, { [PRINCIPAL_TOKEN_HEADER]: token, 'content-type': 'application/json' }),
+      body: {},
+    }));
+    expect(adopted.status).toBe(200);
+    // THE PARSER LAW (quoted verbatim from the shipped client): the answer
+    // MUST parse — pre-fix it threw 'answered without its per-desk response'.
+    const outcomes = clientOutcomesOf(adopted.body.data);
+    expect(outcomes.map((entry) => entry.projectId).sort()).toEqual(['prj-a-1', 'prj-a-2']); // A's own desks, per desk
+    expect(outcomes.every((entry) => entry.adopted && !entry.already)).toBe(true); // both newly adopted THIS call (first-time stamps)
+  });
+
+  it('FW-41-A (I-1): THE PERSISTENCE LAW — a desk adopted on one session answers ALREADY-ADOPTED from a SUBSEQUENT SIGN-IN\'s fresh session id (the ceremony\'s every-subsequent-sign-in row folds: never an empty answer, never waiting-to-adopt forever, never another session\'s desk)', async () => {
+    const { instance, token } = await adoptionScenario();
+    const adopted = await drive(instance.deployment, streamingRequest({
+      method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders(SESSION_A, { [PRINCIPAL_TOKEN_HEADER]: token }),
+    }));
+    expect(adopted.status).toBe(200);
+
+    // THE SUBSEQUENT SIGN-IN (the sign-out/sign-in every persona ran): a
+    // FRESH session id + the same principal token. The ceremony's row
+    // source: the listing marks the adopted desk 'principal-owned'...
+    const listing = await drive(instance.deployment, streamingRequest({ url: '/v1/projects', headers: sessionHeaders(SESSION_B, { [PRINCIPAL_TOKEN_HEADER]: token }) }));
+    const items = (listing.body.data as { items: readonly { id: string; consoleSessionScope?: string }[] }).items;
+    expect(items.find((item) => item.id === 'prj-a-1')?.consoleSessionScope).toBe('principal-owned');
+
+    // ...and the adopt call FROM THE FRESH SESSION names the desk with the
+    // honest idempotent bit (already: true — 'already yours — adopted
+    // before this visit'): the persisted record answers, the row folds.
+    // Pre-fix the fresh session owned NOTHING by session — the route
+    // answered an empty list and the ceremony row stayed 'offered' forever.
+    const reAdopted = await drive(instance.deployment, streamingRequest({
+      method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders(SESSION_B, { [PRINCIPAL_TOKEN_HEADER]: token }),
+    }));
+    expect(reAdopted.status).toBe(200);
+    const outcomes = clientOutcomesOf(reAdopted.body.data);
+    expect(outcomes.map((entry) => entry.projectId).sort()).toEqual(['prj-a-1', 'prj-a-2']); // the account's desks — from the fresh session
+    expect(outcomes.every((entry) => entry.adopted && entry.already)).toBe(true); // already following this account
+    // SCOPE (L12 + the no-expropriation law): another session's desk (prj-c-1 — never adopted by this principal) is NEVER named.
+    expect(outcomes.some((entry) => entry.projectId === 'prj-c-1')).toBe(false);
+  });
+
+  it('FW-41-A (I-1): the persisted adoption answers from a COLD-STARTED instance under a fresh session id (the server-side record — any instance, any session, any browser: the product promise in the ceremony copy)', async () => {
+    const providers = fakeProviders();
+    const instance = composeAuthInstance(authSource(), providers.fetchLike);
+    if (!instance.deployment.ok) return;
+    // Session A launches one desk, registers + adopts it.
+    const created = await drive(instance.deployment, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_A), 'content-type': 'application/json' },
+      body: validCreateProjectRequest(TENANT, 'prj-a-1', 'the cold-start desk'),
+    }));
+    expect(created.status).toBe(201);
+    const { token } = await registeredPrincipal(instance);
+    const adopted = await drive(instance.deployment, streamingRequest({
+      method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders(SESSION_A, { [PRINCIPAL_TOKEN_HEADER]: token }),
+    }));
+    expect(adopted.status).toBe(200);
+    expect(clientOutcomesOf(adopted.body.data)).toEqual([{ projectId: 'prj-a-1', adopted: true, already: false }]);
+
+    // THE COLD INSTANCE (a serverless restart onto fresh memory — the same
+    // durable truth) + THE FRESH SESSION (the sign-in on any browser): the
+    // adopt call names the desk already-adopted — the adoption record is
+    // server-side truth that follows the account, not the session.
+    const cold = composeAuthInstance(authSource(), providers.fetchLike);
+    if (!cold.deployment.ok) return;
+    const reAdopted = await drive(cold.deployment, streamingRequest({
+      method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders(SESSION_B, { [PRINCIPAL_TOKEN_HEADER]: token }),
+    }));
+    expect(reAdopted.status).toBe(200);
+    expect(clientOutcomesOf(reAdopted.body.data)).toEqual([{ projectId: 'prj-a-1', adopted: true, already: true }]);
+  });
 });
 
 // ---------------------------------------------------------------------------
