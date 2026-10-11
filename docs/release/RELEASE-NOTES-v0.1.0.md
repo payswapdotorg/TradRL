@@ -602,3 +602,22 @@ Oversight cockpit.
   failures, D-1 quiet. The D-023 batteries satisfied by tree-identity +
   superset proofs (four standalone runs OOM-died on the 4GB box under
   worker concurrency — the documented house rule going forward).
+
+### Round J — the seam-wave re-verification (0/8/1; the identity arc CLOSED)
+
+9/9 personas on the FW-41 origin + the fresh store. **THE ADOPT SEAM DEAD
+(7 pass + 2 partial, the partials one display defect):** the waiting list
+never un-adopts, the export chains carry actor-stamped project-adopted
+events at launch, the false wrapper appeared nowhere, and the desks ARE
+findable from any browser (the pure test 6/6 — the 3 same-session FAILs
+were a measurement blind spot; the copy still says "session's own" while
+behaving account-scoped). DEAD: I-5 (the compile stall — 0/9 on the fresh
+store; the quota hypothesis holds), the select residual, the post-launch
+instant, I-6, I-8. THE REGISTER: I-4 (the launch-world composition race —
+2 hits this round incl. one clean-path write race; "a lying record"), J-1
+(the ceremony display, 9/9), I-3b (the reload-path marker, 8/9 partial),
+J-2 (the stale-draft hazard), J-3 + the copy-lag. The first-YES list is
+now visibly product-scope: E-7 (pricing — every persona's gate; "a large
+fund cannot procure an unbudgeted seat"), the Oversight cockpit
+(M1/L1's wishlist, DOM-verified absent), E-6 (the research world — M3's
+decisive NO). FW-42 targets the defect half.
