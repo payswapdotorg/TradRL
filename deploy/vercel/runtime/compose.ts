@@ -425,6 +425,13 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
         goalSetDegradedOf(project: string) {
           return !seamHandle.goalOf(project).ok;
         },
+        // FW-42-A (I-4 — the write-then-read law): the seam's SIGHTING —
+        // the launch world this instance's job port accepted (the last
+        // world-carrying console-launch spec), feeding the deliverable
+        // source's compose-site guard (worldReadStaleOf): a declared-world
+        // launch whose goal read carries no world holds the completion
+        // until the projection catches up — never the lying record.
+        declaredWorldOf: (project: string) => seamHandle.declaredWorldOf(project),
         organizationRefOf(tenant, project) {
           const listed = seamHandle.ports.controlPlane.projectsOf(tenant as TenantId);
           if (!listed.ok) return null; // R46: a degraded projection answers nothing

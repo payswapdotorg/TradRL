@@ -547,3 +547,77 @@ describe('deploy/vercel — FW-38-A (G-6): the tick never completes a research j
     expect(result.horizon).toEqual({ statement: 'no goal statement on record for this project at this host' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-42-A (Round J register I-4 — THE lying record): the write-then-read law
+// at the compose site. A launch accepted with a DECLARED world must never
+// compose a deliverable whose goal read carries NO world — "no launch world
+// on record" while the launch was accepted with a declared world is a lying
+// record (M2's words: "while the record sits one drawer away"). The machinery
+// tick's completion guard — the G-6 (mandateDegradedOf) precedent, extended
+// to the world: the compose is HELD (the job stays non-terminal, honest) until
+// the goal read carries the world the launch declared; the read landing
+// completes the job with the REAL world. An ABSENT world with NO declaration
+// (a world-less launch) still composes the honest no-launch-world sentence
+// (THE HONESTY LAW preserved — absent is absent, a declared-but-unread world
+// is never absent).
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-42-A (I-4): the tick never completes a research job whose WORLD read is STALE behind a DECLARED launch world (the write-then-read law)', () => {
+  it('a world-DECLARING launch whose goal read carries NO world HOLDS the research job (no transition, no "no launch world on record" deliverable); the world landing completes it with the REAL world — and a world-LESS launch still composes the honest no-launch-world sentence', () => {
+    const handled: { readonly method: string; readonly path: string; readonly body: Record<string, unknown> }[] = [];
+    const job = { jobId: 'job-fw42a-stale', kind: 'research', project: 'prj-fw42a', tenant: TENANT, status: 'running', submittedAt: AT } as never;
+    const service = {
+      jobs: () => [job],
+      handle: (request: { method: string; path: string; body: Record<string, unknown> }) => {
+        handled.push({ method: request.method, path: request.path, body: request.body });
+        return { status: 202, headers: {}, body: {} } as never;
+      },
+      orgStatusSnapshots: () => [],
+    } as never;
+    const controlPlane = demoControlPlane();
+    // The seam's world state flips between the two ticks: pre-catch-up, the
+    // launch DECLARED a world (the seam sighted it — the port accepted the
+    // console-launch spec) but the goal read carries none (the projection
+    // predates the write); post-catch-up, the goal read carries the world.
+    const declared: LaunchWorldRecord = launchWorldOfSpec({
+      kind: 'console-launch',
+      objective: 'Find and keep an edge in momentum.',
+      horizon: { startsAt: AT, endsAt: AT + 2_592_000_000, label: 'the launch window' },
+      capitalBudget: '500000.00',
+      riskBudget: '40000.00',
+      markets: ['BTC-USD', 'ETH-USD'],
+      venues: ['binance', 'kraken'],
+      dataSources: ['candle-v1', 'depth-v1'],
+      executionMode: 'simulation',
+      preferences: [{ key: 'rebalance', value: 'daily' }],
+    }) as LaunchWorldRecord;
+    let worldOnRecord: LaunchWorldRecord | null = null; // the goal READ's world (null while the projection predates the write)
+    const deliverables: DeliverableSource = {
+      mandateOf: () => ({ goal: validGoal(TENANT) as unknown as GoalStatement, constraintSet: validConstraintSet(TENANT) as unknown as ConstraintSetStatement, world: worldOnRecord }),
+      worldReadStaleOf: () => worldOnRecord === null, // the seam sighted `declared`; the read carries none — STALE
+      observedOf: () => (worldOnRecord === null ? null : { markets: worldOnRecord.markets, venues: worldOnRecord.venues }),
+      promotionOf: () => null,
+    };
+    const context = { ports: { controlPlane }, deliverables, tenant: TENANT, developerToken: 'tok-fw42a', internalToken: 'tok-fw42a-internal' } as never;
+
+    // THE STALE TICK (the projection predates the world write): the job is
+    // DUE (age 10s >= the 8s schedule) but NO completion transition fires —
+    // the pre-fix law would have composed "Simulated research session with
+    // no launch world on record for prj-fw42a" here (the lying record).
+    demoMachineryTick(service, context, AT + 10_000);
+    expect(handled).toEqual([]);
+
+    // THE LANDED WORLD (the next tick, after the projection catches up): the
+    // job completes — and the deliverable carries the REAL world.
+    worldOnRecord = declared;
+    demoMachineryTick(service, context, AT + 11_000);
+    expect(handled).toHaveLength(1);
+    expect(handled[0]!.path).toBe('/internal/jobs/transitions');
+    expect(handled[0]!.body).toMatchObject({ jobId: 'job-fw42a-stale', status: 'complete' });
+    const result = (handled[0]!.body as { readonly result: Record<string, unknown> }).result;
+    expect(result.markets).toEqual(['BTC-USD', 'ETH-USD']);
+    expect(result.venues).toEqual(['binance', 'kraken']);
+    expect(result.summary).toContain('over BTC-USD and ETH-USD on binance and kraken (the world the launch actually served)');
+  });
+});

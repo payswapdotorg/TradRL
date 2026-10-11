@@ -154,7 +154,7 @@ import type {
 } from '../../../services/api/src/index';
 import { canonicalJson, isJobRecord } from '../../../services/api/src/index';
 import { fakeJobSubmission } from '../../../services/api/src/fixtures';
-import { DEMO_PROJECT_ID, demoSeedJobPrimingLatch, launchWorldOfSpec, withDerivedGoalHorizonLabel, OUTCOME_DURABLE_LANE_FIELD, type OutcomeDurableWriteLane, type OutcomeLearningPortWithDurableLane } from './demo';
+import { DEMO_PROJECT_ID, demoSeedJobPrimingLatch, isLaunchWorldRecord, launchWorldOfSpec, withDerivedGoalHorizonLabel, OUTCOME_DURABLE_LANE_FIELD, type LaunchWorldRecord, type OutcomeDurableWriteLane, type OutcomeLearningPortWithDurableLane } from './demo';
 import { NeonFirmMemoryStore, NeonJobStore, NeonOutcomeLearningStore, NeonPrincipalStore, NeonProjectStore, ownerPrincipalOf, ownerSessionOf, type GoalSetRecord, type NeonStoreDeps, type SessionProjectRow } from '../../adapters/neon/stores';
 import { executeNeonStatement, type NeonConfig } from '../../adapters/neon/client';
 import { NEON_DDL_RECORDS } from '../../adapters/neon/schema';
@@ -372,6 +372,34 @@ export interface DurableBackingHandle {
    * when the projection holds no goal set for the project.
    */
   goalOf(projectId: string): { readonly ok: true; readonly value: HydratedGoalSet | null } | { readonly ok: false; readonly error: StoreFailure };
+  /**
+   * FW-42-A (Round J register I-4 — the lying record, THE WRITE-THEN-READ
+   * LAW): the launch world this instance's job port SIGHTED for the
+   * project — the last console-launch spec's extracted world the port
+   * accepted (null when no world-carrying kickoff ever crossed this
+   * instance's port for the project). The durable arm's deliverable
+   * source reads this to hold a research job's completion while the goal
+   * read carries no world for a launch THIS SEAM accepted with a declared
+   * one (the compose-site guard, demoMachineryTick's worldReadStaleOf):
+   * the job stays non-terminal until the projection catches up (the
+   * heal's quiet refresh), and the next tick composes the REAL world —
+   * never "no launch world on record" while the launch was accepted with
+   * a declared world.
+   */
+  declaredWorldOf(projectId: string): LaunchWorldRecord | null;
+  /**
+   * FW-42-A (I-4, the read half): the SERVING projection's launch world
+   * for one project (null when the projection holds no goal set for the
+   * project, or the row carries no world). The staleness heal's
+   * derived-truth probe (runtime/durable-world.ts) compares this against
+   * the FRESH session-JOIN rows: a durable row carrying a world the
+   * serving projection does not carry IDENTICALLY is a DIVERGENCE — the
+   * quiet refresh triggers, and the jobs half's import gate (FW-38-A/G-6)
+   * orders the kickoff job's import AFTER the fresh projection lands
+   * (never a compose from a world-less goal set — L3's draft-restored
+   * read race).
+   */
+  servingWorldOf(projectId: string): LaunchWorldRecord | null;
   /**
    * THE DURABLE JOBS READ (W-27, D-7): the projection's job records for
    * one project — the rows tradrl_jobs holds for the credential tenant
@@ -1291,6 +1319,22 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
    */
   let hydrationQueue: JobRecord[] = [];
 
+  /**
+   * FW-42-A (I-4 — the write-then-read law): the seam's SIGHTING — the
+   * launch world this instance's job port accepted, per project, at the
+   * moment the console-launch spec crossed the port (the last sighting
+   * stands; the overwrite law). Per-instance by construction: only the
+   * instance that served the kickoff ever sees the spec (the hydration
+   * replay rides `{ hydrated: true }` — never a console-launch spec), so
+   * the compose-site guard this feeds (demoMachineryTick's
+   * worldReadStaleOf) holds the completion on the LAUNCH instance while
+   * its read predates the write it accepted; every IMPORTING instance is
+   * covered instead by the heal's derived-truth probe (the world
+   * divergence is a refresh trigger — see durable-world.ts), which gates
+   * the job import on a projection that already carries the world.
+   */
+  const declaredLaunchWorlds = new Map<string, LaunchWorldRecord>();
+
   const innerJobSubmission = fakeJobSubmission();
 
   // FW-31-B: the DEMO-SEED PRIMING LATCH — the same per-instance identity law
@@ -1324,26 +1368,47 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
       // world-less by design either way).
       const seeded = demoSeedPriming.prime(input);
       if (seeded !== null) return { ok: true, value: seeded };
-      // THE LAUNCH WORLD CAPTURE (D-8, W-28): a console-launch kickoff
-      // spec carries the launch's world specification — the only
-      // console->host carrier the frozen contracts leave room for (the
-      // create-project parser keeps exactly its own six fields). The
-      // world MERGES into the project's goal-set row: the live overlay
-      // serves it immediately (goalOf) and the durable write rides the
-      // drain like every control-plane write (the ordering law). The
-      // capture is structural (launchWorldOfSpec validates every field;
-      // a foreign or malformed spec captures nothing — R46), skips the
-      // DEMO project (its goal set stays world-less by design — the demo
-      // scope's teaching empty state is correct), requires a goal set on
-      // record for the project (the console's flow always creates the
-      // project first; an unknown project's world is skipped, never a
-      // crash), and is IDEMPOTENT — a goal set already carrying the same
+      // THE LAUNCH WORLD CAPTURE (D-8, W-28; FW-42-A — Round J register
+      // I-4, the lying record): a console-launch kickoff spec carries the
+      // launch's world specification — the only console->host carrier the
+      // frozen contracts leave room for (the create-project parser keeps
+      // exactly its own six fields). The world MERGES into the project's
+      // goal-set row: the live overlay serves it immediately (goalOf) and
+      // the durable write rides the drain like every control-plane write
+      // (the ordering law). The capture is structural (launchWorldOfSpec
+      // validates every field; a foreign or malformed spec captures
+      // nothing — R46), skips the DEMO project (its goal set stays
+      // world-less by design — the demo scope's teaching empty state is
+      // correct), and is IDEMPOTENT — a goal set already carrying the same
       // world (byte-identical, the W-27 recordJobs pattern) queues
       // nothing.
+      //
+      // FW-42-A (THE WRITE-THEN-READ LAW): the merge base is the DURABLE
+      // ROW, never the per-instance overlay. The pre-fix capture keyed the
+      // merge on `liveGoalSets` — so a kickoff the balancer routed to a
+      // WARM instance whose projection predates the create (M2's clean
+      // launch, the register's I-4 write race) found nothing in the
+      // overlay and SILENTLY DROPPED the world: the job minted, the launch
+      // read as accepted (202), and the durable row never carried it — a
+      // deliverable then composed "no launch world on record" (markets/
+      // venues []) while the drawer beside it showed the declared world.
+      // The law: a launch accepted with a declared world must have that
+      // world on record by the time the compose consumes its slot —
+      // WRITTEN-THEN-READ, fail-closed. When the overlay holds the row the
+      // hot path is unchanged (the overlay IS the projection's row); when
+      // it does not, a DEFERRED RUNNER on the SAME pending drain reads the
+      // durable row fresh (the port is sync — the read is async, so it
+      // rides the drain), merges the world onto it, and writes it back —
+      // a failed read or write is the typed drain failure (the launch is
+      // UNCONFIRMED, the caller learns, never a silent drop), and a
+      // project with NO goal set on record anywhere (no create ever
+      // landed) fails CLOSED: the launch must not stand with a world no
+      // record can carry.
       const world = launchWorldOfSpec(input.spec);
       if (world !== null) {
         const projectId = input.project as string;
         if (projectId !== DEMO_PROJECT_ID) {
+          declaredLaunchWorlds.set(projectId, world); // THE SIGHTING (the compose-site guard reads this — the read must reflect what the launch submitted)
           const existing = liveGoalSets.get(projectId) ?? null;
           if (existing !== null) {
             const merged: GoalSetRecord = { ...existing, world };
@@ -1351,6 +1416,36 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
               liveGoalSets.set(projectId, merged);
               pending.push({ label: 'goalset.world.put', run: () => projectStore.putGoalSet(deps.tenant, projectId, merged) });
             }
+          } else {
+            // FW-42-A: the overlay predates the create (the write race's
+            // shape). The durable row is the merge base — read it FRESH on
+            // the drain, merge, write back; sync the overlay only once the
+            // write is confirmed (a failed write leaves no unconfirmed
+            // overlay — the W-25D law). A row already carrying the same
+            // world (byte-identical) queues nothing (the idempotent no-op)
+            // and still syncs the overlay to the durable truth.
+            const sighted = world;
+            pending.push({
+              label: 'goalset.world.put',
+              run: async () => {
+                const read = await projectStore.goalSetOf(deps.tenant, projectId);
+                if (!read.ok) return read; // the typed read failure — the drain reports it (the launch is unconfirmed)
+                if (read.value === null) {
+                  // FAIL-CLOSED: no goal set on record anywhere — the world
+                  // cannot be recorded, so the launch must not stand.
+                  return { ok: false, error: { code: 'launch_world_unrecordable', message: `the launch's declared world cannot be recorded: no goal set is on record for ${JSON.stringify(projectId)} (the create must land first — a launch accepted with a declared world must have that world on record by the time the compose consumes its slot; never a silent drop, never the lying record)` } };
+                }
+                const row = read.value;
+                if (canonicalJson((row.world ?? null) as never) === canonicalJson(sighted as never)) {
+                  liveGoalSets.set(projectId, row); // idempotent — the durable truth already carries this world; sync this instance's overlay to it
+                  return { ok: true, value: { stored: true } };
+                }
+                const mergedRow: GoalSetRecord = { ...row, world: sighted };
+                const written = await projectStore.putGoalSet(deps.tenant, projectId, mergedRow);
+                if (written.ok) liveGoalSets.set(projectId, mergedRow); // confirmed — the overlay serves the durable truth
+                return written;
+              },
+            });
           }
         }
       }
@@ -1490,6 +1585,18 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     } finally {
       draining = false;
     }
+  }
+
+  /** FW-42-A (I-4): the seam's sighting — the compose-site guard's comparison base (the write the launch submitted). */
+  function declaredWorldOf(projectId: string): LaunchWorldRecord | null {
+    return declaredLaunchWorlds.get(projectId) ?? null;
+  }
+
+  /** FW-42-A (I-4): the serving projection's world for one project (the heal's divergence probe reads this — the RAW stored row, so the probe's byte comparison against the fresh row is exact). */
+  function servingWorldOf(projectId: string): LaunchWorldRecord | null {
+    if (phase !== 'ready' || current === null) return null; // degraded/in flight — the probe's membership gate already skips
+    const world = current.goalSets.get(projectId)?.world;
+    return isLaunchWorldRecord(world) ? world : null;
   }
 
   function goalOf(projectId: string): { readonly ok: true; readonly value: GoalSetRecord | null } | { readonly ok: false; readonly error: StoreFailure } {
@@ -1722,6 +1829,8 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     reproject,
     drain,
     goalOf,
+    declaredWorldOf,
+    servingWorldOf,
     jobsOf,
     recordJobs,
     beginJobHydration,

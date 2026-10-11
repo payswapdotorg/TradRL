@@ -106,6 +106,7 @@
 // (the composition law).
 
 import {
+  canonicalJson,
   deepFreeze,
   isRecord,
   type ApiService,
@@ -116,6 +117,7 @@ import { fixtureKnowledge } from '../../../services/api/src/fixtures';
 import {
   DEMO_PROJECT_ID,
   demoMachineryTick,
+  isLaunchWorldRecord,
   demoOrgSnapshotInstantOf,
   demoOrgStatusSnapshot,
   demoOutcomeRecord,
@@ -564,7 +566,29 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
           && tenantRowHasNewId(freshPostMortems.value, membership.registryProjectIds, membership.postMortemIds, 'postMortemId');
         const unseenKnowledge = freshKnowledge !== null && freshKnowledge.ok
           && knowledgeRowHasNewId(freshKnowledge.value, membership.registryProjectIds, membership.knowledgeIds);
-        if (unseenProject || unseenOutcome || unseenPostMortem || unseenKnowledge) {
+        // FW-42-A (Round J register I-4 — the lying record, the read race's
+        // seam): the membership probes above compare IDS ONLY, so a project
+        // the projection already SERVES whose WORLD landed on ANOTHER
+        // instance (the goal-set row's opaque payload gained its `world` —
+        // no new id appears) was NOT a divergence: the pre-fix probe let
+        // the jobs half import the kickoff job onto the stale projection,
+        // and the very next tick composed "no launch world on record"
+        // while the durable row carried the full world (L3's
+        // draft-restored read race — the record sat one drawer away). THE
+        // FIX: the CONTENT probe — a fresh session row carrying a launch
+        // world the serving projection does not carry IDENTICALLY is a
+        // divergence; the quiet refresh lands it, and the jobs half's
+        // gate (FW-38-A/G-6, below) orders the import AFTER the fresh
+        // projection — the compose never reads a world-less goal set for
+        // a launch whose world is on record.
+        const unseenWorld = rows.value.some((row) => {
+          if (row.goalSet === null) return false;
+          const fresh = row.goalSet.world;
+          if (!isLaunchWorldRecord(fresh)) return false; // no declared world on record — not this probe's case
+          const serving = durable.servingWorldOf(projectOfSessionRow(row));
+          return serving === null || canonicalJson(serving as never) !== canonicalJson(fresh as never);
+        });
+        if (unseenProject || unseenOutcome || unseenPostMortem || unseenKnowledge || unseenWorld) {
           // FW-38-A (G-6): the refresh MUST commit before the jobs half may
           // import — an uncommitted (failed/discarded) refresh leaves the
           // serving projection predating the divergence; never import onto it.
