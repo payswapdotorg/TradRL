@@ -621,3 +621,23 @@ now visibly product-scope: E-7 (pricing — every persona's gate; "a large
 fund cannot procure an unbudgeted seat"), the Oversight cockpit
 (M1/L1's wishlist, DOM-verified absent), E-6 (the research world — M3's
 decisive NO). FW-42 targets the defect half.
+
+### Round K — the FW-42 re-verification (a clean sweep; the register is now purely product)
+
+9/9 personas on the FW-42 origin (5c6212d, dpl_5SjyUeLJ). **fw42_overall
+9/9 PASS — every delta dead on every persona's OWN failure shape,
+quantified at 100-150ms sampling:** the lying record (I-4 — all three
+historical shapes retested, zero occurrences in any UI or export, the
+row-based launchWorld survives cross-browser exports), the ceremony
+first-render (J-1 — zero "Adopt this desk" frames), the reload marker
+(I-3b — "Reading the world…" from the first paint, zero bare samples in
+1,000+ collective), the atomic draft clear (J-2), the account-scoped copy
++ the pure test with truthful copy (every persona found all their desks
+from a wiped context). Main-interface 0/8/1 (most "firmest of six
+rounds"); would_pilot 9/9. THE DEFECT REGISTER IS EMPTY — the first-YES
+gates are now purely product: E-7 pricing (an operator decision), the
+Oversight cockpit (M1/L1's #1, DOM-verified absent a third time), E-6 the
+research world (M3's decisive build), F-12 derived statistics, E-3, S2's
+market-facing surface; plus the export page-session-scope minor (4
+personas, honestly disclosed). FW-43 builds the buildable half; Round L
+measures it.
