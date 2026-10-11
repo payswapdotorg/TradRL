@@ -29,7 +29,8 @@
 //                          identity + expiry — NEVER the verifier)
 //   POST /v1/auth/adopt     (the token + session
 //                          headers)              -> 200 (per-desk
-//                          adoption of the CALLING session's own desks)
+//                          adoption of the calling identity's own desks —
+//                          the `desks` array the shipped client parses)
 //
 // THE AUTH LAW (the W-8 host-route law, verbatim): the host owns the
 // credential registrations, so it authenticates these routes itself — a
@@ -60,15 +61,31 @@
 // honor; the marker fold and the create-stamp therefore see no
 // principal context, honestly).
 //
-// THE ADOPTION LAW (the design §5 Wave 1): `POST /v1/auth/adopt`
-// re-stamps the additive `ownerPrincipal` on the CALLING session's OWN
-// desks — the same ownership law the session routes enforce (rows the
-// calling session OWNS: `ownerSession === session`, the shared demo
-// project NEVER adoptable). IDEMPOTENT (a row already carrying the same
-// owner reports `changed: false`, no durable write); per-desk response;
-// NEVER a widening parameter — the request body is IGNORED entirely (no
-// parameter can steer WHICH desks adopt; the FW-37-B module-level
-// lesson applied here at birth).
+// THE ADOPTION LAW (the design §5 Wave 1; FW-41-A closes the Round I
+// register's I-1 — 9/9 personas, THE headline): `POST /v1/auth/adopt`
+// re-stamps the additive `ownerPrincipal` on the CALLING IDENTITY'S OWN
+// desks — the calling session's (`ownerSession === session`) UNION the
+// calling principal's (`ownerPrincipal === the token's principalId`), the
+// same ownership law the session routes + the listing's marker vocabulary
+// enforce (the shared demo project NEVER adoptable; another session's
+// desk NEVER named — no expropriation). The union is the persistence
+// promise made answerable: a desk adopted on one session (or launched
+// while signed in — the create-stamp) answers ALREADY-ADOPTED from a
+// SUBSEQUENT SIGN-IN's fresh session id (already: true — 'already yours —
+// adopted before this visit'), from any cold-started instance, from any
+// browser: the adoption record is server-side truth that follows the
+// ACCOUNT, never the session. IDEMPOTENT per desk (a row already carrying
+// the same owner reports already: true, no durable write); per-desk
+// response in the shipped client's documented shape (apps/web/src/core/
+// principal.ts outcomesOf — the `desks` array of { projectId, adopted,
+// already }); NEVER a widening parameter — the request body is IGNORED
+// entirely (no parameter can steer WHICH desks adopt; the FW-37-B
+// module-level lesson applied here at birth). Pre-FW-41-A the route
+// answered `adoptions` with a `changed` bit the shipped parser rejected
+// ('the adopt route answered without its per-desk response' — the false
+// not-available note every persona's seat rendered) and the session-only
+// target set answered EMPTY on every fresh session id ('the adoption
+// never persists').
 //
 // THE BRUTE-FORCE GUARD (FW-40-D — the known gap below, CLOSED): the
 // register + login routes (the two token-minting, credential-bearing
@@ -541,14 +558,22 @@ async function whoamiRoute(input: CompleteAuthRouteInput, request: AuthRouteRequ
 
 /**
  * POST /v1/auth/adopt — the adoption ceremony's host half: the CALLING
- * session's OWN desks re-stamp the additive `ownerPrincipal` (beside
+ * IDENTITY'S OWN desks re-stamp the additive `ownerPrincipal` (beside
  * `ownerSession` — lineage preserved). NEVER a widening parameter: the
  * request body is IGNORED entirely; the target set is derived from the
- * session-ownership law over the FRESH session-listing rows (the same
- * JOIN the session routes read); the shared DEMO project is NEVER
- * adoptable (it is owned by no session). Idempotent per desk: a row
- * already carrying the same owner reports `changed: false` with no
- * durable write.
+ * request's own identity — the session-ownership law (`ownerSession ===
+ * session`) UNION the principal-ownership law (`ownerPrincipal === the
+ * token's principalId`) over the FRESH session-listing rows (the same
+ * JOIN the session routes read) — so a desk adopted on one session (or
+ * launched while signed in, the create-stamp) answers ALREADY-ADOPTED
+ * from a SUBSEQUENT SIGN-IN's fresh session id: the record follows the
+ * ACCOUNT, never the session (FW-41-A, the Round I register's I-1).
+ * The shared DEMO project is NEVER adoptable (it is owned by no
+ * identity); another session's desk is NEVER named (no expropriation).
+ * Idempotent per desk: a row already carrying the same owner reports
+ * `already: true` with no durable write. The per-desk response is the
+ * shipped client's documented shape (apps/web/src/core/principal.ts
+ * outcomesOf): the `desks` array of { projectId, adopted, already }.
  */
 async function adoptRoute(input: CompleteAuthRouteInput, request: AuthRouteRequest, requestId: RequestId, authorizationTenant: string): Promise<ApiResponse> {
   const resolution = await resolvePrincipalToken(input, request.headers, authorizationTenant);
@@ -556,21 +581,24 @@ async function adoptRoute(input: CompleteAuthRouteInput, request: AuthRouteReque
   if (resolution.kind === 'absent-or-invalid') return principalTokenRequired(requestId);
   const session = consoleSessionOf(request.headers);
   if (session === null) {
-    return demoRouteError(requestId, apiError('validation_failed', 'the adoption route requires the console session header (it adopts the CALLING session\'s own desks — the session-ownership law scopes the target set, never a request parameter)', { problems: Object.freeze([problem('headers', 'the x-tradrl-console-session header is absent or malformed')]) }));
+    return demoRouteError(requestId, apiError('validation_failed', 'the adoption route requires the console session header (it adopts the calling identity\'s own desks — the session-ownership law scopes the target set, never a request parameter)', { problems: Object.freeze([problem('headers', 'the x-tradrl-console-session header is absent or malformed')]) }));
   }
   const rows = await input.adoption.sessionRowsOf(authorizationTenant);
   if (!rows.ok) return authDegraded(requestId, 'session-listing read', rows.error);
   // THE TARGET SET (derived, never parameterized): the rows the calling
-  // session OWNS (ownerSession === session), the shared demo project
-  // excluded — nothing else can adopt, no body value can widen it.
-  const targets = rows.value.filter((row) => row.ownerSession === session && projectOfRow(row) !== DEMO_PROJECT_ID && projectOfRow(row).length > 0);
-  const adoptions: { readonly projectId: string; readonly adopted: boolean; readonly changed: boolean }[] = [];
+  // session OWNS (ownerSession === session) UNION the rows the calling
+  // PRINCIPAL owns (ownerPrincipal === the token's principalId — the
+  // persistence law: an adopted desk answers from ANY subsequent
+  // sign-in's fresh session id), the shared demo project excluded —
+  // nothing else can adopt, no body value can widen it.
+  const targets = rows.value.filter((row) => (row.ownerSession === session || row.ownerPrincipal === resolution.token.principalId) && projectOfRow(row) !== DEMO_PROJECT_ID && projectOfRow(row).length > 0);
+  const desks: { readonly projectId: string; readonly adopted: boolean; readonly already: boolean }[] = [];
   for (const row of targets) {
     const projectId = projectOfRow(row);
     const stamp = await input.adoption.stampPrincipalOwner(authorizationTenant, projectId, resolution.token.principalId);
-    adoptions.push(deepFreeze({ projectId, adopted: stamp.stamped, changed: stamp.changed }));
+    desks.push(deepFreeze({ projectId, adopted: stamp.stamped, already: stamp.stamped && !stamp.changed }));
   }
-  return demoRouteSuccess(requestId, deepFreeze({ adoptions: Object.freeze(adoptions), principal: deepFreeze({ id: resolution.token.principalId, name: resolution.token.name }) }));
+  return demoRouteSuccess(requestId, deepFreeze({ desks: Object.freeze(desks), principal: deepFreeze({ id: resolution.token.principalId, name: resolution.token.name }) }));
 }
 
 // ---------------------------------------------------------------------------
