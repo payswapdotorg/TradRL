@@ -41,6 +41,7 @@ import type {
   ProjectGoalWorldSpec,
   ProjectLifecycleEvent,
   ProjectRecord,
+  ResearchNoteRecord,
   RiskUtilizationRead,
   StrategyIntent,
   SubmitJobRequest,
@@ -115,6 +116,8 @@ export interface ProjectGoalBundle {
   readonly constraintSet: ConstraintSetStatement;
   /** The launch world specification (D-8, W-28 — the ADDITIVE host-route field; absent for world-less projects and pre-W-28 backings). */
   readonly world?: ProjectGoalWorldSpec;
+  /** The project's ATTACHED RESEARCH NOTES (FW-45 — the ADDITIVE host-route field the note route writes and the boot bundle re-reads; absent when none is on record). */
+  readonly notes?: readonly ResearchNoteRecord[];
 }
 
 /** The typed client over the boundary's public plane (the console's mirror of the SDK's resource surface). */
@@ -136,6 +139,8 @@ export interface ConsoleClient {
     get(projectId: string): Promise<ProjectRecord>;
     /** `GET /v1/projects/:projectId/goal?project=:projectId` — the project's goal + constraint set (the HOST-OWNED W-8 demo-substance route: the seeded records are served from the demo backing BEFORE the boundary wrap, so the frozen SDK surface does not carry it — the mirror extends the family for the console's own read; interop.test.ts documents the amendment. The route serves only projects with a host-seeded goal and answers a typed 404 elsewhere — the caller degrades honestly on it). */
     goal(projectId: string): Promise<ProjectGoalBundle>;
+    /** `POST /v1/projects/:projectId/notes` — THE RESEARCH-NOTE ATTACH (FW-45 — the HOST-OWNED consequential route: the titled text note stored VERBATIM on the project's goal-set record, idempotent per content; the minted record is what `note-attached` dispatches). */
+    attachNote(projectId: string, input: { readonly title: string; readonly text: string }, options?: ConsequentialOptions): Promise<{ readonly note: ResearchNoteRecord }>;
     /** `POST /v1/projects/:projectId/lifecycle` — apply a lifecycle event. */
     transition(projectId: string, event: ProjectLifecycleEvent, at: number, options?: ConsequentialOptions): Promise<ProjectLifecycleTransitionResult>;
     /** `POST /v1/projects/:projectId/organization` — bind an organization. */
@@ -329,6 +334,12 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
         // is the { goal, constraintSet } bundle, already the contract
         // shapes — the envelope parse is the whole translation.
         return request('GET', withQuery(`/v1/projects/${encodeURIComponent(projectId)}/goal`, { project: projectId })) as Promise<ProjectGoalBundle>;
+      },
+      async attachNote(projectId, input, options) {
+        // FW-45: the HOST-OWNED note-attach — the body is EXACTLY the
+        // analyst's own { title, text } (verbatim), the idempotency key
+        // rides the header, the envelope unwraps to the minted record.
+        return request('POST', `/v1/projects/${encodeURIComponent(projectId)}/notes`, { body: input, idempotencyKey: keyFor('projects.attachNote', [projectId, input.title, input.text], options) }) as Promise<{ readonly note: ResearchNoteRecord }>;
       },
       async transition(projectId, event, at, options) {
         return request('POST', `/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, { body: { event, at }, idempotencyKey: keyFor('projects.lifecycle', [projectId, event, at], options) }) as Promise<ProjectLifecycleTransitionResult>;

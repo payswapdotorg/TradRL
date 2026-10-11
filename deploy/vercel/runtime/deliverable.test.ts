@@ -29,6 +29,7 @@ import {
   declaredConstraintFacts,
   deriveSessionStatistics,
   type DeliverableMandate,
+  type DeliverableNoteRef,
   type DeliverableSessionRecords,
   type DeliverableSource,
   type DerivedSessionStatistics,
@@ -961,5 +962,61 @@ describe('deploy/vercel — FW-43-B (F-12): the deliverable composes the derived
     expect(statistics!.refusals.count).toBe(expected.refusals.count);
     expect(statistics!.fees.total).toBe(expected.fees.total);
     expect(result.summary as string).toContain('derive the statistics');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-45 (the E-6 research-world MVP): the deliverable REFERENCES THE NOTES —
+// the research job's provenance block names the attached research notes
+// (count + titles), so the deliverable is no longer disconnected from the
+// analyst's own input (M3: "desk-ledger arithmetic, not research compute
+// over my data" — the MVP's honest answer: the notes are NAMED and CARRIED
+// in the chain; compute-over-notes is disclosed as the next step, never
+// claimed).
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-45: the deliverable\'s provenance names the attached research notes', () => {
+  const NOTES: readonly DeliverableNoteRef[] = [
+    { noteId: 'note:aaaa1111', title: 'Factset export notes' },
+    { noteId: 'note:bbbb2222', title: 'Z-score params' },
+  ];
+
+  it('a project with attached notes composes a summary that NAMES them — the count, every title, and where their verbatim text lives (the workspace export\'s note-attached events)', () => {
+    const payload = composeResearchDeliverableResult({
+      project: 'prj-notes-launch',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      notes: NOTES,
+    });
+    const summary = payload.summary as string;
+    expect(summary).toContain('2 attached research notes'); // the count
+    expect(summary).toContain('Factset export notes'); // every title, verbatim
+    expect(summary).toContain('Z-score params');
+    expect(summary).toContain('note-attached'); // where the verbatim text lives — the chain, honestly named
+    // the structured field carries the same refs (text and fields can never disagree)
+    expect(payload.notes).toEqual({ count: 2, refs: NOTES, statement: expect.any(String) } as never);
+  });
+
+  it('a project with NO notes on record composes the honest absence — never a fabricated reference; an UNWIRED source (the pre-FW-45 caller) composes the same absence', () => {
+    const absent = composeResearchDeliverableResult({
+      project: 'prj-notes-launch',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      notes: [],
+    });
+    expect(absent.summary as string).toContain('no research notes attached to this project on record');
+    const unwired = composeResearchDeliverableResult({
+      project: 'prj-notes-launch',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+    });
+    expect(unwired.summary as string).toContain('no research notes attached to this project on record'); // the optional source degrades to the same honest sentence
+    expect(unwired.notes).toEqual({ count: 0, refs: [] } as never);
   });
 });

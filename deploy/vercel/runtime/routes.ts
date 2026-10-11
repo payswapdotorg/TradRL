@@ -126,6 +126,7 @@ import {
   type TimestampMs,
 } from '../../../services/api/src/index';
 import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, demoWorldOf, isLaunchWorldRecord, withDerivedGoalHorizonLabel, withDerivedHorizonLabel, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
+import { researchNotesOf } from './notes';
 import type { DurableBackingHandle, DdlApplyResult, DdlVerifyResult } from './durable';
 import { matchProjectHydrationPath, serveProjectHydrationRoute } from './hydration';
 import { RISK_UTILIZATION_ROUTE_PATH, serveRiskUtilizationRoute } from './risk-utilization';
@@ -342,7 +343,15 @@ function projectGoalRoute(input: DemoSubstanceRouteInput, request: DemoSubstance
     // annotation names the window; the derived label is the computed fact
     // of its own bounds, so the Goal card's label reconciles with the
     // dates beside it by arithmetic — never a contradictory annotation).
-    return demoRouteSuccess(requestId, deepFreeze({ goal: withDerivedGoalHorizonLabel(demoGoalStatement(authorization.tenant)), constraintSet: demoConstraintSet(authorization.tenant) }));
+    // FW-45 (the E-6 MVP): the demo project's OWN attached notes (the
+    // capture the note route writes) serve as the ADDITIVE `notes` field —
+    // the same read-back law every other project rides.
+    const demoNotes = researchNotesOf(demoGoalSetOf(input.ports, authorization.tenant, projectId)?.notes);
+    return demoRouteSuccess(requestId, deepFreeze({
+      goal: withDerivedGoalHorizonLabel(demoGoalStatement(authorization.tenant)),
+      constraintSet: demoConstraintSet(authorization.tenant),
+      ...(demoNotes.length === 0 ? {} : { notes: demoNotes }),
+    }));
   }
   const captured = demoGoalSetOf(input.ports, authorization.tenant, projectId);
   if (captured === null) {
@@ -357,10 +366,17 @@ function projectGoalRoute(input: DemoSubstanceRouteInput, request: DemoSubstance
   // (absent for a project launched pre-W-28 or without a world — the
   // console degrades to its teaching empty state, never a fabricated one).
   const world = demoWorldOf(input.ports, authorization.tenant, projectId);
+  // FW-45 (the E-6 MVP): the project's ATTACHED RESEARCH NOTES — the
+  // capture the note route writes, served as the ADDITIVE `notes` field
+  // (the `world` precedent) so the console's boot bundle re-reads them
+  // after a reload; structurally re-validated (a malformed entry is
+  // skipped honestly, R46 — never a crash, never a half-record).
+  const notes = researchNotesOf(captured.notes);
   return demoRouteSuccess(requestId, deepFreeze({
     goal: captured.goal,
     constraintSet: captured.constraintSet,
     ...(world === null ? {} : { world }),
+    ...(notes.length === 0 ? {} : { notes }),
   }));
 }
 
@@ -635,10 +651,18 @@ export function serveDurableSubstanceRoute(input: DurableSubstanceRouteInput, re
   // console's stale 'one day' annotation on a multi-day horizon) serves the
   // same computed label as a fresh capture, never a contradictory one.
   const world = read.value.world;
+  // FW-45 (the E-6 MVP): the row's ATTACHED RESEARCH NOTES — the additive
+  // `notes` array the note route merges into the goal-set row (the same
+  // opaque payload column `world` rides), served as the ADDITIVE `notes`
+  // field so a FRESH serverless instance's console reads them back — the
+  // note is durable record, never per-instance state. Structurally
+  // re-validated (a malformed entry is skipped honestly, R46).
+  const notes = researchNotesOf(read.value.notes);
   return demoRouteSuccess(requestId, deepFreeze({
     goal: read.value.goal,
     constraintSet: read.value.constraintSet,
     ...(isLaunchWorldRecord(world) ? { world: withDerivedHorizonLabel(world) } : {}),
+    ...(notes.length === 0 ? {} : { notes }),
   }));
 }
 

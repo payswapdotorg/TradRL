@@ -1260,6 +1260,52 @@ function researchSubmitCard(state: WorkspaceState, view: ShellView): VNode | nul
 }
 
 /**
+ * FW-45: THE INGESTION BOUNDARY SENTENCE — taught VERBATIM at the point
+ * of ingestion (the anti-deception law: the note is stored and referenced;
+ * NOTHING is fetched, no live feed exists, no compute over the text).
+ */
+const NOTE_INGESTION_BOUNDARY = 'SIMULATED ingestion: the note is stored verbatim and referenced by this project\'s records — no external data is fetched, no live feed exists in this deployment; the honest boundary of the research world as this deployment serves it.';
+
+/**
+ * FW-45: THE ATTACHED-NOTES CARD — the Research section's ingestion
+ * surface. Closed: the boundary teaching VERBATIM, the scope's OWN notes
+ * (L4-projected at the view instant; each row's title + id + instant), ONE
+ * primary action. Open: the two-field form (title + the paste target), the
+ * typed validation error INLINE (never a toast), exactly TWO actions. Null
+ * on the launchpad (the D-12 law).
+ */
+function researchNotesCard(state: WorkspaceState, view: ShellView, viewAt: number): VNode | null {
+  if (isLaunchpadScope(state.scope.projectId)) return null;
+  // L4: the notes list is the SCOPE'S OWN records projected at the view
+  // instant — a note attached after it never renders, like every record.
+  const projected = projectToView(state.notes, viewAt, (note) => note.attachedAt);
+  if (view.noteAttach === null) {
+    return v('div', { class: 'card note-attach', 'data-note-attach': 'closed' }, [
+      v('div', { class: 'card-title' }, ['Attached research notes']),
+      v('p', { class: 'card-note' }, [NOTE_INGESTION_BOUNDARY]),
+      ...(projected.length === 0
+        ? [v('p', { class: 'card-note' }, ['No research notes attached to this project on record yet — attach one below; it is stored verbatim and rides this project\'s export chain.'])]
+        : projected.map((note) => v('p', { class: 'card-note', 'data-note-row': note.noteId }, [`${note.title} — ${note.noteId}, attached ${formatInstantUtc(note.attachedAt)}`]))),
+      v('div', { class: 'tm-playback' }, [
+        v('button', { class: 'tm-button', 'data-action': 'note-attach-open', type: 'button' }, ['Attach a research note']),
+      ]),
+    ]);
+  }
+  const edits = view.noteAttach.edits;
+  return v('div', { class: 'card note-attach', 'data-note-attach': 'open' }, [
+    v('div', { class: 'card-title' }, ['Attach a research note']),
+    v('p', { class: 'card-note' }, [NOTE_INGESTION_BOUNDARY]),
+    ...labeledInput({ label: 'Title', name: 'title', value: typeof edits.title === 'string' ? edits.title : '', required: true, hint: 'The note\'s own title (1..120 characters).', vocabulary: 'note' }),
+    ...labeledInput({ label: 'Note text', name: 'text', value: typeof edits.text === 'string' ? edits.text : '', required: true, hint: 'Paste the note\'s own text — it is stored verbatim and fetches nothing.', vocabulary: 'note' }),
+    ...(view.noteAttach.error === null ? [] : [v('p', { class: 'field-error', role: 'alert', 'data-note-error': view.noteAttach.error }, [view.noteAttach.error])]),
+    v('div', { class: 'tm-playback' }, [
+      v('button', { class: 'tm-button', 'data-action': 'note-attach', type: 'button' }, ['Attach note']),
+      v('button', { class: 'tm-button', 'data-action': 'note-attach-cancel', type: 'button' }, ['Cancel']),
+    ]),
+  ]);
+}
+
+/**
  * D-15 (W-29 wave 2): THE LAUNCH SLICE'S SCOPE GUARD. The launch flow
  * leaves its CONCLUDED state (the launched params card, the progress
  * card, the failure card) on the launch slice forever — and the
@@ -1637,8 +1683,12 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       // frozen POST /v1/jobs/research route — the same plumbing the
       // launch's kickoff job rides.
       const submitCard = researchSubmitCard(state, view);
+      // FW-45 (the E-6 MVP): the attached-notes card — the section's
+      // ingestion surface (null on the launchpad, the D-12 law).
+      const notesCard = researchNotesCard(state, view, viewAt);
       return v('section', { class: 'panel', 'data-section': 'research' }, [
         ...(submitCard === null ? [] : [submitCard]),
+        ...(notesCard === null ? [] : [notesCard]),
         ...cards,
         ...(projected.length === 0
           ? [submitCard === null
@@ -2075,7 +2125,7 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
     const marketFields = [
       ...labeledInput({ label: 'Markets', name: 'markets', value: form.markets, required: true, hint: 'Comma-separated instrument ids.', validation: validationOf('markets') }),
       ...labeledInput({ label: 'Venues', name: 'venues', value: form.venues, required: true, hint: 'Comma-separated venue ids.', validation: validationOf('venues') }),
-      ...labeledInput({ label: 'Data sources', name: 'dataSources', value: form.dataSources, required: true, hint: 'Comma-separated data source refs.', validation: validationOf('dataSources') }),
+      ...labeledInput({ label: 'Data sources', name: 'dataSources', value: form.dataSources, required: true, hint: 'Comma-separated data source refs. In this deployment: research = the internal simulated researcher and your attached research notes; external = accepted and stored as a declaration only — no external data is fetched in this deployment (no live feed exists).', validation: validationOf('dataSources') }),
     ];
     const worldFields = [
       // FW-33-B (Round B blocker 3): the horizon inputs are

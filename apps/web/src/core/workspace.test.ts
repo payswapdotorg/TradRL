@@ -11,7 +11,7 @@
 //   - section registry completeness (the twelve, selectable, default goal).
 
 import { describe, expect, it } from 'vitest';
-import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, JobRecord, OrgStatusSnapshot, OutcomeRecord, PostMortemRecord, ProjectGoalWorldSpec, ProjectRecord, ResearchNoteRecord, ServedKnowledge } from '../api/contracts';
 import {
   CHAIN_ALGORITHM,
   CHAIN_CANONICAL_RULE,
@@ -1771,5 +1771,85 @@ describe('workspace: FW-43-B — the export\'s FULL-RECORD scope (the pre-reload
     expect(derived.length).toBeGreaterThan(0);
     expect(doc.events[0]?.derived).toBe(true); // the prefix leads
     expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state)))).toEqual({ ok: true });
+  });
+});
+
+describe('FW-45: the research-note ingestion — the fold, the note-attached event, and the notes reaching the export chain (E-6, M3\'s decisive seam e)', () => {
+  /** One attached research note (the host route's minted record — the verbatim analyst input). */
+  function researchNote(overrides: Partial<ResearchNoteRecord> = {}): ResearchNoteRecord {
+    return {
+      noteId: 'note:aaaa1111',
+      tenant: 'tenant-a',
+      project: 'proj-a',
+      attachedAt: T0 + 40,
+      title: 'Factset export notes',
+      text: 'fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4',
+      ...overrides,
+    } as ResearchNoteRecord;
+  }
+
+  it('the goal bundle\'s ADDITIVE notes ride goal-loaded into state.notes — and a notes-less read CLEARS (the world law: the fold mirrors THIS scope\'s read-back truth, never a stale one)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 1, project: projectRecord() });
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord(), notes: [researchNote()] });
+    expect(state.notes).toHaveLength(1);
+    expect(state.notes[0]?.text).toBe('fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4'); // the verbatim text survives the fold
+    // the re-read without notes: the fold clears exactly like `world` does
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 3, goal: goalRecord(), constraintSet: constraintSetRecord() });
+    expect(state.notes).toEqual([]);
+  });
+
+  it('note-attached appends the minted record deduped by noteId (a re-attach mints no duplicate — the same dedup law the blotter rides); the scope gate refuses a foreign project\'s note', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'note-attached', at: T0 + 40, note: researchNote() });
+    expect(state.notes).toHaveLength(1);
+    state = reduceWorkspace(state, { kind: 'note-attached', at: T0 + 41, note: researchNote() }); // the same noteId — idempotent
+    expect(state.notes).toHaveLength(1);
+    state = reduceWorkspace(state, { kind: 'note-attached', at: T0 + 42, note: researchNote({ noteId: 'note:bbbb2222', title: 'Z-score params' }) });
+    expect(state.notes).toHaveLength(2);
+    // L12/the project gate: a foreign project's note never enters this workspace
+    expect(() => reduceWorkspace(state, { kind: 'note-attached', at: T0 + 43, note: researchNote({ noteId: 'note:cccc3333', project: 'proj-other' }) })).toThrow();
+  });
+
+  it('THE NOTES REACH THE CHAIN (M3\'s seam e answered): the export derives one note-attached event per note row — the verbatim text IN the event record, stamped at the note\'s OWN attachedAt, never the export clock', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 1, project: projectRecord() });
+    state = reduceWorkspace(state, {
+      kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord(),
+      notes: [researchNote(), researchNote({ noteId: 'note:bbbb2222', title: 'Z-score params', text: 'z-entry 2.1, z-exit 0.4; the pair trades only inside the fitted band', attachedAt: T0 + 45 })],
+    });
+    const doc = composeWorkspaceExport(state);
+    const noteEvents = doc.events.filter((entry) => entry.payload.kind === 'note-attached');
+    expect(noteEvents).toHaveLength(2);
+    expect(noteEvents[0]?.derived).toBe(true); // honestly labeled — a record-derived entry
+    expect((noteEvents[0] as { readonly payload: { readonly note: ResearchNoteRecord } }).payload.note.text).toBe('fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4'); // the verbatim text is IN the event record
+    expect((noteEvents[0] as { readonly payload: { readonly at: number } }).payload.at).toBe(T0 + 40); // the note's own attachedAt
+    expect((noteEvents[1] as { readonly payload: { readonly at: number } }).payload.at).toBe(T0 + 45); // each row stamps its own
+    // the derived prefix stays AHEAD of the session's own history (the two-half law)
+    const firstSessionIndex = doc.events.findIndex((entry) => entry.derived !== true);
+    const lastDerivedIndex = doc.events.reduce((last, entry, index) => (entry.derived === true ? index : last), -1);
+    expect(lastDerivedIndex).toBeGreaterThan(-1);
+    if (firstSessionIndex !== -1) expect(lastDerivedIndex).toBeLessThan(firstSessionIndex);
+    expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state)))).toEqual({ ok: true }); // the same chain laws, end to end
+  });
+
+  it('the LIVE attach path rides the session\'s own linked history too (both halves, the same law every record rides); a notes-less scope derives NO note-attached event (never a fabricated note)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'note-attached', at: T0 + 40, note: researchNote() });
+    const doc = composeWorkspaceExport(state);
+    expect(doc.events.some((entry) => entry.payload.kind === 'note-attached' && entry.derived !== true)).toBe(true); // the session's own act
+    expect(doc.events.some((entry) => entry.payload.kind === 'note-attached' && entry.derived === true)).toBe(true); // the record on file
+    // the fixture-less scope: zero note events (richState carries no notes)
+    const richDoc = composeWorkspaceExport(richState());
+    expect(richDoc.events.some((entry) => entry.payload.kind === 'note-attached')).toBe(false);
+  });
+
+  it('the manifest\'s full-record disclosure names the attached research notes (the record families list stays TRUE as the record class grows)', () => {
+    let state = openWorkspace(SCOPE, T0);
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 1, project: projectRecord() });
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord(), notes: [researchNote()] });
+    const doc = composeWorkspaceExport(state);
+    expect(doc.manifest.recordScopeNote).toContain('attached research note'); // the full-record note names the record class
+    expect(doc.manifest.derivedEventRule).toContain('attached research note'); // the published rule names it too
   });
 });

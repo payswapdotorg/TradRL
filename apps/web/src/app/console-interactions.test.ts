@@ -4146,10 +4146,130 @@ describe('executed boot: D-12 (W-29 wave 2) — the standalone research-submit a
   });
 });
 
+// ---------------------------------------------------------------------------
+// FW-45 (the E-6 research-world MVP, M3's decisive item): THE RESEARCH-NOTE
+// INGESTION — the "Attach a research note" affordance in the Research
+// section, the host-owned POST /v1/projects/:projectId/notes route, the
+// note-attached event, and the notes reaching the EXPORT CHAIN (M3's seam
+// e: "the notes never reach the chain" — answered).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-45 — the research-note ingestion (the E-6 MVP)', () => {
+  /**
+   * A notes transport wrapper: serves POST /v1/projects/:id/notes (the
+   * host-owned route — minting the content-addressed record the console's
+   * attach flow consumes) and extends the goal route's bundle with the
+   * attached notes (the read-back half the boot bundle re-reads). The
+   * mint is DETERMINISTIC over the request envelope (the route's own law).
+   */
+  function notesTransport(inner: ApiTransport): {
+    readonly transport: ApiTransport;
+    readonly attaches: { count: number; projects: string[]; bodies: unknown[] };
+  } {
+    const attaches = { count: 0, projects: [] as string[], bodies: [] as unknown[] };
+    const notesByProject = new Map<string, Record<string, unknown>[]>();
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      const attachMatch = /^\/v1\/projects\/([^/]+)\/notes$/.exec(path);
+      if (request.method === 'POST' && attachMatch !== null) {
+        attaches.count += 1;
+        const project = attachMatch[1] ?? '';
+        attaches.projects.push(project);
+        const body = request.body as Record<string, unknown>;
+        attaches.bodies.push(body);
+        const note = {
+          noteId: `note:fw45-${attaches.count}`,
+          tenant: 'tenant-a',
+          project,
+          attachedAt: T0 + 400 + attaches.count,
+          title: String(body.title ?? ''),
+          text: String(body.text ?? ''),
+        };
+        const existing = notesByProject.get(project) ?? [];
+        if (!existing.some((entry) => entry.noteId === note.noteId)) existing.push(note);
+        notesByProject.set(project, [...existing]);
+        return { status: 200, headers: {}, body: { requestId: 'req-n', data: { note } } };
+      }
+      if (request.method === 'GET' && path.startsWith('/v1/projects/') && path.endsWith('/goal')) {
+        const project = path.slice('/v1/projects/'.length, -'/goal'.length);
+        const notes = notesByProject.get(project);
+        const served = await inner(request);
+        if (notes === undefined || notes.length === 0) return served;
+        const body = (served as { readonly body?: { readonly data?: Record<string, unknown> } }).body;
+        if (body?.data === undefined) return served;
+        return { ...served, body: { ...body, data: { ...body.data, notes } } };
+      }
+      return inner(request);
+    };
+    return { transport, attaches };
+  }
+
+  it('the attach flow: open -> type (beat-safe) -> POST /v1/projects/:id/notes with the CURRENT project + the verbatim title/text -> the minted record dispatches note-attached -> the list renders AND the note reaches the export chain', async () => {
+    const api = notesTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    expect(findByData(rig.root, 'data-note-attach', 'closed')).not.toBeNull(); // the affordance card, closed
+    clickAction(rig, 'note-attach-open');
+    expect(findByData(rig.root, 'data-note-attach', 'open')).not.toBeNull();
+
+    // THE BEAT-SAFE DATA-FIELD PATTERN (the J3 law, the note form's own vocabulary)
+    typeNoteField(rig, 'title', 'Factset export notes');
+    clickNav(rig, 'research'); // re-project the whole tree — the buffered edit survives
+    const titleAfter = findByData(rig.root, 'data-note-field', 'title');
+    if (titleAfter === null) throw new Error('the note form vanished on the re-projection');
+    expect(titleAfter.getAttribute('value')).toBe('Factset export notes');
+    typeNoteField(rig, 'text', 'fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4');
+
+    // SUBMIT: the host-owned route receives the CURRENT project + the verbatim text
+    clickAction(rig, 'note-attach');
+    await settle();
+    expect(api.attaches.count).toBe(1); // exactly one POST
+    expect(api.attaches.projects).toEqual(['prj-a']); // the CURRENT project
+    expect(api.attaches.bodies[0]).toEqual({ title: 'Factset export notes', text: 'fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4' }); // the verbatim input, nothing else
+
+    // the minted record dispatched note-attached — the state fold + the section's list
+    expect(rig.handle.state().notes.map((note) => note.noteId)).toContain('note:fw45-1');
+    expect(findByData(rig.root, 'data-note-attach', 'open')).toBeNull(); // success closes the form
+    expect(findByData(rig.root, 'data-note-attach', 'closed')).not.toBeNull();
+    const cardTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(cardTexts).toContain('Factset export notes'); // the note's title renders from the minted record
+
+    // THE NOTES REACH THE CHAIN (M3's seam e): the export carries the note-attached event with the VERBATIM text
+    const doc = JSON.parse(serializeWorkspaceExport(rig.handle.state())) as { events: Array<Record<string, unknown>> };
+    const noteEvents = doc.events.filter((entry) => (entry.payload as { kind?: string } | undefined)?.kind === 'note-attached');
+    expect(noteEvents.length).toBeGreaterThanOrEqual(1);
+    const payload = noteEvents[0]?.payload as { note?: { text?: string; title?: string } };
+    expect(payload?.note?.text).toBe('fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4');
+    expect(verifyWorkspaceExport(doc)).toEqual({ ok: true }); // the chain laws hold end to end
+  });
+
+  it('the typed validation gate: an empty title or text renders the inline error and NEVER fires the route; a failed POST keeps the user\'s text (the untrusted-input law — fail-closed, never a half-applied note)', async () => {
+    const api = notesTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    clickAction(rig, 'note-attach-open');
+    typeNoteField(rig, 'title', 'A title without text');
+    clickAction(rig, 'note-attach'); // no text typed
+    await settle();
+    expect(api.attaches.count).toBe(0); // the gate fired BEFORE any API call
+    expect(findByData(rig.root, 'data-note-attach', 'open')).not.toBeNull(); // the form stays open
+    const error = findByData(rig.root, 'data-note-error', 'text: the note text is required (paste the note — this deployment stores it verbatim and fetches nothing)');
+    expect(error).not.toBeNull(); // the typed error renders inline, in the form's own card
+  });
+});
+
 /** Type into a standalone research form field (the browser's semantics, mirroring typeField: the live value rides the DOM property, the input event carries it into the buffer). */
 function typeResearchField(rig: Rig, field: string, value: string): void {
   const input = findByData(rig.root, 'data-research-field', field);
   if (input === null) throw new Error(`no research field ${field} in the current tree`);
+  input.value = value;
+  rig.doc.fire('input', { target: input });
+}
+
+/** Type into the note-attach form's field (the same browser semantics on the note form's own data-note-field vocabulary). */
+function typeNoteField(rig: Rig, field: string, value: string): void {
+  const input = findByData(rig.root, 'data-note-field', field);
+  if (input === null) throw new Error(`no note field ${field} in the current tree`);
   input.value = value;
   rig.doc.fire('input', { target: input });
 }
