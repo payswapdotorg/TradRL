@@ -554,3 +554,174 @@ describe('dom: FW-40-C — the form-control identity law (the beat-value preserv
     expect(back).not.toBe(outgoing); // never the old element — no resurrection, no leak
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-41-B (Round I register I-2 — 7/7 personas who checked) — THE SELECT
+// DISPLAY LAW. The form-control identity law (FW-40-C) fixed the text /
+// datetime / constraints classes but left a SELECT-CLASS GAP: a select
+// never carries a `value` CONTENT attribute (its paint rides the OPTIONS'
+// selected attributes), so the transplant's user-edit detection (live
+// value vs the painted value attribute) could never fire, and the
+// incoming paint's model value — absent from the select's own attrs —
+// fell through to the `''` default: EVERY beat re-projection WIPED the
+// displayed selection. The wizard's executionMode select rendered empty
+// from every seat while its STATE stayed correct (Review and the launch
+// record read "simulation" — L1: "val '' idx -1; selectOption ran clean
+// but val still '' idx -1"; M2 needed the React value-tracker workaround
+// to advance). M1's cross-check isolated the class: the Settings
+// project-switcher select — NOT identity-eligible (no field attribute,
+// no id), so freshly projected each beat — displays fine; the residual
+// is the TRANSPLANTED select class specifically. THE LAW: the select's
+// displayed selection rides the same identity law as the text controls —
+// the OUTGOING options' selected paint is the model's last paint (the
+// browser never mutates content attributes through user interaction), a
+// live value that differs from it is the user's in-flight pick and
+// SURVIVES, and the incoming paint (the select's own value attribute
+// when it carries one, else the fresh options' selected paint) re-syncs
+// the display on EVERY projection — never the pre-fix wipe to ''.
+// ---------------------------------------------------------------------------
+
+describe('dom: FW-41-B — the select display law (the identity law\'s select-class gap, I-2)', () => {
+  /**
+   * A select in the OPTION-PAINT grammar (the closed-vocabulary paint:
+   * the model value rides the options' selected attributes — no
+   * select-level value attribute). This is labeledSelect's pre-FW-41-B
+   * grammar, and remains the grammar of the switcher and speed selects,
+   * so the projector's CLASS law must carry it on its own.
+   */
+  const modeSelectTree = (painted: string) => v('section', { class: 'panel' }, [
+    v('div', { class: 'card launch-wizard' }, [
+      v('div', { class: 'field', 'data-field': 'executionMode' }, [
+        v('label', { class: 'field-label', for: 'launch-executionMode' }, ['Execution mode *']),
+        v('select', { class: 'field-input field-select', id: 'launch-executionMode', name: 'executionMode', 'data-launch-field': 'executionMode' }, [
+          v('option', { value: 'simulation', ...(painted === 'simulation' ? { selected: 'selected' } : {}) }, ['simulation']),
+          v('option', { value: 'shadow', ...(painted === 'shadow' ? { selected: 'selected' } : {}) }, ['shadow']),
+          v('option', { value: 'live', ...(painted === 'live' ? { selected: 'selected' } : {}) }, ['live']),
+        ]),
+      ]),
+    ]),
+  ]);
+
+  /** The wizard's execution select of the CURRENT projection (the tree is replaced per mount). */
+  const executionSelectOf = (container: StubElement): StubElement => {
+    const found = findByDataAttribute(container as unknown as Element, 'data-launch-field', 'executionMode');
+    if (found === null) throw new Error('the execution-mode select is missing from the projection');
+    return found as unknown as StubElement;
+  };
+
+  it('(b) a beat re-projection with the model value set DISPLAYS it: the transplanted select\'s value property re-syncs to the model\'s painted option — never the pre-fix wipe to \'\'', () => {
+    const container = new StubElement('div');
+    mountVTree(stubDocument, container as unknown as Element, modeSelectTree('simulation'));
+    const select = executionSelectOf(container);
+    // the browser derives the displayed selection from the painted option at insertion
+    // (the stub models that derivation as the value property — the real DOM does it natively)
+    select.value = 'simulation';
+
+    mountVTree(stubDocument, container as unknown as Element, modeSelectTree('simulation')); // the ~500ms beat re-projects the same paint
+
+    const after = executionSelectOf(container);
+    expect(after).toBe(select); // the identity law: the SAME live element
+    expect(after.value).toBe('simulation'); // THE DISPLAY LAW: the model's value holds — not ''
+  });
+
+  it('(c) a user pick in flight SURVIVES the beat (the eaten-fill class): the live value — the pick whose change event may never have landed — rides the same law as a text fill', () => {
+    const container = new StubElement('div');
+    mountVTree(stubDocument, container as unknown as Element, modeSelectTree('simulation'));
+    const select = executionSelectOf(container);
+    select.value = 'simulation'; // the browser's derivation of the painted selection
+    select.value = 'shadow'; // the user picks shadow (the UI / the native setter); the change event has NOT committed the model yet
+
+    mountVTree(stubDocument, container as unknown as Element, modeSelectTree('simulation')); // the beat re-projects the UNCOMMITTED paint
+
+    const after = executionSelectOf(container);
+    expect(after).toBe(select); // still the same live element — the handle never goes stale
+    expect(after.value).toBe('shadow'); // the pick survives on the live node; the next change event commits it
+  });
+
+  it('(c\') the committed pick: once the model repaints the pick, the display follows it — the beat landing AFTER the change event', () => {
+    const container = new StubElement('div');
+    mountVTree(stubDocument, container as unknown as Element, modeSelectTree('simulation'));
+    const select = executionSelectOf(container);
+    select.value = 'simulation'; // the browser's derivation of the painted selection
+    select.value = 'shadow'; // the user picks shadow
+    // the change event landed: the app layer's edit buffer committed, the model repaints the pick
+    mountVTree(stubDocument, container as unknown as Element, modeSelectTree('shadow'));
+
+    const after = executionSelectOf(container);
+    expect(after.value).toBe('shadow'); // the display shows the committed pick (never blank, never the stale paint)
+  });
+
+  it('(d) the model\'s own repaint takes the display (no user edit in flight): the value property follows the fresh paint — a select never shows a stale or blank face', () => {
+    const container = new StubElement('div');
+    mountVTree(stubDocument, container as unknown as Element, modeSelectTree('simulation'));
+    const select = executionSelectOf(container);
+    select.value = 'simulation'; // the browser's derivation of the painted selection
+
+    mountVTree(stubDocument, container as unknown as Element, modeSelectTree('shadow')); // the model changed underneath (a draft restore, a programmatic edit)
+
+    const after = executionSelectOf(container);
+    expect(after).toBe(select); // the same element
+    expect(after.value).toBe('shadow'); // the display follows the model — never stale, never wiped
+  });
+
+  it('the CLASS law, not the one instance: an id-carrying select WITHOUT a delegated field attribute (the switcher\'s grammar — options paint, no select-level value) re-syncs its display the same way', () => {
+    const switcherTree = (painted: string) => v('section', {}, [
+      v('select', { class: 'project-select', id: 'project-switcher', 'data-action': 'project-switch' }, [
+        v('option', { value: 'prj-a', ...(painted === 'prj-a' ? { selected: 'selected' } : {}) }, ['prj-a — Desk A']),
+        v('option', { value: 'prj-b', ...(painted === 'prj-b' ? { selected: 'selected' } : {}) }, ['prj-b — Desk B']),
+      ]),
+    ]);
+    const container = new StubElement('div');
+    mountVTree(stubDocument, container as unknown as Element, switcherTree('prj-a'));
+    const select = findByDataAttribute(container as unknown as Element, 'id', 'project-switcher') as unknown as StubElement;
+    select.value = 'prj-a'; // the browser's derivation of the painted selection
+
+    mountVTree(stubDocument, container as unknown as Element, switcherTree('prj-a')); // the beat
+
+    const after = findByDataAttribute(container as unknown as Element, 'id', 'project-switcher') as unknown as StubElement;
+    expect(after).toBe(select); // identity-keyed reuse (the id-carrying control class)
+    expect(after.value).toBe('prj-a'); // the display law holds for ANY preserved select, not just the wizard's
+  });
+
+  it('THE WIZARD\'S OWN SURFACE end-to-end: the world step\'s execution-mode select displays its model value across a beat, through an in-flight pick, and through the model\'s repaint (the real renderConsoleModel projection)', async () => {
+    const { renderConsoleModel } = await import('./model');
+    const { openWorkspace, reduceAll } = await import('../core/workspace');
+    const scope = { tenantId: 'tenant-a', projectId: 'proj-a' };
+    const t0 = 1_700_000_000_000;
+    const draft = {
+      name: 'Momentum scout', objective: 'Beat the index with bounded drawdown.',
+      horizon: { startsAt: t0, endsAt: t0 + 86_400_000, label: 'one day' },
+      successCriteria: [], evaluation: { blindRef: 'blind-1', walkForwardRef: 'wf-1', regimeRef: 'regime-1', adversarialRequired: true },
+      constraints: [], capitalBudget: '10000.00', riskBudget: '250.00',
+      markets: ['SPY'], venues: ['venue-x'], dataSources: ['src-1'],
+      executionMode: 'simulation', preferences: [],
+    } as never;
+    const worldStep = reduceAll(openWorkspace(scope, t0), [
+      { kind: 'launch-draft-started', at: t0 + 2, draft },
+      { kind: 'launch-step-changed', at: t0 + 3, step: 'world' as never },
+      { kind: 'section-selected', at: t0 + 4, section: 'goal' },
+      { kind: 'view-live', at: t0 + 50 },
+    ]);
+
+    const container = new StubElement('div');
+    mountVTree(stubDocument, container as unknown as Element, renderConsoleModel(worldStep, t0 + 50));
+    const select = executionSelectOf(container);
+    select.value = 'simulation'; // the browser's derivation of the painted selection (state default — the SIMULATED anti-deception default)
+
+    // (b) the beat re-projects the same world step — the display must hold
+    mountVTree(stubDocument, container as unknown as Element, renderConsoleModel(worldStep, t0 + 50));
+    expect(executionSelectOf(container).value).toBe('simulation'); // RED pre-fix: the transplant wiped it to ''
+
+    // (c) the user picks shadow; the change event has not committed the model yet — the pick survives the beat
+    const picked = executionSelectOf(container);
+    picked.value = 'shadow';
+    mountVTree(stubDocument, container as unknown as Element, renderConsoleModel(worldStep, t0 + 50));
+    expect(executionSelectOf(container).value).toBe('shadow'); // RED pre-fix: the pick was wiped to ''
+
+    // (c') the pick commits (the app layer's edit buffer) — the model repaints, the display follows
+    const { defaultShellView } = await import('./shell');
+    const committedView = { ...defaultShellView(worldStep), launchEdits: { executionMode: 'shadow' } };
+    mountVTree(stubDocument, container as unknown as Element, renderConsoleModel(worldStep, t0 + 50, committedView));
+    expect(executionSelectOf(container).value).toBe('shadow'); // the display shows the committed pick
+  });
+});
