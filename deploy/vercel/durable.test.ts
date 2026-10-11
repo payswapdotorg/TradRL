@@ -2299,3 +2299,200 @@ describe('deploy/vercel — FW-39-1: the principal substrate under durable (the 
     if (rowAfter.ok) expect(rowAfter.value?.ownerPrincipalAt).toBe(T0); // never re-stamped — the first observation is the truth
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-42-A (Round J register I-4 — THE lying record, the register's top
+// defect): the launch-world composition race. Round J measured it on the
+// fresh store in BOTH shapes (2 hits / ~47 launches, 7 no-observations —
+// the race stays):
+//
+//   - THE READ RACE (L3's draft-restored D1): the deliverable read "no
+//     launch world on record" while the SAME project's export CARRIED the
+//     full launchWorld record — the deliverable's composer read before the
+//     record was visible to it (the projection on the composing instance
+//     predates the world write that landed on ANOTHER instance; the heal
+//     imported the kickoff job onto that stale projection and the very next
+//     tick composed from a world-less goal set).
+//   - THE WRITE RACE (M2's clean-launch F2): the export corroborates the
+//     record's ABSENCE (no launchWorld record at all; the job-result event's
+//     markets/venues []) — the launch-world write never landed: the kickoff
+//     hit a WARM instance whose projection predates the create, and the
+//     capture silently dropped the world (its merge key was the per-instance
+//     overlay, which held nothing for the project) while the drawer beside it
+//     showed markets credit/venues BROKER-FIX.
+//
+// THE LAW (the write-then-read law, pinned by both tests): the launch-world
+// record is WRITTEN-THEN-READ — a launch accepted with a declared world
+// must have that world on record by the time the compose consumes its slot,
+// and the compose that produces the deliverable must observe it. A
+// deliverable that says "no launch world on record" while the launch was
+// accepted with a declared world is a LYING RECORD — never acceptable.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-42-A (I-4): the launch-world write-then-read law (the lying record)', () => {
+  it('THE READ RACE (L3\'s shape): the record exists — a warm instance whose projection predates only the WORLD imports the kickoff job, and the composed deliverable must carry the world the durable row holds (never "no launch world on record")', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+
+      // INSTANCE A (the launch instance): boots, pays the boot world, then
+      // carries the CREATE at T0+1s.
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/projects', headers: BEARER }));
+      vi.setSystemTime(T0 + 1_000);
+      const created = await drive(instanceA, streamingRequest({ method: 'POST', url: '/v1/projects', headers: { ...BEARER, 'content-type': 'application/json' }, body: createProjectBody('prj-fw42a-read') }));
+      expect(created.status).toBe(201);
+
+      // INSTANCE B boots at T0+2s — AFTER the create, BEFORE the kickoff: its
+      // boot projection holds the goal set WORLD-LESS (this is the warm
+      // instance the balancer keeps routing the console's polls to). Its
+      // first tick ARMS the staleness-heal interval.
+      vi.setSystemTime(T0 + 2_000);
+      const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceB.ok).toBe(true);
+      if (!instanceB.ok) return;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/projects', headers: BEARER }));
+
+      // THE KICKOFF ON A (T0+3s): the world lands in A's overlay AND the
+      // durable row (the router drains the merge write before the 202).
+      vi.setSystemTime(T0 + 3_000);
+      const kickoff = await drive(instanceA, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:fw42a:read:kickoff' }, body: { kind: 'research', projectId: 'prj-fw42a-read', spec: consoleLaunchSpec() } }));
+      expect(kickoff.status).toBe(202);
+      const kickoffJob = (kickoff.body as { data: { jobId: string } }).data;
+
+      // THE EXPORT'S HALF (the corroborating read, fresh from the durable
+      // tables): the row CARRIES the world — the record EXISTS.
+      const direct = storesOver(providers.fetchLike);
+      const goalSet = await direct.project.goalSetOf(TENANT, 'prj-fw42a-read');
+      expect(goalSet.ok).toBe(true);
+      if (goalSet.ok && goalSet.value !== null) expect(goalSet.value.world).toEqual(extractedWorld());
+
+      // THE RACE (pre-fix, the lie): the console's poll lands on B past its
+      // heal interval — the heal's derived-truth probe compares only the
+      // MEMBERSHIP (ids the projection has SEEN), so a project it already
+      // serves whose WORLD landed on another instance is NOT a divergence
+      // trigger; the jobs half imports the kickoff job onto the STALE
+      // projection, and the very next tick composes the deliverable from the
+      // world-less goal set — "no launch world on record" while the record
+      // sits one drawer away.
+      vi.setSystemTime(T0 + 13_000);
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      for (let settle = 0; settle < 400; settle += 1) await Promise.resolve(); // flush the fire-and-forget heal chain
+
+      // THE COMPLETION on B: the tick composes the release candidate — THE
+      // LAW: the deliverable must carry the world the durable row holds.
+      vi.setSystemTime(T0 + 14_000);
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const completed = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/jobs/${kickoffJob.jobId}`, headers: BEARER }));
+      expect(completed.status).toBe(200);
+      const record = (completed.body as { data: { status: string; result: { markets: string[]; venues: string[]; summary: string } } }).data;
+      expect(record.status).toBe('complete');
+      expect(record.result.markets).toEqual(['BTC-USD', 'ETH-USD']);
+      expect(record.result.venues).toEqual(['binance', 'kraken']);
+      expect(record.result.summary).toContain('over BTC-USD and ETH-USD on binance and kraken (the world the launch actually served)');
+      expect(record.result.summary).not.toContain('no launch world on record');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('THE WRITE RACE (M2\'s shape): the launch-world write must LAND — the kickoff hits a WARM instance whose projection predates the create (202, the launch accepted with a declared world), and the durable row must carry the world before the compose consumes its slot (fail-closed, never a silent drop)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+
+      // INSTANCE B boots FIRST (T0, warm — its boot projection predates the
+      // launch entirely: the create has not happened yet). Its first tick
+      // ARMS the staleness-heal interval.
+      const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceB.ok).toBe(true);
+      if (!instanceB.ok) return;
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/projects', headers: BEARER }));
+
+      // INSTANCE A carries the CREATE at T0+2s (the goal set lands durably;
+      // the router drains the create's writes before the 201).
+      vi.setSystemTime(T0 + 2_000);
+      const instanceA = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceA.ok).toBe(true);
+      if (!instanceA.ok) return;
+      await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/projects', headers: BEARER }));
+      const created = await drive(instanceA, streamingRequest({ method: 'POST', url: '/v1/projects', headers: { ...BEARER, 'content-type': 'application/json' }, body: createProjectBody('prj-fw42a-write') }));
+      expect(created.status).toBe(201);
+
+      // THE KICKOFF ON B (T0+3s) — THE RACE (pre-fix, the silent drop): the
+      // balancer routed the kickoff to the warm instance whose projection
+      // predates the create, so the per-instance overlay holds NOTHING for
+      // the project and the capture silently dropped the world — the job
+      // minted, the launch read as accepted (202), and the durable row NEVER
+      // carried the world. THE LAW: the world must LAND on the durable row
+      // (the fresh store read is the merge base — the per-instance overlay is
+      // NOT the record), confirmed by the drain BEFORE the 202 leaves.
+      vi.setSystemTime(T0 + 3_000);
+      const kickoff = await drive(instanceB, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:fw42a:write:kickoff' }, body: { kind: 'research', projectId: 'prj-fw42a-write', spec: consoleLaunchSpec() } }));
+      expect(kickoff.status).toBe(202);
+      const kickoffJob = (kickoff.body as { data: { jobId: string } }).data;
+
+      // THE EXPORT'S HALF: the durable row CARRIES the world — pre-fix this
+      // corroborated the record's ABSENCE (the lying record's write half).
+      const direct = storesOver(providers.fetchLike);
+      const goalSet = await direct.project.goalSetOf(TENANT, 'prj-fw42a-write');
+      expect(goalSet.ok).toBe(true);
+      if (goalSet.ok && goalSet.value !== null) {
+        expect(goalSet.value.goal).toEqual(derivedGoalOf());
+        expect(goalSet.value.world).toEqual(extractedWorld());
+      }
+
+      // THE COMPLETION on the launch instance: the heal interval elapses
+      // (armed at T0), the heal fires (the probe finds the project UNSEEN by
+      // B's projection — the quiet refresh commits the durable truth: the
+      // project + its world), and the tick composes the release candidate
+      // carrying the world. The compose never completes BEFORE the world
+      // write is visible to it (the write-then-read law's read half).
+      vi.setSystemTime(T0 + 13_000);
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      for (let settle = 0; settle < 400; settle += 1) await Promise.resolve(); // flush the fire-and-forget heal chain
+      vi.setSystemTime(T0 + 14_000);
+      await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+      const completed = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/jobs/${kickoffJob.jobId}`, headers: BEARER }));
+      expect(completed.status).toBe(200);
+      const record = (completed.body as { data: { status: string; result: { markets: string[]; venues: string[]; summary: string } } }).data;
+      expect(record.status).toBe('complete');
+      expect(record.result.markets).toEqual(['BTC-USD', 'ETH-USD']);
+      expect(record.result.venues).toEqual(['binance', 'kraken']);
+      expect(record.result.summary).toContain('over BTC-USD and ETH-USD on binance and kraken (the world the launch actually served)');
+      expect(record.result.summary).not.toContain('no launch world on record');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('THE WRITE RACE, fail-closed: a world-carrying kickoff for a project with NO goal set on record anywhere (no create ever landed) is REFUSED — the launch must not stand with an unrecordable world (never the honest-absence deliverable for a declared world)', async () => {
+    const providers = fakeProviders();
+    const deployment = composeInstance(durableSource(), providers.fetchLike);
+    expect(deployment.ok).toBe(true);
+    if (!deployment.ok) return;
+    await deployment.durable!.settled();
+
+    // No create: the project has no goal-set row in the durable store and no
+    // overlay entry. The console-launch spec carries a world. Pre-fix: the
+    // capture silently skipped (existing === null) and the boundary minted
+    // the job (202) — a launch accepted with a declared world that no record
+    // could ever carry. THE LAW: fail-closed — the typed refusal.
+    const kickoff = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:fw42a:failclosed' }, body: { kind: 'research', projectId: 'prj-fw42a-never-created', spec: consoleLaunchSpec() } }));
+    expect(kickoff.status).toBe(503);
+    const failure = (kickoff.body as { error: { code: string; message: string } }).error;
+    expect(failure.code).toBe('unavailable'); // the drain-failure envelope (the W-25D law) carrying the typed launch-world failure
+    expect(failure.message).toContain('launch_world_unrecordable');
+    expect(failure.message).toContain('prj-fw42a-never-created');
+
+    // And the honest control: a world-LESS kickoff for the same unknown
+    // project still mints (the pre-fix law — the boundary's own shape; the
+    // fail-closed gate fires ONLY for a DECLARED world).
+    const bare = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/jobs/research', headers: { ...BEARER, 'idempotency-key': 'idem:fw42a:bare' }, body: { kind: 'research', projectId: 'prj-fw42a-never-created', spec: { source: 'fw42a-bare' } } }));
+    expect(bare.status).toBe(202);
+  });
+});
