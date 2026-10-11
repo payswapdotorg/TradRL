@@ -617,7 +617,7 @@ export function labeledInput(options: {
   const idPrefix = options.vocabulary === 'research' ? 'research' : options.vocabulary === 'account' ? 'account' : 'launch';
   const fieldAttr = options.vocabulary === 'research' ? 'data-research-field' : options.vocabulary === 'account' ? 'data-account-field' : 'data-launch-field';
   // FW-41-B: the sticky-row clearance rides the LAUNCH vocabulary's controls only.
-  const stickyClearance = options.vocabulary === 'research' || options.vocabulary === 'account' ? {} : { style: WIZARD_STICKY_CLEARANCE };
+  const stickyClearance: Readonly<Record<string, string>> = options.vocabulary === 'research' || options.vocabulary === 'account' ? {} : { style: WIZARD_STICKY_CLEARANCE };
   return [
     v('div', { class: `field${invalid ? ' field-invalid' : ''}`, 'data-field': options.name }, [
       v('label', { class: 'field-label', for: `${idPrefix}-${options.name}` }, [options.label, ...(options.required === true ? [' *'] : [])]),
