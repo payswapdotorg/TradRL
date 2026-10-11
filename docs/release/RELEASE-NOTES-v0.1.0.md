@@ -641,3 +641,21 @@ research world (M3's decisive build), F-12 derived statistics, E-3, S2's
 market-facing surface; plus the export page-session-scope minor (4
 personas, honestly disclosed). FW-43 builds the buildable half; Round L
 measures it.
+
+### Round L — the product wave measured (the cockpit verified at exact decimals; the YES waits on the operator)
+
+9/9 personas on the FW-43 origin (b002027, dpl_HRSjW8n). **fw43_overall
+9/9 PASS:** the Oversight cockpit verified with 27 independent
+reconciliation checks (the roll-up = the sum of the parts at live + scrubbed
+instants, the L4 law provably at work, honest-unknown propagation observed
+live); the honest P&L basis ("NOT a market P&L — refuses to print a number
+it cannot derive"); the drill-through both paths no-reload; F-12 four-way
+reconciliation; the export full-record scope dead-on-arrival for the Round K
+omission (pre-reload trails in every export, chains exact). Main-interface
+0/8/1; would_pilot 9/9. **THE COMMITTEE'S UNANIMOUS MESSAGE: the distance
+to the first YES is no longer engineering — SEVEN personas hold standing
+YES-flip commitments on the operator's E-7 pricing decision; the remaining
+builds are E-6 (the research world) and S2's market-facing surface.** One
+new register item: L-1 the Oversight read-absence fold (S1's 5-poll window:
+absent reads rendered as zeros summed as knowns — the fabricated-sum class;
+recovered on reload; not reproduced by the other 8).
