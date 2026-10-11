@@ -20,7 +20,10 @@
 //   POST /v1/auth/login     { name, passphrase }        -> { token, principal }
 //   POST /v1/auth/logout    (the principal-token header) -> 2xx
 //   GET  /v1/auth/whoami    (the principal-token header) -> { principal }
-//   POST /v1/auth/adopt     (the token + session headers) -> { adoptions }
+//   POST /v1/auth/adopt     (the token + session headers) -> { desks: [{ projectId, adopted, already }], principal }
+//     (FW-41-C: the adopt route's per-desk response contract, served by
+//     the host since PR #93 — the stale `{ adoptions }` shape above was
+//     the pre-wave draft; the parser law is outcomesOf below.)
 // Typed 401/404/503 per the boundary's own envelope discipline
 // ({ requestId, data } / { requestId, error }); unknown-vs-foreign
 // indistinguishable; under the DEMO backing every route answers the
@@ -287,6 +290,49 @@ export function isAuthUnauthenticatedError(error: unknown): boolean {
 }
 
 /**
+ * THE HOST'S OWN TYPED ANSWER (FW-41-C, I-1's client half — the error
+ * ORIGIN mark). The auth routes fail through two distinguishable
+ * origins, and the ROUND I register's headline (I-1, 9/9 personas)
+ * conflated them: a route FAILURE (the transport refused, a malformed
+ * answer, a 5xx without an envelope — the client's own honest
+ * translation to the unavailable family) rendered the deployment's
+ * TEACHING state ("Accounts are not available on this deployment —
+ * this console runs without a login") to a SIGNED-IN user on a
+ * deployment that HAS accounts — a false note that collapsed the
+ * ceremony until reload. THE LAW: the teaching note renders ONLY when
+ * the deployment truly lacks the auth surface — the HOST'S OWN typed
+ * not-available, the error envelope that round-tripped. This class
+ * marks exactly that origin (every envelope-path error the client
+ * throws carries it); the client's own translations never do.
+ */
+class HostAnswerAuthError extends ApiConsoleError {
+  constructor(error: ApiConsoleError) {
+    super(error.code, error.message, error.status, { requestId: error.requestId, retryAfterMs: error.retryAfterMs, problems: error.problems });
+    this.name = 'HostAnswerAuthError';
+  }
+}
+
+/**
+ * True ONLY when the deployment's own typed answer says the auth
+ * surface is not available (the HOST'S error envelope, family
+ * unavailable — the DEMO backing's teaching state, R46). A route
+ * FAILURE (the transport threw, the answer carried no envelope, a
+ * malformed body — the client-translated unavailable family) answers
+ * FALSE: the deployment may well have accounts; only the call failed.
+ * The plane renders the teaching wrapper on TRUE and the typed failure
+ * (retryable, the route's own error text) on FALSE — never a false
+ * "this console runs without a login" over a signed-in session.
+ */
+export function isDeploymentAuthUnavailableError(error: unknown): boolean {
+  return error instanceof HostAnswerAuthError && isAuthUnavailableError(error);
+}
+
+/** True when the HOST'S OWN typed answer arrived (the error envelope round-tripped — whatever its family; the session-falsity reads below stay family-driven). */
+export function isHostAnswerError(error: unknown): boolean {
+  return error instanceof HostAnswerAuthError;
+}
+
+/**
  * Build the auth client. Every route answers through the boundary's own
  * envelope discipline: a 2xx unwraps `data`; anything else translates
  * through the shared typed-error mirror (api/errors.ts — the same
@@ -319,7 +365,11 @@ export function createPrincipalAuthClient(config: PrincipalAuthClientConfig): Pr
       throw new ApiConsoleError('unavailable', `the auth route answered ${response.status} without a success envelope`, 503);
     }
     if (envelope !== null && typeof envelope === 'object' && 'error' in envelope && typeof envelope.error === 'object' && envelope.error !== null) {
-      throw errorFromEnvelope(envelope.error as Parameters<typeof errorFromEnvelope>[0], envelope.requestId);
+      // FW-41-C (I-1): the envelope path is the HOST'S OWN TYPED ANSWER —
+      // the only origin that may ever render the deployment's teaching
+      // state. The mark rides the family translation unchanged (code,
+      // message, status, requestId preserved verbatim).
+      throw new HostAnswerAuthError(errorFromEnvelope(envelope.error as Parameters<typeof errorFromEnvelope>[0], envelope.requestId));
     }
     throw new ApiConsoleError('unavailable', `the auth route answered ${response.status} without an error envelope`, 503);
   }

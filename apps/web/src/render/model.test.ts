@@ -1572,3 +1572,63 @@ describe('FW-41-B (I-2 + M2\'s occlusion): the wizard\'s execution-mode select �
     expect(bytes.match(/style="scroll-margin-bottom:72px"/g)?.length ?? 0).toBe(5);
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-41-C (Round I register I-3b — the hydration PENDING marker). S3, L1,
+// L3, M3: the ~10-22s post-boot window read "Not compiled yet" / "No
+// organization snapshots" with NO pending marker — the honest terminal
+// empty state taught a terminal absence over an ACTIVE seek. THE LAW:
+// while the console's read cadence is ACTIVELY seeking this desk's
+// compiled records (the project on hand + connected + zero org
+// snapshots ever) AND the view is the LIVE edge, the surfaces teach
+// "Reading the world…" (data-hydration-pending) — the honest terminal
+// empty state renders ONLY when the seek is not active at the view (a
+// scrubbed instant, a degraded connection, or a read that landed).
+// ---------------------------------------------------------------------------
+
+describe('FW-41-C (I-3b): the hydration PENDING marker — "Reading the world…" vs the honest terminal empty state', () => {
+  /** A desk mid-hydration: the project record on hand, connected, NO organization snapshot ever landed, the machine LIVE at the fresh anchor — the beat's org read is in flight. */
+  function hydratingWorkspace(): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
+      { kind: 'view-live', at: T0 + 50 }, // the live view (the anchor advances past the records)
+    ]);
+  }
+
+  it('the LIVE view over the in-flight read teaches PENDING on the Organization section — never the terminal empty state (the register: reads Not-compiled-yet with no pending marker)', () => {
+    const state = reduceAll(hydratingWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'organization' }]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-hydration-pending="true"'); // the marker the register asked for
+    expect(bytes).toContain('Reading the world…');
+    expect(bytes).not.toContain('No organization snapshots at this view instant.'); // the honest terminal copy renders ONLY once the seek is not active (RED pre-fix: it rendered mid-seek)
+  });
+
+  it('the LIVE view teaches PENDING on the Home ORGANIZATION tile too — never the terminal "Not compiled yet"', () => {
+    const state = hydratingWorkspace();
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'home' })); // the HOME panel (the analyst's default desk view)
+    expect(bytes).toContain('data-rich-stat="ORGANIZATION"');
+    expect(bytes).toContain('Reading the world…');
+    expect(bytes).not.toContain('Not compiled yet'); // RED pre-fix: the terminal text over an active seek
+  });
+
+  it('the boundary law: a SCRUBBED PAST view keeps the honest terminal empty state (the pending state is about NOW) — and a landed read renders the snapshot with no marker anywhere', () => {
+    // scrubbed: the view moves below the anchor — the past view's honest empty state is exactly as before
+    const scrubbed = reduceAll(hydratingWorkspace(), [
+      { kind: 'view-timestamp', at: T0 + 51, timestamp: T0 + 40 },
+      { kind: 'section-selected', at: T0 + 52, section: 'organization' },
+    ]);
+    const scrubbedBytes = serializeConsoleModel(scrubbed, T0 + 51);
+    expect(scrubbedBytes).not.toContain('data-hydration-pending');
+    expect(scrubbedBytes).toContain('No organization snapshots at this view instant.'); // the honest empty state at a past view — unchanged
+    // landed: the read completed — the snapshot card renders, no pending marker anywhere
+    const landed = reduceAll(hydratingWorkspace(), [
+      { kind: 'org-snapshot', at: T0 + 60, snapshot: orgSnapshot() },
+      { kind: 'section-selected', at: T0 + 61, section: 'organization' },
+    ]);
+    const landedBytes = serializeConsoleModel(landed, T0 + 61);
+    expect(landedBytes).not.toContain('data-hydration-pending');
+    expect(landedBytes).toContain('org:alpha'); // the snapshot card renders (the honest post-read state)
+    expect(landedBytes).not.toContain('No organization snapshots at this view instant.');
+  });
+});

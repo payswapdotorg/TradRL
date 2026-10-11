@@ -159,6 +159,25 @@ function withDerivedHorizonLabel(horizon: { readonly startsAt: number; readonly 
 }
 
 /**
+ * FW-41-C (Round I register I-6 — M1's find, L1's caveat; g1's sibling
+ * residue on the LAUNCH-DRAFT event class): the span-derived label law
+ * applied to the DRAFT ITSELF at the event-composition seam. The g1 fix
+ * stamped the composed goal + the launch world; the launch-DRAFT events
+ * (launch-draft-started / launch-draft-edited — the export chain's own
+ * entries) still carried the wizard's stale 'one day' annotation whenever
+ * the horizon end moved past 24h (the draft's label is a seed, never
+ * updated by the edit seam). This fold stamps the SPAN-DERIVED label on
+ * the draft every event-composition site dispatches — the event payload
+ * is born right (the chain never retains a label that contradicts the
+ * span it annotates), and the state's draft, the write-through store and
+ * the wizard's own review read the same derived fact. The draft's other
+ * fields ride verbatim (pure: identical drafts stamp identically).
+ */
+export function withSpanDerivedLaunchLabel(draft: LaunchDraft): LaunchDraft {
+  return { ...draft, horizon: withDerivedHorizonLabel(draft.horizon) };
+}
+
+/**
  * Validate a launch draft — the typed gate before any API call.
  * Every violation throws InvalidLaunchDraftError with the dotted
  * path (the render layer surfaces them inline, never as a wrong

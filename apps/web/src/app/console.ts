@@ -24,7 +24,7 @@ import { createFetchTransport } from '../api/transport';
 import { createConsoleClient, type ConsoleClient } from '../api/client';
 import type { ApiConsoleError } from '../api/errors';
 import type { LaunchDraft, LaunchIds, StandaloneResearchInput } from '../core/launch';
-import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, toLaunchWorldSpec, toStandaloneResearchSpec, validateLaunchDraft, validateStandaloneResearch, isResearchFieldName } from '../core/launch';
+import { LAUNCH_STEPS, toCreateProjectInput, toLaunchJobSpec, toLaunchWorldSpec, toStandaloneResearchSpec, validateLaunchDraft, validateStandaloneResearch, isResearchFieldName, withSpanDerivedLaunchLabel } from '../core/launch';
 import { InvalidLaunchDraftError, InvalidResearchSubmissionError } from '../core/errors';
 import { absorbedEdit, blankLaunchDraft, editLaunchField, isLaunchFieldName, launchFieldValidation, launchFormValues, launchFormValuesOfDraft, launchStepFields, type LaunchFieldName } from '../core/launch-form';
 import { clearStoredLaunchDraft, persistLaunchDraft, readStoredLaunchDraftRecord, type StoredLaunchDraft } from '../core/launch-draft-store';
@@ -299,6 +299,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   // fold would clobber the stored posture to live a dispatch before the
   // restore reads it; bootStoredScope own law, the TM own form).
   const bootStoredTimeMachine: ConsoleSessionPosture['timeMachine'] = sessionPosture.timeMachine;
+  // FW-41-C (I-3a): the boot TM restore's once-flag — set the moment the
+  // restore dispatches, so no later listing read re-lands the stale boot
+  // instant over a live view.
+  let tmPostureRestoreApplied = false;
   const writeSessionPosture = (): void => {
     if (options.scopeStorage === undefined) return;
     persistPosture(options.scopeStorage, sessionPosture);
@@ -411,17 +415,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const family = (error as ApiConsoleError)?.family ?? 'unavailable';
       dispatch({ kind: 'degraded-read', at: instants.nowMs(), route, family, message: (error as Error)?.message ?? String(error) });
       // THE J09 TRIAGE (the W-14c fix): a TRANSPORT-level failure (the
-      // unavailable family — a blocked network, a refused connection, a
-      // 503) while the workspace knows NOTHING (render/model.ts's own
-      // Home freshness gate) is the API being UNREACHABLE, not a
-      // degraded read: dispatch the offline state so the rose
-      // UNREACHABLE connection block + Home's ErrorState ("The console
-      // could not reach the API.", role=alert) with its Try again pill
-      // render — the catalog's J9 surface, previously unreachable in a
-      // real browser (a failed read always mapped to 'degraded';
-      // 'offline' was state-machine+test-only). A failure WITH the
-      // last known world present stays DEGRADED (amber); a typed API
-      // error (the API ANSWERED) is never offline — the family gate.
+      // unavailable family) while the workspace knows NOTHING (the Home
+      // freshness gate) is the API being UNREACHABLE, not a degraded read:
+      // dispatch the offline state so the rose UNREACHABLE connection
+      // block + Home's ErrorState with its Try again pill render (the
+      // catalog's J9 surface — 'offline' was state-machine+test-only
+      // pre-fix). A failure WITH the last known world present stays
+      // DEGRADED (amber); a typed API error (the API ANSWERED) is never
+      // offline — the family gate.
       if (family === 'unavailable' && homeFresh(state)) {
         dispatch({ kind: 'connection-changed', at: instants.nowMs(), status: 'offline' });
       }
@@ -475,33 +476,30 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         dispatch({ kind: 'connection-changed', at: instants.nowMs(), status: 'connected' });
       });
       // THE PROJECT DIRECTORY + THE STORED-SCOPE RESTORE (R6b/R6c,
-      // W-22): the tenant's readable projects list once per bundle —
-      // the scope switcher's data (R6c) — and the validation surface
-      // for the persisted scope (R6b): a stored id that exists in the
-      // directory and differs from the booted scope is ADOPTED (the
-      // launch's reset+switch; the captured-scope reads drop through
-      // dispatchIfCurrent and the beat refetches for the adopted
-      // scope). A stale id (no longer in the directory) is cleared —
-      // the env pin holds, the pre-W-22 behavior.
+      // W-22): the tenant's readable projects list once per bundle (the
+      // scope switcher's data) and the validation surface for the
+      // persisted scope. THE STORED-SCOPE RESTORE below (D-15/W-29):
+      // the boot-captured stored scope restores ONLY at generation 0,
+      // exactly once (never over a user switch — the switcher-rebind
+      // race); a stored id in the directory differing from the booted
+      // scope is ADOPTED (the launch's reset+switch); a stale id
+      // (deleted upstream) is cleared — the env pin holds.
+      // FW-34-B (§3.1) — THE TIME-MACHINE POSTURE RESTORE, same pass,
+      // AFTER the scope branch: when the stored posture left the machine
+      // at a selected instant (scrubbed / t-x / paused) and the machine
+      // STILL sits at its boot 'live' mode, the console REOPENS VIEWING
+      // THAT INSTANT (L3: the incident view was lost on every reload);
+      // a user who touched the TM first left 'live' already — their
+      // choice stands (D-15). Clamped to [floor, anchor] exactly like
+      // the scrubber's commit — never a fabricated instant.
       await read('GET /v1/projects', async () => {
         const records = await client.projects.listAll();
         dispatch({ kind: 'projects-listed', at: instants.nowMs(), records: [...records] });
-        // THE STORED-SCOPE RESTORE (R6b/R6c, W-22 — D-15/W-29): the
-        // boot-captured stored scope restores ONLY at generation 0, exactly
-        // once (never over a user switch — the switcher-rebind race). A
-        // stored id in the directory differing from the booted scope is
-        // ADOPTED (the launch's reset+switch); a stale id (deleted
-        // upstream) is cleared — the env pin holds (pre-W-22 behavior).
-        // FW-34-B (§3.1) — THE TIME-MACHINE POSTURE RESTORE, same pass,
-        // AFTER the scope branch: when the stored posture left the machine
-        // at a selected instant (scrubbed / t-x / paused) and the machine
-        // STILL sits at its boot 'live' mode, the console REOPENS VIEWING
-        // THAT INSTANT (L3: the incident view was lost on every reload);
-        // a user who touched the TM first left 'live' already — their
-        // choice stands (D-15). Clamped to [floor, anchor] exactly like
-        // the scrubber's commit — never a fabricated instant.
+        // (the listing-read restores above — the stored scope, then the
+        // TM posture — ride the block comment's own law; the guards below
+        // are the early-return-free W-22/D-15 forms)
         const stored = sessionPosture.scopeProjectId ?? bootStoredScope;
-        if (stored !== null && scopeGeneration === 0 && stored !== state.scope.projectId) { // the early-return-free W-22/D-15 guards: the TM restore below runs on EVERY path, never skipped by a scope-branch return
+        if (stored !== null && scopeGeneration === 0 && stored !== state.scope.projectId) { // generation-0, once — never over a user switch
           if (records.some((record) => record.id === stored)) {
             dispatch({ kind: 'project-adopted', at: instants.nowMs(), projectId: stored });
           } else if (options.scopeStorage !== undefined) {
@@ -510,7 +508,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             writeSessionPosture(); // the posture record clears with the legacy key (FW-34-B)
           }
         }
-        if (state.timeMachine.mode === 'live' && bootStoredTimeMachine.mode !== 'live' && bootStoredTimeMachine.viewAt !== null) {
+        if (state.timeMachine.mode === 'live' && bootStoredTimeMachine.mode !== 'live' && bootStoredTimeMachine.viewAt !== null && !tmPostureRestoreApplied) {
+          // FW-41-C (I-3a, S2's 4/4 launches): the restore applies AT MOST
+          // ONCE per boot. The pre-fix guard re-ran on EVERY listing read,
+          // re-landing the stale boot instant over the live view after a
+          // launch's hand-off or the analyst's own LIVE click (the D-15
+          // law — never a second opinion over a later drive).
+          tmPostureRestoreApplied = true;
           const anchor = state.timeMachine.anchorAt;
           // FW-34-B (§3.1) — the restore's floor clamp is the
           // RECORD-DERIVED floor ONLY (the MI-D9 step-back law: the
@@ -545,40 +549,30 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // actually opens into (the plane's own law).
         resume.restoreStoredDraft();
       });
-      // FW-37-B (Round F register F-2) + FW-38-B (Round G register G-3 —
-      // the org-status bundle field): THE OVERSIGHT READ CADENCE, one
-      // bundle per SESSION-OWN desk (core/tenant.ts's sessionOwnDesksOf
-      // — the session's own launched projects + the shared demo desk;
-      // another session's desks NEVER enter, the L12 boundary the
-      // switcher and palette ride since FW-37-B), each collected through
-      // the SAME frozen routes every section rides (the standing
-      // risk-utilization read, the execution blotter, the decision
-      // stream, and — G-3 — the desk's own org-status snapshot),
-      // dispatched as the cross-desk `oversight-read` event. The whole
-      // plane lives in app/oversight-plane.ts (the export-flow.ts
-      // extraction pattern — console.ts's 160 KiB single-file payload
-      // budget); it degrades SILENTLY per desk, like the goal read: a
-      // desk without records is the host's answer (the honest "no read
-      // on record" row — never a fabricated number, never a degradation
-      // note for a route the host never promised that desk).
+      // FW-37-B (F-2) + FW-38-B (G-3 — the org-status bundle field): THE
+      // OVERSIGHT READ CADENCE, one bundle per SESSION-OWN desk
+      // (core/tenant.ts's sessionOwnDesksOf — the session's launched
+      // projects + the shared demo desk; another session's desks NEVER
+      // enter, the L12 boundary), collected through the SAME frozen
+      // routes every section rides and dispatched as the cross-desk
+      // `oversight-read` event. The plane lives in
+      // app/oversight-plane.ts (the extraction pattern — console.ts's
+      // payload budget); it degrades SILENTLY per desk, like the goal
+      // read: a desk without records is the host's answer (the honest
+      // "no read on record" row — never a fabricated number, never a
+      // degradation note for a route the host never promised that desk).
       await readOversightPlane(oversightPlaneSeams());
       const projectId = bundleScope;
       if (projectId === LAUNCHPAD_PROJECT_ID) return;
-      // THE BUNDLE'S OWN ORG-REF CAPTURE (D-7, W-27 — the org-status
-      // pairing fix): the org-status read (below, at the bundle's end)
-      // pairs the organization ref of THE BUNDLE'S OWN project record
-      // with the bundle's own project id — same scope by construction.
-      // The pre-W-27 code read `state.project` at the bundle's END; a
-      // mid-bundle scope move could leave it holding the ADOPTED
-      // project's record (with its compiled ref) while this bundle's
-      // `projectId` was still the pre-adoption scope: the read crossed
-      // scopes (GET /v1/organizations/<launched ref>/status?project=
-      // <demo id> — the Lead's observed 404, the boot-order race).
-      // CAPTURING the ref from the FRESHLY READ record of THIS scope
-      // keeps the pair same-scope; a failed project read leaves the
-      // capture null and skips the org read honestly (no record, no
-      // ref — dispatchIfCurrent drops stale snapshots; the org-snapshot
-      // dedup keeps repeats idempotent).
+      // THE BUNDLE'S OWN ORG-REF CAPTURE (D-7, W-27 — the pairing fix):
+      // the org-status read pairs the organization ref of THE BUNDLE'S
+      // OWN freshly-read project record with the bundle's own project id
+      // — same scope by construction. The pre-W-27 code read
+      // `state.project` at the bundle's END; a mid-bundle scope move
+      // could cross the pair (the Lead's observed 404, the boot-order
+      // race). A failed project read leaves the capture null and skips
+      // the org read honestly (no record, no ref — dispatchIfCurrent
+      // drops stale snapshots; the org-snapshot dedup stays idempotent).
       let bundleOrganizationRef: string | null = null;
       await read('GET /v1/projects/:id', async () => {
         const project = await client.projects.get(projectId);
@@ -588,27 +582,25 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // THE GOAL READ (D-1, the W-23 fix — the boot seam the Lead
       // verified broken live): `goal-loaded` fired ONLY inside the
       // launch submit path, so after any reload or switch
-      // state.goal/state.constraintSet stayed null — the Goal section
-      // lost its "Goal statement" card and the Risk section its
-      // "Constraint set" card (the R5 numeric-bounds render included)
-      // for every session that didn't just launch. The read rides the
-      // bundle's own cadence (boot + every scope-change refetch).
-      // Unlike its siblings it degrades SILENTLY: the route is
-      // HOST-OWNED and demo-backing-only (the demo project's seeded
-      // records, a typed 404 everywhere else — every launched project
-      // included), so on ANY failure NOTHING dispatches: no
-      // goal-loaded, no degraded-read note, no offline flip — the honest
-      // pre-fix absence (never a fabricated goal, never a degradation
-      // note for an unhosted route).
+      // state.goal/state.constraintSet stayed null — the Goal and Risk
+      // sections lost their cards (the R5 numeric-bounds render
+      // included) for every session that didn't just launch. The read
+      // rides the bundle's own cadence (boot + every scope-change
+      // refetch). Unlike its siblings it degrades SILENTLY: the route
+      // is HOST-OWNED and demo-backing-only (a typed 404 everywhere
+      // else — every launched project included), so on ANY failure
+      // NOTHING dispatches — the honest pre-fix absence (never a
+      // fabricated goal, never a degradation note for an unhosted
+      // route).
       try {
         const bundle = await client.projects.goal(projectId);
         // D-8 (W-28): the bundle's ADDITIVE `world` (the scope's persisted
-        // launch world — the backing captured it from the kickoff job's
-        // spec into the goal-set record) rides the SAME event, so the
-        // Market World section renders the project's OWN world after a
-        // reload, switch or cold start; an absent world (the
-        // demo scope, a pre-W-28 launch) clears any prior one — the
-        // teaching empty state stays CORRECT for those cases.
+        // launch world, captured from the kickoff job's spec into the
+        // goal-set record) rides the SAME event, so the Market World
+        // section renders the project's OWN world after a reload, switch
+        // or cold start; an absent world (the demo scope, a pre-W-28
+        // launch) clears any prior one — the teaching empty state stays
+        // CORRECT for those cases.
         dispatchIfCurrent(projectId, {
           kind: 'goal-loaded',
           at: instants.nowMs(),
@@ -731,32 +723,33 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     }
   }
 
+  /** FW-41-C (I-5): true while the given organization ref carries NO snapshot on record — the beat's org-status re-read condition (self-terminating once the snapshot lands). */
+  function orgSnapshotMissingFor(organizationRef: string): boolean {
+    return !state.orgSnapshots.some((snapshot) => snapshot.organizationRef === organizationRef);
+  }
+
   async function beat(): Promise<void> {
     // THE LIVE VIEW INSTANT FOLLOWS THE OBSERVED NOW (the W-17a fix —
     // the v0.1.0 release blocker): W-16 measured the LIVE readout pinned
-    // at the BOOT instant while wall-clock advanced (advanceAnchor only
-    // ran on TM clicks), so every post-boot datum hit the L4 projection's
-    // typed error. The beat is the scheduler boundary core/clock.ts
-    // sanctions: each beat re-samples now and moves the anchor forward —
-    // in LIVE mode the view IS the anchor, a T-x offset rides the fresh
-    // anchor, and playback's ceiling rises with it (a tick never passes
-    // the anchor — the guard below). Monotonic by construction: a beat
-    // not past the current anchor dispatches nothing.
+    // at the BOOT instant (advanceAnchor only ran on TM clicks), so every
+    // post-boot datum hit the L4 projection's typed error. The beat is
+    // the scheduler boundary core/clock.ts sanctions: each beat
+    // re-samples now and moves the anchor forward — LIVE's view IS the
+    // anchor, a T-x offset rides the fresh anchor, playback's ceiling
+    // rises with it. Monotonic by construction: a beat not past the
+    // current anchor dispatches nothing.
     const observed = instants.nowMs();
     if (observed > state.timeMachine.anchorAt) {
       dispatch({ kind: 'anchor-advanced', at: observed });
     }
     // §4.8 controlled playback: the beat advances armed playback ONE
     // controlled step — never past the anchor, NEVER while PAUSED (R10,
-    // W-25C: the freeze is the pure machine's own law; a paused history
-    // carries no no-op ticks). FW-33-B (Round B blocker 5): a beat whose
-    // step would CROSS the anchor dispatches into the seam's own anchor
-    // clamp (playback-tick -> stopPlaybackAtAnchor): playback LANDS at
-    // "now" — a final partial step — and stops there, paused (the
-    // pre-fix guard left a "playing" playback frozen one step short with
-    // no disclosed end state). A beat arriving with the view ALREADY AT
-    // the anchor still skips the dispatch (the zero-span arm is the pure
-    // machine's typed law; no unhandled rejections).
+    // W-25C: the freeze is the pure machine's own law). FW-33-B: a beat
+    // whose step would CROSS the anchor dispatches into the seam's own
+    // anchor clamp (playback-tick -> stopPlaybackAtAnchor): playback
+    // LANDS at "now" — a final partial step — and stops there, paused.
+    // A beat with the view ALREADY AT the anchor skips the dispatch (the
+    // zero-span arm is the pure machine's typed law).
     const timeMachine = state.timeMachine;
     if (timeMachine.mode === 'playback' && timeMachine.playback !== null && !timeMachine.playback.paused) {
       const viewAt = timeMachine.playback.fromAt + timeMachine.playback.ticks * timeMachine.playback.stepMs;
@@ -765,16 +758,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       }
     }
     // THE SCOPE-CHANGE REFETCH (R6a, the W-22 fix): the workspace's
-    // scope moved since the last completed read bundle — a launch
-    // adopted a project (project-adopted resets every record + moves
-    // the scope), or a switch did — so the beat re-runs the FULL bundle
-    // for the adopted scope: project, knowledge, outcomes, post-mortems,
-    // the org-status read and job polling. Before this, the launched
-    // project's world (its compiled org snapshot included — the backing
-    // compiles it on its own clock, W-8's R4 pass) NEVER rendered
-    // without a page reload. The bundle degrades gracefully per-read
-    // (the read wrapper); the finally-marked lastFetchedScope keeps this
-    // from re-firing while the scope holds.
+    // scope moved since the last completed read bundle (a launch adopted
+    // a project — project-adopted resets every record + moves the scope
+    // — or a switch did), so the beat re-runs the FULL bundle for the
+    // adopted scope. Before this, the launched project's world (its
+    // compiled org snapshot included — the backing compiles it on its
+    // own clock, W-8's R4 pass) NEVER rendered without a page reload.
+    // The bundle degrades gracefully per-read (the read wrapper); the
+    // finally-marked lastFetchedScope keeps this from re-firing while
+    // the scope holds.
     const scopeNow = state.scope.projectId;
     if (scopeNow !== LAUNCHPAD_PROJECT_ID && scopeNow !== lastFetchedScope) {
       // The full bundle ends with its own job polling, and this beat's
@@ -782,26 +774,31 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // exactly once (the poll cadence's per-beat contract is unchanged).
       await refresh();
       return;
-    } else if (scopeNow !== LAUNCHPAD_PROJECT_ID && state.project !== null && state.project.lifecycle.organizationRef === null) {
+    } else if (scopeNow !== LAUNCHPAD_PROJECT_ID && state.project !== null
+      && (state.project.lifecycle.organizationRef === null || orgSnapshotMissingFor(state.project.lifecycle.organizationRef))) {
       // THE ORG-COMPILE POLL (R6a's second half): the backing binds the
-      // organization ref on its OWN clock (the demo compile pass runs on
-      // a later request's tick, AFTER the adoption-time project read saw
-      // organizationRef null), so the one refetch above can still miss
-      // the compiled snapshot. While the CURRENT project record carries
-      // no organization ref, each beat re-observes the project; the
-      // moment the ref flips, the org-status read runs and the
-      // Organization section renders the compiled snapshot — no reload.
-      // Self-terminating: once the ref exists this
-      // branch stops (the org-snapshot dedup keeps repeats idempotent).
-      // D-7 (W-27): the read pairs the ref with the RE-OBSERVED record
-      // of THIS scope — never the mutable state.project (a mid-beat
-      // scope move could cross the pair — the same read as the bundle's
-      // end, fixed the same way).
+      // organization ref on its OWN clock, so the one refetch above can
+      // still miss the compiled snapshot. While the CURRENT project
+      // record carries no organization ref, each beat re-observes the
+      // project; the moment the ref flips, the org-status read runs and
+      // the Organization section renders the compiled snapshot — no
+      // reload. Self-terminating (the org-snapshot dedup keeps repeats
+      // idempotent). D-7 (W-27): the read pairs the ref with the
+      // RE-OBSERVED record of THIS scope — never the mutable
+      // state.project (a mid-beat scope move could cross the pair).
+      // FW-41-C (I-5's client half — S1's D1, the 15+ min compile stall):
+      // the ref flip triggered the org-status read EXACTLY ONCE pre-fix
+      // and this branch STOPPED once the ref bound — a read landing on a
+      // snapshot-less serverless instance (the bind + the snapshot report
+      // are TWO writes; the watch store is per-instance, back-filled only
+      // by the host's 10s staleness heal) was NEVER retried in-session.
+      // The branch now also runs while the ref is BOUND but no snapshot is
+      // on record — the beat re-reads the org status until it lands.
       await read('GET /v1/projects/:id', async () => {
         const project = await client.projects.get(scopeNow);
         dispatchIfCurrent(scopeNow, { kind: 'project-loaded', at: instants.nowMs(), project });
         const organizationRef = project.lifecycle.organizationRef;
-        if (organizationRef !== null) {
+        if (organizationRef !== null && orgSnapshotMissingFor(organizationRef)) {
           await read('GET /v1/organizations/:ref/status', async () => {
             const snapshot = await client.organizations.status(organizationRef, scopeNow);
             dispatchIfCurrent(scopeNow, { kind: 'org-snapshot', at: instants.nowMs(), snapshot });
@@ -844,11 +841,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // `at` (the deployed backing stamps createdAt/updatedAt from the
       // request's at — services/api's own law), strictly after the boot
       // instant and up to a beat ahead of the last anchor re-sample. The
-      // the same injected source that stamped the submit, so the view
-      // instant is at the record's availability by construction and
-      // the adoption + render below paint the just-created project
-      // immediately (no L4 trip at the Goal section's render gate, no
-      // dependence on the beat cadence's timing).
+      // observed-now sample below is the SAME injected source that
+      // stamped the submit, so the view instant is at the record's
+      // availability by construction and the adoption + render below
+      // paint the just-created project immediately (no L4 trip at the
+      // Goal section's render gate, no dependence on the beat cadence).
       const arrived = instants.nowMs();
       if (arrived > state.timeMachine.anchorAt) {
         dispatch({ kind: 'anchor-advanced', at: arrived });
@@ -863,9 +860,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const goal = toCreateProjectInput(draft, ids, scope.tenantId, at).goal;
       // D-8 (W-28): the in-session bridge carries the draft's OWN world —
       // the just-launched project's world renders immediately (the beat's
-      // scope-change refetch then re-reads the PERSISTED world from the
-      // goal route; the two agree by construction — same draft, same
-      // derivation the kickoff job's spec carried to the backing).
+      // scope-change refetch then re-reads the PERSISTED world; the two
+      // agree by construction — same draft, same derivation the kickoff
+      // job's spec carried to the backing).
       dispatch({ kind: 'goal-loaded', at: instants.nowMs(), goal, constraintSet: toCreateProjectInput(draft, ids, scope.tenantId, at).constraintSet, world: toLaunchWorldSpec(draft) });
       const job = await client.jobs.submitResearch({ projectId: project.id, spec: toLaunchJobSpec(draft) });
       dispatch({ kind: 'launch-submitted', at: instants.nowMs(), projectId: project.id, jobId: job.jobId });
@@ -1020,7 +1017,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (!absorbedEdit(field, value)) remaining[field] = value; // an unparseable grammar stays pending (rendered + validated, never dropped)
       }
       if (JSON.stringify(launchFormValuesOfDraft(next)) !== JSON.stringify(launchFormValuesOfDraft(draft))) {
-        dispatch({ kind: 'launch-draft-edited', at: instants.nowMs(), draft: next }); // renders via onState
+        // FW-41-C (I-6): the draft event's payload is born right — the span-derived label.
+        dispatch({ kind: 'launch-draft-edited', at: instants.nowMs(), draft: withSpanDerivedLaunchLabel(next) }); // renders via onState
       }
       if (Object.keys(remaining).length !== entries.length) view = { ...view, launchEdits: remaining };
     };
@@ -1426,13 +1424,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           writeSessionPosture();
         }
       }
-      // §4.10 D6: a NEW notice surfaces as a toast within the poll cycle; the
-      // toast auto-dismisses after ~5s (the scheduler seam — never a wall-clock
-      // read in a render path; the timer only clears chrome state). §4.10's own
-      // words — toasts are for NEW notices — so the latest notice toasts ONCE
-      // (the W-14b re-fire guard: the old layer re-toasted the latest notice on
-      // EVERY state change — an endless toast loop once auto-dismissal
-      // worked). D-13 (W-29): the pick is the CURRENT SCOPE's latest
+      // §4.10 D6: a NEW notice surfaces as a toast within the poll cycle;
+      // the toast auto-dismisses after ~5s (the scheduler seam — never a
+      // wall-clock read in a render path). The latest notice toasts ONCE
+      // (the W-14b re-fire guard: the old layer re-toasted on EVERY state
+      // change). D-13 (W-29): the pick is the CURRENT SCOPE's latest
       // notice — another desk's notice never toasts in this desk's
       // session (the inbox state keeps them, the surface does not).
       const scopedNow = scopedInbox(next.inbox, next.scope).notices;
@@ -1748,14 +1744,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       }
       // FW-33-B (Round B blocker 5) — THE DISCLOSED SPEED'S COMMIT: the
       // chrome records the chosen key (the NEXT arm steps at it) and an
-      // ARMED playback retunes NOW: the machine's playback-retuned event
-      // re-arms it at its CURRENT view instant with the new step (no
-      // view jump, the paused flag preserved — the pure transition's own
-      // law). A disarmed machine never receives the event (retuning one
-      // is the machine's own typed error). FW-34-B: a
-      // committed select key is the user's EXPLICIT choice of the closed
-      // set — it clears any free speed (the select's face and the
-      // caption name exactly one effective step, never a stale hybrid).
+      // ARMED playback retunes NOW (re-armed at its CURRENT view instant
+      // with the new step — no view jump, the paused flag preserved).
+      // A disarmed machine never receives the event (retuning one is the
+      // machine's own typed error). FW-34-B: a committed select key is
+      // the user's EXPLICIT choice of the closed set — it clears any free
+      // speed (one effective step, never a stale hybrid).
       const speedSelect = speedTargetOf(event.target);
       if (speedSelect !== null) {
         const chosen = typeof speedSelect.value === 'string' ? speedSelect.value : '';
@@ -1820,27 +1814,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         return;
       }
       // THE SCRUBBER'S COMMIT (the J5 wiring): the `change` event (the
-      // drag's release or a keyboard commit) moves the view to
-      // the scrubbed position (an explicit instant: timestamp mode),
-      // clamped to the anchor (the view never points after it — the
-      // machine's typed law, guarded so the delegated listener never
-      // throws at the user).
-      //
+      // drag's release or a keyboard commit) moves the view to the
+      // scrubbed position (timestamp mode), clamped to the anchor (the
+      // machine's typed law, guarded so the listener never throws).
       // FW-32-B (Round A blocker 4): the clamp's floor is the PROJECT'S
       // OWN EVENT HISTORY (historyFloorOf — the earliest record instant
-      // on hand, the honest-derivation law), never the session start:
-      // pre-session history (the auditor's incident review) stays
-      // reachable across every load/reload. With no records on hand the
-      // fold returns the session open instant (derived: 'session') —
-      // taught by the range note. FW-34-B (§3.1): that fallback floor is
-      // TAUGHT, never ENFORCED on the commit (the MI-D9 step-back law):
-      // a commit below the session open lands where the user dragged,
-      // capped only by the anchor — a scope adoption resets every record
-      // before the refetch lands, and enforcing the fallback here would
-      // clamp a fresh desk's FIRST scrub to the degenerate [openedAt,
-      // anchor] point (the incident erased before the posture could
-      // record it). The drag pin clears here: the commit is the drag's
-      // one end point.
+      // on hand), never the session start: pre-session history stays
+      // reachable across every load/reload. With no records the fold
+      // returns the session open instant (derived: 'session') — TAUGHT
+      // by the range note, never ENFORCED on the commit (the MI-D9
+      // step-back law): a commit below the session open lands where the
+      // user dragged, capped only by the anchor — a scope adoption
+      // resets every record before the refetch lands, and enforcing the
+      // fallback here would clamp a fresh desk's FIRST scrub to the
+      // degenerate [openedAt, anchor] point. The drag pin clears here:
+      // the commit is the drag's one end point.
       const scrubber = scrubTargetOf(event.target);
       if (scrubber !== null) {
         const raw = scrubAt ?? scrubValueOf(scrubber);
@@ -1911,23 +1899,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // brand rows, the bell, palette items, empty-state actions); a
     // non-button match (an ancestor state marker, a stray container)
     // falls through to the action branches — when T051 put data-target
-    // on the .tradrl-shell root, every click (Continue, Skip, theme,
-    // refresh, launch steps, export) was intercepted as navigation and
-    // silently returned before any [data-action] branch could run (the
-    // J1 hard block).
+    // on the .tradrl-shell root, every click was intercepted as
+    // navigation and silently returned before any [data-action] branch
+    // could run (the J1 hard block).
     /**
-     * FW-34-B (Round C register §3.6 — the Mark-read incident, L4) —
-     * THE ONE INTERACTION RESOLVER: the delegated click handler's whole
-     * body, lifted so the KEYBOARD path can run the IDENTICAL branches.
-     * The beat re-projection replaces the tree ~every 500ms-1s; when it
-     * lands between a focused button's keydown and the browser's
-     * composed click, the click composes on the DETACHED node and never
-     * bubbles — the activation silently no-ops (L4: "button vanished on
-     * the beat, heading stayed '1 unread', action never fired"). The
+     * FW-34-B (§3.6 — the Mark-read incident, L4) — THE ONE INTERACTION
+     * RESOLVER: the delegated click handler's whole body, lifted so the
+     * KEYBOARD path can run the IDENTICAL branches. The beat
+     * re-projection replaces the tree ~every 500ms-1s; when it lands
+     * between a focused button's keydown and the browser's composed
+     * click, the click composes on the DETACHED node and never bubbles
+     * (L4: "button vanished on the beat, action never fired"). The
      * keyboard path dispatches on the SETTLED state — the live focused
-     * element at keydown (its identity D-10's restore keeps fresh
-     * across beats) — and cancels the browser's click synthesis, so the
-     * action fires EXACTLY once, on the element the user sees.
+     * element at keydown (its identity D-10's restore keeps fresh) —
+     * and cancels the browser's click synthesis, so the action fires
+     * EXACTLY once, on the element the user sees.
      */
     const interactionAt = (rawTarget: ClickTarget | null): void => {
       let target = rawTarget?.closest?.('[data-target]');
@@ -2398,8 +2384,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         if (kind === 'launch-start') {
           const inProgress = state.launch.draft !== null && (state.launch.phase === 'draft' || state.launch.phase === 'idle');
           if (!inProgress) {
-            dispatch({ kind: 'launch-draft-started', at: instants.nowMs(), draft: blankLaunchDraft(instants.nowMs()) }); // renders via onState
+            // FW-41-C (I-6): the fresh draft's event carries the span-derived label.
+            dispatch({ kind: 'launch-draft-started', at: instants.nowMs(), draft: withSpanDerivedLaunchLabel(blankLaunchDraft(instants.nowMs())) }); // renders via onState
             view = { ...view, confirm: null, touchedFields: [], launchEdits: {} };
+          }
+          // FW-41-C (I-8): a launch-start fired from INSIDE the palette closes it.
+          if (view.palette !== null) {
+            view = { ...view, palette: null };
+            refreshPalette();
+            render();
           }
         }
         if (kind === 'launch-reset') {
@@ -2658,6 +2651,18 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         const selected = paletteResults[current];
         if (selected !== undefined) {
           view = { ...view, palette: null };
+          // FW-41-C (I-8): the ACTION entry — the primary flow's start —
+          // fires the SAME guarded launch-start branch a click takes.
+          if (selected.action === 'launch-start') {
+            const inProgress = state.launch.draft !== null && (state.launch.phase === 'draft' || state.launch.phase === 'idle');
+            if (!inProgress) {
+              dispatch({ kind: 'launch-draft-started', at: instants.nowMs(), draft: withSpanDerivedLaunchLabel(blankLaunchDraft(instants.nowMs())) }); // renders via onState
+              view = { ...view, confirm: null, touchedFields: [], launchEdits: {} };
+            }
+            render();
+            focusMainContent();
+            return;
+          }
           // THE J8 OPEN (D-3, W-25A): a JOB entry's ref (`job:<jobId>`)
           // IS the sheet grammar the Research section's job rows
           // carry — Enter navigates to Research AND opens that job's

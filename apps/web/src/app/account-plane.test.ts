@@ -270,3 +270,86 @@ describe('the adoption ceremony + logout', () => {
     expect(accountFieldOf({ getAttribute: () => null, value: 'x' })).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-41-C (Round I register I-1, the client half — THE FALSE
+// NOT-AVAILABLE WRAPPER). The register's headline, 9/9 personas: "the
+// adopt route answered without its per-desk response" wrapped in a
+// FALSE "Accounts are not available on this deployment" note shown to
+// a SIGNED-IN user; the Settings account section collapsed to a bare
+// refusal card until reload. THE ORIGIN LAW: the teaching wrapper
+// renders ONLY for the deployment's OWN typed not-available (the
+// host's error envelope — the deployment truly lacks the auth
+// surface, R46); every ROUTE FAILURE (the transport refused, a
+// malformed answer) renders the TYPED failure inline instead — and
+// the signed-in card NEVER collapses.
+// ---------------------------------------------------------------------------
+
+describe('FW-41-C (I-1 client half): the origin law — the teaching wrapper vs the typed failure', () => {
+  // The scripted transport's exhaustion IS the route-failure origin: the
+  // auth client translates a thrown transport to the unavailable family
+  // ('the auth transport failed: …', 503) — a CLIENT translation, never the
+  // host's envelope. Pre-fix both origins rendered the SAME teaching
+  // wrapper; the law below splits them.
+
+  it('a ROUTE FAILURE on the boot validation renders the TYPED failure on the anonymous form — NEVER the teaching wrapper — and the stored session SURVIVES (a network blip never destroys a session)', async () => {
+    // empty script: the whoami call exhausts the transport — the route fails as a ROUTE FAILURE (the transport refused)
+    const h = harness([], STORED);
+    await h.plane.readBoot();
+    expect(h.panel()?.surface).toBe('anonymous'); // the typed failure renders on the form — never the 'unavailable' teaching wrapper (RED pre-fix: surface 'unavailable')
+    expect(h.panel()?.error).toContain('the auth transport failed'); // the client's honest translation, retryable
+    expect(h.panel()?.error).toContain('scripted transport exhausted');
+    expect(h.storage.getItem(PRINCIPAL_SESSION_STORAGE_KEY)).toBe(STORED); // the session record stays — the next boot re-validates it
+    expect(h.refreshes()).toBe(0);
+  });
+
+  it('a ROUTE FAILURE on the sign-in submit renders the typed failure INLINE on the form — the teaching wrapper renders ONLY for the host\'s own typed not-available (pinned beside it, unchanged)', async () => {
+    const refused = harness([]); // empty script: the login call exhausts the transport
+    refused.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'name' : null), value: 'desk.owner' });
+    refused.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'passphrase' : null), value: 'correct horse battery staple' });
+    refused.plane.interact('account-submit', { getAttribute: () => 'account-submit' });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    expect(refused.panel()?.surface).toBe('anonymous'); // the form carries the typed failure (RED pre-fix: the whole surface flipped to 'unavailable')
+    expect(refused.panel()?.error).toContain('the auth transport failed');
+    expect(refused.panel()?.busy).toBe(false);
+
+    // THE TRUE STATE still teaches: the host's OWN typed 503 (the deployment lacks the auth surface) renders the teaching wrapper — the pin beside the fix, unchanged from the pre-wave law
+    const unavailable = harness([envelopeError(503, 'unavailable', 'accounts are not available on this deployment (R46)')]);
+    unavailable.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'name' : null), value: 'desk.owner' });
+    unavailable.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'passphrase' : null), value: 'correct horse battery staple' });
+    unavailable.plane.interact('account-submit', { getAttribute: () => 'account-submit' });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    expect(unavailable.panel()?.surface).toBe('unavailable');
+    expect(unavailable.panel()?.unavailableMessage).toContain('not available on this deployment');
+  });
+
+  it('a ROUTE FAILURE on the adopt press while SIGNED IN renders the typed failure inline + a retry toast — the signed-in card NEVER collapses to the refusal card and the adopt buttons stay live', async () => {
+    const h = harness([ok(MINT)]);
+    h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'name' : null), value: 'desk.owner' });
+    h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'passphrase' : null), value: 'correct horse battery staple' });
+    h.plane.interact('account-submit', { getAttribute: () => 'account-submit' });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    // the script holds ONLY the mint: the adopt call exhausts the transport — the route fails as a ROUTE FAILURE
+    h.plane.interact('account-adopt', { getAttribute: (name: string) => (name === 'data-desk' ? 'prj-own-1' : 'account-adopt') });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    expect(h.panel()?.surface).toBe('authenticated'); // RED pre-fix: 'unavailable' — the bare refusal card (I-1's collapse)
+    expect(h.panel()?.adoption?.map((row) => row.projectId)).toEqual(['prj-own-1']); // the ceremony's rows keep their states — the buttons stay live for the retry
+    expect(h.panel()?.adoption?.[0]?.status).not.toBe('adopted'); // nothing fabricated by the failure
+    expect(h.panel()?.error).toContain('the auth transport failed'); // the typed failure, inline
+    expect(h.toasts.some((toast) => toast.title === 'Adoption failed — try again')).toBe(true); // the retry toast
+    expect(h.refreshes()).toBe(1); // only the login re-read — no re-read off a failed adoption
+  });
+
+  it('the HOST\'S OWN typed 503 on the adopt press while signed in ALSO renders inline — the teaching wrapper is GONE from the signed-in path entirely (a deployment the user signed in to has accounts)', async () => {
+    const h = harness([ok(MINT), envelopeError(503, 'unavailable', 'accounts are not available on this deployment (R46)')]);
+    h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'name' : null), value: 'desk.owner' });
+    h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'passphrase' : null), value: 'correct horse battery staple' });
+    h.plane.interact('account-submit', { getAttribute: () => 'account-submit' });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    h.plane.interact('account-adopt', { getAttribute: (name: string) => (name === 'data-desk' ? 'prj-own-1' : 'account-adopt') });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    expect(h.panel()?.surface).toBe('authenticated'); // RED pre-fix: 'unavailable'
+    expect(h.panel()?.error).toContain('not available on this deployment'); // the host's own words, inline + retryable
+    expect(h.toasts.some((toast) => toast.title === 'Adoption failed — try again')).toBe(true);
+  });
+});

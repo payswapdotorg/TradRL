@@ -477,14 +477,16 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       // carried the record in. The dedicated events stay (idempotent for
       // the poll path — setting the same phase twice changes nothing).
       let launch = tracked ? { ...state.launch, progress } : state.launch;
+      let timeMachine = withHistory.timeMachine;
       if (tracked && state.launch.phase === 'launching') {
         if (event.job.status === 'complete') {
           launch = { ...launch, phase: 'launched' };
+          timeMachine = launchCompletionHandOff(withHistory.timeMachine, historyFloorOf(state));
         } else if (event.job.status === 'failed') {
           launch = { ...launch, phase: 'failed', error: `the kickoff job ${event.job.jobId} failed` };
         }
       }
-      return { ...next, launch, inbox: refoldNotices({ ...next, launch }) };
+      return { ...next, launch, timeMachine, inbox: refoldNotices({ ...next, launch }) };
   } else if (selector === 'outcomes-loaded') {
       for (const record of event.records) assertProjectScope(state.scope, record);
       const next: WorkspaceState = { ...withHistory, outcomes: Object.freeze([...event.records]) };
@@ -729,7 +731,24 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       return { ...withHistory, launch: { ...withHistory.launch, progress: [...withHistory.launch.progress, { status: event.status, at: event.at }] as readonly JobProgressPoint[] } };
 
   } else if (selector === 'launch-completed') {
-      return { ...withHistory, launch: { ...withHistory.launch, phase: 'launched' } };
+      // FW-41-C (Round I register I-3a — the post-launch LIVE hand-off,
+      // the reducer half): the launch's completion hands the view to LIVE
+      // — or, when an EXPLICIT instant is armed, to the desk's own launch
+      // instant (the record-derived floor), so the analyst ALWAYS sees
+      // their desk's work the moment it completes (S2: "immediately
+      // after every launch the Time Machine sits at an explicit
+      // pre-submit instant ... hiding the desk's own research job behind
+      // 'return to LIVE to see them' — 4/4 launches"). The app layer's
+      // submit seam already dispatches view-live (the H-4 launch arm);
+      // this fold is the defense in depth for any explicit instant that
+      // outlived the wait BELOW the desk's own records (a stale restore,
+      // a scrub that predates the adoption). An armed instant INSIDE the
+      // desk's history stands — the incident-restore law (D-15).
+      return {
+        ...withHistory,
+        launch: { ...withHistory.launch, phase: 'launched' },
+        timeMachine: launchCompletionHandOff(withHistory.timeMachine, historyFloorOf(withHistory)),
+      };
 
   } else if (selector === 'launch-failed') {
       return { ...withHistory, launch: { ...withHistory.launch, phase: 'failed', error: event.message } };
@@ -1390,6 +1409,56 @@ export function historyFloorOf(state: WorkspaceState): HistoryFloor {
     return { floorAt: state.openedAt, derived: 'session' };
   }
   return { floorAt: earliest, derived: 'records' };
+}
+
+/**
+ * FW-41-C (Round I register I-3a — the post-launch hand-off's pure fold,
+ * applied by the launch-completed arm and the D-11 tracked-terminal arm):
+ * at the launch's completion, a machine holding an EXPLICIT instant BELOW
+ * the desk's own record floor hands the view to the desk's launch instant
+ * — so the desk's work is visible the moment the launch completes. A LIVE
+ * machine stays live (the default hand-off); an armed instant INSIDE the
+ * desk's history stands (the incident-restore law, D-15); no record-
+ * derived floor (the launchpad, a pre-read scope) stands too (nothing to
+ * hand to). The target is clamped at the anchor (a view never inspects
+ * the future — the machine's own law), and each mode keeps its own
+ * semantics: a TIMESTAMP lands at the target, a T-MINUS re-offsets so the
+ * view trails the anchor up from the target, and an armed PLAYBACK
+ * re-arms AT the target with its own step + paused flag preserved.
+ */
+function launchCompletionHandOff(machine: TimeMachineState, history: HistoryFloor): TimeMachineState {
+  if (machine.mode === 'live') return machine;
+  if (history.derived !== 'records') return machine;
+  const viewAt = viewAtOfTimeMachine(machine);
+  if (viewAt >= history.floorAt) return machine;
+  const target = Math.min(history.floorAt, machine.anchorAt);
+  if (machine.mode === 'timestamp') return { ...machine, timestamp: target };
+  if (machine.mode === 't-minus') return { ...machine, tMinusMs: Math.max(0, machine.anchorAt - target) };
+  if (machine.playback === null) return machine;
+  return { ...machine, playback: { ...machine.playback, fromAt: target, ticks: 0 } };
+}
+
+/**
+ * FW-41-C (Round I register I-3b — the hydration PENDING marker, the
+ * state half). True while the console's hydration cadence is ACTIVELY
+ * seeking this desk's organization: the project record is on hand, the
+ * connection is live, and NO organization snapshot has ever landed — so
+ * the console's beat cadence keeps re-observing the project and re-reading
+ * the org-status route (the console seam's org-read law, below) — the
+ * surfaces are READING THE WORLD, not staring at a finished empty. The
+ * render layer teaches "reading the world…" on TRUE and renders the
+ * honest "nothing on file" empty state only on FALSE (S3/L1/L3/M3's
+ * 10-22s post-boot window read "Not compiled yet" / "No organization
+ * snapshots" with no pending marker — the honest empty state's copy
+ * taught a terminal absence over an active seek). The fold is the LIVE
+ * view's truth: the render composes it with the view instant (a scrubbed
+ * PAST view keeps the honest empty state + the beyond-view hint — the
+ * pending state is about NOW, never a claim about the past).
+ */
+export function hydrationReadPendingOf(state: WorkspaceState): boolean {
+  return state.project !== null
+    && state.orgSnapshots.length === 0
+    && state.connection === 'connected';
 }
 
 /**
