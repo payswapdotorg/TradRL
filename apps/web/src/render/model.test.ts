@@ -1459,3 +1459,116 @@ describe('FW-36-B (E-8, part 3): the DEMO marker on the fresh-session Home activ
     expect(ownBytes).not.toContain('data-demo="true"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-41-B (Round I register I-2 — 7/7 personas who checked) — the wizard's
+// execution-mode select: THE PAINT CONTRACT + M2's sticky-bar occlusion
+// half. The register's split: the select's STATE is correct everywhere
+// (Review + the launch record read "simulation" — pinned in
+// render/launch.test.ts) while its DISPLAY never survives a beat: the
+// FW-40-C identity law transplants the live select element, but its
+// value-restore branch (written for the text-control class) read a
+// `value` CONTENT attribute a select never carries, so every beat fell
+// through to the `''` default and WIPED the displayed selection
+// (L1: "val '' idx -1; selectOption ran clean but val still '' idx -1";
+// S1: "UI select command, native value setter, and keyboard ArrowDown
+// all wiped by the next ~500ms re-render"). THE PAINT CONTRACT: the
+// model value rides the select ELEMENT ITSELF (value="..." — the
+// transplant's model-truth carrier, the exact mirror of labeledInput)
+// ALONGSIDE the options' selected paint (the fresh projection's display
+// carrier) — the display never depends on the beat's mercy again.
+// M2's occlusion half: "a sticky .tm-playback bar (z-index 5) occludes
+// the execution control at the natural scroll position (click lands on
+// the overlay until scrolled clear)" — the render-surface laws: the
+// sticky action row is CLICK-THROUGH outside its buttons (the FW-35-B
+// class, applied inline — the row's own chrome lives in the shell
+// surface's stylesheet), and the wizard's controls carry the sticky-row
+// CLEARANCE so a focus/scrollIntoView lands them above the pinned row.
+// ---------------------------------------------------------------------------
+
+describe('FW-41-B (I-2 + M2\'s occlusion): the wizard\'s execution-mode select — the paint contract + the sticky-row reach laws', () => {
+  /** A wizard draft (launch.test.ts's own fixture shape, local to this block). */
+  function wizardDraft(executionMode: string): LaunchDraft {
+    return {
+      name: 'Momentum scout',
+      objective: 'Beat the index with bounded drawdown.',
+      horizon: { startsAt: T0, endsAt: T0 + 86_400_000, label: 'one day' },
+      successCriteria: [],
+      evaluation: { blindRef: 'blind-1', walkForwardRef: 'wf-1', regimeRef: 'regime-1', adversarialRequired: true },
+      constraints: [],
+      capitalBudget: '10000.00',
+      riskBudget: '250.00',
+      markets: ['SPY'],
+      venues: ['venue-x'],
+      dataSources: ['src-1'],
+      executionMode,
+      preferences: [],
+    } as unknown as LaunchDraft;
+  }
+
+  /** A workspace with the wizard open at a step (the goal section — the primary flow's own surface). */
+  function wizardAtStep(step: string, executionMode = 'simulation'): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'launch-draft-started', at: T0 + 2, draft: wizardDraft(executionMode) },
+      { kind: 'launch-step-changed', at: T0 + 3, step: step as never },
+      { kind: 'section-selected', at: T0 + 4, section: 'goal' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  /** The serialized opening tag of the wizard's execution-mode select (the only .field-select). */
+  function executionSelectOpenTag(bytes: string): string {
+    const openTag = /<select class="field-input field-select"[^>]*>/.exec(bytes);
+    if (openTag === null) throw new Error('the execution-mode select is missing from the projection');
+    return openTag[0];
+  }
+
+  it('(a) the initial projection paints BOTH display carriers: the model value rides the select ELEMENT (value="simulation") alongside the option\'s selected paint', () => {
+    const bytes = serializeVNode(renderConsoleModel(wizardAtStep('world'), T0 + 50));
+    const openTag = executionSelectOpenTag(bytes);
+    expect(openTag).toContain(' value="simulation"'); // the element-level carrier — the transplant's model truth (RED pre-fix: absent)
+    expect(openTag).toContain('data-launch-field="executionMode"'); // the delegated change wiring stays
+    // ...and the fresh projection's own display carrier: the matching option paints selected, the others never do
+    const modeSelect = /<select class="field-input field-select"[\s\S]*?<\/select>/.exec(bytes);
+    if (modeSelect === null) throw new Error('the execution-mode select body is missing');
+    expect(modeSelect[0]).toContain('<option value="simulation" selected="selected">');
+    expect(modeSelect[0]).not.toContain('<option value="shadow" selected');
+    expect(modeSelect[0]).not.toContain('<option value="live" selected');
+  });
+
+  it('a changed model value repaints BOTH carriers (the draft\'s own execution mode paints through — never a stale option face)', () => {
+    const bytes = serializeVNode(renderConsoleModel(wizardAtStep('world', 'shadow'), T0 + 50));
+    expect(executionSelectOpenTag(bytes)).toContain(' value="shadow"'); // the element-level carrier follows the model
+    const modeSelect = /<select class="field-input field-select"[\s\S]*?<\/select>/.exec(bytes);
+    if (modeSelect === null) throw new Error('the execution-mode select body is missing');
+    expect(modeSelect[0]).toContain('<option value="shadow" selected="selected">');
+    expect(modeSelect[0]).not.toContain('<option value="simulation" selected');
+  });
+
+  it('M2\'s occlusion half — the sticky action row is CLICK-THROUGH outside its buttons: the row carries pointer-events:none inline and its Next/Review buttons pointer-events:auto (the FW-35-B class on the wizard\'s own chrome)', () => {
+    const bytes = serializeVNode(renderConsoleModel(wizardAtStep('world'), T0 + 50));
+    // the row (the wizard's own .tm-playback — distinct from the TM band's, which carries role=group)
+    expect(bytes).toContain('<div class="tm-playback" style="pointer-events:none">');
+    // the buttons keep their full hit areas AND their wiring (the click-through never disables the actions)
+    expect(bytes).toContain('id="launch-next" style="pointer-events:auto"');
+    expect(bytes).toContain('id="launch-review-button" style="pointer-events:auto"');
+    expect(bytes).toContain('data-action="launch-step-review"');
+  });
+
+  it('the armed confirm row carries the SAME click-through law (the review step\'s sticky chrome never eats a covered click)', () => {
+    const bytes = serializeVNode(renderConsoleModel(wizardAtStep('review'), T0 + 50, { ...defaultShellView(wizardAtStep('review')), confirm: 'launch' }));
+    expect(bytes).toContain('<div class="confirm-inline" style="pointer-events:none"');
+    expect(bytes).toContain('class="confirm-cancel" style="pointer-events:auto"');
+    expect(bytes).toContain('class="confirm-go" style="pointer-events:auto"');
+    expect(bytes).toContain('data-action="confirm-launch"'); // the confirm wiring stays
+  });
+
+  it('the wizard\'s controls carry the sticky-row CLEARANCE (scroll-margin-bottom) — a focus/scrollIntoView lands the field ABOVE the pinned row; scoped to the wizard\'s own five world-step controls', () => {
+    const bytes = serializeVNode(renderConsoleModel(wizardAtStep('world'), T0 + 50));
+    expect(executionSelectOpenTag(bytes)).toContain('style="scroll-margin-bottom:72px"'); // the covered class itself: the select
+    expect(bytes).toContain('id="launch-preferences"'); // a text control of the same step, for the count's anchor
+    // EXACTLY the wizard's five world-step controls (2 datetime + the select + preferences + constraints) —
+    // the TM band's own controls and the other forms' fields carry no clearance
+    expect(bytes.match(/style="scroll-margin-bottom:72px"/g)?.length ?? 0).toBe(5);
+  });
+});
