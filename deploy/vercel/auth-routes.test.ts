@@ -430,34 +430,47 @@ describe('deploy/vercel — FW-39-1: the adoption route (the calling session\'s 
     return { instance, token, principalId };
   }
 
-  it('adopt re-stamps the calling session\'s OWN desks (per-desk response, idempotent, the demo project NEVER adoptable, the body NEVER a widening parameter)', async () => {
+  it('adopt re-stamps the calling identity\'s OWN desks (per-desk response, idempotent, the demo project NEVER adoptable, the body NEVER a widening parameter, another session\'s desk NEVER named)', async () => {
     const { instance, token } = await adoptionScenario();
+    // A FOURTH desk owned by a THIRD session — neither the caller\'s session
+    // nor the caller\'s principal ever owned it (the no-expropriation probe).
+    const foreignB = await drive(instance.deployment, streamingRequest({
+      method: 'POST', url: '/v1/projects', headers: { ...sessionHeaders(SESSION_B), 'content-type': 'application/json' },
+      body: validCreateProjectRequest(TENANT, 'prj-b-1', 'the third session desk'),
+    }));
+    expect(foreignB.status).toBe(201);
     // The adoption carries a BODY naming foreign desks — it is IGNORED entirely (never a widening parameter).
     const adopted = await drive(instance.deployment, streamingRequest({
       method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders(SESSION_A, { [PRINCIPAL_TOKEN_HEADER]: token, 'content-type': 'application/json' }),
-      body: { projects: ['prj-c-1', DEMO_PROJECT_ID] },
+      body: { projects: ['prj-c-1', 'prj-b-1', DEMO_PROJECT_ID] },
     }));
     expect(adopted.status).toBe(200);
-    const data = adopted.body.data as { adoptions: readonly { projectId: string; adopted: boolean; changed: boolean }[]; principal: { id: string } };
-    expect(data.adoptions.map((entry) => entry.projectId).sort()).toEqual(['prj-a-1', 'prj-a-2']); // A's OWN desks ONLY — the body changed nothing
-    expect(data.adoptions.every((entry) => entry.adopted && entry.changed)).toBe(true); // both newly stamped
+    const data = adopted.body.data as { desks: readonly { projectId: string; adopted: boolean; already: boolean }[]; principal: { id: string } };
+    expect(data.desks.map((entry) => entry.projectId).sort()).toEqual(['prj-a-1', 'prj-a-2']); // A's OWN desks ONLY — the body changed nothing
+    expect(data.desks.every((entry) => entry.adopted && !entry.already)).toBe(true); // both newly stamped THIS call
 
-    // IDEMPOTENT: a second adoption of the same session reports changed: false — no write.
+    // IDEMPOTENT: a second adoption of the same session reports already: true — no write.
     const again = await drive(instance.deployment, streamingRequest({
       method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders(SESSION_A, { [PRINCIPAL_TOKEN_HEADER]: token }),
     }));
     expect(again.status).toBe(200);
-    const againData = again.body.data as { adoptions: readonly { projectId: string; adopted: boolean; changed: boolean }[] };
-    expect(againData.adoptions.every((entry) => entry.adopted && !entry.changed)).toBe(true);
+    const againData = again.body.data as { desks: readonly { projectId: string; adopted: boolean; already: boolean }[] };
+    expect(againData.desks.every((entry) => entry.adopted && entry.already)).toBe(true);
 
-    // A DIFFERENT session's adoption answers THAT session's own desks only (prj-c-1 — its own
-    // launch): it can adopt its own desk into the calling principal, but NEVER another
-    // session's desks (A's two desks are absent from its response — no expropriation).
+    // A DIFFERENT session's adoption names THAT session's own desk (prj-c-1 — its own
+    // launch, newly adopted) PLUS the calling principal's already-adopted desks
+    // (prj-a-1/prj-a-2 — the persistence law, already: true) — but NEVER a desk owned
+    // by a THIRD session (prj-b-1: not the caller's session, not the caller's
+    // principal — no expropriation) and NEVER the demo project.
     const otherAdopt = await drive(instance.deployment, streamingRequest({
       method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders('cccccccccccccccccccccccccccccccc', { [PRINCIPAL_TOKEN_HEADER]: token }),
     }));
     expect(otherAdopt.status).toBe(200);
-    expect((otherAdopt.body.data as { adoptions: readonly { projectId: string }[] }).adoptions.map((entry) => entry.projectId)).toEqual(['prj-c-1']);
+    const otherData = otherAdopt.body.data as { desks: readonly { projectId: string; adopted: boolean; already: boolean }[] };
+    expect(otherData.desks.map((entry) => entry.projectId).sort()).toEqual(['prj-a-1', 'prj-a-2', 'prj-c-1']);
+    expect(otherData.desks.find((entry) => entry.projectId === 'prj-c-1')).toEqual({ projectId: 'prj-c-1', adopted: true, already: false }); // C's own launch — newly adopted
+    expect(otherData.desks.find((entry) => entry.projectId === 'prj-a-1')).toEqual({ projectId: 'prj-a-1', adopted: true, already: true }); // the account's — already adopted
+    expect(otherData.desks.some((entry) => entry.projectId === 'prj-b-1' || entry.projectId === DEMO_PROJECT_ID)).toBe(false); // no expropriation, no demo
 
     // Adopt WITHOUT the session header: the typed validation failure naming the session law.
     const noSession = await drive(instance.deployment, streamingRequest({
@@ -738,21 +751,21 @@ describe('deploy/vercel — FW-40-D: the auth-route brute-force guard (the typed
     const refused = await register(instance.deployment, 'alice', 'the-refused-register');
     expect(refused.status).toBe(429); // the guard IS live on the credential routes
     // ...and the adopt route NEVER consults it: the ceremony answers its own
-    // 200 law (per-desk adoption of the CALLING session's own desks).
+    // 200 law (per-desk adoption of the calling identity's own desks).
     const adopted = await drive(instance.deployment, streamingRequest({
       method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders(SESSION_A, { [PRINCIPAL_TOKEN_HEADER]: token }),
     }));
     expect(adopted.status).toBe(200);
-    expect((adopted.body.data as { adoptions: readonly { projectId: string; adopted: boolean; changed: boolean }[] }).adoptions).toEqual([{ projectId: 'prj-a-1', adopted: true, changed: true }]);
+    expect((adopted.body.data as { desks: readonly { projectId: string; adopted: boolean; already: boolean }[] }).desks).toEqual([{ projectId: 'prj-a-1', adopted: true, already: false }]);
     // ...not now, not under a hammer: 35 further adopts (past the source
     // budget the credential routes would have long refused) ALL answer 200
-    // idempotently (changed: false) — the adopt law stays exactly as shipped.
+    // idempotently (already: true) — the adopt law stays exactly as shipped.
     for (let index = 0; index < 35; index += 1) {
       const again = await drive(instance.deployment, streamingRequest({
         method: 'POST', url: '/v1/auth/adopt', headers: sessionHeaders(SESSION_A, { [PRINCIPAL_TOKEN_HEADER]: token }),
       }));
       expect(again.status).toBe(200);
-      expect((again.body.data as { adoptions: readonly { adopted: boolean; changed: boolean }[] }).adoptions.every((entry) => entry.adopted && !entry.changed)).toBe(true);
+      expect((again.body.data as { desks: readonly { adopted: boolean; already: boolean }[] }).desks.every((entry) => entry.adopted && entry.already)).toBe(true);
     }
   });
 

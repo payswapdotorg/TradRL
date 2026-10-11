@@ -2145,8 +2145,8 @@ describe('deploy/vercel — FW-39-1: the principal substrate under durable (the 
       method: 'POST', url: '/v1/auth/adopt', headers: { ...sessionHeaders(SESSION_A), 'x-tradrl-principal-token': token },
     }));
     expect(adopted.status).toBe(200);
-    expect(((adopted.body as { data: { adoptions: readonly { projectId: string; adopted: boolean; changed: boolean }[] } }).data).adoptions).toEqual([
-      { projectId: 'prj-session-a-1', adopted: true, changed: true },
+    expect(((adopted.body as { data: { desks: readonly { projectId: string; adopted: boolean; already: boolean }[] } }).data).desks).toEqual([
+      { projectId: 'prj-session-a-1', adopted: true, already: false },
     ]);
 
     // THE STORE TRUTH: the row carries BOTH stamps (the additive field beside the session stamp — lineage preserved).
@@ -2293,7 +2293,7 @@ describe('deploy/vercel — FW-39-1: the principal substrate under durable (the 
       method: 'POST', url: '/v1/auth/adopt', headers: { ...sessionHeaders(SESSION_A), 'x-tradrl-principal-token': token },
     }));
     expect(reAdopted.status).toBe(200);
-    expect(((reAdopted.body as { data: { adoptions: readonly { changed: boolean }[] } }).data).adoptions.every((entry) => entry.changed === false)).toBe(true);
+    expect(((reAdopted.body as { data: { desks: readonly { already: boolean }[] } }).data).desks.every((entry) => entry.already === true)).toBe(true);
     const rowAfter = await direct.project.goalSetOf(TENANT, 'prj-adopt-me');
     expect(rowAfter.ok).toBe(true);
     if (rowAfter.ok) expect(rowAfter.value?.ownerPrincipalAt).toBe(T0); // never re-stamped — the first observation is the truth
