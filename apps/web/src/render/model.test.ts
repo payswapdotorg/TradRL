@@ -1605,7 +1605,8 @@ describe('FW-41-C (I-3b): the hydration PENDING marker — "Reading the world…
   });
 
   it('the LIVE view teaches PENDING on the Home ORGANIZATION tile too — never the terminal "Not compiled yet"', () => {
-    const bytes = serializeConsoleModel(hydratingWorkspace(), T0 + 50); // the default view opens on Home
+    const state = hydratingWorkspace();
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'home' })); // the HOME panel (the analyst's default desk view)
     expect(bytes).toContain('data-rich-stat="ORGANIZATION"');
     expect(bytes).toContain('Reading the world…');
     expect(bytes).not.toContain('Not compiled yet'); // RED pre-fix: the terminal text over an active seek
