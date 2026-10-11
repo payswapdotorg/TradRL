@@ -53,6 +53,7 @@ import { getDeploymentService, type DeploymentComposition } from '../runtime/com
 import { serveAuthRoute } from '../runtime/auth-routes';
 import { demoJobsOf } from '../runtime/demo';
 import { serveJobPromoteRoute } from '../runtime/job-promote';
+import { serveNoteAttachRoute } from '../runtime/notes';
 import { toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
 import { drainedFailureResponse, serveDemoSubstanceRoute, serveDurableSubstanceRoute, serveRunbookRoute } from '../runtime/routes';
 import { consoleSessionOf, serveSessionScopedRoute } from '../runtime/session-routes';
@@ -309,6 +310,55 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
         }
       }
       writeApiResponse(response, promoteRoute);
+      return;
+    }
+  }
+
+  // 3d-2. THE HOST-OWNED RESEARCH-NOTE ATTACH (FW-45, the E-6
+  //     research-world MVP): POST /v1/projects/:projectId/notes — the
+  //     analyst's own titled text note stored VERBATIM on the project's
+  //     goal-set record (the same opaque payload column the launch world
+  //     and the ownership stamps ride) and served back on the goal route's
+  //     ADDITIVE `notes` field (the `world` precedent) so the console's
+  //     boot bundle re-reads it after a reload. Served BEFORE the boundary
+  //     wrap with developer-credential authn (the W-8/FW-31-A/FW-32-A
+  //     host-route law; the path is declared NOWHERE in the frozen T041
+  //     route table). Authn first, the untrusted-input gate second (the
+  //     typed 400 validation_failed, the boundary's own untrusted-payload
+  //     status — never a half-applied note), the fail-closed target third
+  //     (the typed 404 — the note rides a record that must exist), then
+  //     the FW-39-3 audit stamp (a VALID principal token mints the additive
+  //     actor fields; a degraded revocation read fails closed — the typed
+  //     503, the promote route's own law). `deployment.notes === null`
+  //     (port overrides — the injection seam owns its own world) leaves the
+  //     route absent: the request falls through to the boundary's typed
+  //     not-found (the pre-law).
+  if (deployment.notes !== null) {
+    const noteRoute = await serveNoteAttachRoute(
+      {
+        verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization,
+        notes: deployment.notes,
+        resolvePrincipalToken: deployment.auth.resolvePrincipalToken,
+      },
+      wrapped.request,
+      demoSubstanceSerial++,
+    );
+    if (noteRoute !== null) {
+      // THE WRITE-THROUGH DRAIN ON THE HOST-ROUTE PATH (the FW-45 ordering
+      // law, the 3c/4/5b pattern): under the DURABLE backing the attach
+      // queues its goal-set write onto the seam's pending drain at mint
+      // time — this path awaits it BEFORE the response, so the note is
+      // durable TRUTH the moment the analyst hears "200" (every instance's
+      // projection serves it; a failed write replaces the answer with the
+      // typed 503 — the mutation is unconfirmed, the caller learns).
+      if (deployment.durable !== null) {
+        const drained = await deployment.durable.drain();
+        if (!drained.ok) {
+          writeApiResponse(response, drainedFailureResponse(noteRoute, drained.error));
+          return;
+        }
+      }
+      writeApiResponse(response, noteRoute);
       return;
     }
   }

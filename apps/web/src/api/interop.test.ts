@@ -183,7 +183,16 @@ describe('trip-wire: the client method surface + route table (literal)', () => {
     // read (D-1: the goal/constraint-set fetch at boot + on every
     // scope-change refetch) needs it; every other member stays
     // SDK-identical.
-    expect(Object.keys(client.projects).sort()).toEqual(['bindOrganization', 'create', 'get', 'goal', 'list', 'listAll', 'transition']);
+    // THE FW-45 AMENDMENT (documented drift, not silent): the projects
+    // family carries a SECOND method the frozen SDK does not —
+    // `attachNote`, the HOST-OWNED research-note attach
+    // (POST /v1/projects/:projectId/notes, the E-6 MVP's consequential
+    // route — the analyst's titled text note stored VERBATIM on the
+    // project's goal-set record, idempotent per content; the route
+    // exists nowhere in the frozen route table, so the SDK has no mirror
+    // of it). The Research section's attach flow needs it; every other
+    // member stays SDK-identical.
+    expect(Object.keys(client.projects).sort()).toEqual(['attachNote', 'bindOrganization', 'create', 'get', 'goal', 'list', 'listAll', 'transition']);
     // THE W-25A AMENDMENT (documented drift, not silent): the jobs
     // family carries ONE method the frozen SDK does not — `list`, the
     // HOST-OWNED jobs-list read (GET /v1/jobs?project=<id>, the W-25A

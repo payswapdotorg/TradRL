@@ -838,7 +838,6 @@ describe('render model: D-11 — the Home hero\'s launch banner clears when the 
     const state = reduceAll(openWorkspace(SCOPE, T0), events);
     return serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
   }
-
   it('while the launch is IN FLIGHT the banner renders and the entry CTA is away', () => {
     const bytes = homeBytes([{ kind: 'launch-submitted', at: T0 + 1, projectId: 'proj-a', jobId: 'job-9' }]);
     expect(bytes).toContain('A launch is in progress — details below.');
@@ -878,26 +877,26 @@ describe('render model: D-11 — the Home hero\'s launch banner clears when the 
     expect(bytes).toContain('data-hero-launch="draft"');
     expect(bytes).not.toContain('data-action="launch-start"');
   });
-
-  /** The blank draft fixture (the D-11 describe's own copy — the wizard's opening state). */
-  function blankDraftOfD11(): LaunchDraft {
-    return {
-      name: 'Alpha Seeker',
-      objective: 'Find and keep an edge in momentum.',
-      horizon: { startsAt: T0, endsAt: T0 + 86_400_000 },
-      successCriteria: [{ id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 } }],
-      evaluation: { blindRef: 'eval:blind-1', walkForwardRef: 'eval:wf-1', regimeRef: 'eval:regime-1', adversarialRequired: true },
-      constraints: [],
-      capitalBudget: '10000.00',
-      riskBudget: '250.00',
-      markets: ['SPY'],
-      venues: ['venue-x'],
-      dataSources: ['data:ohlcv-1d'],
-      executionMode: 'simulation',
-      preferences: [],
-    };
-  }
 });
+
+/** The blank draft fixture (the wizard's opening state — the D-11 original, hoisted to file scope for the FW-45 seam-(a) hint test). */
+function blankDraftOfD11(): LaunchDraft {
+  return {
+    name: 'Alpha Seeker',
+    objective: 'Find and keep an edge in momentum.',
+    horizon: { startsAt: T0, endsAt: T0 + 86_400_000 },
+    successCriteria: [{ id: 'sc-1', metric: 'pnl.net', predicate: { kind: 'limit.min', bound: 0 } }],
+    evaluation: { blindRef: 'eval:blind-1', walkForwardRef: 'eval:wf-1', regimeRef: 'eval:regime-1', adversarialRequired: true },
+    constraints: [],
+    capitalBudget: '10000.00',
+    riskBudget: '250.00',
+    markets: ['SPY'],
+    venues: ['venue-x'],
+    dataSources: ['data:ohlcv-1d'],
+    executionMode: 'simulation',
+    preferences: [],
+  };
+}
 
 // ---------------------------------------------------------------------------
 // D-13 (W-29) — THE PROJECT-SCOPED INBOX. The inbox state keeps every notice

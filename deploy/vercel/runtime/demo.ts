@@ -139,11 +139,13 @@ import {
 import { deriveProjectEvidence, type ProjectEvidenceSeed } from './project-evidence';
 import {
   composeResearchDeliverableResult,
+  type DeliverableNoteRef,
   type DeliverableSessionRecords,
   emptyDeliverableSource,
   type DeliverableObservedState,
   type DeliverableSource,
 } from './deliverable';
+import { researchNotesOf, type NoteAttachOutcome, type ResearchNoteRecord } from './notes';
 
 // ---------------------------------------------------------------------------
 // The demo seed constants (fixed, deterministic, tenant-scoped at seed time)
@@ -858,6 +860,16 @@ export function demoDeliverableSourceOf(
       const decision = promotions === null ? null : promotions.decisionOfJob(tenant, jobId);
       return decision === null ? null : { outcomeId: decision.outcomeId };
     },
+    // FW-45 (the E-6 MVP): the attached research notes read from the SAME
+    // capture the goal route serves — the deliverable's provenance names
+    // them (count + titles); an unwired/absent read composes the honest
+    // absence, never a fabricated reference.
+    notesOf(project) {
+      const captured = ports.controlPlane.goalSets.get(`${tenant}/${project}`);
+      if (captured === undefined) return null;
+      const notes = researchNotesOf(captured.notes);
+      return notes.length === 0 ? null : Object.freeze(notes.map((note) => ({ noteId: note.noteId, title: note.title })) as readonly DeliverableNoteRef[]);
+    },
     ...(records === undefined ? {} : {
       sessionRecordsOf: (project: string) => deliverableSessionRecordsOf(
         tenant,
@@ -895,6 +907,16 @@ export function durableDeliverableSourceOf(
     mandateOf(project) {
       const goalSet = source.goalSetOf(project);
       return goalSet === null ? null : { goal: goalSet.goal, constraintSet: goalSet.constraintSet, world: goalSet.world };
+    },
+    // FW-45 (the E-6 MVP): the attached research notes read from the SAME
+    // hydrated goal-set row the durable goal route serves — one source of
+    // truth (the row's own additive `notes` array, structurally re-validated;
+    // a malformed entry is skipped honestly, R46).
+    notesOf(project) {
+      const row = source.goalSetOf(project);
+      if (row === null) return null;
+      const notes = researchNotesOf(row.notes);
+      return notes.length === 0 ? null : Object.freeze(notes.map((note) => ({ noteId: note.noteId, title: note.title })) as readonly DeliverableNoteRef[]);
     },
     // FW-38-A (G-6): the DEGRADED/ABSENT distinction rides the deliverable
     // source — a degraded seam goal read (the projection in flight or dirty)
@@ -963,8 +985,15 @@ function organizationRefOfProject(controlPlane: ControlPlanePort, tenant: string
  * runs under both backings (imported, never duplicated).
  */
 export interface DurableEvidenceSource {
-  /** The durable goal set of one project (null when absent or degraded). */
-  goalSetOf(project: string): { readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; readonly world: LaunchWorldRecord | null } | null;
+  /**
+   * The durable goal set of one project (null when absent or degraded).
+   * FW-45 (the E-6 MVP): the row's ADDITIVE `notes` array (the attached
+   * research notes, an opaque unknown — structurally re-validated by the
+   * consumers; a malformed entry is skipped honestly, R46) rides the
+   * same read, so the deliverable's notes fold and the goal route's
+   * `notes` field read ONE source of truth.
+   */
+  goalSetOf(project: string): { readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; readonly world: LaunchWorldRecord | null; readonly notes?: unknown } | null;
   /**
    * FW-38-A (Round G register G-6): the goal-set read's DEGRADED state,
    * distinct from absent — true when the seam's goal read is currently the
@@ -1356,6 +1385,15 @@ export interface DemoGoalSetRecording {
   readonly goal: GoalStatement;
   /** The create-project input's constraint set, verbatim. */
   readonly constraintSet: ConstraintSetStatement;
+  /**
+   * The project's ATTACHED RESEARCH NOTES (FW-45, the E-6 MVP): the additive
+   * array the host note route merges into this per-instance capture — the
+   * DEMO arm's half of what the DURABLE seam persists into the goal-set row
+   * (a serverless cold start resets it, exactly like the capture itself —
+   * honest under the SIMULATED badge, the promote registry's own disclosed
+   * law). Absent = no note was ever attached on this instance.
+   */
+  readonly notes?: readonly ResearchNoteRecord[];
 }
 
 /**
@@ -1401,6 +1439,32 @@ export function demoControlPlane(): ReturnType<typeof fakeControlPlane> & { read
       return result;
     },
   };
+}
+
+/**
+ * THE DEMO ARM'S NOTE ATTACHMENT (FW-45, the E-6 MVP): merge one minted note
+ * record into the per-instance goal-set capture (the DURABLE seam's
+ * attachNote stamp, this backing's own medium — per-instance, a cold start
+ * resets it, honest under the SIMULATED badge). IDEMPOTENT PER CONTENT (the
+ * client's own idempotency-key unit: project + title + text — a row already
+ * carrying the same title+text returns the STORED record: the FIRST mint
+ * stands, actor included, never a duplicate row, never re-attribution; a
+ * same-noteId hit is the subsumed special case); a project with no captured
+ * goal set answers the typed target-absent failure (fail-closed — the note
+ * rides a record that must exist, never a note on nothing).
+ */
+export function attachDemoNote(controlPlane: ReturnType<typeof demoControlPlane>, tenant: string, project: string, note: ResearchNoteRecord): NoteAttachOutcome {
+  const existing = controlPlane.goalSets.get(`${tenant}/${project}`);
+  if (existing === undefined) {
+    return { ok: false, error: { code: 'research_note_target_absent', message: `no goal set is captured for ${JSON.stringify(project)} at this instance (the note attaches to the project's own goal-set record — the record must exist first)` } };
+  }
+  const stored = researchNotesOf(existing.notes);
+  const already = stored.find((entry) => entry.noteId === note.noteId || (entry.title === note.title && entry.text === note.text));
+  if (already !== undefined) return { ok: true, note: already }; // idempotent — the FIRST mint stands
+  // The capture map is the closure's own mutable medium; the merge re-sets the
+  // whole recording (the immutable-record law — never an in-place mutation).
+  (controlPlane.goalSets as Map<string, DemoGoalSetRecording>).set(`${tenant}/${project}`, { ...existing, notes: [...stored, note] });
+  return { ok: true, note };
 }
 
 /**
@@ -1956,6 +2020,11 @@ export function demoMachineryTick(service: ApiService, context: DemoMachineryCon
                   // export carry; an unwired source composes the honest
                   // absence statement, never a fabricated figure).
                   records: context.deliverables.sessionRecordsOf === undefined ? null : context.deliverables.sessionRecordsOf(job.project),
+                  // FW-45 (the E-6 MVP): the deliverable's provenance NAMES
+                  // the attached research notes (count + titles — the record
+                  // the goal-set row carries; an unwired source composes the
+                  // honest absence, never a fabricated reference).
+                  notes: context.deliverables.notesOf === undefined ? null : context.deliverables.notesOf(job.project),
                 })
               : { kind: 'training-summary', epochs: 3, project: job.project },
           }

@@ -327,6 +327,19 @@ export interface GoalSetRecord {
    * absence, never backfilled).
    */
   readonly ownerPrincipalAt?: unknown;
+  /**
+   * The project's ATTACHED RESEARCH NOTES (FW-45, the E-6 research-world
+   * MVP): one additive array of the host route POST /v1/projects/:id/notes
+   * minted records — each the analyst's OWN titled text note stored
+   * VERBATIM (untrusted input structurally parsed at the route; fail-closed,
+   * never a half-applied note). Rides the SAME opaque payload column with
+   * no schema change — exactly the `world`/`ownerSession` precedent. Absent
+   * = the project predates the note ingestion or none was ever attached
+   * (the honest empty, never a fabricated note). The row's own write law is
+   * the goal-set row's: read-then-merge-then-write on the SAME pending
+   * drain every stamp rides (the FW-42-A write-then-read law).
+   */
+  readonly notes?: unknown;
 }
 
 /**
@@ -688,6 +701,11 @@ function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
     // beside `ownerPrincipal` — the L4 law: the seam's clock at stamp time,
     // never backdated) — carried through verbatim when present; pre-account
     // rows never carry the field (no instant was ever observed).
+    // FW-45 (the E-6 MVP): the project's ATTACHED RESEARCH NOTES ride the
+    // same opaque payload column (the additive `notes` array, the `world`
+    // precedent) — carried through verbatim when present; the serving
+    // surfaces re-validate structurally (a malformed entry is skipped
+    // honestly, never a decode failure — pre-FW-45 rows never carry it).
     return {
       ok: true,
       value: {
@@ -697,6 +715,7 @@ function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
         ...('ownerSession' in value ? { ownerSession: value.ownerSession } : {}),
         ...('ownerPrincipal' in value ? { ownerPrincipal: value.ownerPrincipal } : {}),
         ...('ownerPrincipalAt' in value ? { ownerPrincipalAt: value.ownerPrincipalAt } : {}),
+        ...('notes' in value ? { notes: value.notes } : {}),
       },
     };
   } catch {

@@ -306,6 +306,20 @@ function statisticsSentenceOf(statistics: DerivedSessionStatistics): string {
   return `The session's own records derive the statistics: ${fillsSentence}; ${refusalsSentence}; ${decisionsSentence}. Every figure is an exact-decimal fold of the session's own records — the same rows the execution blotter and the workspace export carry — SIMULATED substance, never a fabricated research statistic.`;
 }
 
+/** One attached research note as the deliverable cites it (the record's own identity + title — verbatim-traceable, never re-quoted). */
+export interface DeliverableNoteRef {
+  readonly noteId: string;
+  readonly title: string;
+}
+
+/** The composed deliverable's notes block: the count, the refs, and — when notes are on record — the provenance statement (text and fields can never disagree). */
+export interface DeliverableNotesBlock {
+  readonly count: number;
+  readonly refs: readonly DeliverableNoteRef[];
+  /** Present exactly when `count > 0` (the statement names the refs + where their verbatim text lives); the honest-absence block carries no statement. */
+  readonly statement?: string;
+}
+
 /** One composed release-candidate result payload's construction inputs. */
 export interface ResearchDeliverableInput {
   /** The launched project the research job belongs to. */
@@ -327,6 +341,17 @@ export interface ResearchDeliverableInput {
    * statement, never a fabricated figure (THE HONESTY LAW).
    */
   readonly records?: DeliverableSessionRecords | null;
+  /**
+   * FW-45 (the E-6 research-world MVP): the project's attached research
+   * notes as citable refs, null when none are on record. The composed
+   * payload NAMES them in its provenance (count + titles — where the
+   * verbatim text lives is named honestly: the goal-set row + the export
+   * chain's note-attached events); an absent read composes the honest
+   * absence, never a fabricated reference, and NOTHING computes over
+   * the notes' text (the disclosed next step, never a claimed
+   * capability).
+   */
+  readonly notes?: readonly DeliverableNoteRef[] | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -464,6 +489,18 @@ export interface DeliverableSource {
    * the project at this host (the honest absence, L12).
    */
   readonly sessionRecordsOf?: (project: string) => DeliverableSessionRecords | null;
+  /**
+   * FW-45 (the E-6 research-world MVP): the project's ATTACHED RESEARCH
+   * NOTES as citable refs (noteId + title — count + titles is exactly
+   * what the deliverable's provenance names; the notes' verbatim text
+   * lives on the goal-set row and in the workspace export's
+   * note-attached events, never re-quoted here). Optional + additive: a
+   * source that serves no notes (the pre-FW-45 callers, a lighter test
+   * source) omits it, and the composer renders its honest absence
+   * statement — never a fabricated reference. Null = none on record for
+   * the project at this host.
+   */
+  readonly notesOf?: (project: string) => readonly DeliverableNoteRef[] | null;
 }
 
 /** The honest degraded source (nothing on record anywhere) — every composition degrades to its honest statements, never a crash (R46). */
@@ -533,7 +570,19 @@ export function composeResearchDeliverableResult(input: ResearchDeliverableInput
   // between the mandate and the lineage — the persona-read surface (the
   // RESULT section renders this sentence; the structured `statistics`
   // field carries the same figures, so text and fields can never disagree).
-  const summary = `${worldSentence}. ${mandateSentence}. ${statisticsStatement}. Downstream lineage: ${lineageStatement}. This is ${disclosure}.`;
+  //
+  // FW-45 (the E-6 MVP): the NOTES statement rides the same provenance
+  // block — the count + every title + WHERE the verbatim text lives (the
+  // goal-set row + the workspace export's note-attached events: the
+  // deliverable NAMES the notes, never re-quotes them, and NOTHING
+  // computes over their text — the disclosed next step, never a claimed
+  // capability). An absent/unwired read composes the honest absence
+  // sentence, never a fabricated reference.
+  const notesRefs = input.notes === undefined || input.notes === null ? [] : [...input.notes];
+  const notesStatement = notesRefs.length === 0
+    ? 'no research notes attached to this project on record'
+    : `${notesRefs.length} attached research note${notesRefs.length === 1 ? '' : 's'} (${notesRefs.map((ref) => JSON.stringify(ref.title)).join('; ')}) — their verbatim text lives on this project's goal-set record and in the workspace export's note-attached events, which carry it in the chain; nothing computes over it here`;
+  const summary = `${worldSentence}. ${mandateSentence}. ${statisticsStatement}. Research provenance: ${notesStatement}. Downstream lineage: ${lineageStatement}. This is ${disclosure}.`;
 
   return deepFreeze({
     kind: 'release-candidate',
@@ -554,6 +603,12 @@ export function composeResearchDeliverableResult(input: ResearchDeliverableInput
     // FW-43-B (F-12): the derived-statistics block — null when no session
     // records are on file (the honest absence, never a fabricated figure).
     statistics,
+    // FW-45 (the E-6 MVP): the notes block — the count + the refs + the
+    // statement exactly when notes are on record (the honest-absence block
+    // carries count 0 + empty refs; text and fields can never disagree).
+    notes: Object.freeze(notesRefs.length === 0
+      ? { count: 0, refs: Object.freeze([]) }
+      : { count: notesRefs.length, refs: Object.freeze(notesRefs.map((ref) => Object.freeze({ noteId: ref.noteId, title: ref.title }))), statement: notesStatement }),
     lineage: Object.freeze({
       promotedDecision: promotion === null ? null : promotion.outcomeId,
       statement: lineageStatement,

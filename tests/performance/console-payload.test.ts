@@ -229,9 +229,63 @@ describe('the console boot payload budgets (the no-build console\'s boot transfe
   //   bytes of headroom, the tightest this file has ever recorded; the
   //   next wave that grows it crosses that one too. The file count stays
   //   54 of 64.
+  // Re-recorded (FW-45, the E-6 research-world MVP — the research-note
+  //   ingestion surface; every number measured on the final tree, main @
+  //   32ab402 the base, by the FW-45 continuation worker after the
+  //   recovery): 54 files, 1,210,352 bytes total (1182.0 of the 1168 KiB
+  //   budget — OVER by 14,320). The wave adds +14,617 net bytes of CLIENT
+  //   source for one whole product surface — the notes fold + the
+  //   note-attached chain event (M3's seam e: the notes reach the export
+  //   chain), the Research section's boundary-taught ingestion card + form,
+  //   the seam-(a) Data-sources hint, and the attach flow's app wiring —
+  //   the SAME CLASS as the FW-40-B/FW-43-C raises (product growth, not
+  //   bloat; the server-side halves — the host note route, the storage
+  //   seams, the deliverable's provenance block — ride deploy/vercel,
+  //   OUTSIDE this boot payload). THE TRIM CAME FIRST (the FW-44-A law):
+  //   the dead worker's two comment-tightening passes paid console.ts's
+  //   first cut +6,218 down to +4,219, and the continuation worker's
+  //   finishing pass over the wave's OWN comment blocks (contracts/
+  //   workspace/shell/client/model/export-record/console — every law
+  //   kept, zero code lines touched, the d2727da/72fc594 precedent)
+  //   recovered another 1,386 bytes (1,211,738 -> 1,210,352; console.ts
+  //   168,018 -> 167,920). Closing the remaining 14,320 by trimming alone
+  //   would require gutting the wave's own law-documentation AND a
+  //   ~10-KiB historical-comment compression campaign across files this
+  //   wave never touched — beyond an honest in-place trim, so BOTH
+  //   crossings are PROPOSED as CONSCIOUS raises per this file's own
+  //   protocol, in ONE documented decision, and are EXPLICITLY MARKED AS
+  //   A LEAD DECISION REQUEST in the PR (the FW-43-C protocol: a raise is
+  //   a conscious, documented decision — never silent; the continuation
+  //   worker's work order forbids a silent raise): the byte total
+  //   1168 -> 1200 KiB (a 32-KiB step — a 16-KiB step would leave ~1.2
+  //   KiB, dishonest headroom for a budget line; the proposed line leaves
+  //   18,448 bytes / 1.50%) and the single-file line 160 -> 168 KiB (the
+  //   crossing the FW-43-C note itself predicted: "the next wave that
+  //   grows it crosses that one too"). The additions, itemized (net
+  //   bytes, measured): src/app/console.ts +4,121 (the attach flow's
+  //   interaction wiring — the note-field buffer + the open/cancel/submit
+  //   handlers + the client call + the goal bundle's notes pass-through)
+  //   — measures 167,920 of the proposed 172,032-byte (168 KiB)
+  //   single-file line, 4,112 under; src/render/model.ts +3,759 (the
+  //   notes card — the boundary teaching VERBATIM, the L4-projected
+  //   list, the two-field form — + the seam-(a) Data-sources hint);
+  //   src/core/workspace.ts +2,517 (the notes state fold + the
+  //   note-attached event + the manifest's derivedEventRule);
+  //   src/api/contracts.ts +1,338 (the ResearchNoteRecord contract);
+  //   src/api/client.ts +1,218 (the goal bundle's ADDITIVE notes field +
+  //   the attachNote route); src/core/export-record.ts +949 (the
+  //   note-attached record derivation + the rule/scope-note texts naming
+  //   the new record class); src/render/shell.ts +527 (the noteAttach
+  //   view field); src/render/flow.ts +188 (the 'note' field
+  //   vocabulary). Net +14,617 reconciles EXACTLY with the base
+  //   (FW-44-A's recorded 1,195,735 + 14,617 = 1,210,352). No new files:
+  //   the surface rides the existing modules (the extraction pattern was
+  //   weighed — the account-plane precedent — and rejected: the plane's
+  //   seam boilerplate would ADD total bytes without moving any law to a
+  //   purer home). The file count stays 54 of 64.
   const FILE_COUNT_BUDGET = 64; // each source is one boot fetch — the fetch count stays bounded
-  const TOTAL_BYTES_BUDGET = 1168 * 1024; // 1168 KiB — the whole boot transfer (raised from 1152 KiB at FW-43-C, the FW-43 union — see the note above)
-  const LARGEST_FILE_BUDGET = 160 * 1024; // 160 KiB — one fetch + one strip pass (raised from 128 KiB at FW-34-B — see the note above)
+  const TOTAL_BYTES_BUDGET = 1200 * 1024; // 1200 KiB — the whole boot transfer (PROPOSED raise 1168 -> 1200 at FW-45, the research-note ingestion surface — an EXPLICIT LEAD DECISION REQUEST, see the note above)
+  const LARGEST_FILE_BUDGET = 168 * 1024; // 168 KiB — one fetch + one strip pass (PROPOSED raise 160 -> 168 at FW-45, the attach-flow wiring in console.ts — an EXPLICIT LEAD DECISION REQUEST, see the note above)
 
   it('the payload is the copy spec\'s set on the real tree: index.html + non-test sources, NO test sources, the loader\'s critical path present', () => {
     const { files, bytes } = consolePayload();

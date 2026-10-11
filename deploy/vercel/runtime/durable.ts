@@ -161,6 +161,7 @@ import { NEON_DDL_RECORDS } from '../../adapters/neon/schema';
 import type { ServedKnowledgeMirror } from '../../adapters/neon/mirrors';
 import { enabledAdapters, type ProviderEnv } from '../../wire/composition';
 import { isNonEmptyString, isRecord, type FetchLike, type InstantSourceMirror, type StoreFailure, type StoreResult } from '../../adapters/shared';
+import { researchNotesOf, type NoteAttachOutcome, type ResearchNoteRecord } from './notes';
 
 // ---------------------------------------------------------------------------
 // The seam's inputs + observable surfaces
@@ -189,6 +190,8 @@ export interface HydratedGoalSet {
   readonly constraintSet: unknown;
   /** The launch world specification, when the goal-set row carries one (W-28, D-8). */
   readonly world?: unknown;
+  /** The project's attached research notes (FW-45, the E-6 MVP — the ADDITIVE array the host note route merges in; absent = none on record). */
+  readonly notes?: unknown;
 }
 
 /**
@@ -501,6 +504,25 @@ export interface DurableBackingHandle {
    * unstamped (fail-closed, disclosed — the common path is exact).
    */
   stampPrincipalOwner(tenant: string, projectId: string, principalId: string): Promise<{ readonly stamped: boolean; readonly changed: boolean }>;
+  /**
+   * THE RESEARCH-NOTE ATTACHMENT (FW-45, the E-6 research-world MVP): merge
+   * one minted note record into the project's goal-set row's ADDITIVE
+   * `notes` array (the SAME opaque-column precedent as `world`/
+   * `ownerSession`/`ownerPrincipal` — no schema change) and queue the
+   * durable write onto the SAME pending drain every stamp rides (the
+   * ordering law: the caller drains before the response; a failed write
+   * is the typed 503 + the re-projection — the attach is unconfirmed,
+   * the caller learns). IDEMPOTENT PER CONTENT (the client's own
+   * idempotency-key unit: project + title + text — a row already carrying
+   * the same title+text queues NOTHING and returns the STORED record: the
+   * FIRST mint stands, actor included — never a duplicate row, never
+   * re-attribution; a same-noteId hit is the subsumed special case). A
+   * foreign tenant is refused (L12); a project with NO goal set on record
+   * anywhere answers the typed `research_note_target_absent` failure
+   * (fail-closed — the note rides a record that must exist, never a note
+   * on nothing).
+   */
+  attachNote(tenant: string, project: string, note: ResearchNoteRecord): Promise<NoteAttachOutcome>;
   /**
    * THE SESSION-LISTING READ (FW-MI-A, MI-D1): the tenant's project rows
    * LEFT JOINed with their goal-set rows (NeonProjectStore's
@@ -1789,6 +1811,57 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     return { stamped: true, changed: true };
   }
 
+  /**
+   * THE RESEARCH-NOTE ATTACHMENT (FW-45, the E-6 research-world MVP — the
+   * stampPrincipalOwner pattern over the row's ADDITIVE `notes` array):
+   * merge one minted note record into the project's goal-set row, live
+   * overlay first (the common path) else a FRESH store read (the note may
+   * land on a WARM instance whose projection predates the create — the
+   * FW-42-A write-then-read law), append DEDUPED PER CONTENT (the client's
+   * own idempotency-key unit: project + title + text — the FIRST mint
+   * stands, actor included; a same-noteId hit is the subsumed case), and
+   * queue the write
+   * onto the SAME pending drain every stamp rides. A failed read or
+   * write is the typed failure (the attach is UNCONFIRMED, the caller
+   * learns); no goal set on record anywhere is the typed
+   * `research_note_target_absent` (fail-closed — the note rides a record
+   * that must exist). The returned record is the STORED one (a replay
+   * returns the first mint verbatim — never re-attribution).
+   */
+  async function attachNote(tenant: string, project: string, note: ResearchNoteRecord): Promise<NoteAttachOutcome> {
+    if (tenant !== deps.tenant) {
+      // L12 — the attach keys on the seam's credential tenant, never a request
+      // value; a foreign tenant's project is indistinguishable from an unknown
+      // one at this seam (the target-absent failure, the boundary's own law).
+      return { ok: false, error: { code: 'research_note_target_absent', message: 'no goal set is on record for this project at this seam (the note attaches to the credential tenant\'s own records)' } };
+    }
+    let existing: GoalSetRecord | null = liveGoalSets.get(project) ?? null;
+    if (existing === null) {
+      const read = await projectStore.goalSetOf(deps.tenant, project);
+      if (!read.ok) return { ok: false, error: read.error }; // the typed read failure — the attach is unconfirmed (the drain reports it)
+      existing = read.value;
+    }
+    if (existing === null) {
+      // FAIL-CLOSED: no goal set on record anywhere — the note cannot ride a
+      // record that does not exist (never a note on nothing).
+      return { ok: false, error: { code: 'research_note_target_absent', message: `no goal set is on record for ${JSON.stringify(project)} — the note attaches to the project's own goal-set row, so the record must exist first` } };
+    }
+    const stored = researchNotesOf(existing.notes);
+    const already = stored.find((entry) => entry.noteId === note.noteId || (entry.title === note.title && entry.text === note.text));
+    if (already !== undefined) {
+      // IDEMPOTENT PER CONTENT — the durable truth already carries this
+      // exact content's record (the FIRST mint stands, actor included);
+      // sync this instance's overlay to the row and return the STORED
+      // record verbatim.
+      liveGoalSets.set(project, existing);
+      return { ok: true, note: already };
+    }
+    const merged: GoalSetRecord = { ...existing, notes: [...stored, note] };
+    liveGoalSets.set(project, merged);
+    pending.push({ label: 'goalset.notes.put', run: () => projectStore.putGoalSet(deps.tenant, project, merged) });
+    return { ok: true, note };
+  }
+
   /** THE FRESH TENANT-WIDE JOBS READ (FW-31-B): the durable tables, never the projection — the staleness heal's data source. */
   async function freshJobRecordsOfTenant(): Promise<StoreResult<readonly JobRecord[]>> {
     const rows = await jobStore.jobRecordsOfTenant(deps.tenant);
@@ -1838,6 +1911,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     stampSessionOwner,
     principals: principalStore,
     stampPrincipalOwner,
+    attachNote,
     sessionProjectRows,
     freshJobRecordsOfTenant,
     organizationBoundAtOf,

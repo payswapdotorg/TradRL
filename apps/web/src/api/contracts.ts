@@ -214,6 +214,35 @@ export interface ProjectGoalWorldSpec {
 }
 
 // ---------------------------------------------------------------------------
+// The research note (FW-45, the E-6 MVP — the host note route's minted record)
+// ---------------------------------------------------------------------------
+
+/**
+ * One ATTACHED RESEARCH NOTE (FW-45): the analyst's titled text, stored
+ * VERBATIM on the goal-set record and served back on the goal route's
+ * ADDITIVE `notes` field (the `world` precedent). Untrusted both ways (the
+ * route parses structurally; the console re-validates what it serves).
+ */
+export interface ResearchNoteRecord {
+  /** The content-addressed identity (`note:` + 8 hex — the house grammar). */
+  readonly noteId: string;
+  /** The AUTHORIZED tenant (L12 — never a request value). */
+  readonly tenant: string;
+  /** The project whose goal-set record carries the note. */
+  readonly project: string;
+  /** The route's OWN observation instant (L4). */
+  readonly attachedAt: number;
+  /** The note's title, verbatim. */
+  readonly title: string;
+  /** The note's text, verbatim (a paste target — never a fetched feed). */
+  readonly text: string;
+  /** The attaching ACTOR (FW-39-3) — absent on an anonymous attach. */
+  readonly actorPrincipal?: string;
+  /** The actor stamp's own instant. Absent exactly when `actorPrincipal` is. */
+  readonly actorAt?: number;
+}
+
+// ---------------------------------------------------------------------------
 // The knowledge mirror (the firm-memory shape the /v1 route serves)
 // ---------------------------------------------------------------------------
 

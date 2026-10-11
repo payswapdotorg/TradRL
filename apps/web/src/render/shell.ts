@@ -71,6 +71,15 @@ export interface ShellView {
    * for an error the user must read to fix).
    */
   readonly researchSubmit: { readonly edits: Readonly<Record<string, string>>; readonly error: string | null } | null;
+  /**
+   * FW-45: THE NOTE-ATTACH FORM — null = closed (the notes card renders
+   * its "Attach a research note" affordance); when open, the buffered
+   * field edits (the same J3 beat-safe pattern as researchSubmit) + the
+   * inline error state (the typed validation gate or a failed attach —
+   * in the form's own card, never a toast for an error the user must
+   * read to fix).
+   */
+  readonly noteAttach: { readonly edits: Readonly<Record<string, string>>; readonly error: string | null } | null;
   /** The inline-opened evidence capsule (§4.9): its data-capsule ref, or null. */
   readonly openCapsule: string | null;
   /**
@@ -208,7 +217,7 @@ export function parseSheetRef(rowId: string): SheetRef | null {
 /** The default shell view: light theme, the workspace's own selected section, no endpoint, not simulated, idle. */
 export function defaultShellView(state: WorkspaceState): ShellView {
   void state;
-  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, openCapsule: null, projectFilter: '', exportVerify: null, scrubBounds: null, playbackSpeed: '1x', playbackCustomSpeed: '', playbackCustomSpeedError: null };
+  return { theme: 'light', accountView: 'section', endpoint: '', simulated: false, busy: false, drawerOpen: false, sheet: null, palette: null, onboarding: null, toast: null, confirm: null, touchedFields: [], launchEdits: {}, researchSubmit: null, noteAttach: null, openCapsule: null, projectFilter: '', exportVerify: null, scrubBounds: null, playbackSpeed: '1x', playbackCustomSpeed: '', playbackCustomSpeedError: null };
 }
 
 /** Resolve the active target: the account view when set, else the workspace's selected section. */

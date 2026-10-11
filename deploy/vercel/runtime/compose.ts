@@ -81,9 +81,10 @@ import { buildAuthSurface, type AuthSurface } from './auth-routes';
 import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import type { NeonStoreDeps } from '../../adapters/neon/stores';
-import { DEMO_PROJECT_ID, demoDeliverableSourceOf, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableDeliverableSourceOf, durableProjectEvidenceOf, isDemoSeedJob, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, withDerivedHorizonLabel, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
+import { DEMO_PROJECT_ID, attachDemoNote, demoDeliverableSourceOf, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableDeliverableSourceOf, durableProjectEvidenceOf, isDemoSeedJob, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, withDerivedHorizonLabel, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
 import { emptyDeliverableSource } from './deliverable';
 import { createPromotionRegistry, outcomeLearningWithPromotedDecisions, type PromotionRegistry } from './job-promote';
+import type { NoteIngestionSurface } from './notes';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization, VerifyInternalAuthorization } from './routes';
 import type { DemoSessionWorld } from './session-routes';
 
@@ -246,6 +247,15 @@ export interface DemoBackingHandle {
 
 export type DeploymentComposition =
   | { readonly ok: true; readonly service: ApiService; readonly backing: DeployBacking; readonly demo: DemoBackingHandle | null; readonly durable: DurableDeploymentHandle | null; readonly verifyDeveloperAuthorization: VerifyDeveloperAuthorization; readonly verifyInternalAuthorization: VerifyInternalAuthorization; /** FW-32-A: the host-owned research→decision promotion registry (null under port overrides — the route then answers the boundary's typed not-found, the pre-law). */ readonly promotions: PromotionRegistry | null; /**
+     * FW-45 (the E-6 research-world MVP): the NOTE-INGESTION SURFACE behind
+     * POST /v1/projects/:projectId/notes — under the DEMO backing the
+     * per-instance goal-set capture (attachDemoNote — a cold start resets
+     * it, honest under the SIMULATED badge); under the DURABLE backing the
+     * seam's attachNote (the goal-set row merge + the pending drain — the
+     * note is durable record, served by every instance's projection). Null
+     * under port overrides (the injection seam owns its own world — the
+     * route then answers the boundary's typed not-found, the pre-law).
+     */ readonly notes: NoteIngestionSurface | null; /**
      * FW-39-1 (the identity wave 1): the PRINCIPAL AUTH surface — the
      * host-owned /v1/auth/* routes' input + the shared token resolver. Built
      * on EVERY composition: under the DEMO backing (or without the signing
@@ -413,6 +423,10 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
             goal: goal as GoalStatement,
             constraintSet: constraintSet as ConstraintSetStatement,
             world: isLaunchWorldRecord(read.value.world) ? withDerivedHorizonLabel(read.value.world) : null,
+            // FW-45 (the E-6 MVP): the row's ADDITIVE `notes` array rides the
+            // same read (the deliverable's notes fold reads it; the goal route
+            // serves its own structural re-validation) — one source of truth.
+            ...('notes' in read.value ? { notes: (read.value as { readonly notes?: unknown }).notes } : {}),
           };
         },
         // FW-38-A (Round G register G-6 — the switch-path composition miss):
@@ -660,9 +674,9 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
             firmMemory: ports.firmMemory,
           };
       durable = { ...durable, tick: activation.tick, ensureBootWorld: activation.ensureBootWorld, demoSubstance };
-      return { ok: true, service: serving, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions, auth: authSurfaceOf(durable) };
+      return { ok: true, service: serving, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions, notes: hasOverrides ? null : { attach: (tenantOfNote, project, note) => durable!.attachNote(tenantOfNote, project, note) }, auth: authSurfaceOf(durable) };
     }
-    return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions, auth: authSurfaceOf(durable) };
+    return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions, notes: null, auth: authSurfaceOf(durable) };
   }
   const seed = seedDemoWorld(construction.service, { tenant, developerToken: token, internalToken }, Date.now());
   // FW-36-A (E-1): the demo arm's deliverable source — the W-25B goal-set
@@ -705,6 +719,12 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     // FW-32-A: the promotion registry (non-null — this arm owns the world;
     // the override path returned above with the null it computed).
     promotions,
+    // FW-45 (the E-6 MVP): the note-ingestion surface — the DEMO arm's
+    // per-instance capture (a cold start resets it, honest under the
+    // SIMULATED badge; the promote registry's own disclosed limitation
+    // class). This arm is the un-overridden demo composition by
+    // construction (the override path returned above with notes: null).
+    notes: { attach: (tenantOfNote, project, note) => Promise.resolve(attachDemoNote(demoPorts.controlPlane, tenantOfNote, project, note)) },
     // FW-39-1: the auth surface — the DEMO backing's input teaches the typed
     // not-available (principals/adoption null; the durable seam was never
     // built under this backing).
@@ -724,6 +744,7 @@ let cachedBacking: DeployBacking | null = null;
 let cachedVerify: VerifyDeveloperAuthorization | null = null;
 let cachedVerifyInternal: VerifyInternalAuthorization | null = null;
 let cachedPromotions: PromotionRegistry | null = null;
+let cachedNotes: NoteIngestionSurface | null = null;
 let cachedAuth: AuthSurface | null = null;
 
 interface EnvIdentity {
@@ -744,7 +765,7 @@ export function getDeploymentService(
   source: Readonly<Record<string, string | undefined>> = process.env,
 ): DeploymentComposition {
   if (cachedService !== null && cachedEnv !== null && cachedEnv.source === source && cachedBacking !== null && cachedVerify !== null && cachedVerifyInternal !== null && cachedAuth !== null) {
-    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo, durable: cachedDurable, verifyDeveloperAuthorization: cachedVerify, verifyInternalAuthorization: cachedVerifyInternal, promotions: cachedPromotions, auth: cachedAuth };
+    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo, durable: cachedDurable, verifyDeveloperAuthorization: cachedVerify, verifyInternalAuthorization: cachedVerifyInternal, promotions: cachedPromotions, notes: cachedNotes, auth: cachedAuth };
   }
   const composed = composeDeployment(readApiEnv(source));
   if (!composed.ok) return composed;
@@ -756,6 +777,7 @@ export function getDeploymentService(
   cachedVerify = composed.verifyDeveloperAuthorization;
   cachedVerifyInternal = composed.verifyInternalAuthorization;
   cachedPromotions = composed.promotions;
+  cachedNotes = composed.notes;
   cachedAuth = composed.auth;
-  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo, durable: composed.durable, verifyDeveloperAuthorization: composed.verifyDeveloperAuthorization, verifyInternalAuthorization: composed.verifyInternalAuthorization, promotions: composed.promotions, auth: composed.auth };
+  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo, durable: composed.durable, verifyDeveloperAuthorization: composed.verifyDeveloperAuthorization, verifyInternalAuthorization: composed.verifyInternalAuthorization, promotions: composed.promotions, notes: composed.notes, auth: composed.auth };
 }

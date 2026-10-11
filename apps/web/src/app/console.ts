@@ -470,15 +470,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         await client.negotiateVersion();
         dispatch({ kind: 'connection-changed', at: instants.nowMs(), status: 'connected' });
       });
-      // THE PROJECT DIRECTORY + THE STORED-SCOPE RESTORE (R6b/R6c,
-      // W-22): the tenant's readable projects list once per bundle (the
+      // THE PROJECT DIRECTORY + THE STORED-SCOPE RESTORE (R6b/R6c, W-22):
+      // the tenant's readable projects list once per bundle (the
       // switcher's data) and the validation surface for the persisted
-      // scope. THE STORED-SCOPE RESTORE (D-15/W-29): the boot-captured
-      // stored scope restores ONLY at generation 0, exactly once (never
-      // over a user switch — the switcher-rebind race); a stored id in
-      // the directory differing from the booted scope is ADOPTED (the
-      // launch's reset+switch); a stale id (deleted upstream) is
-      // cleared — the env pin holds.
+      // scope. The stored scope restores ONLY at generation 0, exactly
+      // once (never over a user switch — the switcher-rebind race); a
+      // stored id in the directory differing from the booted scope is
+      // ADOPTED (the launch's reset+switch); a stale id (deleted
+      // upstream) is cleared — the env pin holds.
       // FW-34-B (§3.1) — THE TM POSTURE RESTORE, same pass, AFTER the
       // scope branch: when the stored posture left the machine at a
       // selected instant (scrubbed / t-x / paused) and the machine STILL
@@ -603,6 +602,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           goal: bundle.goal,
           constraintSet: bundle.constraintSet,
           ...(bundle.world === undefined ? {} : { world: bundle.world }),
+          // FW-45: the bundle's ADDITIVE `notes` field rides the same
+          // event — the boot re-read carries the attached notes.
+          ...(bundle.notes === undefined ? {} : { notes: bundle.notes }),
         });
       } catch {
         // the goal route is host-owned demo-backing-only — an absent
@@ -771,18 +773,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // org ref on its OWN clock, so the one refetch above can still
       // miss the compiled snapshot. While the CURRENT project record
       // carries no ref, each beat re-observes the project; the moment it
-      // flips, the org-status read runs and the Organization section
-      // renders the compiled snapshot — no reload. Self-terminating
+      // flips, the org-status read runs — no reload. Self-terminating
       // (the org-snapshot dedup). D-7 (W-27): the read pairs the ref
       // with the RE-OBSERVED record of THIS scope, never the mutable
       // state.project (a mid-beat scope move could cross the pair).
       // FW-41-C (I-5, S1's D1 compile stall): pre-fix the branch STOPPED
       // once the ref bound — a read landing on a snapshot-less serverless
       // instance (the bind + the snapshot report are TWO writes; the
-      // watch store is per-instance, healed only by the host's 10s
-      // staleness pass) was NEVER retried in-session. The branch now
-      // also runs while the ref is BOUND but no snapshot is on record —
-      // the beat re-reads until it lands.
+      // watch store heals only via the host's 10s staleness pass) was
+      // NEVER retried in-session. The branch now also runs while the
+      // ref is BOUND but no snapshot is on record — the beat re-reads
+      // until it lands.
       await read('GET /v1/projects/:id', async () => {
         const project = await client.projects.get(scopeNow);
         dispatchIfCurrent(scopeNow, { kind: 'project-loaded', at: instants.nowMs(), project });
@@ -893,6 +894,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       touchedFields: [],
       launchEdits: {},
       researchSubmit: null,
+      noteAttach: null,
       openCapsule: null,
       projectFilter: '',
       exportVerify: null,
@@ -972,6 +974,19 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
       const name = element.getAttribute('data-research-field');
       if (name === null || !isResearchFieldName(name)) return null;
+      const value = typeof element.value === 'string' ? element.value : '';
+      return { field: name, value };
+    };
+    /**
+     * FW-45: read the note-attach form's field of an event target (null
+     * when not one of its inputs) — its own data-note-field vocabulary,
+     * its own edit buffer (the researchFieldOf law).
+     */
+    const noteFieldOf = (target: unknown): { readonly field: string; readonly value: string } | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      const name = element.getAttribute('data-note-field');
+      if (name !== 'title' && name !== 'text') return null;
       const value = typeof element.value === 'string' ? element.value : '';
       return { field: name, value };
     };
@@ -1090,15 +1105,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      * File-like (name + text()). Null when the target is not the input
      * or the selection is empty/not a readable file.
      * FW-32-B (b1 — Round A blocker 5): the selection is read through
-     * the FileList's OWN surface (a numeric length + index access) —
-     * the pre-fix `Array.isArray(files)` guard passed ONLY the test
+     * the FileList's OWN surface (numeric length + index access) — the
+     * pre-fix `Array.isArray(files)` guard passed ONLY the test
      * harness's plain arrays (a REAL browser serves a FileList —
      * array-like, never an Array): every real upload fell through to
      * null, no verdict ever rendered (the L3/L4/M5 finding). Array-likes
-     * and Arrays read the same here; the beat-race class (a change on a
-     * replaced element) is already covered by the J3 discipline — the
-     * change reads the buffered state or the live element, whichever
-     * survived.
+     * and Arrays read the same here; the beat-race class is covered by
+     * the J3 discipline (the change reads the buffered state or the
+     * live element, whichever survived).
      */
     const verifyFileTargetOf = (target: unknown): { readonly element: FieldEventTarget; readonly file: SelectedExportFile } | null => {
       const element = target as FieldEventTarget | null;
@@ -1133,12 +1147,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      * replacement), the change lands on the FRESH element whose
      * FileList is EMPTY — files=0, the verify never runs, and the
      * re-projected input renders "No file chosen" (the Round C
-     * regression: worked in Round B, refused every attempt in Round C).
-     * The input-time selection BUFFERS here (the J3 discipline — the
-     * same class as the launch edits and the scrub position); the
-     * change commit reads the LIVE element's file when it carries one
-     * (a fresh selection always wins) and the BUFFERED file otherwise,
-     * so the commit path survives every replacement.
+     * regression). The input-time selection BUFFERS here (the J3
+     * discipline); the change commit reads the LIVE element's file when
+     * it carries one (a fresh selection always wins) and the BUFFERED
+     * file otherwise, so the commit path survives every replacement.
      */
     let pendingVerifyFile: SelectedExportFile | null = null;
     // THE SCRUB BUFFER (the J5 wiring — the J3 pointer discipline): a
@@ -1522,22 +1534,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     };
 
     // THE LAUNCH FIELD WIRING (the J3 fix): delegated input/change/
-    // focusout listeners on the document — the same delegation model as
-    // clicks. Edits BUFFER in the view (launchEdits) and commit on the
-    // next action (the flush) — never synchronously on focusout while a
-    // click is in flight (the re-render between mousedown and mouseup
-    // would drop the click).
+    // focusout listeners on the document. Edits BUFFER in the view
+    // (launchEdits) and commit on the next action (the flush) — never
+    // synchronously on focusout while a click is in flight (the re-render
+    // between mousedown and mouseup would drop the click).
     // THE PENDING PRESS (D-6a, W-25C — the beat-render click race): the
     // beat re-projection rebuilds the WHOLE tree; when it lands between
     // mousedown and mouseup, the browser composes the click on a common
     // ANCESTOR of the replaced pair, and closest('[data-action]') from
     // that ancestor resolves to NOTHING — the click no-ops (the
-    // M-persona finding). The press intent is captured HERE at mousedown
-    // (the affordance under the pointer); the click handler replays it
-    // ONLY when the composed click resolved to no affordance AND the
-    // pressed element left the tree. A normal click resolves by itself
-    // (never double-dispatched); a dragged-away press stays cancelled
-    // as the browser intended.
+    // M-persona finding). The press intent is captured HERE at mousedown;
+    // the click handler replays it ONLY when the composed click resolved
+    // to no affordance AND the pressed element left the tree. A normal
+    // click resolves by itself (never double-dispatched); a dragged-away
+    // press stays cancelled as the browser intended.
     let pendingPress: PendingPress | null = null;
     /** (The attachedToRoot test + the D-6a machinery live in app/press.ts — extracted by FW-38-B for the payload budget.) */
     document.addEventListener('mousedown', (event) => {
@@ -1561,10 +1571,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // §4.14 THE PALETTE QUERY (the W-14c fix — the J8 dead-input
       // defect): typing in [data-palette-input] feeds view.palette.query
       // and re-renders the ranked results through the PURE machinery
-      // (core/palette.ts's fuzzyScore/rankPalette via refreshPalette —
-      // never duplicated here); the selection resets to the top result
-      // (the query changed the list; the old index is meaningless). The
-      // render's focus preservation keeps the caret in the input.
+      // (core/palette.ts via refreshPalette); the selection resets to the
+      // top result (the query changed the list). The render's focus
+      // preservation keeps the caret in the input.
       const query = paletteQueryOf(event.target);
       if (query !== null) {
         if (view.palette !== null && view.palette.query !== query) {
@@ -1656,6 +1665,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         const researchEntry = researchFieldOf(event.target);
         if (researchEntry !== null && view.researchSubmit !== null) {
           view = { ...view, researchSubmit: { ...view.researchSubmit, edits: { ...view.researchSubmit.edits, [researchEntry.field]: researchEntry.value } } };
+        }
+        // FW-45: the note-attach form's edit buffer — the same J3 law
+        // (buffer only; the render merges it, the submit commits it).
+        const noteEntry = noteFieldOf(event.target);
+        if (noteEntry !== null && view.noteAttach !== null) {
+          view = { ...view, noteAttach: { ...view.noteAttach, edits: { ...view.noteAttach.edits, [noteEntry.field]: noteEntry.value } } };
         }
         return;
       }
@@ -1816,10 +1831,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // session open instant (derived: 'session') — TAUGHT by the range
       // note, never ENFORCED on the commit (the MI-D9 step-back law):
       // a commit below the session open lands where the user dragged,
-      // capped only by the anchor — a scope adoption resets every
-      // record before the refetch lands, and enforcing the fallback
-      // here would clamp a fresh desk's FIRST scrub to the degenerate
-      // [openedAt, anchor] point.
+      // capped only by the anchor (a scope adoption resets every record
+      // before the refetch lands; enforcing the fallback here would
+      // clamp a fresh desk's FIRST scrub to the degenerate [openedAt,
+      // anchor] point).
       const scrubber = scrubTargetOf(event.target);
       if (scrubber !== null) {
         const raw = scrubAt ?? scrubValueOf(scrubber);
@@ -1842,6 +1857,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         const researchEntry = researchFieldOf(event.target);
         if (researchEntry !== null && view.researchSubmit !== null) {
           view = { ...view, researchSubmit: { ...view.researchSubmit, edits: { ...view.researchSubmit.edits, [researchEntry.field]: researchEntry.value } } };
+        }
+        // FW-45: the note form's change commit buffers the same way.
+        const noteEntry = noteFieldOf(event.target);
+        if (noteEntry !== null && view.noteAttach !== null) {
+          view = { ...view, noteAttach: { ...view.noteAttach, edits: { ...view.noteAttach.edits, [noteEntry.field]: noteEntry.value } } };
         }
         return;
       }
@@ -1881,9 +1901,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     });
 
     // The delegated interaction layer: shell navigation (the fifteen
-    // targets), the drawer, the theme controls, the refresh action, the
-    // inbox read-all, the Time Machine controls — every handler a pure
-    // state/view update (the model does the rest).
+    // targets), the drawer, theme, refresh, inbox read-all, the Time
+    // Machine — every handler a pure state/view update.
     //
     // THE DELEGATION LAW (W-10b): the navigation branch acts ONLY on a
     // [data-target] match that is an interactive BUTTON (nav items,
@@ -1897,12 +1916,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      * click handler's body, lifted so the KEYBOARD path runs the
      * IDENTICAL branches. The beat re-projection replaces the tree
      * ~every 500ms-1s; when it lands between a focused button's keydown
-     * and the composed click, the click lands on the DETACHED node and
-     * never bubbles (L4: "button vanished on the beat"). The keyboard
-     * path dispatches on the SETTLED state — the live focused element
-     * at keydown (its identity D-10's restore keeps fresh) — and
-     * cancels the click synthesis, so the action fires EXACTLY once,
-     * on the element the user sees.
+     * and the composed click, the click hits the DETACHED node and never
+     * bubbles (L4: "button vanished on the beat"). The keyboard path
+     * dispatches on the SETTLED state and cancels the click synthesis,
+     * so the action fires EXACTLY once, on the element the user sees.
      */
     const interactionAt = (rawTarget: ClickTarget | null): void => {
       let target = rawTarget?.closest?.('[data-target]');
@@ -1913,15 +1930,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       const rowId = row === null || row === undefined ? null : row.getAttribute('data-row');
       const sheetRef = rowId === null ? null : parseSheetRef(rowId);
       // THE BEAT-RACE REPLAY (D-6a, W-25C): the composed click resolved
-      // to NOTHING interactive (no nav button, no action, no
-      // sheet-opening row) — the beat-render replacement class — so if
-      // a press is pending on an affordance the re-projection DETACHED
-      // mid-press, the press intent substitutes for the dead click and
-      // the handler's own branches execute it (action-keyed dispatch:
-      // the SAME code path a live click takes, flush included — the
-      // replayed action reads the full draft like a landed click). The
-      // pending press is consumed either way: a click that resolves by
-      // it) never replays.
+      // to NOTHING interactive (no nav button, action, or sheet row — the
+      // beat-render replacement class), so a press pending on an
+      // affordance the re-projection DETACHED mid-press substitutes for
+      // the dead click: the SAME branches a live click takes, flush
+      // included. The pending press is consumed either way — a click
+      // that resolves by itself never replays.
       const press = pendingPress;
       pendingPress = null;
       if (press !== null && !navResolved && actionKind === null && sheetRef === null && !attachedToRoot(root, press.element)) {
@@ -1957,27 +1971,23 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         const id = target.getAttribute('data-target');
         if (id !== null && isShellTarget(id)) {
           // §4.14: selecting a palette result (a click on a palette
-          // item, the only [data-target] reachable while the modal
-          // overlay is open) navigates AND closes the dialog — the
-          // same behavior as Enter. THE J8 OPEN (D-3, W-25A): a JOB
-          // entry's ref (`job:<jobId>`) IS the sheet grammar the
-          // Research section's job rows carry — the selection ALSO
-          // opens that job's detail sheet, so the palette alone
-          // reaches the job's dialog (the J8-spec goal), the same
-          // open path a row click takes. Non-entity entries carry no
-          // parsable sheet ref and navigate as before.
+          // item, the only [data-target] reachable while the modal is
+          // open) navigates AND closes the dialog — same as Enter. THE
+          // J8 OPEN (D-3, W-25A): a JOB entry's ref (`job:<jobId>`) IS
+          // the sheet grammar the Research rows carry, so the selection
+          // ALSO opens the job's detail sheet from the palette alone;
+          // non-entity entries navigate as before.
           let openedSheet: SheetRef | null = null;
           if (view.palette !== null) {
             const ref = target.getAttribute('data-palette-ref');
             openedSheet = ref === null ? null : parseSheetRef(ref);
             // D-16 (W-29 wave 2): EVERY ENTITY RESULT OPENS ITS ENTITY. An
-            // EVIDENCE entry's capsule opens INLINE (view.openCapsule is the
-            // §4.9 open key — the same one a capsule badge's click sets; a
-            // JOB entry already opened its dialog, and the inconsistency
-            // was S4's finding), and a cross-project JUMP entry adopts its
-            // project (the same user-initiated project-adopted the
-            // switcher rides — the D-15 generation guard counts it, so the
-            // boot restore can never clobber a palette jump).
+            // EVIDENCE entry's capsule opens INLINE (view.openCapsule, the
+            // §4.9 key a capsule badge's click sets — S4's inconsistency
+            // find), a JOB entry already opened its dialog, and a
+            // cross-project JUMP entry adopts its project (the switcher's
+            // own project-adopted; the D-15 generation guard counts it, so
+            // the boot restore never clobbers a palette jump).
             const capsuleId = ref === null ? null : capsuleRefOf(ref);
             const jumpTo = ref === null ? null : projectRefOf(ref);
             view = {
@@ -2072,9 +2082,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // (while playing: the view instant FREEZES — no jump-back, no
         // advance), and RESUMES it (while paused: continue from the
         // frozen instant). Before R10 the pause face re-dispatched
-        // playback-start, which re-armed at the opened instant with
-        // zero ticks — the view jumped back to openedAt and the beat
-        // kept ticking it forward (the J5 symptom).
+        // playback-start, re-arming at the opened instant with zero
+        // ticks — the view jumped back to openedAt and the beat kept
+        // ticking it forward (the J5 symptom).
         if (kind === 'playback-start' || kind === 'tm-mode-playback') {
           const timeMachine = state.timeMachine;
           if (timeMachine.mode === 'playback' && timeMachine.playback !== null && !timeMachine.playback.paused) {
@@ -2093,11 +2103,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             //     anchor] like the scrubber's commit — the incident
             //     review plays forward FROM the incident.
             //   - LIVE (no instant selected): the arm IS the range floor
-            //     (the history-derived floor the scrubber renders, capped
-            //     at the anchor) — the launch-to-now arc replays from
-            //     the start. The never-below-the-floor law holds by
-            //     construction; the FW-33-B anchor clamp still lands a
-            //     crossing tick AT "now", paused.
+            //     (capped at the anchor) — the launch-to-now arc replays
+            //     from the start; the never-below-the-floor law holds by
+            //     construction, and the FW-33-B anchor clamp still lands
+            //     a crossing tick AT "now", paused.
             const anchor = state.timeMachine.anchorAt;
             // FW-34-B (§3.1 + the MI-D9 law): the SELECTED-instant arm's
             // floor clamp is the RECORD-DERIVED floor only (the
@@ -2142,8 +2151,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // Step back re-anchored against the live anchor (advancing EVERY
         // beat, ~1s > the 500ms step) — the view moved FORWARD on every
         // click (M5). Now both controls dispatch an EXPLICIT timestamp
-        // (viewAt ± TIME_MACHINE_STEP_MS), clamped to [the history
-        // floor, the anchor] — the scrubber's own clamp.
+        // (viewAt ± TIME_MACHINE_STEP_MS), clamped like the scrubber.
         if (kind === 'playback-step') {
           const timeMachine = state.timeMachine;
           if (timeMachine.mode === 'playback' && timeMachine.playback !== null && timeMachine.playback.paused) {
@@ -2503,6 +2511,82 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           })();
           return;
         }
+        // FW-45 (the E-6 MVP): THE RESEARCH-NOTE ATTACH — the Research
+        // section's notes card. The typed validation gate fires FIRST
+        // (an empty/oversized title or text renders the inline error and
+        // NEVER calls the route — fail-closed, never a half-applied note);
+        // the submit rides the HOST-OWNED POST /v1/projects/:id/notes route
+        // with the CURRENT project + the verbatim buffered text, and the
+        // MINTED record dispatches note-attached (the reducer's scope gate
+        // + noteId dedup) — the note lands in the section's list AND the
+        // session's linked history.
+        if (kind === 'note-attach-open') {
+          if (view.noteAttach === null) {
+            view = { ...view, noteAttach: { edits: {}, error: null } };
+            render();
+          }
+          return;
+        }
+        if (kind === 'note-attach-cancel') {
+          if (view.noteAttach !== null) {
+            view = { ...view, noteAttach: null };
+            render();
+          }
+          return;
+        }
+        if (kind === 'note-attach') {
+          const noteForm = view.noteAttach;
+          if (noteForm === null) {
+            render();
+            return;
+          }
+          const title = typeof noteForm.edits.title === 'string' ? noteForm.edits.title.trim() : '';
+          const text = typeof noteForm.edits.text === 'string' ? noteForm.edits.text : '';
+          if (title.length === 0 || title.length > 120 || text.length === 0 || text.length > 16_000) {
+            // THE TYPED VALIDATION GATE (fail-closed, never an API call):
+            // the first broken field renders inline; the buffered edits
+            // stay (the user's text is never lost to a refusal).
+            const error = title.length === 0
+              ? 'title: the note title is required (1..120 characters — the note\'s own name)'
+              : title.length > 120
+                ? 'title: the note title is at most 120 characters'
+                : text.length === 0
+                  ? 'text: the note text is required (paste the note — this deployment stores it verbatim and fetches nothing)'
+                  : 'text: the note text is at most 16,000 characters';
+            view = { ...view, noteAttach: { ...noteForm, error } };
+            render();
+            return;
+          }
+          const projectId = state.scope.projectId;
+          if (isLaunchpadScope(projectId)) {
+            // the affordance never renders on the launchpad; a stale press
+            // is refused honestly.
+            view = { ...view, noteAttach: { ...noteForm, error: 'There is no project yet — launch first; the note attaches to a project\'s own record.' } };
+            render();
+            return;
+          }
+          view = { ...view, noteAttach: { ...noteForm, error: null } };
+          render();
+          void (async () => {
+            try {
+              const attached = await client.projects.attachNote(projectId, { title, text });
+              // Only the still-current scope receives the record (the
+              // reducer's scope gate is the law; this guard is defense
+              // in depth).
+              if (state.scope.projectId === projectId) {
+                dispatch({ kind: 'note-attached', at: instants.nowMs(), note: attached.note });
+              }
+              view = { ...view, noteAttach: null }; // success closes the form
+              render();
+            } catch (error) {
+              const message = (error as Error)?.message ?? String(error);
+              // the form keeps the user's text (the research-submit law).
+              view = { ...view, noteAttach: view.noteAttach === null ? { edits: {}, error: message } : { ...view.noteAttach, error: message } };
+              render();
+            }
+          })();
+          return;
+        }
         // FW-32-A (blocker 2): THE RESEARCH→DECISION PROMOTION — the
         // completed research job's "Propose as decision" affordance (the
         // job sheet's own button, render/model.ts). The call rides the
@@ -2723,11 +2807,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // node across beats), through the SAME resolver a click takes —
       // the browser's click synthesis is cancelled (preventDefault), so
       // the action fires EXACTLY once. The guard is the click handler's
-      // own vocabulary: BUTTONs with a data-action or data-target (nav
-      // items, notice toggles, TM controls, the wizard's CTA/Skip);
-      // text inputs, selects and the scrubber keep their native key
-      // behavior (the file input's Enter keeps the OS picker, the
-      // select's its dropdown).
+      // own vocabulary: BUTTONs with a data-action or data-target; text
+      // inputs, selects and the scrubber keep their native key behavior.
       if ((key === 'Enter' || key === ' ') && document.activeElement !== undefined) {
         // FW-35-B (§3.6 — "a keyboard Mark-read eaten (mouse works)"):
         // a SYNTHETIC activation (a keydown composed on the button

@@ -49,6 +49,7 @@ import type {
   PostMortemRecord,
   ProjectGoalWorldSpec,
   ProjectRecord,
+  ResearchNoteRecord,
   RiskUtilizationRead,
   ServedKnowledge,
 } from '../api/contracts';
@@ -151,6 +152,15 @@ export interface WorkspaceState {
    * section's teaching empty state is CORRECT for exactly those cases.
    */
   readonly world: ProjectGoalWorldSpec | null;
+  /**
+   * THE PROJECT'S ATTACHED RESEARCH NOTES (FW-45): the analyst's titled
+   * text notes, read back from the goal route's ADDITIVE `notes` field and
+   * appended live by `note-attached` events (deduped by noteId). The fold
+   * mirrors THIS scope's read-back truth: a notes-less read CLEARS (the
+   * `world` law), a project switch resets. Nothing computes over the text
+   * — the export chain carries it VERBATIM (M3's seam e answered).
+   */
+  readonly notes: readonly ResearchNoteRecord[];
   readonly launch: LaunchState;
   readonly orgSnapshots: readonly OrgStatusSnapshot[];
   readonly jobs: readonly JobRecord[];
@@ -204,6 +214,7 @@ export function openWorkspace(scope: WorkspaceScope, at: number): WorkspaceState
     goal: null,
     constraintSet: null,
     world: null,
+    notes: [],
     launch: initialLaunchState(),
     orgSnapshots: [],
     jobs: [],
@@ -230,7 +241,8 @@ export type WorkspaceEvent =
   | { readonly kind: 'connection-changed'; readonly at: number; readonly status: ConnectionStatus }
   | { readonly kind: 'project-adopted'; readonly at: number; readonly projectId: string }
   | { readonly kind: 'project-loaded'; readonly at: number; readonly project: ProjectRecord }
-  | { readonly kind: 'goal-loaded'; readonly at: number; readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; /** The scope's persisted launch world, when the host goal route served one (D-8, W-28) — absent = the project has none on record. */ readonly world?: ProjectGoalWorldSpec }
+  | { readonly kind: 'goal-loaded'; readonly at: number; readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; /** The scope's persisted launch world, when the host goal route served one (D-8, W-28) — absent = none on record. */ readonly world?: ProjectGoalWorldSpec; /** The scope's ATTACHED RESEARCH NOTES (FW-45) — absent = none on record (the read clears, the `world` law). */ readonly notes?: readonly ResearchNoteRecord[] }
+  | { readonly kind: 'note-attached'; readonly at: number; /** The host note route's MINTED record (FW-45) — the note's own envelope verbatim (attachedAt is the route's own observation, L4); the scope gate + noteId dedup are the law. */ readonly note: ResearchNoteRecord }
   | { readonly kind: 'org-snapshot'; readonly at: number; readonly snapshot: OrgStatusSnapshot }
   | { readonly kind: 'job-updated'; readonly at: number; readonly job: JobRecord }
   | { readonly kind: 'outcomes-loaded'; readonly at: number; readonly records: readonly OutcomeRecord[] }
@@ -424,6 +436,7 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         goal: null,
         constraintSet: null,
         world: null,
+        notes: [],
         orgSnapshots: [],
         jobs: [],
         outcomes: [],
@@ -447,7 +460,19 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       // (the demo scope, a pre-W-28 launch) CLEARS any prior one, exactly
       // like goal/constraintSet: the state always mirrors THIS scope's
       // read-back truth, never a stale world from a prior scope.
-      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet, world: event.world ?? null };
+      // FW-45: the ADDITIVE `notes` field rides the SAME law — a read
+      // that serves none clears, one that serves them replaces wholesale.
+      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet, world: event.world ?? null, notes: event.notes === undefined ? [] : Object.freeze([...event.notes]) };
+  } else if (selector === 'note-attached') {
+      // FW-45: ONE ATTACHED NOTE enters the state — the note route's minted
+      // record. THE INGEST GATES: the scope gate (a foreign note is the
+      // typed cross-scope error BEFORE any render path) + the dedup-by-noteId
+      // law (a re-attach is an idempotent no-op). The event rides the
+      // session's linked history AND the export derives one record event
+      // per note row — both halves, the law every record rides.
+      assertProjectScope(state.scope, event.note);
+      const seen = state.notes.some((existing) => existing.noteId === event.note.noteId);
+      return seen ? withHistory : { ...withHistory, notes: Object.freeze([...state.notes, event.note]) };
   } else if (selector === 'org-snapshot') {
       assertProjectScope(state.scope, event.snapshot);
       const seen = state.orgSnapshots.some((existing) => existing.organizationRef === event.snapshot.organizationRef && existing.at === event.snapshot.at);
@@ -1005,6 +1030,16 @@ export interface ExportManifest {
    */
   readonly recordScopeNote?: string;
   /**
+   * FW-43-B (the export's FULL-RECORD scope) / FW-45 (the E-6 MVP): THE
+   * PUBLISHED DERIVED-EVENT RULE, verbatim (the EXPORT_DERIVED_EVENT_RULE
+   * constant, core/export-record.ts) — what the `derived: true` field
+   * means and its placement OUTSIDE every digest. ADDITIVE: pre-FW-43-B
+   * v2 documents carry no such field and still verify (the format version
+   * stays 2). Present exactly when the chain carries record-derived
+   * entries (the recordScopeNote's own gate).
+   */
+  readonly derivedEventRule?: string;
+  /**
    * FW-36-B (E-8, part 2): THE PUBLISHED SIMULATED-FLAG RULE, verbatim
    * (the EXPORT_SIMULATED_FLAG_RULE constant) — the per-record flag's
    * semantics + digest-rule placement. ADDITIVE: pre-E-8 v2 documents
@@ -1196,7 +1231,7 @@ export function composeWorkspaceExport(state: WorkspaceState, simulated = false,
       readNotices: readNoticeIds.length,
       unreadNotices: unreadNoticeIds.length,
     },
-    ...(recordScopeNoteOf(recordDerivedEvents, sessionEvents) === undefined ? {} : { recordScopeNote: recordScopeNoteOf(recordDerivedEvents, sessionEvents) as string }),
+    ...(recordScopeNoteOf(recordDerivedEvents, sessionEvents) === undefined ? {} : { recordScopeNote: recordScopeNoteOf(recordDerivedEvents, sessionEvents) as string, derivedEventRule: EXPORT_DERIVED_EVENT_RULE }),
     ...(chainScopeNote === undefined ? {} : { chainScopeNote }),
     // FW-36-B (E-8, part 2): the published simulated-flag rule rides the
     // manifest on every export (the reader of the manifest alone knows

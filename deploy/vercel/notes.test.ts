@@ -9,8 +9,10 @@
 //     developer credential is the typed 401 (the W-8 law);
 //   - THE UNTRUSTED-INPUT GATE — the note is STRUCTURALLY PARSED before
 //     any storage: a body that is not an object, a missing/empty/oversized
-//     title or text, or a non-string field answers the typed 422 with the
-//     broken paths named — NEVER a half-applied note (the draft-store law);
+//     title or text, or a non-string field answers the typed 400
+//     validation_failed (the boundary's own untrusted-payload law) with
+//     the broken paths named — NEVER a half-applied note (the draft-store
+//     law);
 //   - FAIL-CLOSED TARGET — a note attaches ONLY to a project with a goal
 //     set on record (the note rides the SAME opaque row the launch world
 //     and the ownership stamps ride — the W-28 precedent); a project with
@@ -23,8 +25,11 @@
 //     honest absence; degraded = the typed 503, fail closed), and its
 //     attachedAt is the ROUTE'S OWN observation (L4 — never a request
 //     value);
-//   - IDEMPOTENT PER ENVELOPE — re-attaching the same note at the same
-//     observed instant returns the SAME record, never a duplicate row;
+//   - IDEMPOTENT PER CONTENT — re-attaching a note the project already
+//     carries (the same title + text — the client's own idempotency-key
+//     unit: project + title + text) returns the STORED record, never a
+//     duplicate row (the FIRST mint stands, actor included — never
+//     re-attribution);
 //   - THE READ-BACK — the host goal route (GET /v1/projects/:id/goal)
 //     serves the attached notes as the ADDITIVE `notes` field (the `world`
 //     precedent), so the console's boot bundle re-reads them after a
@@ -175,12 +180,12 @@ describe('deploy/vercel — the research-note ingestion route (FW-45, the E-6 MV
     expect((refused.body.error as { code: string }).code).toBe('unauthenticated');
   });
 
-  it('THE UNTRUSTED-INPUT GATE: a malformed body answers the typed 422 with the broken paths named — never a half-applied note', async () => {
+  it('THE UNTRUSTED-INPUT GATE: a malformed body answers the typed 400 validation_failed (the boundary\'s own untrusted-payload law) with the broken paths named — never a half-applied note', async () => {
     const deployment = composeInstance(demoSource());
     const created = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/projects', headers: { ...BEARER, 'idempotency-key': 'idem:fw45:project' }, body: createProjectBody('prj-fw45-a') }));
     expect(created.status).toBe(201);
     for (const [label, body] of [
-      ['not an object', 'a string body'],
+      ['not an object', '"a string body"'], // a VALID-JSON non-object — the platform's invalid_json 400 is a DIFFERENT (correct) refusal; this pins the route's own typed gate
       ['no title', { text: 'the note text' }],
       ['empty title', { title: '   ', text: 'the note text' }],
       ['no text', { title: 'A title' }],
@@ -190,7 +195,7 @@ describe('deploy/vercel — the research-note ingestion route (FW-45, the E-6 MV
       ['oversized text', { title: 'A title', text: 'x'.repeat(16_001) }],
     ] as const) {
       const refused = await drive(deployment, streamingRequest({ method: 'POST', url: '/v1/projects/prj-fw45-a/notes', headers: BEARER, body }));
-      expect(refused.status, label).toBe(422);
+      expect(refused.status, label).toBe(400);
       expect((refused.body.error as { code: string }).code, label).toBe('validation_failed');
     }
     // nothing stored: the goal route serves NO notes after the refused attaches
@@ -235,7 +240,8 @@ describe('deploy/vercel — the research-note ingestion route (FW-45, the E-6 MV
     expect(goal.status).toBe(200);
     const served = (goal.body.data as { notes?: readonly ServedNote[] }).notes;
     expect(served).toEqual([note]);
-    // IDEMPOTENT PER ENVELOPE: the identical attach at the same observed instant returns the SAME record — never a duplicate
+    // IDEMPOTENT PER CONTENT: the identical attach (the same title + text)
+    // returns the SAME record — never a duplicate
     const replay = await drive(deployment, streamingRequest({
       method: 'POST',
       url: '/v1/projects/prj-fw45-b/notes',
@@ -312,7 +318,7 @@ describe('deploy/vercel — the durable note storage (FW-45: the note is durable
     const deps: NeonStoreDeps = { config: NEON_CONFIG, fetchLike: providers.fetchLike, instants: { next: () => T0 } };
     const store = new NeonProjectStore(deps);
     const row = await store.goalSetOf(TENANT, 'prj-fw45-d');
-    expect(row.ok).toBe(true);
+    if (!row.ok) throw new Error(`the goal-set read failed: ${row.error.code}`);
     const notes = (row.value as { readonly notes?: readonly ServedNote[] } | null)?.notes ?? [];
     expect(notes.map((entry) => entry.noteId)).toEqual([note.noteId]);
   });
