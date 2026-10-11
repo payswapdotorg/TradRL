@@ -6430,10 +6430,18 @@ describe('executed boot: FW-40-C — the wizard race cluster (the beat-value car
     rig.handle.dispatch({ kind: 'goal-loaded', at: T0 + 6_000, goal: staleGoal, constraintSet: toCreateProjectInput(VALID_DRAFT, { projectId: 'prj-old', goalId: 'goal-old', constraintSetId: 'cs-old' }, 'tenant-a', T0).constraintSet });
     const oldDoc = JSON.parse(serializeWorkspaceExport(rig.handle.state(), true));
     expect(verifyWorkspaceExport(oldDoc)).toEqual({ ok: true }); // the old bytes still verify — byte-compatible rules
-    const oldGoalEvents = (oldDoc as { readonly events: readonly { readonly payload: { readonly kind: string; readonly goal?: { readonly horizon: { readonly label: string } } } }[] }).events
+    const oldGoalEvents = (oldDoc as { readonly events: readonly { readonly derived?: boolean; readonly payload: { readonly kind: string; readonly goal?: { readonly horizon: { readonly label: string } } } }[] }).events
       .filter((entry) => entry.payload?.kind === 'goal-loaded' && (entry.payload.goal?.horizon.label ?? '') === 'one day');
-    expect(oldGoalEvents.length).toBe(1); // the stale-label event is IN the chain (the old shape is legal history)...
-    expect(verifyWorkspaceExport(oldDoc)).toEqual({ ok: true }); // ...and the chain verifies over it — the law held
+    // FW-43-B (the export's record-derived prefix): the stale-label goal now
+    // rides TWICE — once as the RECORD-DERIVED image of the state's own goal
+    // bundle row (the dispatched stale goal IS the record on file now, so the
+    // prefix mirrors its 'one day' label), and once as the session's OWN
+    // dispatched event. Both are legal history under the unchanged chain law;
+    // the pin's intent (the old shape is IN the chain and verifies) holds for
+    // BOTH halves, counted per half:
+    expect(oldGoalEvents.filter((entry) => entry.derived === true).length).toBe(1); // the record-derived image of the stale row
+    expect(oldGoalEvents.filter((entry) => entry.derived !== true).length).toBe(1); // the session's own stale event (the old shape is legal history)...
+    expect(verifyWorkspaceExport(oldDoc)).toEqual({ ok: true }); // ...and the chain verifies over BOTH — the law held
   });
 });
 

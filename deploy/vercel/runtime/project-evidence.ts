@@ -235,6 +235,23 @@ function isPositiveDecimal(value: string): boolean {
   return parsed !== null && parsed.digits > 0n;
 }
 
+/**
+ * FW-43-B (F-12): the EXACT-DECIMAL SUM of a list of canonical decimal
+ * strings — the shared fold behind the deliverable's derived-statistics
+ * block (deploy/vercel/runtime/deliverable.ts). A malformed entry makes
+ * the whole sum null (the caller skips the figure honestly — never a
+ * float, never a partial sum presented as exact); an empty list sums to
+ * '0'. Exported for the one source of truth: the same string-money law
+ * this module's own arithmetic rides, never a second implementation.
+ */
+export function sumExactDecimalStrings(values: readonly string[]): string | null {
+  let total: string | null = '0';
+  for (const value of values) {
+    total = total === null ? null : addDecimals(total, value);
+  }
+  return total;
+}
+
 // ---------------------------------------------------------------------------
 // The envelope (the project's own captured records)
 // ---------------------------------------------------------------------------

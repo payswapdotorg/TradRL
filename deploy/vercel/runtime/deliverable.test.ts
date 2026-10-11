@@ -27,20 +27,29 @@ import type { ConstraintSetStatement, GoalStatement, TimestampMs } from '../../.
 import {
   composeResearchDeliverableResult,
   declaredConstraintFacts,
+  deriveSessionStatistics,
   type DeliverableMandate,
+  type DeliverableSessionRecords,
   type DeliverableSource,
+  type DerivedSessionStatistics,
 } from './deliverable';
 import {
   DEMO_PROJECT_ID,
   demoControlPlane,
   demoDeliverableSourceOf,
+  demoExecutionGateway,
   demoMachineryTick,
+  demoOutcomeRecord,
+  demoSubmissionsOf,
+  demoSubmissionBlotter,
   durableDeliverableSourceOf,
+  durableProjectEvidenceOf,
   horizonSpanLabel,
   launchWorldOfSpec,
   seedDemoBacking,
   withDerivedGoalHorizonLabel,
   withDerivedHorizonLabel,
+  type DemoSubstanceSource,
   type DurableEvidenceSource,
   type LaunchWorldRecord,
 } from './demo';
@@ -619,5 +628,338 @@ describe('deploy/vercel — FW-42-A (I-4): the tick never completes a research j
     expect(result.markets).toEqual(['BTC-USD', 'ETH-USD']);
     expect(result.venues).toEqual(['binance', 'kraken']);
     expect(result.summary).toContain('over BTC-USD and ETH-USD on binance and kraken (the world the launch actually served)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-43-B (Round K register F-12 — the product list, four personas):
+// "the deliverable composes no derived statistics" — the deliverable
+// carries the mandate verbatim but NO statistics derived from the
+// session's own records (M3: "the deliverable is still a provenance
+// receipt — my mandate verbatim, zero derived statistics"; M2/S3/S2/L2:
+// "deliverables that carry derived statistics, not provenance receipts
+// alone"). THE BUILD: the deliverable composes a DERIVED-STATISTICS
+// BLOCK from the session's own records — the fills (count, total booked
+// notional, per-market distribution), the refusals (count, the bounds
+// they cite), the fees (total), the decisions (count) — each figure an
+// EXACT-DECIMAL fold of the records the input carries, honestly labeled
+// (SIMULATED, the same disclosure laws), never fabricated. THE
+// STANDING-BOOK LAW (one source of truth): the statistics ride the SAME
+// submission + decision records the execution blotter route and the
+// workspace export carry — never a second source.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-43-B (F-12): the deliverable composes the derived-statistics block from the session\'s own records', () => {
+  /** The demo scope's own SEEDED session records: the seeded blotter's 3 rows + the seeded outcome (the decisions on file). */
+  function seededSessionRecords(): DeliverableSessionRecords {
+    return {
+      submissions: [...demoSubmissionBlotter()],
+      decisions: [{ outcomeId: demoOutcomeRecord(TENANT, DEMO_PROJECT_ID).outcomeId }],
+    };
+  }
+
+  it('THE DERIVED BLOCK: fills (count, exact-decimal notional total, per-market distribution), refusals (count, the bounds they cite), fees (total), decisions (count) — every figure a fold of the records the input carries, traceable row by row', () => {
+    const payload = composeResearchDeliverableResult({
+      project: DEMO_PROJECT_ID,
+      director: 'spec-demo-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      records: seededSessionRecords(),
+    });
+    // The structured block — the seeded blotter's own story, folded:
+    // 2 fills (BTC-USD 45750.375 fee 0.02 + ETH-USD 20472.60 fee 0.03),
+    // 1 refusal (k-position position.grossExposure limit.max bound 2,
+    // observed 2.4), 1 decision on file (the seeded outcome).
+    const statistics = payload.statistics as DerivedSessionStatistics | null;
+    expect(statistics).not.toBeNull();
+    expect(statistics!.fills.count).toBe(2);
+    expect(statistics!.fills.notionalTotal).toBe('66222.975'); // 45750.375 + 20472.60 — EXACT DECIMALS, never a float
+    expect(statistics!.fills.markets).toEqual([
+      { market: 'BTC-USD', fills: 1, notional: '45750.375' },
+      { market: 'ETH-USD', fills: 1, notional: '20472.60' },
+    ]);
+    expect(statistics!.refusals.count).toBe(1);
+    expect(statistics!.refusals.boundsCited).toEqual(['k-position state position.grossExposure limit.max bound 2 (observed 2.4)']);
+    expect(statistics!.fees.total).toBe('0.05'); // 0.02 + 0.03 — exact
+    expect(statistics!.decisions.count).toBe(1);
+    expect(statistics!.decisions.refs).toEqual(['out:demo0001']); // traceable — the decision record's own id
+    // The summary text carries the same figures verbatim (the persona
+    // reads the RESULT section's summary — the statistics must BE there).
+    const summary = payload.summary as string;
+    expect(summary).toContain('2 fills booked for a total notional of 66222.975');
+    expect(summary).toContain('fees 0.05 total');
+    expect(summary).toContain('1 on BTC-USD (notional 45750.375)');
+    expect(summary).toContain('1 on ETH-USD (notional 20472.60)');
+    expect(summary).toContain('1 refusal the gateway stopped, citing the bound k-position state position.grossExposure limit.max bound 2 (observed 2.4)');
+    expect(summary).toContain('1 decision on record');
+  });
+
+  it('THE HONESTY LAW: no session records on file -> the honest absence (statistics null, never a fabricated figure); EMPTY records state their honest zeros — never an invented number', () => {
+    // No records at all (the pre-F-12 callers + a source that read nothing):
+    // the honest absence statement, never a fabricated block.
+    const absent = composeResearchDeliverableResult({
+      project: 'prj-f12-absent',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      records: null,
+    });
+    expect(absent.statistics).toBeNull();
+    expect(absent.summary as string).toContain('no session records on file'); // the honest absence, named
+    expect(absent.summary as string).not.toContain('0 fills'); // never a fabricated zero where nothing is on record
+    // Empty records (on file, honestly empty — a desk that executed nothing):
+    // the zeros are TRUE statements about empty records, stated as such.
+    const empty = composeResearchDeliverableResult({
+      project: 'prj-f12-empty',
+      director: 'spec-launch-director',
+      mandate: SPARSE_MANDATE,
+      observed: { markets: SPARSE_WORLD.markets, venues: SPARSE_WORLD.venues },
+      promotion: null,
+      records: { submissions: [], decisions: [] },
+    });
+    const emptyStatistics = empty.statistics as DerivedSessionStatistics | null;
+    expect(emptyStatistics).not.toBeNull();
+    expect(emptyStatistics!.fills.count).toBe(0);
+    expect(emptyStatistics!.fills.notionalTotal).toBe('0');
+    expect(emptyStatistics!.fees.total).toBe('0');
+    expect(emptyStatistics!.refusals.count).toBe(0);
+    expect(emptyStatistics!.decisions.count).toBe(0);
+    expect(empty.summary as string).toContain('no fills, no refusals and no decisions on record');
+  });
+
+  it('TWO SESSIONS WITH DIFFERENT RECORDS produce observably different statistics text (the E-1 divergence law extended to the statistics — never the one fixed sentence)', () => {
+    const denseRecords: DeliverableSessionRecords = seededSessionRecords();
+    // A different session: one fill on SOL-USD + a different cited bound + 2 decisions.
+    const otherRecords: DeliverableSessionRecords = {
+      submissions: [
+        {
+          kind: 'routed',
+          submissionId: 'xgs:aaaabbbb',
+          decisionId: 'xd:other0001',
+          auditId: 'xga:other0001',
+          requestRef: 'gor:other0001',
+          venue: 'okx',
+          adapterRef: 'adapter:other',
+          channelRef: 'chan:other',
+          routedAt: AT as TimestampMs,
+          order: { clientOrderId: 'ord-other-1', instrumentId: 'SOL-USD', venueId: 'okx', side: 'buy', kind: 'limit', quantity: '10', price: '36.00', timeInForce: 'gtc', createdAt: new Date(AT).toISOString() },
+          fill: { state: 'filled', quantity: '10', price: '36.00', notional: '360.00', fee: '0.0036', filledAt: AT + 250 },
+        } as never,
+        {
+          kind: 'refused',
+          submissionId: 'xgs:ccccdddd',
+          decisionId: null,
+          auditId: 'xga:other0002',
+          refusal: {
+            stage: 'risk_limits',
+            evaluationId: 'rev:other0002',
+            refusals: [
+              { constraintId: 'c-9', domain: 'outcome', subject: 'capital.budget', severity: 'blocking', predicate: { kind: 'equals', bound: '80000' }, observed: '80959.9968' },
+            ],
+          },
+          refusedAt: (AT + 120_000) as TimestampMs,
+          order: { clientOrderId: 'ord-other-2', instrumentId: 'SOL-USD', venueId: 'okx', side: 'buy', kind: 'limit', quantity: '2.24', price: '36000', timeInForce: 'gtc', createdAt: new Date(AT + 120_000).toISOString() },
+        } as never,
+      ],
+      decisions: [{ outcomeId: 'out:other-decision-1' }, { outcomeId: 'out:other-decision-2' }],
+    };
+    const dense = composeResearchDeliverableResult({
+      project: 'prj-f12-dense',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      records: denseRecords,
+    });
+    const other = composeResearchDeliverableResult({
+      project: 'prj-f12-other',
+      director: 'spec-launch-director',
+      mandate: SPARSE_MANDATE,
+      observed: { markets: SPARSE_WORLD.markets, venues: SPARSE_WORLD.venues },
+      promotion: null,
+      records: otherRecords,
+    });
+    const denseSummary = dense.summary as string;
+    const otherSummary = other.summary as string;
+    expect(denseSummary).not.toBe(otherSummary);
+    expect(denseSummary).toContain('2 fills booked for a total notional of 66222.975');
+    expect(otherSummary).toContain('1 fill booked for a total notional of 360.00'); // the other session's own story
+    expect(otherSummary).toContain('1 on SOL-USD (notional 360.00)');
+    expect(otherSummary).toContain('fees 0.0036 total');
+    expect(otherSummary).toContain('citing the bound c-9 outcome capital.budget equals bound 80000 (observed 80959.9968)');
+    expect(otherSummary).toContain('2 decisions on record');
+    expect(otherSummary).not.toContain('BTC-USD'); // each summary carries ONLY its own session's records
+    expect(denseSummary).not.toContain('SOL-USD');
+    // The exact-decimal fold — the fraction-heavy total never rounds (never a float).
+    expect((other.statistics as DerivedSessionStatistics).fills.notionalTotal).toBe('360.00');
+    expect((other.statistics as DerivedSessionStatistics).fees.total).toBe('0.0036');
+  });
+
+  it('THE SIMULATED LABEL: the statistics sentence names its source and stays under the SIMULATED disclosure (the same laws — never a fabricated research statistic)', () => {
+    const payload = composeResearchDeliverableResult({
+      project: 'prj-f12-label',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      records: seededSessionRecords(),
+    });
+    const summary = payload.summary as string;
+    expect(summary).toContain('exact-decimal fold of the session\'s own records');
+    expect(summary).toContain('the same rows the execution blotter and the workspace export carry');
+    expect(summary).toContain('SIMULATED substance, never a fabricated research statistic');
+    const statistics = payload.statistics as DerivedSessionStatistics;
+    expect(statistics.derivedFrom).toContain('the session\'s own execution submission records and decision records on file');
+    expect(statistics.derivedFrom).toContain('exact-decimal');
+  });
+
+  it('THE PURE FOLD (deriveSessionStatistics): malformed rows are skipped honestly (R46) — a fill without economics is a routed-unfilled row, never a fabricated fill; a refusal without citations still counts its row', () => {
+    const records: DeliverableSessionRecords = {
+      submissions: [
+        // A routed row WITHOUT fill economics — routed-unfilled, never a fill.
+        { kind: 'routed', submissionId: 'xgs:eeeeffff', decisionId: 'xd:r1', auditId: 'xga:r1', requestRef: 'gor:r1', venue: 'okx', adapterRef: 'a', channelRef: 'c', routedAt: AT as TimestampMs } as never,
+        // A malformed fill row (notional not a decimal) — skipped from the totals, never a crash.
+        {
+          kind: 'routed', submissionId: 'xgs:aaaa1111', decisionId: 'xd:r2', auditId: 'xga:r2', requestRef: 'gor:r2', venue: 'okx', adapterRef: 'a', channelRef: 'c', routedAt: AT as TimestampMs,
+          order: { clientOrderId: 'o1', instrumentId: 'BTC-USD', venueId: 'okx', side: 'buy', kind: 'limit', quantity: '1', price: '1', timeInForce: 'gtc', createdAt: new Date(AT).toISOString() },
+          fill: { state: 'filled', quantity: '1', price: '1', notional: 'not-a-decimal', fee: '0.01', filledAt: AT + 1 },
+        } as never,
+      ],
+      decisions: [{ outcomeId: 'out:fold-1' }],
+    };
+    const statistics = deriveSessionStatistics(records);
+    expect(statistics.fills.count).toBe(0); // the malformed notional row is not a fill total — honest skip
+    expect(statistics.fills.routedWithoutFill).toBe(2); // both routed rows carry no honest fill economics
+    expect(statistics.fills.notionalTotal).toBe('0');
+    expect(statistics.fees.total).toBe('0'); // the malformed row's fee never enters the total
+  });
+
+  it('THE SOURCE WIRING (demo arm): sessionRecordsOf reads the SAME submissions fold the blotter route serves + the decisions on file (the standing-book law — ONE source of truth)', () => {
+    const ports = seedDemoBacking(TENANT);
+    // A launched desk: create + world capture + org bind (the compile gate).
+    const created = ports.controlPlane.createProject({
+      ...validCreateProjectRequest(TENANT, 'prj-f12-launched'),
+      tenantId: TENANT,
+      goal: numbersDenseGoal(),
+      constraintSet: numbersDenseConstraintSet(),
+    } as Parameters<typeof ports.controlPlane.createProject>[0]);
+    expect(created.ok).toBe(true);
+    (ports.jobSubmission.worlds as unknown as Map<string, LaunchWorldRecord>).set(`${TENANT}/prj-f12-launched`, DENSE_WORLD);
+    const bound = ports.controlPlane.bindOrganization({ tenantId: TENANT, projectId: 'prj-f12-launched', organizationRef: 'org:compiled-prj-f12-launched', at: AT } as Parameters<typeof ports.controlPlane.bindOrganization>[0]);
+    expect(bound.ok).toBe(true);
+    const promotions = {
+      decisionOfJob: () => null,
+      outcomesOf: (tenant: string, project: string) => (tenant === TENANT && project === 'prj-f12-launched' ? [{ outcomeId: 'out:promoted-f12' }] : []),
+    };
+    const source = demoDeliverableSourceOf(TENANT, ports, promotions, ports);
+    expect(source.sessionRecordsOf).toBeDefined();
+    // The launched desk: the SAME rows the blotter fold serves (seeded +
+    // derived + live — demoSubmissionsOf), and the decisions on file (the
+    // derived outcome + the promoted decision).
+    const records = source.sessionRecordsOf!('prj-f12-launched') as DeliverableSessionRecords | null;
+    expect(records).not.toBeNull();
+    expect(records!.submissions).toEqual(demoSubmissionsOf(ports, TENANT, 'prj-f12-launched')); // the same fold the host route serves — one source of truth
+    expect(records!.submissions.length).toBeGreaterThanOrEqual(3); // the derived stream's 2 fills + 1 refusal
+    const recordIds = new Set(records!.decisions.map((decision) => decision.outcomeId));
+    expect(recordIds.has('out:promoted-f12')).toBe(true); // the promoted decision counts
+    expect(recordIds.size).toBe(2); // the derived outcome + the promoted decision — never double-counted
+    // The demo scope: its own SEEDED blotter + the seeded outcome.
+    const demoRecords = source.sessionRecordsOf!(DEMO_PROJECT_ID) as DeliverableSessionRecords | null;
+    expect(demoRecords).not.toBeNull();
+    expect(demoRecords!.submissions).toEqual(demoSubmissionBlotter());
+    expect(demoRecords!.submissions.length).toBe(3);
+    expect(demoRecords!.decisions.map((decision) => decision.outcomeId)).toEqual(['out:demo0001']);
+    // A project with nothing on record: the honest EMPTY folds (the blotter
+    // route serves its empty page; never a leak, never a fabricated row).
+    expect(source.sessionRecordsOf!('prj-f12-foreign')).toEqual({ submissions: [], decisions: [] });
+    // The composed deliverable over the source's own reads: the block rides
+    // end-to-end (the demo scope's deliverable carries its seeded statistics).
+    const payload = composeResearchDeliverableResult({
+      project: DEMO_PROJECT_ID,
+      director: 'spec-demo-director',
+      mandate: source.mandateOf(DEMO_PROJECT_ID),
+      observed: source.observedOf(DEMO_PROJECT_ID),
+      promotion: source.promotionOf('job-any'),
+      records: source.sessionRecordsOf!(DEMO_PROJECT_ID),
+    });
+    const statistics = payload.statistics as DerivedSessionStatistics | null;
+    expect(statistics).not.toBeNull();
+    expect(statistics!.fills.count).toBe(2);
+    expect(statistics!.fills.notionalTotal).toBe('66222.975');
+    expect(statistics!.decisions.count).toBe(1);
+  });
+
+  it('THE DURABLE ARM\'S WIRING: sessionRecordsOf serves the same law over the seam\'s own fold (the hydrated derived stream + the promoted decisions)', () => {
+    const durableSource: DurableEvidenceSource = {
+      goalSetOf: (project) => (project === 'prj-f12-durable' ? { goal: sparseGoal(), constraintSet: sparseConstraintSet(), world: SPARSE_WORLD } : null),
+      organizationRefOf: (tenant, project) => (project === 'prj-f12-durable' ? 'org:compiled-prj-f12-durable' : null),
+    };
+    const records: DemoSubstanceSource = {
+      submissions: demoSubmissionBlotter(),
+      executionGateway: demoExecutionGateway(),
+      projectEvidenceOf: (tenant, project) => durableProjectEvidenceOf(durableSource, tenant, project)?.submissions ?? [],
+    };
+    const promotions = {
+      decisionOfJob: () => null,
+      outcomesOf: (tenant: string, project: string) => (project === 'prj-f12-durable' ? [{ outcomeId: 'out:f12-durable-promo' }] : []),
+    };
+    const source = durableDeliverableSourceOf(TENANT, durableSource, promotions, records);
+    expect(source.sessionRecordsOf).toBeDefined();
+    const onRecord = source.sessionRecordsOf!('prj-f12-durable') as DeliverableSessionRecords | null;
+    expect(onRecord).not.toBeNull();
+    expect(onRecord!.submissions).toEqual(demoSubmissionsOf(records, TENANT, 'prj-f12-durable'));
+    expect(onRecord!.decisions.map((decision) => decision.outcomeId)).toContain('out:f12-durable-promo');
+    // The derived outcome rides the decisions too (the compiled desk's own outcome record).
+    expect(onRecord!.decisions.length).toBe(2);
+    // The demo scope under durable: the SEEDED blotter + the seeded outcome (the boot world writes those rows).
+    const demoRecords = source.sessionRecordsOf!(DEMO_PROJECT_ID) as DeliverableSessionRecords | null;
+    expect(demoRecords!.submissions).toEqual(demoSubmissionBlotter());
+    expect(demoRecords!.decisions.map((decision) => decision.outcomeId)).toEqual(['out:demo0001']);
+  });
+
+  it('THE MACHINERY TICK composes the block at the completion transition (the composed release candidate carries the session\'s own statistics)', () => {
+    const handled: { readonly method: string; readonly path: string; readonly body: Record<string, unknown> }[] = [];
+    const job = { jobId: 'job-f12-tick', kind: 'research', project: 'prj-f12-launched', tenant: TENANT, status: 'running', submittedAt: AT } as never;
+    const service = {
+      jobs: () => [job],
+      handle: (request: { method: string; path: string; body: Record<string, unknown> }) => {
+        handled.push({ method: request.method, path: request.path, body: request.body });
+        return { status: 202, headers: {}, body: {} } as never;
+      },
+      orgStatusSnapshots: () => [],
+    } as never;
+    const ports = seedDemoBacking(TENANT);
+    const created = ports.controlPlane.createProject({
+      ...validCreateProjectRequest(TENANT, 'prj-f12-launched'),
+      tenantId: TENANT,
+      goal: numbersDenseGoal(),
+      constraintSet: numbersDenseConstraintSet(),
+    } as Parameters<typeof ports.controlPlane.createProject>[0]);
+    expect(created.ok).toBe(true);
+    (ports.jobSubmission.worlds as unknown as Map<string, LaunchWorldRecord>).set(`${TENANT}/prj-f12-launched`, DENSE_WORLD);
+    expect(ports.controlPlane.bindOrganization({ tenantId: TENANT, projectId: 'prj-f12-launched', organizationRef: 'org:compiled-prj-f12-launched', at: AT } as Parameters<typeof ports.controlPlane.bindOrganization>[0]).ok).toBe(true);
+    const deliverables = demoDeliverableSourceOf(TENANT, ports, { decisionOfJob: () => null, outcomesOf: () => [] }, ports);
+    const context = { ports, deliverables, tenant: TENANT, developerToken: 'tok-f12', internalToken: 'tok-f12-internal' } as never;
+    demoMachineryTick(service, context, AT + 10_000);
+    expect(handled).toHaveLength(1);
+    expect(handled[0]!.body).toMatchObject({ jobId: 'job-f12-tick', status: 'complete' });
+    const result = (handled[0]!.body as { readonly result: Record<string, unknown> }).result;
+    const statistics = result.statistics as DerivedSessionStatistics | null;
+    expect(statistics).not.toBeNull();
+    // The desk's own derived records: the entry + trim fills + the honest
+    // concentration refusal — the SAME rows the blotter route serves.
+    expect(statistics!.fills.count).toBeGreaterThanOrEqual(1);
+    expect(statistics!.refusals.count).toBeGreaterThanOrEqual(1);
+    expect(statistics!.fills.notionalTotal).not.toBe('0');
+    // The figures reconcile with the served fold (the one-source-of-truth law).
+    const served = demoSubmissionsOf(ports, TENANT, 'prj-f12-launched');
+    const expected = deriveSessionStatistics({ submissions: served, decisions: [] });
+    expect(statistics!.fills.count).toBe(expected.fills.count);
+    expect(statistics!.fills.notionalTotal).toBe(expected.fills.notionalTotal);
+    expect(statistics!.refusals.count).toBe(expected.refusals.count);
+    expect(statistics!.fees.total).toBe(expected.fees.total);
+    expect(result.summary as string).toContain('derive the statistics');
   });
 });

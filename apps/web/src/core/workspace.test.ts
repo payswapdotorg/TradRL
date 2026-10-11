@@ -593,19 +593,36 @@ describe('workspace: the SHA-256 chain (R9a — genesis + linkage under the publ
     expect(second.chainHead).toBe(sha256Hex((first.chainHead as string) + (second.digest as string)));
   });
 
-  it('the runtime chain and the export-rebuilt chain AGREE entry for entry (one algorithm, both places)', () => {
+  it('the runtime chain and the export-rebuilt chain AGREE entry for entry (one algorithm, both places) — and the FW-43-B record prefix renumbers ahead of the session segment (a longer chain under the same laws)', () => {
     const state = richState();
     const doc = composeWorkspaceExport(state);
-    expect(doc.events.length).toBe(state.history.length);
+    // FW-43-B: the export chains the RECORD-DERIVED PREFIX first, so the
+    // session segment renumbers (seq = prefix + 1 …) — the payloads stay
+    // the SAME records in the SAME order, and every digest/link still
+    // recomputes from the file alone (pinned above + below).
+    const prefixLength = doc.events.length - state.history.length;
+    expect(prefixLength).toBeGreaterThan(0); // richState holds records on file — the prefix derives
     for (let index = 0; index < state.history.length; index++) {
       const runtime = state.history[index];
-      const exported = doc.events[index];
+      const exported = doc.events[prefixLength + index];
       if (runtime === undefined || exported === undefined) throw new Error('fixture: histories must align');
-      expect(exported.digest).toBe(runtime.digest);
-      expect(exported.chainHead).toBe(runtime.chainHead);
-      expect(exported.payload).toEqual(runtime.payload);
+      expect(exported.payload).toEqual(runtime.payload); // the same event, verbatim
+      expect(exported.seq).toBe(prefixLength + index + 1); // renumbered over the longer chain
+      expect(exported.derived).not.toBe(true); // the session segment is never labeled derived
     }
-    expect(doc.chain.head).toBe((state.history[state.history.length - 1] as { chainHead: string }).chainHead);
+    expect(doc.chain.head).toBe(doc.events[doc.events.length - 1]?.chainHead);
+    // The pre-FW-43-B byte-agreement law holds EXACTLY when no records are
+    // on file (an empty prefix): the export's chain is then the runtime
+    // chain, entry for entry, digest for digest.
+    let uiOnly = openWorkspace(SCOPE, T0);
+    uiOnly = reduceWorkspace(uiOnly, { kind: 'connection-changed', at: T0 + 1, status: 'connected' });
+    uiOnly = reduceWorkspace(uiOnly, { kind: 'view-tminus', at: T0 + 2, tMinusMs: 1_000 });
+    const uiOnlyDoc = composeWorkspaceExport(uiOnly);
+    expect(uiOnlyDoc.events.length).toBe(uiOnly.history.length);
+    for (let index = 0; index < uiOnly.history.length; index++) {
+      expect(uiOnlyDoc.events[index]?.digest).toBe(uiOnly.history[index]?.digest);
+      expect(uiOnlyDoc.events[index]?.chainHead).toBe(uiOnly.history[index]?.chainHead);
+    }
   });
 
   it('a payload-less history entry is a LOUD composition error (never a fake digest over nothing)', () => {
@@ -747,7 +764,11 @@ describe('workspace: export derivability + tamper detection (R9a — the file al
     expect(verifyWorkspaceExport(doc)).toEqual({ ok: true });
     expect(scope.tenantId).toBe('tenant-a'); // (the fixture held)
     expect(chain.algorithm).toBe('sha-256');
-    expect(events.length).toBe(13);
+    // FW-43-B: the export's chain = the record-derived prefix (9 events —
+    // the project, the goal bundle, the org snapshot, the outcomes/
+    // knowledge/post-mortems folds, 2 submission rows, 1 job row) + the
+    // session's own 13 linked events.
+    expect(events.length).toBe(9 + 13);
   });
 
   it('a pre-fix v1 export (the old serializeWorkspace dump) does not verify — honestly refused, never faked', () => {
@@ -843,10 +864,16 @@ describe('workspace: export completeness (R9b — capsules, decisions, read-stat
     const state = richState();
     const doc = composeWorkspaceExport(state);
     expect(doc.manifest.included).toEqual([
-      'launchWorld', 'workspace.state', 'events.chain', 'evidence.capsules', 'decisions.watch', 'decisions.gateway', 'readState',
+      // FW-43-B: the record-derived prefix rides the chain when records
+      // are on file (richState holds them) — the manifest names the block.
+      'launchWorld', 'workspace.state', 'events.chain', 'events.record', 'evidence.capsules', 'decisions.watch', 'decisions.gateway', 'readState',
     ]);
     expect(doc.manifest.counts.launchWorld).toBe(doc.launchWorld === null ? 0 : 1); // D-14: the world count is TRUE either way
     expect(doc.manifest.counts.events).toBe(doc.events.length);
+    // FW-43-B: the record/session split, counted TRUE (the manifest alone tells the compliance officer the shape).
+    expect(doc.manifest.counts.recordDerivedEvents).toBe(doc.events.filter((entry) => entry.derived === true).length);
+    expect(doc.manifest.counts.sessionEvents).toBe(doc.events.filter((entry) => entry.derived !== true).length);
+    expect(doc.manifest.counts.recordDerivedEvents + doc.manifest.counts.sessionEvents).toBe(doc.events.length);
     expect(doc.manifest.counts.capsules).toBe(doc.capsules.length);
     expect(doc.manifest.counts.decisionsWatch).toBe(doc.decisions.watch.length);
     expect(doc.manifest.counts.decisionsGateway).toBe(doc.decisions.gateway.length);
@@ -970,17 +997,18 @@ describe('workspace: FW-36-B — the structured per-record simulated flag (E-8, 
     expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state, true)))).toEqual({ ok: true });
   });
 
-  it('the payloads stay THE EXACT EVENTS AS APPLIED (never modified by the flag) — and the export-rebuilt chain agrees with the runtime chain entry for entry', () => {
+  it('the payloads stay THE EXACT EVENTS AS APPLIED (never modified by the flag) — and the export-rebuilt chain agrees with the runtime chain entry for entry (the FW-43-B record prefix riding ahead, renumbered)', () => {
     const state = richState();
     const doc = composeWorkspaceExport(state, true);
+    const prefixLength = doc.events.length - state.history.length; // FW-43-B: the record-derived prefix
     for (let index = 0; index < state.history.length; index += 1) {
       const runtime = state.history[index];
-      const exported = doc.events[index];
+      const exported = doc.events[prefixLength + index];
       if (runtime === undefined || exported === undefined) throw new Error('fixture: histories must align');
       expect(exported.payload).toEqual(runtime.payload);
-      expect(exported.digest).toBe(runtime.digest);
       // the flag is a sibling of the payload, never a field inside it
       expect((exported.payload as Record<string, unknown>).simulated).toBeUndefined();
+      expect((exported.payload as Record<string, unknown>).derived).toBeUndefined(); // the derived label too — the payload is never modified
     }
   });
 
@@ -1244,9 +1272,11 @@ describe('workspace: MI-D7 — the non-ASCII canonical divergence + the publishe
     const honest = verifyWorkspaceExportReport(JSON.parse(serializeWorkspaceExport(state)));
     expect(honest.ok).toBe(true);
     expect(honest.reason).toBeNull();
-    expect(honest.entryCount).toBe(state.history.length);
-    expect(honest.digestsOk).toBe(state.history.length);
-    expect(honest.linksOk).toBe(state.history.length);
+    // FW-43-B: the outcomes fold derives 1 record event ahead of the 3
+    // session events (a longer chain under the same laws).
+    expect(honest.entryCount).toBe(state.history.length + 1);
+    expect(honest.digestsOk).toBe(state.history.length + 1);
+    expect(honest.linksOk).toBe(state.history.length + 1);
     expect(honest.headMatch).toBe(true);
     expect(honest.format).toBe('tradrl-workspace-export');
     expect(honest.formatVersion).toBe(2);
@@ -1534,5 +1564,212 @@ describe('FW-42-B (I-3b): the reload-path hydration pending window (hydrationRea
       { kind: 'org-snapshot', at: T0 + 4, snapshot: { organizationRef: 'org:c', tenant: 'tenant-a', project: 'prj-compiled', status: 'active', at: T0 + 4, instanceRefs: ['inst:1'] } },
     ]);
     expect(hydrationReadPendingOf(landed)).toBe(false); // the read completed — the snapshot renders, no marker anywhere
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-43-B (Round K minor, 4 personas — L3/S2/S3/L2): THE EXPORT'S
+// FULL-RECORD SCOPE. The pre-fix law: the export's events chain was
+// PAGE-SESSION-SCOPED — an export taken after a reload started a fresh
+// chain and omitted the pre-reload record (L3: "a compliance officer
+// exporting after a refresh gets a truncated history chain; D1's
+// launch-submitted event is absent from my D2 export"). THE NEW LAW: the
+// export carries the PROJECT's FULL RECORD ON FILE — every event the
+// durable rows hold for the scope, DERIVED from the folded rows the boot
+// re-read serves (one record-derived event per row, stamped at the
+// record's OWN instant), ahead of the current page session's own linked
+// history. The chain rules (digest/link/head) are UNCHANGED — a longer
+// chain under the same laws. The honest boundary, disclosed: session-only
+// UI events of PRIOR sessions (view navigation, wizard drafts, playback,
+// notice reads) were never records on file and cannot be recovered — the
+// durable rows ARE the record.
+// ---------------------------------------------------------------------------
+
+describe('workspace: FW-43-B — the export\'s FULL-RECORD scope (the pre-reload record rides every export)', () => {
+  /** The launch trail's kickoff row, complete (the record the durable rows hold). */
+  function kickoffJob(completed = true): JobRecord {
+    return {
+      jobId: 'job-1',
+      kind: 'research',
+      tenant: 'tenant-a',
+      project: 'proj-launched',
+      status: completed ? 'complete' : 'running',
+      submittedAt: T0 + 20,
+      ...(completed ? { completedAt: T0 + 28 } : {}),
+    } as JobRecord;
+  }
+
+  /** A promoted decision row (the outcome record with the decision→job backlink), scoped to the launched desk. */
+  function promotedDecision(): OutcomeRecord {
+    return { ...outcomeRecord(), outcomeId: 'out-promoted-1', project: 'proj-launched', promotedFromJob: 'job-1', asOf: T0 + 40 } as OutcomeRecord;
+  }
+
+  /** The launched desk's own knowledge + post-mortem rows (project-scoped fixtures — the L12 gate refuses cross-project records). */
+  function launchedKnowledge(): ServedKnowledge {
+    return { ...knowledgeRecord(), record: { ...knowledgeRecord().record, project: 'proj-launched' } } as unknown as ServedKnowledge;
+  }
+
+  function launchedPostMortem(): PostMortemRecord {
+    return { ...postMortemRecord(), lineage: { ...postMortemRecord().lineage, tenant: 'tenant-a', project: 'proj-launched' } } as unknown as PostMortemRecord;
+  }
+
+  /** SESSION ONE — the console session that launched the desk (its own linked history). */
+  function launchedSession(): WorkspaceState {
+    const launchedScope = { tenantId: 'tenant-a', projectId: 'proj-launched' } as const;
+    let state = openWorkspace(launchedScope, T0);
+    state = reduceWorkspace(state, { kind: 'connection-changed', at: T0 + 1, status: 'connected' });
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 2, project: projectRecord({ id: 'proj-launched', lifecycle: { projectId: 'proj-launched', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:alpha' } }) });
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 3, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    state = reduceWorkspace(state, { kind: 'launch-submitted', at: T0 + 20, projectId: 'proj-launched', jobId: 'job-1' });
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 21, job: kickoffJob(false) });
+    state = reduceWorkspace(state, { kind: 'launch-progress', at: T0 + 22, status: 'running' });
+    state = reduceWorkspace(state, { kind: 'launch-completed', at: T0 + 29 });
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 30, job: kickoffJob(true) });
+    state = reduceWorkspace(state, { kind: 'submission-recorded', at: T0 + 50, submission: routedSubmission() });
+    state = reduceWorkspace(state, { kind: 'outcome-recorded', at: T0 + 41, outcome: promotedDecision() });
+    state = reduceWorkspace(state, { kind: 'view-tminus', at: T0 + 60, tMinusMs: 5_000 }); // a session-only UI event
+    return state;
+  }
+
+  /** THE RELOAD — a fresh page session over the same scope: the boot bundle re-reads the durable rows (NO launch events — the pre-fix truncated chain). */
+  function reloadedSession(): WorkspaceState {
+    const launchedScope = { tenantId: 'tenant-a', projectId: 'proj-launched' } as const;
+    let state = openWorkspace(launchedScope, T0 + 100_000); // the reload, a fresh open instant
+    state = reduceWorkspace(state, { kind: 'connection-changed', at: T0 + 100_001, status: 'connected' });
+    state = reduceWorkspace(state, { kind: 'project-loaded', at: T0 + 100_002, project: projectRecord({ id: 'proj-launched', lifecycle: { projectId: 'proj-launched', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:alpha' }, updatedAt: T0 + 2 }) });
+    state = reduceWorkspace(state, { kind: 'goal-loaded', at: T0 + 100_003, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    state = reduceWorkspace(state, { kind: 'knowledge-loaded', at: T0 + 100_004, records: [launchedKnowledge()] });
+    state = reduceWorkspace(state, { kind: 'outcomes-loaded', at: T0 + 100_005, records: [promotedDecision()] });
+    state = reduceWorkspace(state, { kind: 'post-mortems-loaded', at: T0 + 100_006, records: [launchedPostMortem()] });
+    state = reduceWorkspace(state, { kind: 'submission-recorded', at: T0 + 100_007, submission: routedSubmission() });
+    state = reduceWorkspace(state, { kind: 'job-updated', at: T0 + 100_008, job: kickoffJob(true) });
+    state = reduceWorkspace(state, { kind: 'org-snapshot', at: T0 + 100_009, snapshot: { ...orgSnapshot('active'), project: 'proj-launched' } });
+    state = reduceWorkspace(state, { kind: 'section-selected', at: T0 + 100_010, section: 'time-machine' });
+    return state;
+  }
+
+  it('THE PERSONA\'S CASE: an export after the reload carries the FULL RECORD ON FILE — the pre-reload launch trail (launch-submitted + launch-completed) derived from the durable rows, ahead of the fresh session\'s own history', () => {
+    const state = reloadedSession();
+    const doc = composeWorkspaceExport(state);
+    // THE PRE-RELOAD LAUNCH TRAIL — absent from the pre-fix export, derived from the kickoff row + the world record now:
+    const launchSubmitted = doc.events.filter((entry) => entry.payload.kind === 'launch-submitted');
+    expect(launchSubmitted).toHaveLength(1); // the pre-fix export carried ZERO (the persona\'s finding)
+    expect((launchSubmitted[0] as { readonly payload: { readonly jobId?: string; readonly at?: number } }).payload.jobId).toBe('job-1');
+    expect((launchSubmitted[0] as { readonly payload: { readonly at?: number } }).payload.at).toBe(T0 + 20); // the ROW\'s own submittedAt — never the reload\'s clock
+    expect(launchSubmitted[0]?.derived).toBe(true); // honestly labeled: a record-derived entry
+    const launchCompleted = doc.events.filter((entry) => entry.payload.kind === 'launch-completed');
+    expect(launchCompleted).toHaveLength(1);
+    expect((launchCompleted[0] as { readonly payload: { readonly at?: number } }).payload.at).toBe(T0 + 28); // the row\'s completedAt
+    expect(launchCompleted[0]?.derived).toBe(true);
+    // EVERY RECORD-DERIVED EVENT rides ahead of the session's own trail (the deterministic order — the segment split, by the derived label):
+    const firstSessionIndex = doc.events.findIndex((entry) => entry.derived !== true);
+    const lastDerivedIndex = doc.events.reduce((last, entry, index) => (entry.derived === true ? index : last), -1);
+    expect(firstSessionIndex).toBeGreaterThan(0); // the session segment exists
+    expect(lastDerivedIndex).toBeGreaterThan(-1);
+    expect(lastDerivedIndex).toBeLessThan(firstSessionIndex); // the record prefix first, then the session suffix
+    expect(doc.events[0]?.derived).toBe(true);
+    // The promoted decision rides too (the promotion trail — a record on file):
+    const promoted = doc.events.filter((entry) => entry.payload.kind === 'outcome-recorded');
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]?.derived).toBe(true);
+    expect(doc.chain.entryCount).toBe(doc.events.length); // the longer chain, counted honestly
+    expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state)))).toEqual({ ok: true }); // the SAME laws, end to end
+  });
+
+  it('THE CHAIN RULES ARE UNCHANGED — a longer chain under the same laws; the derived marker sits OUTSIDE every digest (the additive law, pinned)', () => {
+    const state = reloadedSession();
+    const doc = composeWorkspaceExport(state);
+    // Every derived entry's digest recomputes under the PUBLISHED rule (independent walk):
+    let priorHead = CHAIN_GENESIS;
+    for (const entry of doc.events) {
+      const digest = sha256Of({ seq: entry.seq, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload });
+      expect(digest).toBe(entry.digest);
+      expect(sha256Hex(priorHead + digest)).toBe(entry.chainHead);
+      priorHead = entry.chainHead;
+    }
+    expect(doc.chain.head).toBe(priorHead);
+    // THE ADDITIVE LAW: stripping every `derived` field leaves every digest + link byte-identical (the simulated/actor precedent):
+    const stripped = JSON.parse(serializeWorkspaceExport(state)) as { events: Array<Record<string, unknown>> };
+    for (const entry of stripped.events) delete entry.derived;
+    expect(verifyWorkspaceExport(stripped)).toEqual({ ok: true });
+    for (let index = 0; index < doc.events.length; index += 1) {
+      expect((stripped.events[index] as { digest: string }).digest).toBe(doc.events[index].digest);
+      expect((stripped.events[index] as { chainHead: string }).chainHead).toBe(doc.events[index].chainHead);
+    }
+  });
+
+  it('ONE SOURCE OF TRUTH: the derived events\' payloads ARE the state\'s own folded rows — the goal bundle (goal + constraintSet + world), every submission row, every job row, verbatim', () => {
+    const state = reloadedSession();
+    const doc = composeWorkspaceExport(state);
+    const derivedGoal = doc.events.find((entry) => entry.payload.kind === 'goal-loaded' && entry.derived === true);
+    expect(derivedGoal).toBeDefined();
+    expect((derivedGoal as { readonly payload: { readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; readonly world?: ProjectGoalWorldSpec } }).payload.goal).toEqual(goalRecord());
+    expect((derivedGoal as { readonly payload: { readonly world?: ProjectGoalWorldSpec } }).payload.world).toEqual(worldRecord());
+    const derivedSubmissions = doc.events.filter((entry) => entry.payload.kind === 'submission-recorded' && entry.derived === true);
+    expect(derivedSubmissions).toHaveLength(1);
+    expect((derivedSubmissions[0] as { readonly payload: { readonly submission: GatewaySubmissionRecord } }).payload.submission).toEqual(routedSubmission());
+    const derivedJobs = doc.events.filter((entry) => entry.payload.kind === 'job-updated' && entry.derived === true);
+    expect(derivedJobs).toHaveLength(1);
+    expect((derivedJobs[0] as { readonly payload: { readonly job: JobRecord } }).payload.job).toEqual(kickoffJob(true));
+    // The session\'s OWN read-arrival events still ride too (the suffix — what THIS session saw):
+    const sessionSubmissions = doc.events.filter((entry) => entry.payload.kind === 'submission-recorded' && entry.derived !== true);
+    expect(sessionSubmissions).toHaveLength(1);
+  });
+
+  it('THE HONEST BOUNDARY, DISCLOSED: the record prefix carries only what the durable rows hold — a prior session\'s UI events never ride (they were never records), and the manifest tells the full-record truth', () => {
+    const state = reloadedSession();
+    const doc = composeWorkspaceExport(state);
+    // Session-one-only UI events are NOT on file and never ride (the honest nothing):
+    expect(doc.events.some((entry) => entry.payload.kind === 'view-tminus')).toBe(false);
+    expect(doc.events.some((entry) => entry.payload.kind === 'launch-progress')).toBe(false); // the session\'s progress observation — no durable row carries it
+    // The CURRENT session\'s own UI events DO ride (the suffix — this session\'s audit trail):
+    expect(doc.events.some((entry) => entry.payload.kind === 'section-selected')).toBe(true);
+    // THE MANIFEST\'S FULL-RECORD NOTE (the chainScopeNote\'s record-scope sibling):
+    const note = doc.manifest.recordScopeNote;
+    expect(typeof note).toBe('string');
+    expect(note).toContain('FULL RECORD ON FILE');
+    expect(note).toContain('record-derived');
+    expect(note).toContain("'derived': true");
+    expect(note).toContain('PAGE SESSION');
+    expect(note).toContain('cannot be recovered');
+    // The counts tell the split:
+    expect(doc.manifest.counts.recordDerivedEvents).toBe(doc.events.filter((entry) => entry.derived === true).length);
+    expect(doc.manifest.counts.sessionEvents).toBe(doc.events.filter((entry) => entry.derived !== true).length);
+    expect(doc.manifest.counts.events).toBe(doc.events.length);
+    expect(doc.manifest.included).toContain('events.record');
+  });
+
+  it('THE HONEST ABSENCES: a world-less scope (the demo desk — seeded, never launched) derives NO launch trail; a launched scope with no jobs derives none either (never a fabricated launch); an empty workspace still exports the empty chain', () => {
+    // The demo scope: project + goal with NO world — no launch trail is derivable (the demo desk was seeded, not launched).
+    let demoState = openWorkspace(SCOPE, T0);
+    demoState = reduceWorkspace(demoState, { kind: 'project-loaded', at: T0 + 1, project: projectRecord() });
+    demoState = reduceWorkspace(demoState, { kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord() });
+    demoState = reduceWorkspace(demoState, { kind: 'job-updated', at: T0 + 3, job: jobRecord('complete') });
+    const demoDoc = composeWorkspaceExport(demoState);
+    expect(demoDoc.events.some((entry) => entry.payload.kind === 'launch-submitted' && entry.derived === true)).toBe(false);
+    expect(demoDoc.events.some((entry) => entry.payload.kind === 'launch-completed' && entry.derived === true)).toBe(false);
+    expect(demoDoc.events.filter((entry) => entry.derived === true).length).toBeGreaterThan(0); // the records that ARE on file still derive
+    // A world-carrying scope with NO jobs: no kickoff row — no launch trail (never a fabricated one).
+    let joblessState = openWorkspace({ tenantId: 'tenant-a', projectId: 'proj-launched' } as const, T0);
+    joblessState = reduceWorkspace(joblessState, { kind: 'goal-loaded', at: T0 + 2, goal: goalRecord(), constraintSet: constraintSetRecord(), world: worldRecord() });
+    const joblessDoc = composeWorkspaceExport(joblessState);
+    expect(joblessDoc.events.some((entry) => entry.payload.kind === 'launch-submitted')).toBe(false);
+    // An empty workspace: the empty chain, unchanged (the pre-existing law).
+    const emptyDoc = composeWorkspaceExport(openWorkspace(SCOPE, T0));
+    expect(emptyDoc.events).toEqual([]);
+    expect(emptyDoc.chain.entryCount).toBe(0);
+    expect(emptyDoc.manifest.recordScopeNote).toBeUndefined(); // nothing on file — nothing to disclose
+  });
+
+  it('THE SAME-SESSION EXPORT TOO: the record prefix rides ahead of the launching session\'s own history (the compliance officer\'s one file, regardless of when it was taken)', () => {
+    const state = launchedSession();
+    const doc = composeWorkspaceExport(state);
+    // The session\'s own launch events still ride (the suffix — what this session did)...
+    expect(doc.events.some((entry) => entry.payload.kind === 'launch-submitted' && entry.derived !== true)).toBe(true);
+    // ...and the record-derived prefix rides ahead (the record on file — the same launch, derived from the row):
+    const derived = doc.events.filter((entry) => entry.derived === true);
+    expect(derived.length).toBeGreaterThan(0);
+    expect(doc.events[0]?.derived).toBe(true); // the prefix leads
+    expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state)))).toEqual({ ok: true });
   });
 });
