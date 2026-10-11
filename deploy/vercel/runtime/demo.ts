@@ -139,6 +139,7 @@ import {
 import { deriveProjectEvidence, type ProjectEvidenceSeed } from './project-evidence';
 import {
   composeResearchDeliverableResult,
+  type DeliverableAlertRef,
   type DeliverableNoteRef,
   type DeliverableSessionRecords,
   emptyDeliverableSource,
@@ -146,6 +147,7 @@ import {
   type DeliverableSource,
 } from './deliverable';
 import { researchNotesOf, type NoteAttachOutcome, type ResearchNoteRecord } from './notes';
+import { priceAlertsOf, type AlertDeclareOutcome, type PriceAlertRecord } from './alerts';
 
 // ---------------------------------------------------------------------------
 // The demo seed constants (fixed, deterministic, tenant-scoped at seed time)
@@ -870,6 +872,15 @@ export function demoDeliverableSourceOf(
       const notes = researchNotesOf(captured.notes);
       return notes.length === 0 ? null : Object.freeze(notes.map((note) => ({ noteId: note.noteId, title: note.title })) as readonly DeliverableNoteRef[]);
     },
+    // FW-46 (the S2 market surface): the declared price alerts read from the
+    // SAME capture the goal route serves — the provenance names them (count
+    // + envelopes); an unwired/absent read composes the honest absence.
+    alertsOf(project) {
+      const captured = ports.controlPlane.goalSets.get(`${tenant}/${project}`);
+      if (captured === undefined) return null;
+      const alerts = priceAlertsOf(captured.alerts);
+      return alerts.length === 0 ? null : Object.freeze(alerts.map((alert) => ({ alertId: alert.alertId, market: alert.market, direction: alert.direction, level: alert.level })) as readonly DeliverableAlertRef[]);
+    },
     ...(records === undefined ? {} : {
       sessionRecordsOf: (project: string) => deliverableSessionRecordsOf(
         tenant,
@@ -917,6 +928,15 @@ export function durableDeliverableSourceOf(
       if (row === null) return null;
       const notes = researchNotesOf(row.notes);
       return notes.length === 0 ? null : Object.freeze(notes.map((note) => ({ noteId: note.noteId, title: note.title })) as readonly DeliverableNoteRef[]);
+    },
+    // FW-46 (the S2 market surface): the declared price alerts read from the
+    // SAME hydrated goal-set row (the row's own additive `alerts` array,
+    // structurally re-validated — one source of truth, R46).
+    alertsOf(project) {
+      const row = source.goalSetOf(project);
+      if (row === null) return null;
+      const alerts = priceAlertsOf(row.alerts);
+      return alerts.length === 0 ? null : Object.freeze(alerts.map((alert) => ({ alertId: alert.alertId, market: alert.market, direction: alert.direction, level: alert.level })) as readonly DeliverableAlertRef[]);
     },
     // FW-38-A (G-6): the DEGRADED/ABSENT distinction rides the deliverable
     // source — a degraded seam goal read (the projection in flight or dirty)
@@ -993,7 +1013,7 @@ export interface DurableEvidenceSource {
    * same read, so the deliverable's notes fold and the goal route's
    * `notes` field read ONE source of truth.
    */
-  goalSetOf(project: string): { readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; readonly world: LaunchWorldRecord | null; readonly notes?: unknown } | null;
+  goalSetOf(project: string): { readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; readonly world: LaunchWorldRecord | null; readonly notes?: unknown; readonly alerts?: unknown } | null;
   /**
    * FW-38-A (Round G register G-6): the goal-set read's DEGRADED state,
    * distinct from absent — true when the seam's goal read is currently the
@@ -1394,6 +1414,13 @@ export interface DemoGoalSetRecording {
    * law). Absent = no note was ever attached on this instance.
    */
   readonly notes?: readonly ResearchNoteRecord[];
+  /**
+   * The project's DECLARED PRICE ALERTS (FW-46, the S2 market surface): the
+   * additive array the host alert route merges into this capture — the
+   * same law `notes` rides (per-instance under demo, durable under the
+   * seam). Absent = no alert was ever declared on this instance.
+   */
+  readonly alerts?: readonly PriceAlertRecord[];
 }
 
 /**
@@ -1465,6 +1492,32 @@ export function attachDemoNote(controlPlane: ReturnType<typeof demoControlPlane>
   // whole recording (the immutable-record law — never an in-place mutation).
   (controlPlane.goalSets as Map<string, DemoGoalSetRecording>).set(`${tenant}/${project}`, { ...existing, notes: [...stored, note] });
   return { ok: true, note };
+}
+
+/**
+ * THE DEMO ARM'S ALERT DECLARATION (FW-46, the S2 market surface): merge one
+ * minted alert record into the per-instance goal-set capture (the DURABLE
+ * seam's attachAlert stamp, this backing's own medium — per-instance, a
+ * cold start resets it, honest under the SIMULATED badge). IDEMPOTENT PER
+ * CONTENT (the client's own idempotency-key unit: project + market +
+ * direction + level — a row already carrying the same envelope returns the
+ * STORED record: the FIRST mint stands, never a duplicate row; a
+ * same-alertId hit is the subsumed special case); a project with no captured
+ * goal set answers the typed target-absent failure (fail-closed — the
+ * alert rides a record that must exist, never an alert on nothing).
+ */
+export function attachDemoAlert(controlPlane: ReturnType<typeof demoControlPlane>, tenant: string, project: string, alert: PriceAlertRecord): AlertDeclareOutcome {
+  const existing = controlPlane.goalSets.get(`${tenant}/${project}`);
+  if (existing === undefined) {
+    return { ok: false, error: { code: 'price_alert_target_absent', message: `no goal set is captured for ${JSON.stringify(project)} at this instance (the alert attaches to the project's own goal-set record — the record must exist first)` } };
+  }
+  const stored = priceAlertsOf(existing.alerts);
+  const already = stored.find((entry) => entry.alertId === alert.alertId || (entry.market === alert.market && entry.direction === alert.direction && entry.level === alert.level));
+  if (already !== undefined) return { ok: true, alert: already }; // idempotent — the FIRST mint stands
+  // The capture map is the closure's own mutable medium; the merge re-sets the
+  // whole recording (the immutable-record law — never an in-place mutation).
+  (controlPlane.goalSets as Map<string, DemoGoalSetRecording>).set(`${tenant}/${project}`, { ...existing, alerts: [...stored, alert] });
+  return { ok: true, alert };
 }
 
 /**
@@ -2025,6 +2078,10 @@ export function demoMachineryTick(service: ApiService, context: DemoMachineryCon
                   // the goal-set row carries; an unwired source composes the
                   // honest absence, never a fabricated reference).
                   notes: context.deliverables.notesOf === undefined ? null : context.deliverables.notesOf(job.project),
+                  // FW-46 (the S2 market surface): the provenance NAMES the
+                  // declared price alerts (count + envelopes; an unwired
+                  // source composes the honest absence).
+                  alerts: context.deliverables.alertsOf === undefined ? null : context.deliverables.alertsOf(job.project),
                 })
               : { kind: 'training-summary', epochs: 3, project: job.project },
           }

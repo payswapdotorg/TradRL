@@ -45,6 +45,7 @@ function filledRow(overrides: {
   readonly side?: 'buy' | 'sell';
   readonly fill?: Record<string, unknown> | null;
 }): GatewaySubmissionRecord {
+  const routedAt = overrides.routedAt ?? overrides.filledAt;
   return {
     kind: 'routed',
     submissionId: overrides.submissionId,
@@ -54,7 +55,7 @@ function filledRow(overrides: {
     venue: 'BROKER-FIX',
     adapterRef: 'adapter:demo-broker',
     channelRef: 'chan:demo-main',
-    routedAt: overrides.routedAt ?? overrides.filledAt,
+    routedAt,
     order: {
       clientOrderId: `ord-${overrides.submissionId}`,
       instrumentId: overrides.instrument,
@@ -64,7 +65,10 @@ function filledRow(overrides: {
       quantity: overrides.quantity ?? '0.75',
       price: overrides.price,
       timeInForce: 'gtc',
-      createdAt: new Date(overrides.routedAt ?? overrides.filledAt).toISOString(),
+      // the malformed-instant fixture routes through this helper too — a
+      // non-finite instant renders no ISO date (the order leg's own honest
+      // degradation; the FOLD under test skips the row long before it).
+      createdAt: Number.isFinite(routedAt) ? new Date(routedAt).toISOString() : '',
     },
     ...(overrides.fill === null ? {} : { fill: overrides.fill ?? { state: 'filled', quantity: overrides.quantity ?? '0.75', price: overrides.price, notional: '1', fee: '0.01', filledAt: overrides.filledAt } }),
   } as GatewaySubmissionRecord;
@@ -157,7 +161,11 @@ describe('core/market — priceSeriesOf (per market, first-appearance order, obs
       filledRow({ submissionId: 'sub-3', instrument: 'BTC-USD', price: '60500.25', filledAt: T0 + 500 }),
       filledRow({ submissionId: 'sub-4', instrument: 'BTC-USD', price: '60800.00', filledAt: T0 + 100 }), // earlier instant, later row — the series orders by instant
     ];
-    const series = priceSeriesOf(rows);
+    // the grouping fold takes the OBSERVATIONS (fillPriceObservationsOf's
+    // output — the RED draft passed the raw rows; the split into the two
+    // folds is the implementation's own shape: the observation fold is the
+    // one source of truth, the grouping fold is pure over its output).
+    const series = priceSeriesOf(fillPriceObservationsOf(rows));
     expect(series.map((market) => market.market)).toEqual(['BTC-USD', 'ETH-USD']); // first appearance
     expect(series[0]?.observations.map((observation) => observation.price)).toEqual(['60800.00', '61000.50', '60500.25']); // by instant
     expect(series[1]?.observations).toHaveLength(1);

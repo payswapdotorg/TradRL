@@ -73,17 +73,49 @@ import type { VNode } from './vtree';
 export interface ProjectorDocument {
   createElement(tag: string): Element;
   createTextNode(text: string): Text;
+  /**
+   * FW-46 (the S2 market surface): the SVG-namespace creator — OPTIONAL so
+   * every pre-FW-46 stub document stays valid (a document without it
+   * degrades to createElement, never a throw — R46; the real browser
+   * document carries it, and the chart needs it so <svg> + its geometry
+   * children paint as SVG).
+   */
+  createElementNS?(namespaceURI: string, qualifiedName: string): Element;
+}
+
+/**
+ * The SVG namespace (the one namespace this console's view tree carries —
+ * the market view's chart). NB: the URL is CONCATENATED, never a single
+ * literal — the no-build loader's erasable-subset lexer treats `//` as a
+ * line comment even inside a string literal (a pre-existing limitation no
+ * published source had hit before this wave; the pieces each carry a
+ * single slash, which the lexer leaves alone).
+ */
+const SVG_NAMESPACE = 'http:' + '/' + '/www.w3.org/2000/svg';
+
+/** Create one element — namespaced when the subtree calls for it (no createElementNS: degrades to createElement, never a throw). */
+function createElementFor(document: ProjectorDocument, tag: string, namespaced: boolean): Element {
+  if (namespaced && typeof document.createElementNS === 'function') {
+    return document.createElementNS(SVG_NAMESPACE, tag);
+  }
+  return document.createElement(tag);
 }
 
 /** Project one VNode into a fresh element (attributes verbatim; children in order). */
 export function projectVNode(document: ProjectorDocument, node: VNode | string): Node {
+  return projectVNodeInNamespace(document, node, false);
+}
+
+/** The namespaced projection (FW-46: an <svg> subtree — the root AND every child — renders through createElementNS). */
+function projectVNodeInNamespace(document: ProjectorDocument, node: VNode | string, namespaced: boolean): Node {
   if (typeof node === 'string') return document.createTextNode(node);
-  const element = document.createElement(node.tag);
+  const inSvg = namespaced || node.tag === 'svg';
+  const element = createElementFor(document, node.tag, inSvg);
   for (const [name, value] of Object.entries(node.attrs)) {
     element.setAttribute(name, value);
   }
   for (const child of node.children) {
-    element.appendChild(projectVNode(document, child));
+    element.appendChild(projectVNodeInNamespace(document, child, inSvg));
   }
   return element;
 }

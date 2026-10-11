@@ -41,6 +41,7 @@ import type {
   ProjectGoalWorldSpec,
   ProjectLifecycleEvent,
   ProjectRecord,
+  PriceAlertRecord,
   ResearchNoteRecord,
   RiskUtilizationRead,
   StrategyIntent,
@@ -118,6 +119,8 @@ export interface ProjectGoalBundle {
   readonly world?: ProjectGoalWorldSpec;
   /** The project's ATTACHED RESEARCH NOTES (FW-45 — the ADDITIVE host-route field the note route writes and the boot bundle re-reads; absent when none is on record). */
   readonly notes?: readonly ResearchNoteRecord[];
+  /** The project's DECLARED PRICE ALERTS (FW-46 — the ADDITIVE host-route field the alert route writes and the boot bundle re-reads; absent = none on record). */
+  readonly alerts?: readonly PriceAlertRecord[];
 }
 
 /** The typed client over the boundary's public plane (the console's mirror of the SDK's resource surface). */
@@ -141,6 +144,8 @@ export interface ConsoleClient {
     goal(projectId: string): Promise<ProjectGoalBundle>;
     /** `POST /v1/projects/:projectId/notes` — THE RESEARCH-NOTE ATTACH (FW-45 — the HOST-OWNED consequential route: the titled text note stored VERBATIM on the project's goal-set record, idempotent per content; the minted record is what `note-attached` dispatches). */
     attachNote(projectId: string, input: { readonly title: string; readonly text: string }, options?: ConsequentialOptions): Promise<{ readonly note: ResearchNoteRecord }>;
+    /** `POST /v1/projects/:projectId/alerts` — THE PRICE-ALERT DECLARATION (FW-46 — the HOST-OWNED consequential route: the desk's declared alert (market, direction, level) stored on the goal-set record, idempotent per content; the minted record is what `alert-declared` dispatches). */
+    declareAlert(projectId: string, input: { readonly market: string; readonly direction: 'above' | 'below'; readonly level: string }, options?: ConsequentialOptions): Promise<{ readonly alert: PriceAlertRecord }>;
     /** `POST /v1/projects/:projectId/lifecycle` — apply a lifecycle event. */
     transition(projectId: string, event: ProjectLifecycleEvent, at: number, options?: ConsequentialOptions): Promise<ProjectLifecycleTransitionResult>;
     /** `POST /v1/projects/:projectId/organization` — bind an organization. */
@@ -340,6 +345,10 @@ export function createConsoleClient(config: ConsoleClientConfig): ConsoleClient 
         // analyst's own { title, text } (verbatim), the idempotency key
         // rides the header, the envelope unwraps to the minted record.
         return request('POST', `/v1/projects/${encodeURIComponent(projectId)}/notes`, { body: input, idempotencyKey: keyFor('projects.attachNote', [projectId, input.title, input.text], options) }) as Promise<{ readonly note: ResearchNoteRecord }>;
+      },
+      async declareAlert(projectId, input, options) {
+        // FW-46: the HOST-OWNED price-alert declaration — the body is EXACTLY the desk's own { market, direction, level } (verbatim); the envelope unwraps to the minted record.
+        return request('POST', `/v1/projects/${encodeURIComponent(projectId)}/alerts`, { body: input, idempotencyKey: keyFor('projects.declareAlert', [projectId, input.market, input.direction, input.level], options) }) as Promise<{ readonly alert: PriceAlertRecord }>;
       },
       async transition(projectId, event, at, options) {
         return request('POST', `/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, { body: { event, at }, idempotencyKey: keyFor('projects.lifecycle', [projectId, event, at], options) }) as Promise<ProjectLifecycleTransitionResult>;

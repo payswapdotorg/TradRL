@@ -6902,6 +6902,7 @@ describe('executed boot: FW-46 — the price-alert declaration (the S2 market su
   function alertsTransport(inner: ApiTransport): {
     readonly transport: ApiTransport;
     readonly declares: { count: number; projects: string[]; bodies: unknown[] };
+    readonly preseed: (project: string, alert: Record<string, unknown>) => void;
   } {
     const declares = { count: 0, projects: [] as string[], bodies: [] as unknown[] };
     const alertsByProject = new Map<string, Record<string, unknown>[]>();
@@ -6923,9 +6924,16 @@ describe('executed boot: FW-46 — the price-alert declaration (the S2 market su
           direction: body.direction,
           level: String(body.level ?? ''),
         };
+        // FW-46-cont fixture repair (exposed by the strengthened test): the
+        // served bundle's arrays are the SAME references the workspace
+        // reducer deep-freezes when it links goal-loaded into the history
+        // chain (the MI-D7 immutable-after-seal law) — so the map's stored
+        // array must never be mutated IN PLACE (the first declare after a
+        // boot read threw "object is not extensible"). Rebuild instead.
         const existing = alertsByProject.get(project) ?? [];
-        if (!existing.some((entry) => entry.alertId === alert.alertId)) existing.push(alert);
-        alertsByProject.set(project, [...existing]);
+        if (!existing.some((entry) => entry.alertId === alert.alertId)) {
+          alertsByProject.set(project, [...existing, alert]);
+        }
         return { status: 200, headers: {}, body: { requestId: 'req-a', data: { alert } } };
       }
       if (request.method === 'GET' && path.startsWith('/v1/projects/') && path.endsWith('/goal')) {
@@ -6939,7 +6947,16 @@ describe('executed boot: FW-46 — the price-alert declaration (the S2 market su
       }
       return inner(request);
     };
-    return { transport, declares };
+    return {
+      transport,
+      declares,
+      // pre-seed a record the goal route serves on the NEXT boot bundle read
+      // (the durable read-back path: an alert declared BEFORE an observed
+      // fill fires against it — the honest firing law).
+      preseed: (project, alert) => {
+        alertsByProject.set(project, [alert]);
+      },
+    };
   }
 
   /** Type into the alert-declare form's field (the note form's own browser semantics, on the data-alert-field vocabulary). */
@@ -7012,24 +7029,44 @@ describe('executed boot: FW-46 — the price-alert declaration (the S2 market su
     expect(error).not.toBeNull(); // the typed error renders inline, in the form's own card
   });
 
-  it('a FIRED alert renders its firing state from the records on file (the seeded ETH-USD fill at 3412.10 crosses a below-3200 alert only if a crossing record exists; a below-3500 alert FIRES against it)', async () => {
+  it('a FIRED alert renders its firing state from the records on file (an alert declared BEFORE the seeded ETH-USD fill at 3412.10, loaded from the goal bundle, FIRES against it — the firing is derived from the records, never fabricated); a LIVE declare of the same envelope stays waiting (its only crossing fill predates it — L4 at the surface)', async () => {
     const api = alertsTransport(demoSubstanceTransport().transport);
+    // a PRE-DECLARED alert on the host's record: declared at T0+100 — BEFORE
+    // the seeded ETH-USD fill (filledAt T0+230) — so the goal bundle's
+    // read-back carries it and the crossing observation exists on file (a
+    // LIVE declare at the transport's own stamp T0+401 would honestly stay
+    // waiting: the seeded fills predate it — the L4 law this test's second
+    // half pins at the surface, the same law core/market pins at the fold).
+    api.preseed('prj-a', { alertId: 'alert:fw46-seed', tenant: 'tenant-a', project: 'prj-a', declaredAt: T0 + 100, market: 'ETH-USD', direction: 'below', level: '3500' });
     const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
     clickNav(rig, 'market-world');
+    const row = findByData(rig.root, 'data-alert-row', 'alert:fw46-seed');
+    if (row === null) throw new Error('the pre-declared alert row never rendered');
+    expect(textOf(row)).toContain('ETH-USD below 3500 — FIRED'); // the seeded ETH-USD fill at 3412.10 crosses below 3500
+    expect(textOf(row)).toContain('3412.10'); // the observed price, verbatim
+    expect(textOf(row)).toContain('FIRED at '); // the observed instant is named
+    // THE LIVE DECLARE OF THE SAME ENVELOPE (the continuation worker's
+    // strengthening amendment: the RED draft drove the fired state through
+    // a live declare, which the L4 firing law makes unattainable — the
+    // mint stamps T0+401, AFTER the T0+230 fill it needed — so the RED
+    // draft demanded a fabricated firing; this half RESTORES the RED
+    // draft's form-path coverage it dropped: the direction SELECT's
+    // change event + the verbatim below-body POST, and pins the honest
+    // law the RED draft violated — the same-envelope live declare stays
+    // WAITING, its only crossing observation predates it).
     clickAction(rig, 'alert-declare-open');
     typeAlertField(rig, 'market', 'ETH-USD');
     typeAlertField(rig, 'level', '3500');
-    // the direction select defaults to 'above'; the below case needs the change event (the select's own semantics)
     const direction = findByData(rig.root, 'data-alert-field', 'direction');
     if (direction === null) throw new Error('the direction select never rendered');
     direction.value = 'below';
-    rig.doc.fire('change', { target: direction });
+    rig.doc.fire('change', { target: direction }); // the select's own semantics — the change commit buffers
     clickAction(rig, 'alert-declare');
     await settle();
-    expect(api.declares.bodies[0]).toEqual({ market: 'ETH-USD', direction: 'below', level: '3500' });
-    const row = findByData(rig.root, 'data-alert-row', 'alert:fw46-1');
-    if (row === null) throw new Error('the declared alert row never rendered');
-    expect(textOf(row)).toContain('FIRED'); // the seeded ETH-USD fill at 3412.10 crosses below 3500 — the firing renders from the record on file
-    expect(textOf(row)).toContain('3412.10'); // the observed price, verbatim
+    expect(api.declares.bodies[0]).toEqual({ market: 'ETH-USD', direction: 'below', level: '3500' }); // the verbatim input, nothing else (the RED draft's own pin)
+    const liveRow = findByData(rig.root, 'data-alert-row', 'alert:fw46-1');
+    if (liveRow === null) throw new Error('the live-declared alert row never rendered');
+    expect(textOf(liveRow)).toContain('ETH-USD below 3500 — waiting'); // never a fabricated firing: the 3412.10 fill predates the T0+401 declaration
+    expect(textOf(liveRow)).not.toContain('FIRED');
   });
 });

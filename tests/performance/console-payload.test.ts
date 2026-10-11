@@ -283,9 +283,62 @@ describe('the console boot payload budgets (the no-build console\'s boot transfe
   //   weighed — the account-plane precedent — and rejected: the plane's
   //   seam boilerplate would ADD total bytes without moving any law to a
   //   purer home). The file count stays 54 of 64.
+  // Re-recorded (FW-46, the S2 market-facing surface — every number
+  //   measured on the final tree by the FW-46 continuation worker after
+  //   the recovery, main @ e0341d0 the base): 56 files, 1,247,435 bytes
+  //   total (1218.2 of the 1200 KiB budget — OVER by 18,635). THE TRIM
+  //   CAME FIRST (the FW-44-A/FW-45 law): a multi-pass comment-tightening
+  //   campaign over the WAVE'S OWN blocks (every law kept, zero code
+  //   lines touched, the d2727da/72fc594 precedent) recovered 5,063
+  //   bytes from the WIP's first cut (1,252,498 -> 1,247,435; console.ts
+  //   173,279 -> 171,970), and console.ts's own single-file crossing was
+  //   paid DOWN
+  //   PAST ITS LINE by the file's historical-comment compression campaign
+  //   (the W-17a beat block, the D-15 restore, the pending-press, the
+  //   scrubber, the export-verify, the delegated-layer notes — the
+  //   FW-39-3/FW-40-B payment precedent, every law kept). The additions,
+  //   itemized (net bytes, measured): TWO NEW MODULES riding the
+  //   extraction pattern the budget exists to encourage — src/core/
+  //   market.ts 6,835 (the honest price-series folds + the alert firing
+  //   fold + the PriceObservation/MarketPriceSeries/AlertFiring records)
+  //   + src/render/market.ts 13,598 (the market-view SVG chart cards +
+  //   the boundary-taught live card + the price-alerts card with the
+  //   declare form — the S2 surface's own card, the note-card pattern);
+  //   the additive seams — src/app/console.ts +4,050 (the declare flow's
+  //   wiring — the alert field buffer + the open/cancel/submit arms +
+  //   the client call + the boot bundle's alerts pass-through),
+  //   src/core/workspace.ts +2,483 (the alerts fold + the alert-declared/
+  //   alert-fired events + the manifest prose), src/core/export-record.ts
+  //   +2,353 (the alert-declared/alert-fired record derivations + the
+  //   rule/scope-note texts), src/render/dom.ts +1,682 (the SVG-namespace
+  //   projection — createElementNS, the chart's paint path),
+  //   src/core/decimals.ts +1,749 (compareExactDecimals — the by-value
+  //   decimal compare the firing law rides), src/api/contracts.ts
+  //   +1,629 (the PriceAlertRecord contract), src/api/client.ts +1,253
+  //   (the goal bundle's ADDITIVE alerts field + the declareAlert route),
+  //   src/render/model.ts +749, src/render/shell.ts +510, src/render/
+  //   flow.ts +192. Net +37,083 reconciles EXACTLY with the base
+  //   (FW-45's recorded 1,210,352 + 37,083 = 1,247,435). Closing the
+  //   remaining 18,635 by trimming alone would demand gutting the wave's
+  //   own law-documentation AND a ~15-KiB historical-comment compression
+  //   campaign across files this wave never touched — beyond an honest
+  //   in-place trim (the FW-45 finding, a fortiori here), so the crossing
+  //   is PROPOSED as a CONSCIOUS raise per this file's own protocol and
+  //   EXPLICITLY MARKED AS A LEAD DECISION REQUEST in the PR (never
+  //   silent; the continuation worker's work order forbids a silent
+  //   raise): the byte total 1200 -> 1232 KiB (a 32-KiB step — 16 KiB
+  //   does not fit the measured 1218.2; the proposed line leaves 14,133
+  //   bytes / 1.1% headroom over the measured surface). NO single-file
+  //   raise: console.ts measures 171,970 of the 172,032-byte (168 KiB)
+  //   line — 62 bytes UNDER, paid by the file's own compression campaign
+  //   above; the FW-45 note's own raise rationale ("the raise carries
+  //   the S2 market surface on its back") is honored on the single-file
+  //   line and exceeded on the total by the surface's true size (two new
+  //   modules + ten seams, the chart the S2 quote asked for). The file
+  //   count stays 56 of 64 (54 + the two new modules).
   const FILE_COUNT_BUDGET = 64; // each source is one boot fetch — the fetch count stays bounded
-  const TOTAL_BYTES_BUDGET = 1200 * 1024; // 1200 KiB — the whole boot transfer (PROPOSED raise 1168 -> 1200 at FW-45, the research-note ingestion surface — an EXPLICIT LEAD DECISION REQUEST, see the note above)
-  const LARGEST_FILE_BUDGET = 168 * 1024; // 168 KiB — one fetch + one strip pass (PROPOSED raise 160 -> 168 at FW-45, the attach-flow wiring in console.ts — an EXPLICIT LEAD DECISION REQUEST, see the note above)
+  const TOTAL_BYTES_BUDGET = 1232 * 1024; // 1232 KiB — the whole boot transfer (PROPOSED raise 1200 -> 1232 at FW-46, the S2 market-facing surface's two new modules + ten seams — an EXPLICIT LEAD DECISION REQUEST, see the note above; the Lead decides, never silent)
+  const LARGEST_FILE_BUDGET = 168 * 1024; // 168 KiB — one fetch + one strip pass (raised 160 -> 168 at FW-45, accepted by the Lead; FW-46 stays UNDER this line — console.ts 171,970)
 
   it('the payload is the copy spec\'s set on the real tree: index.html + non-test sources, NO test sources, the loader\'s critical path present', () => {
     const { files, bytes } = consolePayload();

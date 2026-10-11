@@ -46,6 +46,15 @@
 //                      E-6 MVP — the note's envelope VERBATIM, its text
 //                      IN the chained record, stamped at the note's OWN
 //                      attachedAt: the notes reach the chain)
+//   alert-declared     one per DECLARED PRICE ALERT row (FW-46, the S2
+//                      market surface — the alert's envelope VERBATIM,
+//                      stamped at the alert's OWN declaredAt)
+//   alert-fired        one per FIRED alert — derived against the RECORDED
+//                      fill prices (the earliest crossing observation
+//                      at-or-after the declaration), stamped at the
+//                      OBSERVED fill's OWN filledAt with the observed
+//                      price VERBATIM; no crossing observation derives
+//                      NONE (never a fabricated firing)
 //
 // THE HONEST BOUNDARY, DISCLOSED (never silently truncated): session-only
 // UI events of PRIOR sessions — view navigation, playback, wizard drafts,
@@ -66,6 +75,7 @@
 // precedent).
 
 import type { WorkspaceEvent, WorkspaceState } from './workspace';
+import { alertFiringOf, fillPriceObservationsOf } from './market';
 
 /**
  * FW-43-B: THE PUBLISHED DERIVED-EVENT RULE, embedded verbatim in every
@@ -73,7 +83,7 @@ import type { WorkspaceEvent, WorkspaceState } from './workspace';
  * EXPORT_SIMULATED_FLAG_RULE / EXPORT_ACTOR_RULE precedent): what the
  * `derived: true` field means and its placement OUTSIDE every digest.
  */
-export const EXPORT_DERIVED_EVENT_RULE = 'derived field: events[] chain entries carrying \'derived\': true are RECORD-DERIVED — composed at export time from the project\'s own durable rows on file (the project record, the goal bundle with its launch world, every execution submission row, every job row, the launch trail derived from the kickoff job\'s own record, every promoted decision, the organization-status snapshots, the standing risk read, and every attached research note — each note-attached entry carries the note\'s own text VERBATIM, stamped at the note\'s own attached instant), each stamped at ITS OWN RECORD\'S instant and never at the exporting session\'s clock. They are the compliance officer\'s FULL RECORD: an export taken after a reload carries them regardless of what the current page session observed. Entries without the field are the CURRENT PAGE SESSION\'s own linked history — its reads and actions. DELIBERATELY NON-DIGESTED: the published digest rule covers exactly {seq,tenantId,projectId,payload}, so the flag rides each entry as envelope data exactly like the simulated flag — the chain and every digest verify identically with or without it, and pre-FW-43-B documents verify unchanged (the format version stays 2).';
+export const EXPORT_DERIVED_EVENT_RULE = 'derived field: events[] chain entries carrying \'derived\': true are RECORD-DERIVED — composed at export time from the project\'s own durable rows on file (the project record, the goal bundle with its launch world, every execution submission row, every job row, the launch trail derived from the kickoff job\'s own record, every promoted decision, the organization-status snapshots, the standing risk read, every attached research note — each note-attached entry carries the note\'s own text VERBATIM, stamped at the note\'s own attached instant — and every declared price alert — each alert-declared entry carries the alert\'s envelope verbatim, stamped at the alert\'s own declared instant, and each alert-fired entry is evaluated only against the recorded fill prices, stamped at the observed fill\'s own instant with the observed price verbatim — never a live-feed claim), each stamped at ITS OWN RECORD\'S instant and never at the exporting session\'s clock. They are the compliance officer\'s FULL RECORD: an export taken after a reload carries them regardless of what the current page session observed. Entries without the field are the CURRENT PAGE SESSION\'s own linked history — its reads and actions. DELIBERATELY NON-DIGESTED: the published digest rule covers exactly {seq,tenantId,projectId,payload}, so the flag rides each entry as envelope data exactly like the simulated flag — the chain and every digest verify identically with or without it, and pre-FW-43-B documents verify unchanged (the format version stays 2).';
 
 /** One derived launch-trail row — the kickoff job's own fields (null when nothing derivable). */
 interface DerivedKickoffRow {
@@ -203,6 +213,27 @@ export function deriveRecordEventsOf(state: WorkspaceState): readonly WorkspaceE
     events.push({ kind: 'note-attached', at: note.attachedAt, note });
   }
 
+  // 14. FW-46: ONE EVENT PER DECLARED PRICE ALERT — the alert's own
+  // envelope VERBATIM, stamped at the alert's OWN declaredAt (never the
+  // export clock — L4). A malformed row is skipped honestly (R46).
+  for (const alert of state.alerts) {
+    if (!Number.isFinite(alert.declaredAt)) continue;
+    events.push({ kind: 'alert-declared', at: alert.declaredAt, alert });
+  }
+
+  // 15. FW-46: ONE EVENT PER FIRED ALERT — derived from the records on
+  // file (core/market.ts alertFiringOf), stamped at the OBSERVED fill's
+  // OWN filledAt with the observed price VERBATIM. An alert with no
+  // crossing observation derives NOTHING — never a fabricated firing.
+  const observations = fillPriceObservationsOf(state.submissions);
+  for (const alert of state.alerts) {
+    if (!Number.isFinite(alert.declaredAt)) continue;
+    const firing = alertFiringOf(alert, observations);
+    if (firing.fired && firing.at !== null && firing.observedPrice !== null) {
+      events.push({ kind: 'alert-fired', at: firing.at, alert, firing: { at: firing.at, observedPrice: firing.observedPrice } });
+    }
+  }
+
   return Object.freeze(events);
 }
 
@@ -215,7 +246,7 @@ export function deriveRecordEventsOf(state: WorkspaceState): readonly WorkspaceE
 export function recordScopeNoteOf(recordDerivedEvents: number, sessionEvents: number): string | undefined {
   if (recordDerivedEvents === 0) return undefined;
   return [
-    `THE FULL RECORD ON FILE: this export's events chain carries ${recordDerivedEvents} record-derived entries first (each labeled 'derived': true) — one per record the host's durable rows hold for this scope (the project record, the goal bundle with its launch world, every execution submission row, every job row, the launch trail derived from the kickoff job's own record, every promoted decision, the organization-status snapshots, the standing risk read, and every attached research note — its own text rides its note-attached entry verbatim), each stamped at its own record's instant.`,
+    `THE FULL RECORD ON FILE: this export's events chain carries ${recordDerivedEvents} record-derived entries first (each labeled 'derived': true) — one per record the host's durable rows hold for this scope (the project record, the goal bundle with its launch world, every execution submission row, every job row, the launch trail derived from the kickoff job's own record, every promoted decision, the organization-status snapshots, the standing risk read, every attached research note — its own text rides its note-attached entry verbatim — and every declared price alert — its envelope rides its alert-declared entry verbatim; each fired alert's alert-fired entry is evaluated only against the recorded fill prices, stamped at the observed fill's own instant), each stamped at its own record's instant.`,
     `The ${sessionEvents} entries after those are the CURRENT PAGE SESSION's own linked history — its reads and actions.`,
     'An export taken after a reload carries the record-derived prefix regardless of what the current session observed (the pre-fix export started a fresh chain at the reload and omitted the pre-reload record).',
     'The honest boundary: session-only UI events of PRIOR sessions (view navigation, playback, wizard drafts, notice reads, connection changes) were never records on file — no durable row holds them — and cannot be recovered; the durable rows are the record. Every digest and link verifies under the published rules with or without the derived labels.',

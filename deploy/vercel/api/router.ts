@@ -54,6 +54,7 @@ import { serveAuthRoute } from '../runtime/auth-routes';
 import { demoJobsOf } from '../runtime/demo';
 import { serveJobPromoteRoute } from '../runtime/job-promote';
 import { serveNoteAttachRoute } from '../runtime/notes';
+import { serveAlertDeclareRoute } from '../runtime/alerts';
 import { toApiRequest, writeApiResponse, writeDegraded, type FunctionRequest, type FunctionResponse } from '../runtime/http';
 import { drainedFailureResponse, serveDemoSubstanceRoute, serveDurableSubstanceRoute, serveRunbookRoute } from '../runtime/routes';
 import { consoleSessionOf, serveSessionScopedRoute } from '../runtime/session-routes';
@@ -359,6 +360,53 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
         }
       }
       writeApiResponse(response, noteRoute);
+      return;
+    }
+  }
+
+  // 3d-3. THE HOST-OWNED PRICE-ALERT DECLARATION (FW-46, the S2
+  //     market-facing surface): POST /v1/projects/:projectId/alerts — the
+  //     desk's own declared alert (market, direction, level) stored on the
+  //     project's goal-set record (the same opaque payload column the launch
+  //     world, the ownership stamps and the research notes ride) and served
+  //     back on the goal route's ADDITIVE `alerts` field (the `notes`
+  //     precedent) so the console's boot bundle re-reads it after a reload.
+  //     Served BEFORE the boundary wrap with developer-credential authn (the
+  //     W-8/FW-31-A/FW-32-A/FW-45 host-route law; the path is declared
+  //     NOWHERE in the frozen T041 route table). Authn first, the
+  //     untrusted-input gate second (the typed 400 validation_failed, the
+  //     boundary's own untrusted-payload status — never a half-applied
+  //     alert), the fail-closed target third (the typed 404 — the alert
+  //     rides a record that must exist), then the FW-39-3 audit stamp (a
+  //     VALID principal token mints the additive actor fields; a degraded
+  //     revocation read fails closed — the typed 503). `deployment.alerts
+  //     === null` (port overrides — the injection seam owns its own world)
+  //     leaves the route absent: the request falls through to the
+  //     boundary's typed not-found (the pre-law).
+  if (deployment.alerts !== null) {
+    const alertRoute = await serveAlertDeclareRoute(
+      {
+        verifyDeveloperAuthorization: deployment.verifyDeveloperAuthorization,
+        alerts: deployment.alerts,
+        resolvePrincipalToken: deployment.auth.resolvePrincipalToken,
+      },
+      wrapped.request,
+      demoSubstanceSerial++,
+    );
+    if (alertRoute !== null) {
+      // THE WRITE-THROUGH DRAIN ON THE HOST-ROUTE PATH (the FW-45 ordering
+      // law, the same pattern): under the DURABLE backing the declare
+      // queues its goal-set write onto the seam's pending drain at mint
+      // time — this path awaits it BEFORE the response, so the alert is
+      // durable TRUTH the moment the desk hears "200".
+      if (deployment.durable !== null) {
+        const drained = await deployment.durable.drain();
+        if (!drained.ok) {
+          writeApiResponse(response, drainedFailureResponse(alertRoute, drained.error));
+          return;
+        }
+      }
+      writeApiResponse(response, alertRoute);
       return;
     }
   }

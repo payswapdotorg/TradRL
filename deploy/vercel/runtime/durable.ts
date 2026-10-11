@@ -162,6 +162,7 @@ import type { ServedKnowledgeMirror } from '../../adapters/neon/mirrors';
 import { enabledAdapters, type ProviderEnv } from '../../wire/composition';
 import { isNonEmptyString, isRecord, type FetchLike, type InstantSourceMirror, type StoreFailure, type StoreResult } from '../../adapters/shared';
 import { researchNotesOf, type NoteAttachOutcome, type ResearchNoteRecord } from './notes';
+import { priceAlertsOf, type AlertDeclareOutcome, type PriceAlertRecord } from './alerts';
 
 // ---------------------------------------------------------------------------
 // The seam's inputs + observable surfaces
@@ -192,6 +193,8 @@ export interface HydratedGoalSet {
   readonly world?: unknown;
   /** The project's attached research notes (FW-45, the E-6 MVP — the ADDITIVE array the host note route merges in; absent = none on record). */
   readonly notes?: unknown;
+  /** The project's declared price alerts (FW-46, the S2 market surface — the ADDITIVE array the host alert route merges in; absent = none on record). */
+  readonly alerts?: unknown;
 }
 
 /**
@@ -523,6 +526,17 @@ export interface DurableBackingHandle {
    * on nothing).
    */
   attachNote(tenant: string, project: string, note: ResearchNoteRecord): Promise<NoteAttachOutcome>;
+  /**
+   * THE PRICE-ALERT DECLARATION (FW-46, the S2 market surface): merge one
+   * minted alert record into the project's goal-set row's ADDITIVE `alerts`
+   * array (the `notes` precedent — the SAME opaque column, no schema change)
+   * and queue the durable write onto the SAME pending drain every stamp
+   * rides. IDEMPOTENT PER CONTENT (project + market + direction + level —
+   * the FIRST mint stands); a foreign tenant is refused (L12); a project
+   * with NO goal set on record answers the typed
+   * `price_alert_target_absent` failure (fail-closed).
+   */
+  declareAlert(tenant: string, project: string, alert: PriceAlertRecord): Promise<AlertDeclareOutcome>;
   /**
    * THE SESSION-LISTING READ (FW-MI-A, MI-D1): the tenant's project rows
    * LEFT JOINed with their goal-set rows (NeonProjectStore's
@@ -1862,6 +1876,54 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     return { ok: true, note };
   }
 
+  /**
+   * THE PRICE-ALERT DECLARATION (FW-46, the S2 market surface — the
+   * attachNote pattern over the row's ADDITIVE `alerts` array): merge one
+   * minted alert record into the project's goal-set row, live overlay first
+   * (the common path) else a FRESH store read (the alert may land on a WARM
+   * instance whose projection predates the create — the FW-42-A
+   * write-then-read law), append DEDUPED PER CONTENT (the client's own
+   * idempotency-key unit: project + market + direction + level — the FIRST
+   * mint stands; a same-alertId hit is the subsumed case), and queue the
+   * write onto the SAME pending drain every stamp rides. A failed read or
+   * write is the typed failure (the declare is UNCONFIRMED, the caller
+   * learns); no goal set on record anywhere is the typed
+   * `price_alert_target_absent` (fail-closed). The returned record is the
+   * STORED one (a replay returns the first mint verbatim).
+   */
+  async function declareAlert(tenant: string, project: string, alert: PriceAlertRecord): Promise<AlertDeclareOutcome> {
+    if (tenant !== deps.tenant) {
+      // L12 — the declare keys on the seam's credential tenant, never a request
+      // value; a foreign tenant's project is indistinguishable from an unknown
+      // one at this seam (the target-absent failure, the boundary's own law).
+      return { ok: false, error: { code: 'price_alert_target_absent', message: 'no goal set is on record for this project at this seam (the alert attaches to the credential tenant\'s own records)' } };
+    }
+    let existing: GoalSetRecord | null = liveGoalSets.get(project) ?? null;
+    if (existing === null) {
+      const read = await projectStore.goalSetOf(deps.tenant, project);
+      if (!read.ok) return { ok: false, error: read.error }; // the typed read failure — the declare is unconfirmed (the drain reports it)
+      existing = read.value;
+    }
+    if (existing === null) {
+      // FAIL-CLOSED: no goal set on record anywhere — the alert cannot ride a
+      // record that does not exist (never an alert on nothing).
+      return { ok: false, error: { code: 'price_alert_target_absent', message: `no goal set is on record for ${JSON.stringify(project)} — the alert attaches to the project's own goal-set row, so the record must exist first` } };
+    }
+    const stored = priceAlertsOf(existing.alerts);
+    const already = stored.find((entry) => entry.alertId === alert.alertId || (entry.market === alert.market && entry.direction === alert.direction && entry.level === alert.level));
+    if (already !== undefined) {
+      // IDEMPOTENT PER CONTENT — the durable truth already carries this
+      // exact content's record (the FIRST mint stands); sync this instance's
+      // overlay to the row and return the STORED record verbatim.
+      liveGoalSets.set(project, existing);
+      return { ok: true, alert: already };
+    }
+    const merged: GoalSetRecord = { ...existing, alerts: [...stored, alert] };
+    liveGoalSets.set(project, merged);
+    pending.push({ label: 'goalset.alerts.put', run: () => projectStore.putGoalSet(deps.tenant, project, merged) });
+    return { ok: true, alert };
+  }
+
   /** THE FRESH TENANT-WIDE JOBS READ (FW-31-B): the durable tables, never the projection — the staleness heal's data source. */
   async function freshJobRecordsOfTenant(): Promise<StoreResult<readonly JobRecord[]>> {
     const rows = await jobStore.jobRecordsOfTenant(deps.tenant);
@@ -1912,6 +1974,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     principals: principalStore,
     stampPrincipalOwner,
     attachNote,
+    declareAlert,
     sessionProjectRows,
     freshJobRecordsOfTenant,
     organizationBoundAtOf,

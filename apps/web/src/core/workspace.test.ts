@@ -1948,7 +1948,10 @@ describe('FW-46: the price-alert record class — the fold, the alert-declared e
     const doc = composeWorkspaceExport(state);
     const firedEvents = doc.events.filter((entry) => entry.payload.kind === 'alert-fired');
     expect(firedEvents).toHaveLength(1); // the SOL-USD alert never fired — no observation on record
-    const fired = firedEvents[0] as { readonly payload: { readonly alert: PriceAlertRecord; readonly firing: { readonly at: number; readonly observedPrice: string } } };
+    // FW-46-cont type-only repair (the RED draft never reached Gate B): the
+    // cast below must carry the export entry's own 'derived' marker for the
+    // assertion two lines down — the assertion itself is the RED's, verbatim.
+    const fired = firedEvents[0] as { readonly derived?: boolean; readonly payload: { readonly alert: PriceAlertRecord; readonly firing: { readonly at: number; readonly observedPrice: string } } };
     expect(fired.payload.alert.alertId).toBe('alert:aaaa1111');
     expect(fired.payload.firing.at).toBe(T0 + 60); // the OBSERVED fill's own instant — never the export clock
     expect(fired.payload.firing.observedPrice).toBe('62000.00'); // the observed price verbatim
