@@ -609,6 +609,22 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
       // every mutation path). Under port overrides the injection seam owns
       // the world — the raw service rides, exactly as before.
       const serving = hasOverrides ? construction.service : wrapServiceForDurableJobs(construction.service, durable, tenant);
+      // FW-43-B (F-12): the durable arm's demo-substance PORTS PAIR — the
+      // SAME pair the demo-substance reads below fold over (the seeded
+      // blotter + the seam's recording gateway + the per-project derived
+      // evidence fold), hoisted so the DELIVERABLE SOURCE's session-records
+      // read (the derived-statistics block's source) rides the IDENTICAL
+      // fold the host route serves — one source of truth, built once.
+      const durableSubstancePorts = hasOverrides || seamGateway === null || durableEvidenceSource === null
+        ? undefined
+        : {
+            submissions: demoSubmissionBlotter(),
+            executionGateway: seamGateway,
+            // FW-MI-B (MI-D2): the durable arm's blotter fold carries the
+            // per-project derived rows — the same derivation the wrapped
+            // outcome-learning port serves, over the same evidence source.
+            projectEvidenceOf: (evidenceTenant: string, evidenceProject: string) => durableProjectEvidenceOf(durableEvidenceSource as DurableEvidenceSource, evidenceTenant, evidenceProject)?.submissions ?? [],
+          };
       const activation: DurableActivation = hasOverrides
         ? { tick: null, ensureBootWorld: async () => undefined }
         : buildDurableActivation({
@@ -622,24 +638,17 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
             // (the seam built but its goal reads are degraded) degrades to the
             // EMPTY source — the composer's honest statements, never a
             // fabricated number.
-            deliverables: durableEvidenceSource === null ? emptyDeliverableSource : durableDeliverableSourceOf(tenant, durableEvidenceSource, promotions),
+            deliverables: durableEvidenceSource === null ? emptyDeliverableSource : durableDeliverableSourceOf(tenant, durableEvidenceSource, promotions, durableSubstancePorts),
             at: () => Date.now(),
           });
       // THE W-26C DURABLE DEMO-SUBSTANCE READS (R4): the same folds the
       // demo arm serves, over THIS composition's per-instance stores —
       // bound only when the composition owns the world (under port
       // overrides the injection seam owns it and the routes fall through).
-      const demoSubstance: DurableDemoSubstance | null = hasOverrides || seamGateway === null || durableEvidenceSource === null
+      const demoSubstance: DurableDemoSubstance | null = durableSubstancePorts === undefined
         ? null
         : {
-            ports: {
-              submissions: demoSubmissionBlotter(),
-              executionGateway: seamGateway,
-              // FW-MI-B (MI-D2): the durable arm's blotter fold carries the
-              // per-project derived rows — the same derivation the wrapped
-              // outcome-learning port serves, over the same evidence source.
-              projectEvidenceOf: (evidenceTenant, evidenceProject) => durableProjectEvidenceOf(durableEvidenceSource as DurableEvidenceSource, evidenceTenant, evidenceProject)?.submissions ?? [],
-            },
+            ports: durableSubstancePorts,
             jobsOf: (tenantOfJobs, project) => demoJobsOf(serving, tenantOfJobs, project),
             // FW-34-A: the WRAPPED port chain the composed service drives —
             // the SAME objects POST /v1/outcomes/query +
@@ -662,7 +671,7 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
   // is its seeded goal set (the seed's create rode the same route, so the
   // capture holds it); its observed world is the seeded blotter's own
   // instruments (world-less by design since W-28).
-  const machinery: DemoMachineryContext = { ports: demoPorts, deliverables: demoDeliverableSourceOf(tenant, demoPorts, promotions), tenant, developerToken: token, internalToken: internalToken as string };
+  const machinery: DemoMachineryContext = { ports: demoPorts, deliverables: demoDeliverableSourceOf(tenant, demoPorts, promotions, demoPorts), tenant, developerToken: token, internalToken: internalToken as string };
   // THE DEMO SESSION WORLD (FW-MI-A, MI-D1): the per-instance ownership
   // map + the records read. The map is host-owned composition state (the
   // router records into it the moment a session-scoped create succeeds);

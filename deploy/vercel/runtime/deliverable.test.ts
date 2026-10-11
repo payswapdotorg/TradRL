@@ -871,8 +871,9 @@ describe('deploy/vercel — FW-43-B (F-12): the deliverable composes the derived
     expect(demoRecords!.submissions).toEqual(demoSubmissionBlotter());
     expect(demoRecords!.submissions.length).toBe(3);
     expect(demoRecords!.decisions.map((decision) => decision.outcomeId)).toEqual(['out:demo0001']);
-    // A foreign project: nothing on record (L12 — never a leak, never a fabricated row).
-    expect(source.sessionRecordsOf!('prj-f12-foreign')).toBeNull();
+    // A project with nothing on record: the honest EMPTY folds (the blotter
+    // route serves its empty page; never a leak, never a fabricated row).
+    expect(source.sessionRecordsOf!('prj-f12-foreign')).toEqual({ submissions: [], decisions: [] });
     // The composed deliverable over the source's own reads: the block rides
     // end-to-end (the demo scope's deliverable carries its seeded statistics).
     const payload = composeResearchDeliverableResult({

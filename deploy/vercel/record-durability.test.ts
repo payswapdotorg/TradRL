@@ -1278,3 +1278,129 @@ describe('deploy/vercel — FW-38-A (G-6): a warm instance never imports a kicko
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-43-B (F-12 — the derived-statistics block): the DURABLE tick composes
+// the block from the desk's OWN records, and every figure reconciles with
+// the rows the host routes serve (THE ONE-SOURCE-OF-TRUTH LAW: the same
+// submissions the blotter route serves, the same decision records the
+// outcomes fold serves — string-for-string, never a second source).
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-43-B (F-12): the durable launch\'s deliverable carries the derived-statistics block (the one-source-of-truth reconciliation)', () => {
+  it('the completed kickoff\'s release candidate folds the desk\'s own blotter rows + decision records — every figure recomputable from the served routes alone', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    try {
+      const providers = fakeProviders();
+      const instance = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instance.ok).toBe(true);
+      if (!instance.ok) return;
+      await drive(instance, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER })); // the boot world settles
+
+      // THE LAUNCH + THE COMPLETION (the console's flow, the full handler).
+      const finished = await seedLaunchedDesk(instance, 'prj-fw43b-f12', 'fw43b-f12');
+      expect(finished.status).toBe('complete');
+      expect(finished.result.kind).toBe('release-candidate');
+
+      // THE DERIVED-STATISTICS BLOCK rides the composed deliverable.
+      const result = finished.result as {
+        readonly statistics: {
+          readonly fills: { readonly count: number; readonly notionalTotal: string; readonly markets: readonly { readonly market: string; readonly fills: number; readonly notional: string }[] };
+          readonly refusals: { readonly count: number; readonly boundsCited: readonly string[] };
+          readonly fees: { readonly total: string };
+          readonly decisions: { readonly count: number };
+        } | null;
+        readonly summary: string;
+      };
+      expect(result.statistics).not.toBeNull();
+      const statistics = result.statistics!;
+
+      // THE ONE-SOURCE-OF-TRUTH RECONCILIATION: re-derive every figure from
+      // the rows the HOST ROUTES serve (the blotter page + the outcomes fold)
+      // — an independent fold in this test, over the served records alone.
+      const blotter = await drive(instance, streamingRequest({ method: 'GET', url: '/v1/execution/submissions?project=prj-fw43b-f12', headers: BEARER }));
+      expect(blotter.status).toBe(200);
+      const servedSubmissions = (blotter.body as { data: { items: readonly { kind: string; fill?: { notional: string; fee: string }; order?: { instrumentId: string }; refusal?: { refusals: readonly { constraintId: string; domain: string; subject: string; predicate: { kind: string; bound: string | number }; observed: string }[] } }[] } }).data.items;
+      const outcomes = await outcomeIdsOf(instance, 'prj-fw43b-f12');
+      let expectedFills = 0;
+      let expectedRefusals = 0;
+      const expectedNotionals: string[] = [];
+      const expectedFees: string[] = [];
+      const expectedMarketFills = new Map<string, number>();
+      const expectedMarketNotionals = new Map<string, string[]>();
+      for (const row of servedSubmissions) {
+        if (row.kind === 'refused') {
+          expectedRefusals += 1;
+          continue;
+        }
+        if (row.fill === undefined) continue;
+        expectedFills += 1;
+        expectedNotionals.push(row.fill.notional);
+        expectedFees.push(row.fill.fee);
+        const market = row.order?.instrumentId ?? 'unlabeled-market';
+        expectedMarketFills.set(market, (expectedMarketFills.get(market) ?? 0) + 1);
+        const list = expectedMarketNotionals.get(market) ?? [];
+        list.push(row.fill.notional);
+        expectedMarketNotionals.set(market, list);
+      }
+      expect(statistics.fills.count).toBe(expectedFills);
+      expect(statistics.refusals.count).toBe(expectedRefusals);
+      expect(statistics.fills.notionalTotal).toBe(sumWidestScale(expectedNotionals));
+      expect(statistics.fees.total).toBe(sumWidestScale(expectedFees));
+      expect(statistics.decisions.count).toBe(outcomes.length); // the outcomes fold's own count — never a second source
+      expect(statistics.fills.markets.length).toBe(expectedMarketFills.size);
+      for (const slice of statistics.fills.markets) {
+        expect(slice.fills).toBe(expectedMarketFills.get(slice.market));
+        expect(slice.notional).toBe(sumWidestScale(expectedMarketNotionals.get(slice.market) ?? []));
+      }
+      // The refusal citations trace to the served refusal rows verbatim.
+      for (const citation of statistics.refusals.boundsCited) {
+        const cited = servedSubmissions.some((row) => row.kind === 'refused' && (row.refusal?.refusals ?? []).some((entry) => citation.startsWith(`${entry.constraintId} ${entry.domain} ${entry.subject} ${entry.predicate.kind} bound`)));
+        expect(cited).toBe(true);
+      }
+      // The summary sentence carries the block's own figures (the persona-read surface).
+      expect(result.summary).toContain('derive the statistics');
+      expect(result.summary).toContain(`${statistics.fills.count} fill`);
+      expect(result.summary).toContain(statistics.fills.notionalTotal);
+      expect(result.summary).toContain('SIMULATED substance, never a fabricated research statistic');
+
+      // A FRESH instance serves the SAME composed record (the frozen
+      // completion instant — the block is part of the durable truth).
+      const instanceB = composeInstance(durableSourceWithMachinery(), providers.fetchLike);
+      expect(instanceB.ok).toBe(true);
+      if (instanceB.ok) {
+        await drive(instanceB, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
+        await flushAsyncWork();
+        const served = await drive(instanceB, streamingRequest({ method: 'GET', url: `/v1/jobs/${finished.jobId}`, headers: BEARER }));
+        expect(served.status).toBe(200);
+        expect((served.body as { data: { result: unknown } }).data.result).toEqual(finished.result);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+/** The widest-scale exact-decimal sum (apps/web sumExactDecimals' own law — the reconciliation fold this test re-derives independently). */
+function sumWidestScale(values: readonly string[]): string {
+  if (values.length === 0) return '0';
+  let widest = 0;
+  for (const value of values) {
+    const dot = value.indexOf('.');
+    widest = Math.max(widest, dot === -1 ? 0 : value.length - dot - 1);
+  }
+  let sum = 0n;
+  for (const value of values) {
+    const negative = value.startsWith('-');
+    const magnitude = negative ? value.slice(1) : value;
+    const dot = magnitude.indexOf('.');
+    const padded = dot === -1 ? magnitude + '0'.repeat(widest) : magnitude.slice(0, dot) + magnitude.slice(dot + 1).padEnd(widest, '0');
+    sum += (negative ? -1n : 1n) * BigInt(padded);
+  }
+  const negative = sum < 0n;
+  const digits = (negative ? -sum : sum).toString().padStart(widest + 1, '0');
+  const whole = widest === 0 ? digits : digits.slice(0, digits.length - widest);
+  const fraction = widest === 0 ? '' : `.${digits.slice(digits.length - widest)}`;
+  return negative ? `-${whole}${fraction}` : `${whole}${fraction}`;
+}

@@ -139,6 +139,7 @@ import {
 import { deriveProjectEvidence, type ProjectEvidenceSeed } from './project-evidence';
 import {
   composeResearchDeliverableResult,
+  type DeliverableSessionRecords,
   emptyDeliverableSource,
   type DeliverableObservedState,
   type DeliverableSource,
@@ -777,9 +778,47 @@ function demoSeededObservedState(): DeliverableObservedState {
   return deepFreeze({ markets: Object.freeze(markets), venues: Object.freeze(venues) });
 }
 
-/** The promotion-reader the deliverable sources share (structural — the composition's PromotionRegistry satisfies it; never imported here). */
+/** The promotion-reader the deliverable sources share (structural — the composition's PromotionRegistry satisfies it; never imported here). FW-43-B (F-12): the optional `outcomesOf` fold serves the promoted decision records of one project — the decisions-on-file count's source (the registry's own per-project fold; the composition's registry satisfies it structurally). */
 interface DeliverablePromotionReader {
   readonly decisionOfJob: (tenant: string, jobId: string) => { readonly outcomeId: string } | null;
+  /** FW-43-B (F-12): the promoted decision records of one project (as refs). Optional + additive — a reader that serves none keeps the honest emptiness. */
+  readonly outcomesOf?: (tenant: string, project: string) => readonly { readonly outcomeId: string }[];
+}
+
+/**
+ * FW-43-B (F-12 — the derived-statistics block's source read): THE
+ * SESSION'S OWN RECORDS of one project — the SAME submission rows the
+ * execution blotter fold serves (demoSubmissionsOf: seeded + derived +
+ * live, per backing) and the project's decision-stream records on file
+ * (the seeded outcome for the demo scope; the derived outcome behind the
+ * compile gate; the promoted decisions from the registry). THE
+ * STANDING-BOOK LAW: one source of truth — the fold the host route and
+ * the workspace export carry, never a second one. Each backing passes
+ * its own `records` pair (DemoSubstanceSource — the submissions fold's
+ * structural source) + its own derived-evidence reader; both readers are
+ * nullable-safe (R46): a foreign project folds nothing.
+ */
+function deliverableSessionRecordsOf(
+  tenant: string,
+  project: string,
+  records: DemoSubstanceSource | undefined,
+  derivedOutcomeOf: () => { readonly outcomeId: string } | null,
+  promotions: DeliverablePromotionReader | null,
+): DeliverableSessionRecords | null {
+  if (records === undefined) return null; // no fold wired (the pre-FW-43-B callers) — the honest absence
+  const submissions = demoSubmissionsOf(records, tenant, project);
+  const decisions: { readonly outcomeId: string }[] = [];
+  if (project === DEMO_PROJECT_ID) {
+    // The demo scope's seeded decision record (the boot world writes these
+    // same rows durably under the durable backing — byte-identical, so the
+    // ref names the record either fold serves).
+    decisions.push({ outcomeId: demoOutcomeRecord(tenant, project).outcomeId });
+  }
+  const derivedOutcome = derivedOutcomeOf();
+  if (derivedOutcome !== null) decisions.push(derivedOutcome);
+  const promoted = promotions?.outcomesOf === undefined ? [] : promotions.outcomesOf(tenant, project);
+  decisions.push(...promoted.map((decision) => ({ outcomeId: decision.outcomeId })));
+  return { submissions, decisions };
 }
 
 /**
@@ -792,11 +831,16 @@ interface DeliverablePromotionReader {
  * goal set (the seed's create rode the same route, so the capture holds it).
  * Every read is nullable — nothing on record composes the HONEST degraded
  * statements, never a fabricated number (THE HONESTY LAW).
+ * FW-43-B (F-12): the optional `records` (DemoSubstanceSource — DemoPorts
+ * satisfies it structurally) wires `sessionRecordsOf` over the SAME
+ * submissions fold the host route serves + the decisions on file (the
+ * derived stream behind the compile gate + the promoted decisions).
  */
 export function demoDeliverableSourceOf(
   tenant: string,
   ports: DemoEvidencePorts,
   promotions: DeliverablePromotionReader | null,
+  records?: DemoSubstanceSource,
 ): DeliverableSource {
   return {
     mandateOf(project) {
@@ -814,6 +858,18 @@ export function demoDeliverableSourceOf(
       const decision = promotions === null ? null : promotions.decisionOfJob(tenant, jobId);
       return decision === null ? null : { outcomeId: decision.outcomeId };
     },
+    ...(records === undefined ? {} : {
+      sessionRecordsOf: (project: string) => deliverableSessionRecordsOf(
+        tenant,
+        project,
+        records,
+        () => {
+          const derived = demoProjectEvidenceOf(ports, tenant, project);
+          return derived === null ? null : { outcomeId: derived.outcome.outcomeId };
+        },
+        promotions,
+      ),
+    }),
   };
 }
 
@@ -823,11 +879,17 @@ export function demoDeliverableSourceOf(
  * + constraint set + the rehydrated W-28 world, already tenant-scoped by the
  * seam's construction) + the promotion registry. The DEMO project's observed
  * state is the same seeded blotter (the boot world writes those rows durably).
+ * FW-43-B (F-12): the optional `records` (the composition's demo-substance
+ * ports pair — the seeded blotter + the seam's recording gateway + the
+ * durable per-project evidence fold) wires `sessionRecordsOf` over the SAME
+ * submissions fold the host route serves; the decisions on file read the
+ * seam's own derived stream (durableProjectEvidenceOf) + the registry.
  */
 export function durableDeliverableSourceOf(
   tenant: string,
   source: DurableEvidenceSource,
   promotions: DeliverablePromotionReader | null,
+  records?: DemoSubstanceSource,
 ): DeliverableSource {
   return {
     mandateOf(project) {
@@ -862,6 +924,21 @@ export function durableDeliverableSourceOf(
         if (source.declaredWorldOf!(project) === null) return false; // no declaration ever sighted — an absent world is the honest absence
         return (source.goalSetOf(project)?.world ?? null) === null; // declared, but the read carries none — STALE, never an honest absence
       },
+    }),
+    // FW-43-B (F-12): the session-records read over the seam's own fold —
+    // the SAME submissions the host route serves + the seam's derived
+    // stream + the registry's promoted decisions.
+    ...(records === undefined ? {} : {
+      sessionRecordsOf: (project: string) => deliverableSessionRecordsOf(
+        tenant,
+        project,
+        records,
+        () => {
+          const derived = durableProjectEvidenceOf(source, tenant, project);
+          return derived === null ? null : { outcomeId: derived.outcome.outcomeId };
+        },
+        promotions,
+      ),
     }),
   };
 }
@@ -1874,6 +1951,11 @@ export function demoMachineryTick(service: ApiService, context: DemoMachineryCon
                   mandate: context.deliverables.mandateOf(job.project),
                   observed: context.deliverables.observedOf(job.project),
                   promotion: context.deliverables.promotionOf(job.jobId),
+                  // FW-43-B (F-12): the session's own records fold into the
+                  // derived-statistics block (the SAME rows the blotter/
+                  // export carry; an unwired source composes the honest
+                  // absence statement, never a fabricated figure).
+                  records: context.deliverables.sessionRecordsOf === undefined ? null : context.deliverables.sessionRecordsOf(job.project),
                 })
               : { kind: 'training-summary', epochs: 3, project: job.project },
           }
