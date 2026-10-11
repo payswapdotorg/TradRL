@@ -47,6 +47,7 @@ import type {
   OrgStatusSnapshot,
   OutcomeRecord,
   PostMortemRecord,
+  PriceAlertRecord,
   ProjectGoalWorldSpec,
   ProjectRecord,
   ResearchNoteRecord,
@@ -161,6 +162,16 @@ export interface WorkspaceState {
    * — the export chain carries it VERBATIM (M3's seam e answered).
    */
   readonly notes: readonly ResearchNoteRecord[];
+  /**
+   * THE PROJECT'S DECLARED PRICE ALERTS (FW-46, the S2 market surface):
+   * the desk's own declarations, read back from the goal route's ADDITIVE
+   * `alerts` field and appended live by `alert-declared` events (deduped
+   * by alertId). An alerts-less read CLEARS (the `world`/`notes` law); a
+   * project switch resets. FIRING is DERIVED AT RENDER + EXPORT TIME
+   * (core/market.ts alertFiringOf) — only against recorded fill prices,
+   * never a live feed (none exists here).
+   */
+  readonly alerts: readonly PriceAlertRecord[];
   readonly launch: LaunchState;
   readonly orgSnapshots: readonly OrgStatusSnapshot[];
   readonly jobs: readonly JobRecord[];
@@ -215,6 +226,7 @@ export function openWorkspace(scope: WorkspaceScope, at: number): WorkspaceState
     constraintSet: null,
     world: null,
     notes: [],
+    alerts: [],
     launch: initialLaunchState(),
     orgSnapshots: [],
     jobs: [],
@@ -241,8 +253,10 @@ export type WorkspaceEvent =
   | { readonly kind: 'connection-changed'; readonly at: number; readonly status: ConnectionStatus }
   | { readonly kind: 'project-adopted'; readonly at: number; readonly projectId: string }
   | { readonly kind: 'project-loaded'; readonly at: number; readonly project: ProjectRecord }
-  | { readonly kind: 'goal-loaded'; readonly at: number; readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; /** The scope's persisted launch world, when the host goal route served one (D-8, W-28) — absent = none on record. */ readonly world?: ProjectGoalWorldSpec; /** The scope's ATTACHED RESEARCH NOTES (FW-45) — absent = none on record (the read clears, the `world` law). */ readonly notes?: readonly ResearchNoteRecord[] }
+  | { readonly kind: 'goal-loaded'; readonly at: number; readonly goal: GoalStatement; readonly constraintSet: ConstraintSetStatement; /** The scope's persisted launch world, when the host goal route served one (D-8, W-28) — absent = none on record. */ readonly world?: ProjectGoalWorldSpec; /** The scope's ATTACHED RESEARCH NOTES (FW-45) — absent = none on record (the read clears, the `world` law). */ readonly notes?: readonly ResearchNoteRecord[]; /** The scope's DECLARED PRICE ALERTS (FW-46) — absent = none on record (the read clears, the `world`/`notes` law). */ readonly alerts?: readonly PriceAlertRecord[] }
   | { readonly kind: 'note-attached'; readonly at: number; /** The host note route's MINTED record (FW-45) — the note's own envelope verbatim (attachedAt is the route's own observation, L4); the scope gate + noteId dedup are the law. */ readonly note: ResearchNoteRecord }
+  | { readonly kind: 'alert-declared'; readonly at: number; /** The host alert route's MINTED record (FW-46) — the alert's own envelope verbatim (declaredAt is the route's own observation, L4); the scope gate + alertId dedup are the law. */ readonly alert: PriceAlertRecord }
+  | { readonly kind: 'alert-fired'; readonly at: number; /** DERIVED-ONLY (never session-dispatched): one alert's firing against the records on file — the alert's own envelope + the firing observation's own instant + verbatim price (core/market.ts alertFiringOf). The export's record prefix derives one per fired alert. */ readonly alert: PriceAlertRecord; readonly firing: { readonly at: number; readonly observedPrice: string } }
   | { readonly kind: 'org-snapshot'; readonly at: number; readonly snapshot: OrgStatusSnapshot }
   | { readonly kind: 'job-updated'; readonly at: number; readonly job: JobRecord }
   | { readonly kind: 'outcomes-loaded'; readonly at: number; readonly records: readonly OutcomeRecord[] }
@@ -437,6 +451,7 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         constraintSet: null,
         world: null,
         notes: [],
+        alerts: [],
         orgSnapshots: [],
         jobs: [],
         outcomes: [],
@@ -462,7 +477,8 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       // read-back truth, never a stale world from a prior scope.
       // FW-45: the ADDITIVE `notes` field rides the SAME law — a read
       // that serves none clears, one that serves them replaces wholesale.
-      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet, world: event.world ?? null, notes: event.notes === undefined ? [] : Object.freeze([...event.notes]) };
+      // FW-46: `alerts` rides the SAME law too.
+      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet, world: event.world ?? null, notes: event.notes === undefined ? [] : Object.freeze([...event.notes]), alerts: event.alerts === undefined ? [] : Object.freeze([...event.alerts]) };
   } else if (selector === 'note-attached') {
       // FW-45: ONE ATTACHED NOTE enters the state — the note route's minted
       // record. THE INGEST GATES: the scope gate (a foreign note is the
@@ -473,6 +489,18 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       assertProjectScope(state.scope, event.note);
       const seen = state.notes.some((existing) => existing.noteId === event.note.noteId);
       return seen ? withHistory : { ...withHistory, notes: Object.freeze([...state.notes, event.note]) };
+  } else if (selector === 'alert-declared') {
+      // FW-46: ONE DECLARED PRICE ALERT enters the state — the alert
+      // route's minted record. THE INGEST GATES: the scope gate (a foreign
+      // alert is the typed cross-scope error) + the dedup-by-alertId law
+      // (a re-declare is an idempotent no-op). The event rides the
+      // session's linked history AND the export derives one record event
+      // per alert row (both halves, the law every record rides).
+      // (alert-fired is DERIVED-ONLY — never dispatched here; the export
+      // prefix + the render fold derive it from the records on file.)
+      assertProjectScope(state.scope, event.alert);
+      const seen = state.alerts.some((existing) => existing.alertId === event.alert.alertId);
+      return seen ? withHistory : { ...withHistory, alerts: Object.freeze([...state.alerts, event.alert]) };
   } else if (selector === 'org-snapshot') {
       assertProjectScope(state.scope, event.snapshot);
       const seen = state.orgSnapshots.some((existing) => existing.organizationRef === event.snapshot.organizationRef && existing.at === event.snapshot.at);

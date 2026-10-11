@@ -243,6 +243,39 @@ export interface ResearchNoteRecord {
 }
 
 // ---------------------------------------------------------------------------
+// The price alert (FW-46, the S2 market surface — the host alert route's
+// minted record, the FW-45 note precedent mirrored)
+// ---------------------------------------------------------------------------
+
+/**
+ * ONE DECLARED PRICE ALERT (FW-46): the desk's own declaration (market +
+ * direction + level), stored on the goal-set record and served back on the
+ * goal route's ADDITIVE `alerts` field (the `world`/`notes` precedent).
+ * Untrusted both ways. An alert FIRES only on observations on record (the
+ * desk's own fill prices) — never a live feed (none exists here).
+ */
+export interface PriceAlertRecord {
+  /** The content-addressed identity (`alert:` + 8 hex — the house grammar). */
+  readonly alertId: string;
+  /** The AUTHORIZED tenant (L12 — never a request value). */
+  readonly tenant: string;
+  /** The project whose goal-set record carries the alert. */
+  readonly project: string;
+  /** The route's OWN observation instant (L4). */
+  readonly declaredAt: number;
+  /** The instrument the alert watches (e.g. 'BTC-USD'), verbatim. */
+  readonly market: string;
+  /** The crossing direction: 'above' fires at price >= level; 'below' at price <= level. */
+  readonly direction: 'above' | 'below';
+  /** The alert's price level — an exact decimal string, verbatim. */
+  readonly level: string;
+  /** The declaring ACTOR (FW-39-3) — absent on an anonymous declaration. */
+  readonly actorPrincipal?: string;
+  /** The actor stamp's own instant. Absent exactly when `actorPrincipal` is. */
+  readonly actorAt?: number;
+}
+
+// ---------------------------------------------------------------------------
 // The knowledge mirror (the firm-memory shape the /v1 route serves)
 // ---------------------------------------------------------------------------
 

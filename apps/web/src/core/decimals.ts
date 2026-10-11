@@ -78,6 +78,40 @@ export function isNonNegativeDecimal(value: string): boolean {
 }
 
 /**
+ * FW-46 (the S2 market surface): THE EXACT-DECIMAL COMPARE — two canonical
+ * decimal strings compared BY VALUE (scale-lifted BigInt integers, the
+ * sumExactDecimals law): -1 when a < b, 0 when equal, 1 when a > b. The
+ * price-alert firing law rides this (a recorded price crosses a declared
+ * level BY VALUE, never a float, never lexicographically). A malformed
+ * operand is the typed error (the discipline's own law).
+ */
+export function compareExactDecimals(a: string, b: string): -1 | 0 | 1 {
+  if (!isExactDecimal(a) || !isExactDecimal(b)) {
+    throw new Error(`compareExactDecimals: ${JSON.stringify(isExactDecimal(a) ? b : a)} is not an exact decimal string — comparisons run on the served records, never coerced operands`);
+  }
+  const parse = (value: string): { readonly digits: bigint; readonly scale: number; readonly negative: boolean } => {
+    const negative = value.startsWith('-');
+    const magnitude = negative ? value.slice(1) : value;
+    const dot = magnitude.indexOf('.');
+    const whole = dot === -1 ? magnitude : magnitude.slice(0, dot);
+    const fraction = dot === -1 ? '' : magnitude.slice(dot + 1);
+    return { digits: BigInt(`${whole}${fraction}`), scale: fraction.length, negative };
+  };
+  const left = parse(a);
+  const right = parse(b);
+  const scale = Math.max(left.scale, right.scale);
+  const lift = (value: { readonly digits: bigint; readonly scale: number; readonly negative: boolean }): bigint => {
+    const byTen = 10n ** BigInt(scale - value.scale);
+    return (value.negative ? -value.digits : value.digits) * byTen;
+  };
+  const leftLifted = lift(left);
+  const rightLifted = lift(right);
+  if (leftLifted < rightLifted) return -1;
+  if (leftLifted > rightLifted) return 1;
+  return 0;
+}
+
+/**
  * FW-40-A (Round H register H-3 — L2's find): THE SIZING DIVISION,
  * mirroring the boundary's own law VERBATIM (deploy/vercel/runtime/
  * project-evidence.ts's divideDecimalsFloor — the FW-36-A sizing

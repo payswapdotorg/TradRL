@@ -81,10 +81,11 @@ import { buildAuthSurface, type AuthSurface } from './auth-routes';
 import { adapterAbsentFailure, enabledAdapters } from '../../wire/composition';
 import type { FetchLike, InstantSourceMirror } from '../../adapters/shared';
 import type { NeonStoreDeps } from '../../adapters/neon/stores';
-import { DEMO_PROJECT_ID, attachDemoNote, demoDeliverableSourceOf, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableDeliverableSourceOf, durableProjectEvidenceOf, isDemoSeedJob, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, withDerivedHorizonLabel, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
+import { DEMO_PROJECT_ID, attachDemoAlert, attachDemoNote, demoDeliverableSourceOf, demoExecutionGateway, demoJobsOf, demoMachineryTick, demoSubmissionBlotter, durableDeliverableSourceOf, durableProjectEvidenceOf, isDemoSeedJob, isLaunchWorldRecord, outcomeLearningWithProjectEvidence, seedDemoBacking, seedDemoWorld, withDerivedHorizonLabel, type DemoMachineryContext, type DemoPorts, type DurableDemoSubstance, type DurableEvidenceSource } from './demo';
 import { emptyDeliverableSource } from './deliverable';
 import { createPromotionRegistry, outcomeLearningWithPromotedDecisions, type PromotionRegistry } from './job-promote';
 import type { NoteIngestionSurface } from './notes';
+import type { AlertDeclarationSurface } from './alerts';
 import type { DemoSubstanceAuthorization, VerifyDeveloperAuthorization, VerifyInternalAuthorization } from './routes';
 import type { DemoSessionWorld } from './session-routes';
 
@@ -256,6 +257,13 @@ export type DeploymentComposition =
      * under port overrides (the injection seam owns its own world — the
      * route then answers the boundary's typed not-found, the pre-law).
      */ readonly notes: NoteIngestionSurface | null; /**
+     * FW-46 (the S2 market surface): the ALERT-DECLARATION SURFACE behind
+     * POST /v1/projects/:projectId/alerts — under the DEMO backing the
+     * per-instance goal-set capture (attachDemoAlert, the notes law); under
+     * the DURABLE backing the seam's declareAlert (the goal-set row merge +
+     * the pending drain — the alert is durable record). Null under port
+     * overrides (the same pre-law).
+     */ readonly alerts: AlertDeclarationSurface | null; /**
      * FW-39-1 (the identity wave 1): the PRINCIPAL AUTH surface — the
      * host-owned /v1/auth/* routes' input + the shared token resolver. Built
      * on EVERY composition: under the DEMO backing (or without the signing
@@ -427,6 +435,10 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
             // same read (the deliverable's notes fold reads it; the goal route
             // serves its own structural re-validation) — one source of truth.
             ...('notes' in read.value ? { notes: (read.value as { readonly notes?: unknown }).notes } : {}),
+            // FW-46 (the S2 market surface): the row's ADDITIVE `alerts` array
+            // rides the same read (the deliverable's alerts fold + the goal
+            // route's alerts serve read it) — one source of truth.
+            ...('alerts' in read.value ? { alerts: (read.value as { readonly alerts?: unknown }).alerts } : {}),
           };
         },
         // FW-38-A (Round G register G-6 — the switch-path composition miss):
@@ -674,9 +686,9 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
             firmMemory: ports.firmMemory,
           };
       durable = { ...durable, tick: activation.tick, ensureBootWorld: activation.ensureBootWorld, demoSubstance };
-      return { ok: true, service: serving, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions, notes: hasOverrides ? null : { attach: (tenantOfNote, project, note) => durable!.attachNote(tenantOfNote, project, note) }, auth: authSurfaceOf(durable) };
+      return { ok: true, service: serving, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions, notes: hasOverrides ? null : { attach: (tenantOfNote, project, note) => durable!.attachNote(tenantOfNote, project, note) }, alerts: hasOverrides ? null : { declare: (tenantOfAlert, project, alert) => durable!.declareAlert(tenantOfAlert, project, alert) }, auth: authSurfaceOf(durable) };
     }
-    return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions, notes: null, auth: authSurfaceOf(durable) };
+    return { ok: true, service: construction.service, backing, demo: null, durable, verifyDeveloperAuthorization, verifyInternalAuthorization, promotions, notes: null, alerts: null, auth: authSurfaceOf(durable) };
   }
   const seed = seedDemoWorld(construction.service, { tenant, developerToken: token, internalToken }, Date.now());
   // FW-36-A (E-1): the demo arm's deliverable source — the W-25B goal-set
@@ -725,6 +737,9 @@ export function composeDeployment(env: ApiDeploymentEnv, overrides: DeploymentPo
     // class). This arm is the un-overridden demo composition by
     // construction (the override path returned above with notes: null).
     notes: { attach: (tenantOfNote, project, note) => Promise.resolve(attachDemoNote(demoPorts.controlPlane, tenantOfNote, project, note)) },
+    // FW-46 (the S2 market surface): the alert-declaration surface — the
+    // DEMO arm's per-instance capture (the notes law, the same arm).
+    alerts: { declare: (tenantOfAlert, project, alert) => Promise.resolve(attachDemoAlert(demoPorts.controlPlane, tenantOfAlert, project, alert)) },
     // FW-39-1: the auth surface — the DEMO backing's input teaches the typed
     // not-available (principals/adoption null; the durable seam was never
     // built under this backing).
@@ -745,6 +760,7 @@ let cachedVerify: VerifyDeveloperAuthorization | null = null;
 let cachedVerifyInternal: VerifyInternalAuthorization | null = null;
 let cachedPromotions: PromotionRegistry | null = null;
 let cachedNotes: NoteIngestionSurface | null = null;
+let cachedAlerts: AlertDeclarationSurface | null = null;
 let cachedAuth: AuthSurface | null = null;
 
 interface EnvIdentity {
@@ -765,7 +781,7 @@ export function getDeploymentService(
   source: Readonly<Record<string, string | undefined>> = process.env,
 ): DeploymentComposition {
   if (cachedService !== null && cachedEnv !== null && cachedEnv.source === source && cachedBacking !== null && cachedVerify !== null && cachedVerifyInternal !== null && cachedAuth !== null) {
-    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo, durable: cachedDurable, verifyDeveloperAuthorization: cachedVerify, verifyInternalAuthorization: cachedVerifyInternal, promotions: cachedPromotions, notes: cachedNotes, auth: cachedAuth };
+    return { ok: true, service: cachedService, backing: cachedBacking, demo: cachedDemo, durable: cachedDurable, verifyDeveloperAuthorization: cachedVerify, verifyInternalAuthorization: cachedVerifyInternal, promotions: cachedPromotions, notes: cachedNotes, alerts: cachedAlerts, auth: cachedAuth };
   }
   const composed = composeDeployment(readApiEnv(source));
   if (!composed.ok) return composed;
@@ -778,6 +794,7 @@ export function getDeploymentService(
   cachedVerifyInternal = composed.verifyInternalAuthorization;
   cachedPromotions = composed.promotions;
   cachedNotes = composed.notes;
+  cachedAlerts = composed.alerts;
   cachedAuth = composed.auth;
-  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo, durable: composed.durable, verifyDeveloperAuthorization: composed.verifyDeveloperAuthorization, verifyInternalAuthorization: composed.verifyInternalAuthorization, promotions: composed.promotions, notes: composed.notes, auth: composed.auth };
+  return { ok: true, service: composed.service, backing: composed.backing, demo: composed.demo, durable: composed.durable, verifyDeveloperAuthorization: composed.verifyDeveloperAuthorization, verifyInternalAuthorization: composed.verifyInternalAuthorization, promotions: composed.promotions, notes: composed.notes, alerts: composed.alerts, auth: composed.auth };
 }

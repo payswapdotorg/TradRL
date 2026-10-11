@@ -312,6 +312,22 @@ export interface DeliverableNoteRef {
   readonly title: string;
 }
 
+/** One declared price alert as the deliverable cites it (the record's own identity + envelope — verbatim-traceable, never re-quoted). */
+export interface DeliverableAlertRef {
+  readonly alertId: string;
+  readonly market: string;
+  readonly direction: 'above' | 'below';
+  readonly level: string;
+}
+
+/** The composed deliverable's alerts block: the count, the refs, and — when alerts are on record — the provenance statement (text and fields can never disagree). */
+export interface DeliverableAlertsBlock {
+  readonly count: number;
+  readonly refs: readonly DeliverableAlertRef[];
+  /** Present exactly when `count > 0`; the honest-absence block carries no statement. */
+  readonly statement?: string;
+}
+
 /** The composed deliverable's notes block: the count, the refs, and — when notes are on record — the provenance statement (text and fields can never disagree). */
 export interface DeliverableNotesBlock {
   readonly count: number;
@@ -352,6 +368,16 @@ export interface ResearchDeliverableInput {
    * capability).
    */
   readonly notes?: readonly DeliverableNoteRef[] | null;
+  /**
+   * FW-46 (the S2 market surface): the project's declared price alerts as
+   * citable refs, null when none are on record. The composed payload
+   * NAMES them in its provenance (count + envelopes — where the records
+   * live is named honestly: the goal-set row + the export chain's
+   * alert-declared events; the FIRING is the console's own fold against
+   * recorded fill prices, never a live-feed claim — no live feed exists
+   * in this deployment).
+   */
+  readonly alerts?: readonly DeliverableAlertRef[] | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +527,17 @@ export interface DeliverableSource {
    * the project at this host.
    */
   readonly notesOf?: (project: string) => readonly DeliverableNoteRef[] | null;
+  /**
+   * FW-46 (the S2 market surface): the project's DECLARED PRICE ALERTS as
+   * citable refs (alertId + market + direction + level — count + envelopes
+   * is exactly what the deliverable's provenance names; the records live on
+   * the goal-set row and in the workspace export's alert-declared events,
+   * never re-quoted here). Optional + additive: a source that serves no
+   * alerts (the pre-FW-46 callers, a lighter test source) omits it, and the
+   * composer renders its honest absence statement — never a fabricated
+   * reference. Null = none on record for the project at this host.
+   */
+  readonly alertsOf?: (project: string) => readonly DeliverableAlertRef[] | null;
 }
 
 /** The honest degraded source (nothing on record anywhere) — every composition degrades to its honest statements, never a crash (R46). */
@@ -582,7 +619,18 @@ export function composeResearchDeliverableResult(input: ResearchDeliverableInput
   const notesStatement = notesRefs.length === 0
     ? 'no research notes attached to this project on record'
     : `${notesRefs.length} attached research note${notesRefs.length === 1 ? '' : 's'} (${notesRefs.map((ref) => JSON.stringify(ref.title)).join('; ')}) — their verbatim text lives on this project's goal-set record and in the workspace export's note-attached events, which carry it in the chain; nothing computes over it here`;
-  const summary = `${worldSentence}. ${mandateSentence}. ${statisticsStatement}. Research provenance: ${notesStatement}. Downstream lineage: ${lineageStatement}. This is ${disclosure}.`;
+  // FW-46 (the S2 market surface): the ALERTS statement rides the same
+  // provenance block — the count + every envelope + WHERE the records
+  // live (the goal-set row + the workspace export's alert-declared
+  // events); the deliverable NAMES the alerts, never re-quotes their
+  // firing state (the FIRING is the console's own fold against the
+  // recorded fill prices — no live feed exists in this deployment). An
+  // absent/unwired read composes the honest absence sentence.
+  const alertRefs = input.alerts === undefined || input.alerts === null ? [] : [...input.alerts];
+  const alertsStatement = alertRefs.length === 0
+    ? 'no price alerts declared on this project on record'
+    : `${alertRefs.length} declared price alert${alertRefs.length === 1 ? '' : 's'} (${alertRefs.map((ref) => `${ref.market} ${ref.direction} ${ref.level}`).join('; ')}) — the declarations live on this project's goal-set record and in the workspace export's alert-declared events; their firing is evaluated only against this desk's own recorded fill prices, never a live feed`;
+  const summary = `${worldSentence}. ${mandateSentence}. ${statisticsStatement}. Research provenance: ${notesStatement}. ${alertsStatement}. Downstream lineage: ${lineageStatement}. This is ${disclosure}.`;
 
   return deepFreeze({
     kind: 'release-candidate',
@@ -609,6 +657,13 @@ export function composeResearchDeliverableResult(input: ResearchDeliverableInput
     notes: Object.freeze(notesRefs.length === 0
       ? { count: 0, refs: Object.freeze([]) }
       : { count: notesRefs.length, refs: Object.freeze(notesRefs.map((ref) => Object.freeze({ noteId: ref.noteId, title: ref.title }))), statement: notesStatement }),
+    // FW-46 (the S2 market surface): the alerts block — the count + the
+    // refs + the statement exactly when alerts are on record (the
+    // honest-absence block carries count 0 + empty refs; text and fields
+    // can never disagree).
+    alerts: Object.freeze(alertRefs.length === 0
+      ? { count: 0, refs: Object.freeze([]) }
+      : { count: alertRefs.length, refs: Object.freeze(alertRefs.map((ref) => Object.freeze({ alertId: ref.alertId, market: ref.market, direction: ref.direction, level: ref.level }))), statement: alertsStatement }),
     lineage: Object.freeze({
       promotedDecision: promotion === null ? null : promotion.outcomeId,
       statement: lineageStatement,

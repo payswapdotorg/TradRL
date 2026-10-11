@@ -340,6 +340,19 @@ export interface GoalSetRecord {
    * drain every stamp rides (the FW-42-A write-then-read law).
    */
   readonly notes?: unknown;
+  /**
+   * The project's DECLARED PRICE ALERTS (FW-46, the S2 market surface): one
+   * additive array of the host route POST /v1/projects/:id/alerts minted
+   * records — each the desk's OWN declaration (market + direction + level,
+   * untrusted input structurally parsed at the route; fail-closed, never a
+   * half-applied alert). Rides the SAME opaque payload column with no
+   * schema change — exactly the `notes` precedent. Absent = the project
+   * predates the alert surface or none was ever declared (the honest
+   * empty, never a fabricated alert). The row's own write law is the
+   * goal-set row's: read-then-merge-then-write on the SAME pending drain
+   * every stamp rides.
+   */
+  readonly alerts?: unknown;
 }
 
 /**
@@ -706,6 +719,11 @@ function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
     // precedent) — carried through verbatim when present; the serving
     // surfaces re-validate structurally (a malformed entry is skipped
     // honestly, never a decode failure — pre-FW-45 rows never carry it).
+    // FW-46 (the S2 market surface): the project's DECLARED PRICE ALERTS
+    // ride the same opaque payload column (the additive `alerts` array,
+    // the `notes` precedent) — carried through verbatim when present; the
+    // serving surfaces re-validate structurally (pre-FW-46 rows never
+    // carry the field).
     return {
       ok: true,
       value: {
@@ -716,6 +734,7 @@ function decodeGoalSet(row: readonly unknown[]): StoreResult<GoalSetRecord> {
         ...('ownerPrincipal' in value ? { ownerPrincipal: value.ownerPrincipal } : {}),
         ...('ownerPrincipalAt' in value ? { ownerPrincipalAt: value.ownerPrincipalAt } : {}),
         ...('notes' in value ? { notes: value.notes } : {}),
+        ...('alerts' in value ? { alerts: value.alerts } : {}),
       },
     };
   } catch {

@@ -7,8 +7,7 @@
 //     INJECTED instants (never a wall-clock read in a render path);
 //   - drives the read cadence (negotiation, project/knowledge/outcome/
 //     post-mortem/org reads, job polling) with graceful degradation on
-//     every failure (never a crash on an unreachable API — the last
-//     known world + the degradation note);
+//     every failure (the last known world + the degradation note);
 //   - composes the primary flow's launch (create + kickoff + progress)
 //     through the API routes;
 //   - mounts the render model into a DOM root and re-projects on every
@@ -70,6 +69,7 @@ import {
   type OnboardingState,
 } from '../core/onboarding';
 import { noticeCopyOf } from '../render/flow';
+import { alertFormErrorOf } from '../render/market';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs } from '../core/evidence';
 import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission, projectToView } from '../core/availability';
 import { parseSheetRef, SHELL_INTERACTION_CSS, type SheetRef, type ShellView } from '../render/shell';
@@ -272,8 +272,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   // boot-restore's own — every one rides dispatch). The restore applies
   // ONLY at generation 0; after ANY move it is done forever —
   // rehydration never overwrites a driving user (the switcher-rebind
-  // race the Lead reproduced twice: "the first select change did not
-  // take").
+  // race the Lead reproduced twice).
   let scopeGeneration = 0;
   // FW-34-B (Round C §3.1 — the browser-restart residuals): THE
   // SESSION POSTURE. One validated record (core/posture.ts) carries
@@ -474,10 +473,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // the tenant's readable projects list once per bundle (the
       // switcher's data) and the validation surface for the persisted
       // scope. The stored scope restores ONLY at generation 0, exactly
-      // once (never over a user switch — the switcher-rebind race); a
-      // stored id in the directory differing from the booted scope is
-      // ADOPTED (the launch's reset+switch); a stale id (deleted
-      // upstream) is cleared — the env pin holds.
+      // once (never over a user switch); a stored id differing from the
+      // booted scope is ADOPTED; a stale id (deleted upstream) is
+      // cleared — the env pin holds.
       // FW-34-B (§3.1) — THE TM POSTURE RESTORE, same pass, AFTER the
       // scope branch: when the stored posture left the machine at a
       // selected instant (scrubbed / t-x / paused) and the machine STILL
@@ -605,6 +603,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           // FW-45: the bundle's ADDITIVE `notes` field rides the same
           // event — the boot re-read carries the attached notes.
           ...(bundle.notes === undefined ? {} : { notes: bundle.notes }),
+          // FW-46: the bundle's ADDITIVE `alerts` field rides the same
+          // event — the boot re-read carries the declared price alerts.
+          ...(bundle.alerts === undefined ? {} : { alerts: bundle.alerts }),
         });
       } catch {
         // the goal route is host-owned demo-backing-only — an absent
@@ -645,11 +646,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // state.jobs populated ONLY from session-local events, so on
       // boot/reload/scope-switch it reset to [] and NEVER refilled —
       // the Research section and the palette's JOB group stayed empty
-      // forever. The read follows the bundle's own pattern, one
-      // collection over the W-22 blotter seam; each served row
-      // dispatches the EXISTING job-updated event, whose reducer arm
-      // merges deduped by jobId (the launch kickoff's record rides the
-      // same merge — a re-refresh never duplicates; the read runs
+      // forever. The read follows the bundle's own pattern; each served
+      // row dispatches the EXISTING job-updated event, whose reducer
+      // arm merges deduped by jobId (the launch kickoff's record rides
+      // the same merge — a re-refresh never duplicates; the read runs
       // BEFORE pollJobs so the served non-terminal jobs join the poll
       // cadence immediately).
       await read('GET /v1/jobs', async () => {
@@ -668,9 +668,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // (a project without records answers the typed 404 — the host's
       // answer, not a console failure), so on ANY failure NOTHING
       // dispatches: no read event, no degraded-read note, no offline
-      // flip — the section renders its honest teaching note (never a
-      // fabricated meter). THE L4 LAW: a current-instant standing read
-      // (its own asOf); the panel never fakes point-in-time risk.
+      // flip — the section renders its honest teaching note. THE L4
+      // LAW: a current-instant standing read (its own asOf); the panel
+      // never fakes point-in-time risk.
       try {
         const utilization = await client.risk.utilization(projectId);
         dispatchIfCurrent(projectId, { kind: 'risk-utilization-loaded', at: instants.nowMs(), read: utilization });
@@ -729,8 +729,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // the scheduler boundary core/clock.ts sanctions: each beat
     // re-samples now and moves the anchor forward — LIVE's view IS the
     // anchor, a T-x offset rides the fresh anchor, playback's ceiling
-    // rises with it. Monotonic by construction: a beat not past the
-    // current anchor dispatches nothing.
+    // rises with it. Monotonic by construction (a beat not past the
+    // current anchor dispatches nothing).
     const observed = instants.nowMs();
     if (observed > state.timeMachine.anchorAt) {
       dispatch({ kind: 'anchor-advanced', at: observed });
@@ -779,11 +779,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // state.project (a mid-beat scope move could cross the pair).
       // FW-41-C (I-5, S1's D1 compile stall): pre-fix the branch STOPPED
       // once the ref bound — a read landing on a snapshot-less serverless
-      // instance (the bind + the snapshot report are TWO writes; the
-      // watch store heals only via the host's 10s staleness pass) was
-      // NEVER retried in-session. The branch now also runs while the
-      // ref is BOUND but no snapshot is on record — the beat re-reads
-      // until it lands.
+      // instance (TWO writes; the watch store heals only via the host's
+      // 10s staleness pass) was NEVER retried in-session. The branch now
+      // also runs while the ref is BOUND but no snapshot is on record.
       await read('GET /v1/projects/:id', async () => {
         const project = await client.projects.get(scopeNow);
         dispatchIfCurrent(scopeNow, { kind: 'project-loaded', at: instants.nowMs(), project });
@@ -895,6 +893,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       launchEdits: {},
       researchSubmit: null,
       noteAttach: null,
+      alertDeclare: null,
       openCapsule: null,
       projectFilter: '',
       exportVerify: null,
@@ -987,6 +986,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
       const name = element.getAttribute('data-note-field');
       if (name !== 'title' && name !== 'text') return null;
+      const value = typeof element.value === 'string' ? element.value : '';
+      return { field: name, value };
+    };
+    /** FW-46: the alert-declare form's field of an event target (null when not one of its inputs) — its own data-alert-field vocabulary, its own edit buffer (the noteFieldOf law; the direction select rides the same attribute). */
+    const alertFieldOf = (target: unknown): { readonly field: string; readonly value: string } | null => {
+      const element = target as FieldEventTarget | null;
+      if (element === null || element === undefined || typeof element.getAttribute !== 'function') return null;
+      const name = element.getAttribute('data-alert-field');
+      if (name !== 'market' && name !== 'direction' && name !== 'level') return null;
       const value = typeof element.value === 'string' ? element.value : '';
       return { field: name, value };
     };
@@ -1111,8 +1119,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      * array-like, never an Array): every real upload fell through to
      * null, no verdict ever rendered (the L3/L4/M5 finding). Array-likes
      * and Arrays read the same here; the beat-race class is covered by
-     * the J3 discipline (the change reads the buffered state or the
-     * live element, whichever survived).
+     * the J3 discipline (buffered state or live element, whichever
+     * survived).
      */
     const verifyFileTargetOf = (target: unknown): { readonly element: FieldEventTarget; readonly file: SelectedExportFile } | null => {
       const element = target as FieldEventTarget | null;
@@ -1164,8 +1172,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // re-projection keeps the SAME min/max; the anchor advances every
     // beat, and without the pin the range re-anchors continuously
     // mid-drag). The render() below also re-writes the fresh scrubber's
-    // value to the buffered position, so the re-projected thumb stays
-    // where the user dragged it. The pin clears at the change-commit.
+    // value to the buffered position (the re-projected thumb stays
+    // where the user dragged it). The pin clears at the change-commit.
     let scrubAt: number | null = null;
     /** Parse the scrubber's live value (NaN-safe: a garbage value commits nothing). */
     const scrubValueOf = (element: FieldEventTarget): number | null => {
@@ -1545,9 +1553,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // that ancestor resolves to NOTHING — the click no-ops (the
     // M-persona finding). The press intent is captured HERE at mousedown;
     // the click handler replays it ONLY when the composed click resolved
-    // to no affordance AND the pressed element left the tree. A normal
-    // click resolves by itself (never double-dispatched); a dragged-away
-    // press stays cancelled as the browser intended.
+    // to no affordance AND the pressed element left the tree (a normal
+    // click resolves by itself; a dragged-away press stays cancelled).
     let pendingPress: PendingPress | null = null;
     /** (The attachedToRoot test + the D-6a machinery live in app/press.ts — extracted by FW-38-B for the payload budget.) */
     document.addEventListener('mousedown', (event) => {
@@ -1641,8 +1648,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // THE SCRUBBER (the J5 wiring): a drag's input events BUFFER the
       // live position — never a dispatch, never a render (a re-projection
       // under the pointer replaces the range input and the browser
-      // silently drops the drag; the J3 pointer discipline, same class).
-      // FW-32-B: the drag's FIRST input also pins the bounds (the
+      // silently drops the drag; the J3 pointer discipline). FW-32-B:
+      // the drag's FIRST input also pins the bounds (the
       // mid-drag re-anchor fix — see the scrub buffer's own note).
       const scrubber = scrubTargetOf(event.target);
       if (scrubber !== null) {
@@ -1659,18 +1666,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       if (entry === null) {
         // D-12 (W-29 wave 2): THE STANDALONE RESEARCH FORM'S EDIT BUFFER —
         // the same J3 pattern as the launch edits: buffer ONLY, never a
-        // dispatch, never a render (the buffer IS the live form — the
-        // render merges it, so a beat re-projection never reverts the
-        // user's text; the submit commits it through the frozen route).
+        // dispatch, never a render (the buffer IS the live form; the
+        // submit commits it through the frozen route).
         const researchEntry = researchFieldOf(event.target);
         if (researchEntry !== null && view.researchSubmit !== null) {
           view = { ...view, researchSubmit: { ...view.researchSubmit, edits: { ...view.researchSubmit.edits, [researchEntry.field]: researchEntry.value } } };
         }
-        // FW-45: the note-attach form's edit buffer — the same J3 law
-        // (buffer only; the render merges it, the submit commits it).
+        // FW-45: the note-attach form's edit buffer — the same J3 law.
         const noteEntry = noteFieldOf(event.target);
         if (noteEntry !== null && view.noteAttach !== null) {
           view = { ...view, noteAttach: { ...view.noteAttach, edits: { ...view.noteAttach.edits, [noteEntry.field]: noteEntry.value } } };
+        }
+        // FW-46: the alert-declare form's edit buffer — the same J3 law.
+        const alertEntry = alertFieldOf(event.target);
+        if (alertEntry !== null && view.alertDeclare !== null) {
+          view = { ...view, alertDeclare: { ...view.alertDeclare, edits: { ...view.alertDeclare.edits, [alertEntry.field]: alertEntry.value } } };
         }
         return;
       }
@@ -1831,10 +1841,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // session open instant (derived: 'session') — TAUGHT by the range
       // note, never ENFORCED on the commit (the MI-D9 step-back law):
       // a commit below the session open lands where the user dragged,
-      // capped only by the anchor (a scope adoption resets every record
-      // before the refetch lands; enforcing the fallback here would
+      // capped only by the anchor (enforcing the fallback here would
       // clamp a fresh desk's FIRST scrub to the degenerate [openedAt,
-      // anchor] point).
+      // anchor] point — a scope adoption resets every record before
+      // the refetch lands).
       const scrubber = scrubTargetOf(event.target);
       if (scrubber !== null) {
         const raw = scrubAt ?? scrubValueOf(scrubber);
@@ -1862,6 +1872,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         const noteEntry = noteFieldOf(event.target);
         if (noteEntry !== null && view.noteAttach !== null) {
           view = { ...view, noteAttach: { ...view.noteAttach, edits: { ...view.noteAttach.edits, [noteEntry.field]: noteEntry.value } } };
+        }
+        // FW-46: the alert form's change commit buffers the same way (the
+        // direction select rides this arm — its own data-alert-field).
+        const alertCommit = alertFieldOf(event.target);
+        if (alertCommit !== null && view.alertDeclare !== null) {
+          view = { ...view, alertDeclare: { ...view.alertDeclare, edits: { ...view.alertDeclare.edits, [alertCommit.field]: alertCommit.value } } };
         }
         return;
       }
@@ -1907,10 +1923,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // THE DELEGATION LAW (W-10b): the navigation branch acts ONLY on a
     // [data-target] match that is an interactive BUTTON (nav items,
     // brand rows, the bell, palette items, empty-state actions); a
-    // non-button match falls through to the action branches — when T051
-    // put data-target on the .tradrl-shell root, every click was
-    // intercepted as navigation before any [data-action] branch could
-    // run (the J1 hard block).
+    // non-button match falls through to the action branches (the T051
+    // root-target class — the J1 hard block).
     /**
      * FW-34-B (§3.6, L4) — THE ONE INTERACTION RESOLVER: the delegated
      * click handler's body, lifted so the KEYBOARD path runs the
@@ -2097,9 +2111,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             // pre-fix arm was ALWAYS a computed instant — max(openedAt,
             // floor) — discarding L3's scrub, never reaching L1's
             // launch-to-now arc). The arm follows the machine's mode:
-            //   - TIMESTAMP / T-MINUS (a selected past instant — the
-            //     scrubber's commit, the Steps' selection): the arm IS
-            //     that instant, clamped to [the history floor, the
+            //   - TIMESTAMP / T-MINUS (a selected past instant): the arm
+            //     IS that instant, clamped to [the history floor, the
             //     anchor] like the scrubber's commit — the incident
             //     review plays forward FROM the incident.
             //   - LIVE (no instant selected): the arm IS the range floor
@@ -2150,7 +2163,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // the SELECTED INSTANT (never the t-minus offset): the pre-fix
         // Step back re-anchored against the live anchor (advancing EVERY
         // beat, ~1s > the 500ms step) — the view moved FORWARD on every
-        // click (M5). Now both controls dispatch an EXPLICIT timestamp
+        // click (M5). Both controls dispatch an EXPLICIT timestamp
         // (viewAt ± TIME_MACHINE_STEP_MS), clamped like the scrubber.
         if (kind === 'playback-step') {
           const timeMachine = state.timeMachine;
@@ -2275,9 +2288,8 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // FW-34-B (§3.1) — THE WIZARD'S BACKDROP = THE MOUSE DISMISSAL
         // (L3: the restart-summoned wizard was an a11y-invisible blocker
         // native clicks could not dismiss): a press on the overlay
-        // OUTSIDE the card skips the wizard (the standard modal
-        // dismissal); a press inside resolves to the card's own
-        // affordances (the CTA/Skip branches), never here.
+        // OUTSIDE the card skips the wizard; a press inside resolves to
+        // the card's own affordances, never here.
         if (kind === 'onboarding-backdrop') {
           const insideCard = rawTarget?.closest?.('.onboarding-card');
           if (insideCard === null || insideCard === undefined) {
@@ -2514,12 +2526,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // FW-45 (the E-6 MVP): THE RESEARCH-NOTE ATTACH — the Research
         // section's notes card. The typed validation gate fires FIRST
         // (an empty/oversized title or text renders the inline error and
-        // NEVER calls the route — fail-closed, never a half-applied note);
-        // the submit rides the HOST-OWNED POST /v1/projects/:id/notes route
-        // with the CURRENT project + the verbatim buffered text, and the
-        // MINTED record dispatches note-attached (the reducer's scope gate
-        // + noteId dedup) — the note lands in the section's list AND the
-        // session's linked history.
+        // NEVER calls the route — fail-closed); the submit rides the
+        // HOST-OWNED POST /v1/projects/:id/notes route with the CURRENT
+        // project + the verbatim buffered text, and the MINTED record
+        // dispatches note-attached (the reducer's scope gate + noteId
+        // dedup) — the note lands in the section's list AND the session's
+        // linked history.
         if (kind === 'note-attach-open') {
           if (view.noteAttach === null) {
             view = { ...view, noteAttach: { edits: {}, error: null } };
@@ -2544,8 +2556,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           const text = typeof noteForm.edits.text === 'string' ? noteForm.edits.text : '';
           if (title.length === 0 || title.length > 120 || text.length === 0 || text.length > 16_000) {
             // THE TYPED VALIDATION GATE (fail-closed, never an API call):
-            // the first broken field renders inline; the buffered edits
-            // stay (the user's text is never lost to a refusal).
+            // the broken field renders inline; the buffered edits stay.
             const error = title.length === 0
               ? 'title: the note title is required (1..120 characters — the note\'s own name)'
               : title.length > 120
@@ -2559,8 +2570,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           }
           const projectId = state.scope.projectId;
           if (isLaunchpadScope(projectId)) {
-            // the affordance never renders on the launchpad; a stale press
-            // is refused honestly.
+            // the affordance never renders on the launchpad; a stale press is refused honestly.
             view = { ...view, noteAttach: { ...noteForm, error: 'There is no project yet — launch first; the note attaches to a project\'s own record.' } };
             render();
             return;
@@ -2570,9 +2580,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           void (async () => {
             try {
               const attached = await client.projects.attachNote(projectId, { title, text });
-              // Only the still-current scope receives the record (the
-              // reducer's scope gate is the law; this guard is defense
-              // in depth).
+              // Only the still-current scope receives the record (the reducer's scope gate is the law; this guard is defense in depth).
               if (state.scope.projectId === projectId) {
                 dispatch({ kind: 'note-attached', at: instants.nowMs(), note: attached.note });
               }
@@ -2580,8 +2588,74 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
               render();
             } catch (error) {
               const message = (error as Error)?.message ?? String(error);
-              // the form keeps the user's text (the research-submit law).
+              // the form keeps the user's edits.
               view = { ...view, noteAttach: view.noteAttach === null ? { edits: {}, error: message } : { ...view.noteAttach, error: message } };
+              render();
+            }
+          })();
+          return;
+        }
+        // FW-46 (the S2 market surface): THE PRICE-ALERT DECLARE FLOW — the
+        // note-attach flow's pattern (open/cancel/submit; the typed gate
+        // fires BEFORE any route call — fail-closed; the submit rides the
+        // HOST-OWNED POST /v1/projects/:id/alerts route and the MINTED
+        // record dispatches alert-declared — the scope gate + alertId
+        // dedup are the law).
+        if (kind === 'alert-declare-open') {
+          if (view.alertDeclare === null) {
+            view = { ...view, alertDeclare: { edits: {}, error: null } };
+            render();
+          }
+          return;
+        }
+        if (kind === 'alert-declare-cancel') {
+          if (view.alertDeclare !== null) {
+            view = { ...view, alertDeclare: null };
+            render();
+          }
+          return;
+        }
+        if (kind === 'alert-declare') {
+          const alertForm = view.alertDeclare;
+          if (alertForm === null) {
+            render();
+            return;
+          }
+          const market = typeof alertForm.edits.market === 'string' ? alertForm.edits.market.trim() : '';
+          const direction = alertForm.edits.direction === 'below' ? 'below' : 'above';
+          const level = typeof alertForm.edits.level === 'string' ? alertForm.edits.level : '';
+          const gateError = alertFormErrorOf(market, direction, level);
+          if (gateError !== null) {
+            // THE TYPED VALIDATION GATE (fail-closed, never an API call):
+            // the broken field renders inline; the buffered edits stay.
+            view = { ...view, alertDeclare: { ...alertForm, error: gateError } };
+            render();
+            return;
+          }
+          const projectId = state.scope.projectId;
+          if (isLaunchpadScope(projectId)) {
+            // the affordance never renders on the launchpad; a stale press is refused honestly.
+            view = { ...view, alertDeclare: { ...alertForm, error: 'There is no project yet — launch first; the alert attaches to a project\'s own record.' } };
+            render();
+            return;
+          }
+          view = { ...view, alertDeclare: { ...alertForm, error: null } };
+          render();
+          void (async () => {
+            try {
+              const declared = await client.projects.declareAlert(projectId, { market, direction, level });
+              // Only the still-current scope receives the record (the
+              // reducer's scope gate is the law; this guard is defense
+              // in depth).
+              if (state.scope.projectId === projectId) {
+                dispatch({ kind: 'alert-declared', at: instants.nowMs(), alert: declared.alert });
+              }
+              view = { ...view, alertDeclare: null }; // success closes the form
+              render();
+            } catch (error) {
+              const message = (error as Error)?.message ?? String(error);
+              // the form keeps the user's edits (the note-attach law).
+              view = { ...view, alertDeclare: view.alertDeclare === null ? { edits: {}, error: message } : { ...view.alertDeclare, error: message } };
               render();
             }
           })();

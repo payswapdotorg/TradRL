@@ -599,8 +599,9 @@ export function fieldError(field: FieldValidation): VNode | null {
  * rides under it). The `vocabulary` picks the delegated data-field
  * attribute — 'launch' (the wizard's data-launch-field, the default),
  * 'research' (the D-12 standalone research form's data-research-field),
- * 'note' (the FW-45 note-attach form's data-note-field) — so each form's
- * inputs bind to their OWN beat-safe edit buffer.
+ * 'note' (the FW-45 note-attach form's data-note-field), 'alert' (the
+ * FW-46 alert form's data-alert-field) — each form's inputs bind to
+ * their OWN beat-safe edit buffer.
  */
 export function labeledInput(options: {
   readonly label: string;
@@ -611,13 +612,13 @@ export function labeledInput(options: {
   readonly hint?: string;
   readonly validation?: FieldValidation;
   readonly required?: boolean;
-  readonly vocabulary?: 'launch' | 'research' | 'account' | 'note';
+  readonly vocabulary?: 'launch' | 'research' | 'account' | 'note' | 'alert';
 }): VNode[] {
   const invalid = options.validation?.touched === true && (options.validation?.message.length ?? 0) > 0;
-  const idPrefix = options.vocabulary === 'research' ? 'research' : options.vocabulary === 'account' ? 'account' : options.vocabulary === 'note' ? 'note' : 'launch';
-  const fieldAttr = options.vocabulary === 'research' ? 'data-research-field' : options.vocabulary === 'account' ? 'data-account-field' : options.vocabulary === 'note' ? 'data-note-field' : 'data-launch-field';
+  const idPrefix = options.vocabulary === 'research' ? 'research' : options.vocabulary === 'account' ? 'account' : options.vocabulary === 'note' ? 'note' : options.vocabulary === 'alert' ? 'alert' : 'launch';
+  const fieldAttr = options.vocabulary === 'research' ? 'data-research-field' : options.vocabulary === 'account' ? 'data-account-field' : options.vocabulary === 'note' ? 'data-note-field' : options.vocabulary === 'alert' ? 'data-alert-field' : 'data-launch-field';
   // FW-41-B: the sticky-row clearance rides the LAUNCH vocabulary's controls only.
-  const stickyClearance: Readonly<Record<string, string>> = options.vocabulary === 'research' || options.vocabulary === 'account' || options.vocabulary === 'note' ? {} : { style: WIZARD_STICKY_CLEARANCE };
+  const stickyClearance: Readonly<Record<string, string>> = options.vocabulary === 'research' || options.vocabulary === 'account' || options.vocabulary === 'note' || options.vocabulary === 'alert' ? {} : { style: WIZARD_STICKY_CLEARANCE };
   return [
     v('div', { class: `field${invalid ? ' field-invalid' : ''}`, 'data-field': options.name }, [
       v('label', { class: 'field-label', for: `${idPrefix}-${options.name}` }, [options.label, ...(options.required === true ? [' *'] : [])]),

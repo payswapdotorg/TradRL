@@ -34,6 +34,7 @@ import { assertVisible, availabilityOfJob, availabilityOfKnowledge, availability
 import { assertProjectScope, isDemoProject, isLaunchpadScope, type WorkspaceScope } from '../core/tenant';
 import { renderDecimal } from '../core/decimals';
 import { blotterTotalsNoteOf, blotterTotalsOf } from '../core/blotter';
+import { marketViewCards, priceAlertsCard } from './market';
 import { formatDurationMs, formatInstantUtc } from '../core/format';
 import { PolicyEnforcementError } from '../core/errors';
 import { elapsedMsOfJobRecord, initialLaunchState, renderJobProgress, LAUNCH_STEPS, researchFormValuesOf, type LaunchState, type LaunchStep } from '../core/launch';
@@ -1416,9 +1417,13 @@ function observedWorldOf(state: WorkspaceState, viewAt: number): ObservedWorld {
  * open in a scope that has no world yet; the OBSERVED world (FW-33-B)
  * for a world-less scope whose records show one — the demo scope's
  * every first view; the teaching empty state only when the scope
- * genuinely shows nothing at this view instant.
+ * genuinely shows nothing at this view instant. FW-46: below every
+ * world card rides THE MARKET-FACING SURFACE (the market view + the
+ * price-alerts card — both null on the launchpad, D-12).
  */
-function marketWorldPanel(state: WorkspaceState, viewAt: number): VNode {
+function marketWorldPanel(state: WorkspaceState, view: ShellView, viewAt: number): VNode {
+  const marketCards = [...marketViewCards(state, viewAt)];
+  const alertsCard = priceAlertsCard(state, view, viewAt);
   const world = state.world;
   if (world !== null) {
     return v('section', { class: 'panel', 'data-section': 'market-world' }, [
@@ -1435,6 +1440,8 @@ function marketWorldPanel(state: WorkspaceState, viewAt: number): VNode {
         ]),
         v('p', { class: 'card-note' }, ['The launch specification this project\'s market world was set to — persisted with the project, restored on every visit.']),
       ]),
+      ...marketCards,
+      ...(alertsCard === null ? [] : [alertsCard]),
     ]);
   }
   const draft = state.launch.draft;
@@ -1446,7 +1453,7 @@ function marketWorldPanel(state: WorkspaceState, viewAt: number): VNode {
     // full specification.
     const observed = observedWorldOf(state, viewAt);
     if (observed.markets.length === 0 && observed.venues.length === 0) {
-      return v('section', { class: 'panel', 'data-section': 'market-world' }, [sectionEmpty('market-world')]);
+      return v('section', { class: 'panel', 'data-section': 'market-world' }, [sectionEmpty('market-world'), ...marketCards, ...(alertsCard === null ? [] : [alertsCard])]);
     }
     return v('section', { class: 'panel', 'data-section': 'market-world' }, [
       v('div', { class: 'card', 'data-market-world': 'observed' }, [
@@ -1458,6 +1465,8 @@ function marketWorldPanel(state: WorkspaceState, viewAt: number): VNode {
         ]),
         v('p', { class: 'card-note' }, ['This desk has no launch specification on record — the markets and venues above are observed from its own execution submissions at this view instant. A launch from Goal writes the full specification here.']),
       ]),
+      ...marketCards,
+      ...(alertsCard === null ? [] : [alertsCard]),
     ]);
   }
   return v('section', { class: 'panel', 'data-section': 'market-world' }, [
@@ -1473,6 +1482,8 @@ function marketWorldPanel(state: WorkspaceState, viewAt: number): VNode {
         ['horizon', `${formatInstantUtc(draft.horizon.startsAt)} -> ${formatInstantUtc(draft.horizon.endsAt)}`],
       ]),
     ]),
+    ...marketCards,
+    ...(alertsCard === null ? [] : [alertsCard]),
   ]);
 }
 
@@ -1648,8 +1659,10 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       // sources. FW-33-B (Round B blocker 6): the world-less scope renders
       // the OBSERVED world its own records show (marketWorldPanel below)
       // — the demo scope's every first view — never the misleading
-      // "No launch context yet" over an active desk.
-      return marketWorldPanel(state, viewAt);
+      // "No launch context yet" over an active desk. FW-46: the section
+      // also carries the market-facing surface (render/market.ts, null
+      // on the launchpad).
+      return marketWorldPanel(state, view, viewAt);
   } else if (selector === 'time-machine') {
       const knowable: VNode[] = [
         factRow('view instant', formatInstantUtc(viewAt)),

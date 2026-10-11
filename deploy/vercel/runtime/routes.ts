@@ -127,6 +127,7 @@ import {
 } from '../../../services/api/src/index';
 import { DEMO_PROJECT_ID, demoConstraintSet, demoGoalSetOf, demoGoalStatement, demoSubmissionsOf, demoWorldOf, isLaunchWorldRecord, withDerivedGoalHorizonLabel, withDerivedHorizonLabel, type DemoPorts, type DemoSubstanceSource, type DurableDemoSubstance } from './demo';
 import { researchNotesOf } from './notes';
+import { priceAlertsOf } from './alerts';
 import type { DurableBackingHandle, DdlApplyResult, DdlVerifyResult } from './durable';
 import { matchProjectHydrationPath, serveProjectHydrationRoute } from './hydration';
 import { RISK_UTILIZATION_ROUTE_PATH, serveRiskUtilizationRoute } from './risk-utilization';
@@ -347,10 +348,15 @@ function projectGoalRoute(input: DemoSubstanceRouteInput, request: DemoSubstance
     // capture the note route writes) serve as the ADDITIVE `notes` field —
     // the same read-back law every other project rides.
     const demoNotes = researchNotesOf(demoGoalSetOf(input.ports, authorization.tenant, projectId)?.notes);
+    // FW-46 (the S2 market surface): the demo project's OWN declared price
+    // alerts (the capture the alert route writes) serve as the ADDITIVE
+    // `alerts` field — the same read-back law.
+    const demoAlerts = priceAlertsOf(demoGoalSetOf(input.ports, authorization.tenant, projectId)?.alerts);
     return demoRouteSuccess(requestId, deepFreeze({
       goal: withDerivedGoalHorizonLabel(demoGoalStatement(authorization.tenant)),
       constraintSet: demoConstraintSet(authorization.tenant),
       ...(demoNotes.length === 0 ? {} : { notes: demoNotes }),
+      ...(demoAlerts.length === 0 ? {} : { alerts: demoAlerts }),
     }));
   }
   const captured = demoGoalSetOf(input.ports, authorization.tenant, projectId);
@@ -372,11 +378,17 @@ function projectGoalRoute(input: DemoSubstanceRouteInput, request: DemoSubstance
   // after a reload; structurally re-validated (a malformed entry is
   // skipped honestly, R46 — never a crash, never a half-record).
   const notes = researchNotesOf(captured.notes);
+  // FW-46 (the S2 market surface): the project's DECLARED PRICE ALERTS —
+  // the capture the alert route writes, served as the ADDITIVE `alerts`
+  // field (the `world`/`notes` precedent); structurally re-validated (a
+  // malformed entry is skipped honestly, R46).
+  const alerts = priceAlertsOf(captured.alerts);
   return demoRouteSuccess(requestId, deepFreeze({
     goal: captured.goal,
     constraintSet: captured.constraintSet,
     ...(world === null ? {} : { world }),
     ...(notes.length === 0 ? {} : { notes }),
+    ...(alerts.length === 0 ? {} : { alerts }),
   }));
 }
 
@@ -658,11 +670,18 @@ export function serveDurableSubstanceRoute(input: DurableSubstanceRouteInput, re
   // note is durable record, never per-instance state. Structurally
   // re-validated (a malformed entry is skipped honestly, R46).
   const notes = researchNotesOf(read.value.notes);
+  // FW-46 (the S2 market surface): the row's DECLARED PRICE ALERTS — the
+  // additive `alerts` array the alert route merges into the same goal-set
+  // row, served as the ADDITIVE `alerts` field (the `notes` precedent) —
+  // the alert is durable record, never per-instance state. Structurally
+  // re-validated (a malformed entry is skipped honestly, R46).
+  const alerts = priceAlertsOf(read.value.alerts);
   return demoRouteSuccess(requestId, deepFreeze({
     goal: read.value.goal,
     constraintSet: read.value.constraintSet,
     ...(isLaunchWorldRecord(world) ? { world: withDerivedHorizonLabel(world) } : {}),
     ...(notes.length === 0 ? {} : { notes }),
+    ...(alerts.length === 0 ? {} : { alerts }),
   }));
 }
 

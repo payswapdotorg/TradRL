@@ -192,7 +192,17 @@ describe('trip-wire: the client method surface + route table (literal)', () => {
     // exists nowhere in the frozen route table, so the SDK has no mirror
     // of it). The Research section's attach flow needs it; every other
     // member stays SDK-identical.
-    expect(Object.keys(client.projects).sort()).toEqual(['attachNote', 'bindOrganization', 'create', 'get', 'goal', 'list', 'listAll', 'transition']);
+    // THE FW-46 AMENDMENT (documented drift, not silent): the projects
+    // family carries a THIRD method the frozen SDK does not —
+    // `declareAlert`, the HOST-OWNED price-alert declaration
+    // (POST /v1/projects/:projectId/alerts, the S2 market surface's
+    // consequential route — the desk's declared price alert (market,
+    // direction, level) stored on the project's goal-set record,
+    // idempotent per content; the route exists nowhere in the frozen
+    // route table, so the SDK has no mirror of it). The Market World
+    // section's declare flow needs it; every other member stays
+    // SDK-identical.
+    expect(Object.keys(client.projects).sort()).toEqual(['attachNote', 'bindOrganization', 'create', 'declareAlert', 'get', 'goal', 'list', 'listAll', 'transition']);
     // THE W-25A AMENDMENT (documented drift, not silent): the jobs
     // family carries ONE method the frozen SDK does not — `list`, the
     // HOST-OWNED jobs-list read (GET /v1/jobs?project=<id>, the W-25A
