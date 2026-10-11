@@ -53,7 +53,7 @@ import type {
   ServedKnowledge,
 } from '../api/contracts';
 import { DEFAULT_SECTION, isSectionId, type SectionId } from './sections';
-import { assertProjectScope, assertTenantScope, isWorkspaceScope, type WorkspaceScope } from './tenant';
+import { assertProjectScope, assertTenantScope, isLaunchpadScope, isWorkspaceScope, type WorkspaceScope } from './tenant';
 import type { OversightDeskRead } from './oversight';
 import { canonicalJson, sha256Hex, sha256Of } from './digest';
 import {
@@ -1454,11 +1454,24 @@ function launchCompletionHandOff(machine: TimeMachineState, history: HistoryFloo
  * view's truth: the render composes it with the view instant (a scrubbed
  * PAST view keeps the honest empty state + the beyond-view hint — the
  * pending state is about NOW, never a claim about the past).
+ *
+ * FW-42-B (Round J register I-3b — the RELOAD-PATH window, 8/9 partial):
+ * the boot/reload path taught the bare "Not compiled yet" over a
+ * COMPILED desk for ~3-8.5s because its project record lands LATE (the
+ * listing adoption scopes the desk first; the oversight reads and the
+ * project read follow) — the pre-fix fold read that window as terminal.
+ * THE LAW: the pending state holds FROM THE FIRST PAINT until the read
+ * completes — a REAL desk is scoped (not the launchpad), the connection
+ * is live, and no snapshot has ever landed: the read bundle is in
+ * flight, whatever the project read's own latency. The terminal
+ * "Not compiled yet" renders ONLY after the read completes empty (the
+ * launchpad — no desk exists at all) or off the live edge / degraded
+ * connection (the pre-existing laws, unchanged).
  */
 export function hydrationReadPendingOf(state: WorkspaceState): boolean {
-  return state.project !== null
-    && state.orgSnapshots.length === 0
-    && state.connection === 'connected';
+  if (state.connection !== 'connected' || state.orgSnapshots.length > 0) return false;
+  if (state.project !== null) return true;
+  return !isLaunchpadScope(state.scope.projectId);
 }
 
 /**

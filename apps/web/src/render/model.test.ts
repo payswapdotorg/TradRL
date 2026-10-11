@@ -1632,3 +1632,44 @@ describe('FW-41-C (I-3b): the hydration PENDING marker — "Reading the world…
     expect(landedBytes).not.toContain('No organization snapshots at this view instant.');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-42-B (Round J register I-3b — the reload-path hydration marker, the
+// render half). The register's quantification (M2, L2): on a COMPILED
+// desk the post-reload window taught the bare "Not compiled yet" on the
+// Home ORGANIZATION tile for ~3-8.5s before the late "Reading the
+// world…" marker — the honest-empty wording MISSTATING a compiled desk
+// (the launch/switch path is prompt: its project record lands with the
+// adoption). THE LAW: the boot/reload path's hydration state is PENDING
+// from the first paint until the read completes — the same marker the
+// launch path uses; "Not compiled yet" renders ONLY after the read
+// completes empty (the launchpad — no desk exists at all).
+// ---------------------------------------------------------------------------
+
+describe('FW-42-B (I-3b): the reload-path pending window on the Home ORGANIZATION tile', () => {
+  /** The reload window on a COMPILED desk: connected, the stored scope adopted, the project record not yet read, no snapshot ever. */
+  function reloadingWorkspace(): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'project-adopted', at: T0 + 2, projectId: 'proj-a' }, // the stored-scope adoption — the read bundle is in flight
+      { kind: 'view-live', at: T0 + 50 }, // the live edge (the reload's own posture)
+    ]);
+  }
+
+  it('the reload window over a COMPILED desk teaches PENDING — never the bare "Not compiled yet" (the misstatement)', () => {
+    const bytes = serializeVNode(renderConsoleModel(reloadingWorkspace(), T0 + 50, { ...defaultShellView(reloadingWorkspace()), accountView: 'home' }));
+    expect(bytes).toContain('data-rich-stat="ORGANIZATION"');
+    expect(bytes).toContain('Reading the world…'); // the same marker the launch path uses
+    expect(bytes).not.toContain('Not compiled yet'); // RED pre-fix: the bare honest-empty wording over a compiled desk
+  });
+
+  it('the launchpad boot stays the honest terminal empty (no desk exists at all — the marker never lies about nothing)', () => {
+    const launchpad = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: '(launchpad)' }, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(launchpad, T0 + 50, { ...defaultShellView(launchpad), accountView: 'home' }));
+    expect(bytes).toContain('Not compiled yet'); // the honest terminal — nothing was ever launched
+    expect(bytes).not.toContain('data-hydration-pending="true"');
+  });
+});
