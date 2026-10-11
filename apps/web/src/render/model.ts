@@ -2110,9 +2110,23 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
                 v('p', { class: 'field-hint' }, ['Fix each field on its step, then return here to launch.']),
               ])]),
         ]
-        : [...stepFields, v('div', { class: 'tm-playback' }, [
-          v('button', { class: 'tm-button', id: 'launch-next', 'data-action': `launch-step-${nextStepOf(launch.step)}`, type: 'button' }, [`Next: ${nextStepOf(launch.step)}`]),
-          v('button', { class: 'tm-button', id: 'launch-review-button', 'data-action': 'launch-step-review', type: 'button' }, ['Review']),
+        : [
+          // FW-41-B (Round I register I-2, M2's occlusion half): the action
+          // row rides FW-38-B's sticky law (its controls can never sit below
+          // the fold), so at mid-card scroll positions it floats over the
+          // lower fields — M2: "a sticky .tm-playback bar (z-index 5)
+          // occludes the execution control at the natural scroll position
+          // (click lands on the overlay until scrolled clear)". The row gets
+          // the same CLICK-THROUGH discipline the TM band adopted in FW-35-B
+          // (applied inline — the row's own sticky chrome lives in the shell
+          // surface's stylesheet): the ROW passes covered click points
+          // through to the field underneath, the BUTTONS keep their full hit
+          // areas. The wizard's own fields carry the companion clearance
+          // (flow.ts's WIZARD_STICKY_CLEARANCE) so a focus lands them above
+          // the pinned row.
+          ...stepFields, v('div', { class: 'tm-playback', style: 'pointer-events:none' }, [
+          v('button', { class: 'tm-button', id: 'launch-next', style: 'pointer-events:auto', 'data-action': `launch-step-${nextStepOf(launch.step)}`, type: 'button' }, [`Next: ${nextStepOf(launch.step)}`]),
+          v('button', { class: 'tm-button', id: 'launch-review-button', style: 'pointer-events:auto', 'data-action': 'launch-step-review', type: 'button' }, ['Review']),
         ])]),
     ]));
   }

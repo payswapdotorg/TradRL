@@ -571,6 +571,23 @@ export interface FieldValidation {
   readonly touched: boolean;
 }
 
+/**
+ * FW-41-B (Round I register I-2, M2's occlusion half): the sticky-row
+ * CLEARANCE for the wizard's own controls. The wizard's action row is
+ * STICKY within its card (FW-38-B's ride-the-fold law — the Next/Review
+ * click points can never sit below the fold), so at mid-card scroll
+ * positions it floats over the lower fields — M2: "a sticky .tm-playback
+ * bar (z-index 5) occludes the execution control at the natural scroll
+ * position (click lands on the overlay until scrolled clear)". The row's
+ * own CLICK-THROUGH law (pointer-events, applied where the row is built)
+ * un-eats the covered click points; this clearance makes every focus /
+ * scrollIntoView of a wizard control land it ABOVE the pinned row (the
+ * D-6e scroll-reserve pattern, at the element) — a control the keyboard
+ * or a focus aims at is never left behind the row. Scoped to the LAUNCH
+ * vocabulary (the wizard's chrome — the only surface with a sticky row).
+ */
+const WIZARD_STICKY_CLEARANCE = 'scroll-margin-bottom:72px';
+
 /** The field's validation message node (inline, destructive, only when touched + invalid — §4.11). */
 export function fieldError(field: FieldValidation): VNode | null {
   if (field.touched !== true || field.message.length === 0) return null;
@@ -599,6 +616,8 @@ export function labeledInput(options: {
   const invalid = options.validation?.touched === true && (options.validation?.message.length ?? 0) > 0;
   const idPrefix = options.vocabulary === 'research' ? 'research' : options.vocabulary === 'account' ? 'account' : 'launch';
   const fieldAttr = options.vocabulary === 'research' ? 'data-research-field' : options.vocabulary === 'account' ? 'data-account-field' : 'data-launch-field';
+  // FW-41-B: the sticky-row clearance rides the LAUNCH vocabulary's controls only.
+  const stickyClearance = options.vocabulary === 'research' || options.vocabulary === 'account' ? {} : { style: WIZARD_STICKY_CLEARANCE };
   return [
     v('div', { class: `field${invalid ? ' field-invalid' : ''}`, 'data-field': options.name }, [
       v('label', { class: 'field-label', for: `${idPrefix}-${options.name}` }, [options.label, ...(options.required === true ? [' *'] : [])]),
@@ -608,6 +627,7 @@ export function labeledInput(options: {
         name: options.name,
         type: options.type ?? 'text',
         value: options.value,
+        ...stickyClearance,
         ...(options.placeholder === undefined ? {} : { placeholder: options.placeholder }),
         ...(invalid ? { 'aria-invalid': 'true' } : {}),
         [fieldAttr]: options.name,
@@ -636,6 +656,18 @@ export function labeledSelect(options: {
         class: 'field-input field-select',
         id: `launch-${options.name}`,
         name: options.name,
+        // FW-41-B (Round I register I-2): the model's value rides the
+        // ELEMENT TOO — the identity law's transplant (render/dom.ts)
+        // reads it as the select's model truth (the exact mirror of
+        // labeledInput's value attribute); the options' selected paint
+        // stays as the fresh projection's display carrier. Together with
+        // the projector's select display law, the displayed selection
+        // survives every ~500ms beat re-projection — never the wipe to ''.
+        value: options.value,
+        // FW-41-B (M2's occlusion half): the sticky-row clearance (see
+        // WIZARD_STICKY_CLEARANCE) — a focus on this select lands it
+        // above the pinned action row.
+        style: WIZARD_STICKY_CLEARANCE,
         ...(invalid ? { 'aria-invalid': 'true' } : {}),
         'data-launch-field': options.name,
       }, options.choices.map(([value, label]) => v('option', { value, ...(value === options.value ? { selected: 'selected' } : {}) }, [label]))),
@@ -684,9 +716,17 @@ export function twoStepConfirm(action: ConfirmAction, armed: boolean): VNode {
   if (!armed) {
     return v('button', { class: 'confirm-arm', id: `${action}-confirm-arm`, 'data-action': `confirm-arm-${action}`, type: 'button' }, [CONFIRM_QUESTIONS[action]]);
   }
-  return v('div', { class: 'confirm-inline', 'data-confirm-pending': action, role: 'group', 'aria-label': CONFIRM_QUESTIONS[action] }, [
+  // FW-41-B (Round I register I-2, M2's occlusion half): the armed row
+  // rides the same sticky law as the action row (FW-38-B — its controls
+  // can never sit below the fold), so it gets the same CLICK-THROUGH
+  // discipline the TM band adopted in FW-35-B: the ROW itself passes
+  // covered click points through to whatever sits underneath (the
+  // question span and the padding are not affordances), while the
+  // buttons keep their full hit areas. Applied inline — the row's own
+  // sticky chrome lives in the shell surface's stylesheet.
+  return v('div', { class: 'confirm-inline', style: 'pointer-events:none', 'data-confirm-pending': action, role: 'group', 'aria-label': CONFIRM_QUESTIONS[action] }, [
     v('span', { class: 'confirm-question' }, [`Are you sure? ${CONFIRM_QUESTIONS[action]}`]),
-    v('button', { class: 'confirm-cancel', id: `${action}-confirm-cancel`, 'data-action': `confirm-cancel-${action}`, type: 'button' }, ['Cancel']),
-    v('button', { class: 'confirm-go', id: `${action}-confirm-go`, 'data-action': `confirm-${action}`, type: 'button' }, ['Confirm']),
+    v('button', { class: 'confirm-cancel', style: 'pointer-events:auto', id: `${action}-confirm-cancel`, 'data-action': `confirm-cancel-${action}`, type: 'button' }, ['Cancel']),
+    v('button', { class: 'confirm-go', style: 'pointer-events:auto', id: `${action}-confirm-go`, 'data-action': `confirm-${action}`, type: 'button' }, ['Confirm']),
   ]);
 }

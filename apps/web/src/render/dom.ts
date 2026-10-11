@@ -43,6 +43,29 @@
 // from the incoming VNode — the model stays the source of truth for
 // what renders; this layer keeps only what the user had in flight
 // (the same law as the open accordions and scroll offsets above).
+//
+// THE SELECT DISPLAY LAW (FW-41-B, Round I register I-2 — 7/7
+// personas who checked): the identity law's value-restore branch was
+// written for the TEXT-CONTROL class and left a SELECT-CLASS GAP — a
+// select never carries a `value` CONTENT attribute (its paint rides
+// its OPTIONS' selected attributes), so the outgoing-paint read
+// (getAttribute('value')) always returned null for a select: the
+// user-edit detection could never fire, and the incoming model value
+// — absent from the select's own attrs — fell through to the `''`
+// default. EVERY beat re-projection wiped the displayed selection
+// while the STATE stayed correct (the wizard's executionMode select:
+// Review and the launch record read "simulation" while the control
+// rendered blank from every seat; the Settings switcher select — NOT
+// identity-eligible, so freshly projected each beat — displayed
+// fine, which isolated the class to the TRANSPLANTED select). The
+// law: a select's displayed selection rides the same identity law —
+// the OUTGOING options' selected paint is the model's last paint
+// (content attributes never mutate through user interaction), a live
+// value differing from it is the user's in-flight pick and SURVIVES,
+// and the incoming paint (the select's own value attribute when it
+// carries one — labeledSelect's element-level carrier — else the
+// fresh options' selected paint) re-syncs the display on EVERY
+// projection. Never the wipe to ''.
 
 import type { VNode } from './vtree';
 
@@ -334,6 +357,30 @@ interface ValueCarrier {
   value?: string;
 }
 
+/**
+ * FW-41-B (Round I register I-2): the model value a SELECT's paint
+ * carries — the value attribute of the first OPTION carrying a
+ * `selected` attribute (the closed-vocabulary paint grammar: the
+ * wizard's labeledSelect, the Settings project switcher, the playback
+ * speed select). A select NEVER carries a value CONTENT attribute of
+ * its own (its displayed selection is element-property + option
+ * selectedness state), so this read IS the select's model truth. The
+ * browser never mutates content attributes through user interaction —
+ * the user's pick lives in the element's value PROPERTY only — so
+ * reading the options' selected paint always yields the MODEL's last
+ * paint, never the user's in-flight pick. Null when no option paints a
+ * selection (the model selected nothing).
+ */
+function selectedOptionValueOf(select: Element): string | null {
+  for (const child of elementChildrenOf(select)) {
+    if (tagNameOf(child) !== 'OPTION') continue;
+    if (child.getAttribute('selected') === null) continue;
+    const value = child.getAttribute('value');
+    return value === null ? '' : value;
+  }
+  return null;
+}
+
 /** The paired (VNode, Element) visitor of the preservable walk (the ElementVisitor pattern). */
 type PreservableVisitor = (vnode: VNode, element: Element) => void;
 
@@ -355,10 +402,21 @@ function transplantPreserved(preserved: Element, fresh: Element, attrs: Readonly
   // whose input/change events may NEVER have landed (the beat detached the
   // node mid-fill) — it survives the re-projection on the SAME element, so
   // the next input event (whenever it fires, on this live node) commits it.
-  const isField = tagNameOf(preserved) === 'INPUT' || tagNameOf(preserved) === 'SELECT' || tagNameOf(preserved) === 'TEXTAREA';
+  // FW-41-B (I-2, the select display law): the OUTGOING paint's model value
+  // is control-class-specific — a text control paints it as the `value`
+  // content attribute, but a select paints it on its OPTIONS (a select
+  // never carries a value content attribute), so the text-control read
+  // could never see a select's paint: the user-edit detection never fired
+  // and every beat fell through to the `''` default, WIPING the displayed
+  // selection (the wizard's executionMode select rendered empty from
+  // every seat while its state stayed correct). The select's painted model
+  // value is read HERE — before the children swap below replaces the
+  // options with the fresh projection's own.
+  const isSelect = tagNameOf(preserved) === 'SELECT';
+  const isField = isSelect || tagNameOf(preserved) === 'INPUT' || tagNameOf(preserved) === 'TEXTAREA';
   const liveValue = (preserved as Element & ValueCarrier).value;
-  const outgoingValueAttribute = preserved.getAttribute('value');
-  const userEdited = isField && typeof liveValue === 'string' && outgoingValueAttribute !== null && liveValue !== outgoingValueAttribute;
+  const outgoingPaintedValue = isSelect ? selectedOptionValueOf(preserved) : preserved.getAttribute('value');
+  const userEdited = isField && typeof liveValue === 'string' && outgoingPaintedValue !== null && liveValue !== outgoingPaintedValue;
   // Attribute sync: the incoming set applies verbatim; an attribute the
   // incoming projection dropped is removed (class/aria-invalid toggles stay
   // the model's truth). Best-effort without getAttributeNames (a stub
@@ -378,10 +436,20 @@ function transplantPreserved(preserved: Element, fresh: Element, attrs: Readonly
   // The value property: a USER-EDITED live value survives untouched (the
   // dirty value the browser would keep anyway); otherwise the incoming
   // (model) value takes the property so the control reflects the fresh paint.
+  // FW-41-B (I-2): a select's incoming model value is its own `value`
+  // attribute when the paint carries one (labeledSelect's element-level
+  // carrier — the mirror of labeledInput), ELSE the FRESH options'
+  // selected paint (the fresh children were just moved on above) — so
+  // the displayed selection re-syncs from the model on EVERY projection,
+  // never the pre-fix wipe to ''. A select whose model paints no
+  // selection (no value attribute, no selected option) honestly clears.
   if (isField && typeof liveValue === 'string') {
     const valueCarrier = preserved as Element & { value: string };
     if (userEdited) {
       valueCarrier.value = liveValue;
+    } else if (isSelect) {
+      const fromAttrs = Object.prototype.hasOwnProperty.call(attrs, 'value') ? (attrs.value as string) : null;
+      valueCarrier.value = fromAttrs !== null ? fromAttrs : (selectedOptionValueOf(preserved) ?? '');
     } else {
       valueCarrier.value = Object.prototype.hasOwnProperty.call(attrs, 'value') ? (attrs.value as string) : '';
     }
