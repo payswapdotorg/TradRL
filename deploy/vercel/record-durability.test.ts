@@ -1304,7 +1304,10 @@ describe('deploy/vercel — FW-43-B (F-12): the durable launch\'s deliverable ca
       expect(finished.result.kind).toBe('release-candidate');
 
       // THE DERIVED-STATISTICS BLOCK rides the composed deliverable.
-      const result = finished.result as {
+      // (the double cast is the file-family's own idiom — seedLaunchedDesk's
+      //  result is deliberately the loose { kind: string } every other caller
+      //  reads; the statistics shape is this test's own reading lens)
+      const result = finished.result as unknown as {
         readonly statistics: {
           readonly fills: { readonly count: number; readonly notionalTotal: string; readonly markets: readonly { readonly market: string; readonly fills: number; readonly notional: string }[] };
           readonly refusals: { readonly count: number; readonly boundsCited: readonly string[] };
