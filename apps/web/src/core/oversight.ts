@@ -65,6 +65,7 @@
 
 import type { GatewaySubmissionRecord, OrgStatusSnapshot, OutcomeRecord, ProjectRecord, RiskUtilizationEntryBlocked, RiskUtilizationRead } from '../api/contracts';
 import { blotterTotalsOf } from './blotter';
+import { sumExactDecimals } from './decimals';
 import { availabilityOfOutcome, availabilityOfSubmission, projectToView } from './availability';
 import { parseInstantUtc } from './format';
 import { standingReadFoldOf, type StandingReadFold } from './standing';
@@ -148,6 +149,83 @@ export interface OversightDeskRow {
   readonly asOf: string | null;
   /** FW-38-B (G-12): the DATA'S OWN AS-OF — the newest fill or non-withheld observation the standing rows derive from; null when nothing derives. */
   readonly standingAsOf: number | null;
+  /**
+   * FW-43-A (Round K register §3.2 — the product list's #2, M1 + L1's
+   * #1 YES-gate item): the desk's COCKPIT numbers — the per-desk
+   * net-exposure and the simulated P&L basis the cards render and the
+   * cross-desk aggregate rolls up. Every field is an HONEST NULLABLE:
+   * a desk without a read bundle on record folds every field to null
+   * (never a fabricated 0 — the console has not read that desk's
+   * blotter), and the breach field is null when the bundle carries no
+   * standing read (the blotter fields stay known — per-field honesty).
+   */
+  readonly cockpit: OversightDeskCockpit;
+}
+
+/**
+ * FW-43-A: one desk's cockpit numbers — the honest nullable view of
+ * what the desk's own records can derive AT THE VIEW INSTANT.
+ *   net exposure — the gross booked notional of the open positions
+ *   (the fill-derived book's own composition, core/blotter.ts's
+ *   exact-decimal notional total over the L4-projected fills — the
+ *   same data the standing rows ride); every fill on record is an open
+ *   position on the records this console holds (no position store
+ *   exists on any backing).
+ *   The simulated P&L basis — the booked notional + the fee total +
+ *   the refusal count (the numbers the fills themselves carry). NO
+ *   market P&L is ever fabricated: no mark-to-market exists on any
+ *   backing, so the render composes and labels these derived figures
+ *   as the SIMULATED world's book value, never a P&L the records
+ *   cannot derive.
+ */
+export interface OversightDeskCockpit {
+  /** The open positions on record at the view instant (the fills — the blotter's own count), or null when the desk's blotter is not on record. */
+  readonly openPositions: number | null;
+  /** The exact-decimal gross booked notional of those open positions (the fill-derived book), or null when the desk's blotter is not on record. */
+  readonly netExposure: string | null;
+  /** The exact-decimal fee total across the fills, or null when the desk's blotter is not on record. */
+  readonly feeTotal: string | null;
+  /** The fills on record at the view instant (the bundle's own L4-projected blotter), or null when no bundle is on record. */
+  readonly fills: number | null;
+  /** The gateway-stopped refusals on record at the view instant, or null when no bundle is on record. */
+  readonly refusals: number | null;
+  /** The decisions on record at the view instant, or null when no bundle is on record. */
+  readonly decisions: number | null;
+  /** The active breaches OBSERVED BY the view instant, or null when the bundle (or its standing read) is not on record. */
+  readonly breaches: number | null;
+}
+
+/**
+ * FW-43-A: THE CROSS-DESK AGGREGATE ROW — the roll-up over every desk
+ * at the view instant (the SAME L4 projection the cards ride, folded
+ * from the same rows). THE HONESTY LAW (the work order's own words):
+ * each field is the exact sum of the known per-desk fields, and reads
+ * UNKNOWN (null) when ANY desk's own field is unknown — never a
+ * fabricated sum. The blotter-derived fields need every desk's bundle
+ * on record; the breach field additionally needs every desk's STANDING
+ * read (a bundle without one leaves that desk's breach count unknown).
+ * `desks` itself is always known — the census is the view-instant
+ * listing, exactly the scope note's own count.
+ */
+export interface OversightAggregateRow {
+  /** The desks that existed at the view instant (the census — always known). */
+  readonly desks: number;
+  /** The exact-decimal sum of the desks' net exposures (the fill-derived books summed), or null when any desk's book is unknown. */
+  readonly netExposureTotal: string | null;
+  /** The sum of the desks' open positions, or null when any desk's count is unknown. */
+  readonly openPositions: number | null;
+  /** The sum of the desks' fills, or null when any desk's count is unknown. */
+  readonly fills: number | null;
+  /** The sum of the desks' gateway-stopped refusals, or null when any desk's count is unknown. */
+  readonly refusals: number | null;
+  /** The sum of the desks' decisions, or null when any desk's count is unknown. */
+  readonly decisions: number | null;
+  /** The sum of the desks' view-instant active breaches, or null when any desk's standing read is not on record. */
+  readonly breaches: number | null;
+  /** The desks whose bundle is not on record (the blotter-field unknowns' cause, named — never a silent absence). */
+  readonly desksWithoutRead: number;
+  /** The bundled desks whose standing read is not on record (the breach-field unknown's cause, named). */
+  readonly desksWithoutStandingRead: number;
 }
 
 /**
@@ -224,6 +302,25 @@ export function oversightRowsOf(state: WorkspaceState, viewAt: number): readonly
     // observed instant); the data's own as-of names the newest record
     // the rows derive from, never the read-capture instant.
     const standing = standingReadFoldOf(read?.utilization ?? null, submissions, viewAt);
+    // FW-43-A: the desk's COCKPIT numbers — the honest nullable view.
+    // A desk with NO bundle on record folds every field to null (the
+    // console has not read that desk's blotter — never a fabricated
+    // 0); a bundle whose standing read did not answer keeps the
+    // blotter fields known but folds the breach count to null (the
+    // per-field honesty the aggregate rolls up). The numbers ride the
+    // SAME totals the row's own counts carry (blotterTotalsOf over the
+    // L4-projected submissions — exact decimals, never float).
+    const cockpit: OversightDeskCockpit = read === null
+      ? { openPositions: null, netExposure: null, feeTotal: null, fills: null, refusals: null, decisions: null, breaches: null }
+      : {
+          openPositions: totals.fills,
+          netExposure: totals.notionalTotal,
+          feeTotal: totals.feeTotal,
+          fills: totals.fills,
+          refusals: totals.refusals,
+          decisions: decisions.length,
+          breaches: read.utilization === null ? null : breachesAtView,
+        };
     return {
       projectId: desk.id,
       name: desk.name,
@@ -242,8 +339,52 @@ export function oversightRowsOf(state: WorkspaceState, viewAt: number): readonly
       breachesTotal: breaches.length,
       asOf: read?.utilization?.asOf ?? null,
       standingAsOf: standing.dataAsOf,
+      cockpit,
     };
   });
+}
+
+/** FW-43-A: one cockpit count field's picker (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
+type CockpitCountOf = (row: OversightDeskRow) => number | null;
+
+/**
+ * FW-43-A: THE CROSS-DESK AGGREGATE — the roll-up of the SAME rows the
+ * cards render, at the SAME view instant (one fold, two surfaces — the
+ * F-6 law's own shape). Pure and total: an empty listing folds to a
+ * zero-desk census (every field known at 0 — the honest empty book,
+ * never an unknown); otherwise each field is the exact sum of the
+ * known per-desk fields, or null when ANY desk's own field is unknown
+ * (never a fabricated sum — the work order's own law). The notional
+ * total is an EXACT-DECIMAL sum (core/decimals.ts's sumExactDecimals
+ * over the desks' net-exposure strings, never float arithmetic).
+ */
+export function oversightAggregateOf(state: WorkspaceState, viewAt: number): OversightAggregateRow {
+  const rows = oversightRowsOf(state, viewAt);
+  const desksWithoutRead = rows.filter((row) => row.read === null).length;
+  const desksWithoutStandingRead = rows.filter((row) => row.read !== null && row.read.utilization === null).length;
+  // THE HONEST GRANULARITY: the blotter-derived fields are one family
+  // (they all derive from the desk's bundle); the breach field needs
+  // the standing read too. A family is known only when EVERY desk can
+  // produce its number — one unread desk makes the roll-up unknown,
+  // never a sum fabricated over the gap.
+  const blotterKnown = desksWithoutRead === 0;
+  const breachesKnown = desksWithoutRead === 0 && desksWithoutStandingRead === 0;
+  const sumCounts = (pick: CockpitCountOf): number | null =>
+    rows.reduce((total: number | null, row) => {
+      const value = pick(row);
+      return value === null || total === null ? null : total + value;
+    }, 0);
+  return {
+    desks: rows.length,
+    netExposureTotal: blotterKnown ? sumExactDecimals(rows.map((row) => row.cockpit.netExposure ?? '0')) : null,
+    openPositions: blotterKnown ? sumCounts((row) => row.cockpit.openPositions) : null,
+    fills: blotterKnown ? sumCounts((row) => row.cockpit.fills) : null,
+    refusals: blotterKnown ? sumCounts((row) => row.cockpit.refusals) : null,
+    decisions: blotterKnown ? sumCounts((row) => row.cockpit.decisions) : null,
+    breaches: breachesKnown ? sumCounts((row) => row.cockpit.breaches) : null,
+    desksWithoutRead,
+    desksWithoutStandingRead,
+  };
 }
 
 /**

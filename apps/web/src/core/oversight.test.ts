@@ -39,7 +39,7 @@ import type { GatewaySubmissionRecord, OutcomeRecord, ProjectRecord, RiskUtiliza
 import { CrossTenantRenderError } from './errors';
 import { DEMO_PROJECT_ID } from './tenant';
 import { formatInstantUtc, parseInstantUtc } from './format';
-import { oversightRowsOf, oversightScopeNoteOf, type OversightDeskRead } from './oversight';
+import { oversightAggregateOf, oversightRowsOf, oversightScopeNoteOf, type OversightDeskRead } from './oversight';
 import { standingBookOf, standingReadFoldOf } from './standing';
 import { openWorkspace, reduceAll, type WorkspaceState } from './workspace';
 
@@ -516,5 +516,176 @@ describe('FW-42-B (the copy-lag): the scope note is account-scoped under a signe
     expect(note).toContain("One governed view of this session's own desks in workspace tenant-a");
     expect(note).toContain('the session\'s own launched projects plus the shared demo desk');
     expect(note).not.toContain('your desks');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-43-A (Round K register §3.2 — the product list's #2, M1 + L1's #1
+// YES-gate item, DOM-verified absent three rounds running): THE OVERSIGHT
+// COCKPIT's model half. The personas, verbatim:
+//   M1 (Head of Trading, mid AM): "the Oversight cockpit (drill-through
+//   from breach counts, per-desk P&L/net-exposure, cross-desk
+//   aggregates) — DOM-verified absent again".
+//   L1 (Senior PM, large fund): "cross-desk aggregate row across my
+//   desks (net-exposure/utilization/P&L roll-up), per-desk
+//   P&L/net-exposure columns, drill-through from breach counts to
+//   blotters".
+// THE LAWS this fold owns (the work order's own words):
+//   - the PER-DESK COCKPIT numbers (net exposure = the gross booked
+//     notional of the open positions — the fill-derived book's own
+//     composition, the same data the standing rows ride; the simulated
+//     P&L basis = the booked notional + fees to date) are carried on
+//     each row as HONEST NULLABLES: a desk without a read bundle on
+//     record folds every cockpit field to null — never a fabricated 0 —
+//     and the breach field is null when the bundle carries no standing
+//     read (the blotter fields stay known; per-field honesty);
+//   - THE CROSS-DESK AGGREGATE ROW rolls up the SAME numbers the cards
+//     carry, at the SAME view instant (the identical L4 projection the
+//     cards ride): each field is the exact sum of the known per-desk
+//     fields, and reads UNKNOWN when ANY desk's own field is unknown —
+//     never a fabricated sum;
+//   - a true P&L is NEVER fabricated: no mark-to-market exists on any
+//     backing, so the fold composes only the numbers the fills carry
+//     (notional + fee) and the render labels them as the SIMULATED
+//     world's book value, not a market P&L.
+// ---------------------------------------------------------------------------
+
+describe('FW-43-A: the per-desk cockpit numbers (net exposure + the simulated P&L basis)', () => {
+  /** Two fills (100.00 + 50.005 = 150.005 exact), one stopped refusal, one decision, one pre-view breach — prj-a's bundle. */
+  function alphaBundle(): OversightDeskRead {
+    return {
+      projectId: 'prj-a',
+      utilization: utilizationOf('prj-a', [VIEW_AT - 1000]),
+      submissions: [
+        routedFill('xgs:a-1', VIEW_AT - 2000, '100.00'),
+        routedFill('xgs:a-2', VIEW_AT - 1500, '50.005'),
+        refusedRow('xgs:a-ref', VIEW_AT - 500),
+        routedFill('xgs:a-future', VIEW_AT + 9999, '999'), // post-view — never enters the book (L4)
+      ],
+      decisions: [decision('a-1', VIEW_AT - 800)],
+      readAt: VIEW_AT,
+    };
+  }
+
+  it('net exposure is the gross booked notional of the open positions (exact decimals) with the open-position count, the fee total, and the counts — all L4-projected at the view instant', () => {
+    const state = reduceAll(oversightWorkspace(), [{ kind: 'oversight-read', at: VIEW_AT, read: alphaBundle() }]);
+    const row = oversightRowsOf(state, VIEW_AT).find((candidate) => candidate.projectId === 'prj-a');
+    if (row === undefined) throw new Error('prj-a is not in the fold');
+    // net exposure: the fill-derived book's own composition (100.00 + 50.005 — exact, never float)
+    expect(row.cockpit.netExposure).toBe('150.005');
+    expect(row.cockpit.openPositions).toBe(2);    // the two pre-view fills (the post-view one is projected away)
+    expect(row.cockpit.feeTotal).toBe('0.20');    // 0.10 + 0.10 — exact decimals
+    expect(row.cockpit.fills).toBe(2);            // the bundle's blotter answered (L4-projected)
+    expect(row.cockpit.refusals).toBe(1);
+    expect(row.cockpit.decisions).toBe(1);
+    expect(row.cockpit.breaches).toBe(1);         // the one breach observed BY the view instant
+  });
+
+  it('a desk without a read bundle folds EVERY cockpit field to null — never a fabricated 0 (the honest law the aggregate rolls up)', () => {
+    const rows = oversightRowsOf(oversightWorkspace(), VIEW_AT);
+    const unread = rows.find((candidate) => candidate.projectId === 'prj-b');
+    if (unread === undefined) throw new Error('prj-b is not in the fold');
+    expect(unread.read).toBeNull();
+    expect(unread.cockpit).toEqual({
+      openPositions: null, netExposure: null, feeTotal: null,
+      fills: null, refusals: null, decisions: null, breaches: null,
+    });
+  });
+
+  it('per-field honesty: a bundle without a standing read keeps the blotter fields KNOWN but folds breaches to null', () => {
+    const bundle: OversightDeskRead = { projectId: 'prj-b', utilization: null, submissions: [routedFill('xgs:b-1', VIEW_AT - 1000, '10')], decisions: [], readAt: VIEW_AT };
+    const state = reduceAll(oversightWorkspace(), [{ kind: 'oversight-read', at: VIEW_AT, read: bundle }]);
+    const row = oversightRowsOf(state, VIEW_AT).find((candidate) => candidate.projectId === 'prj-b');
+    if (row === undefined) throw new Error('prj-b is not in the fold');
+    expect(row.cockpit.netExposure).toBe('10');   // the blotter answered
+    expect(row.cockpit.fills).toBe(1);
+    expect(row.cockpit.breaches).toBeNull();      // the standing read did not — the breach count is unknown, never 0
+  });
+});
+
+describe('FW-43-A: the cross-desk aggregate fold (the headline)', () => {
+  /** Every desk bundled: prj-a (2 fills + 1 refusal + 1 decision + 1 breach), prj-b (1 fill), the demo desk (an honest empty book). */
+  function allBundledWorkspace(): WorkspaceState {
+    return reduceAll(oversightWorkspace(), [
+      { kind: 'oversight-read', at: VIEW_AT, read: {
+        projectId: 'prj-a',
+        utilization: utilizationOf('prj-a', [VIEW_AT - 1000]),
+        submissions: [routedFill('xgs:a-1', VIEW_AT - 2000, '100.00'), routedFill('xgs:a-2', VIEW_AT - 1500, '50.005'), refusedRow('xgs:a-ref', VIEW_AT - 500), routedFill('xgs:a-future', VIEW_AT + 9999, '999')],
+        decisions: [decision('a-1', VIEW_AT - 800)],
+        readAt: VIEW_AT,
+      } },
+      { kind: 'oversight-read', at: VIEW_AT, read: {
+        projectId: 'prj-b',
+        utilization: utilizationOf('prj-b', []),
+        submissions: [routedFill('xgs:b-1', VIEW_AT - 1000, '10')],
+        decisions: [],
+        readAt: VIEW_AT,
+      } },
+      { kind: 'oversight-read', at: VIEW_AT, read: {
+        projectId: DEMO_PROJECT_ID,
+        utilization: utilizationOf(DEMO_PROJECT_ID, []),
+        submissions: [],
+        decisions: [],
+        readAt: VIEW_AT,
+      } },
+    ]);
+  }
+
+  it('sums every field across the desks at the view instant — the exact-decimal notional total, the same numbers the cards carry rolled up', () => {
+    const aggregate = oversightAggregateOf(allBundledWorkspace(), VIEW_AT);
+    expect(aggregate.desks).toBe(3);
+    expect(aggregate.netExposureTotal).toBe('160.005'); // 150.005 + 10 + 0 — an exact-decimal sum, never float
+    expect(aggregate.openPositions).toBe(3);           // 2 + 1 + 0
+    expect(aggregate.fills).toBe(3);
+    expect(aggregate.refusals).toBe(1);
+    expect(aggregate.decisions).toBe(1);
+    expect(aggregate.breaches).toBe(1);                // the one view-instant breach across every desk
+    expect(aggregate.desksWithoutRead).toBe(0);
+    expect(aggregate.desksWithoutStandingRead).toBe(0);
+  });
+
+  it('a desk without a read bundle makes every blotter field UNKNOWN — the total is never a fabricated sum, and the causes are counted', () => {
+    // the base workspace: NO desk has a bundle on record
+    const aggregate = oversightAggregateOf(oversightWorkspace(), VIEW_AT);
+    expect(aggregate.desks).toBe(3);                  // the census itself is always known
+    expect(aggregate.netExposureTotal).toBeNull();
+    expect(aggregate.openPositions).toBeNull();
+    expect(aggregate.fills).toBeNull();
+    expect(aggregate.refusals).toBeNull();
+    expect(aggregate.decisions).toBeNull();
+    expect(aggregate.breaches).toBeNull();
+    expect(aggregate.desksWithoutRead).toBe(3);
+    // one bundled desk among three is still an unknown roll-up (any desk's field unknown)
+    const mixed = oversightAggregateOf(reduceAll(oversightWorkspace(), [
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-a', utilization: utilizationOf('prj-a', []), submissions: [routedFill('xgs:a-1', VIEW_AT - 1000, '100.00')], decisions: [], readAt: VIEW_AT } },
+    ]), VIEW_AT);
+    expect(mixed.desks).toBe(3);
+    expect(mixed.netExposureTotal).toBeNull();
+    expect(mixed.desksWithoutRead).toBe(2);
+  });
+
+  it('the breach field is unknown when any desk\'s standing read is missing (per-field honesty — the blotter fields can be known in the same breath)', () => {
+    // every desk bundled; prj-b's bundle carries NO standing read — blotter known, breaches unknown
+    const aggregate = oversightAggregateOf(reduceAll(oversightWorkspace(), [
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-a', utilization: utilizationOf('prj-a', []), submissions: [routedFill('xgs:a-1', VIEW_AT - 1000, '100.00')], decisions: [], readAt: VIEW_AT } },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-b', utilization: null, submissions: [routedFill('xgs:b-1', VIEW_AT - 1000, '10')], decisions: [], readAt: VIEW_AT } },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: DEMO_PROJECT_ID, utilization: utilizationOf(DEMO_PROJECT_ID, []), submissions: [], decisions: [], readAt: VIEW_AT } },
+    ]), VIEW_AT);
+    expect(aggregate.netExposureTotal).toBe('110.00'); // every blotter answered (100.00 + 10 + 0, padded to the widest fraction — exact)
+    expect(aggregate.openPositions).toBe(2);
+    expect(aggregate.fills).toBe(2);
+    expect(aggregate.breaches).toBeNull();           // prj-b's standing read never answered
+    expect(aggregate.desksWithoutRead).toBe(0);
+    expect(aggregate.desksWithoutStandingRead).toBe(1);
+  });
+
+  it('L4: the aggregate rides the identical projection the cards ride — a post-view fill never enters the sums, and lands once the view passes it', () => {
+    const state = allBundledWorkspace();
+    const at = oversightAggregateOf(state, VIEW_AT);
+    expect(at.fills).toBe(3);                        // the post-view fill (xgs:a-future, VIEW_AT + 9999) is excluded
+    expect(at.netExposureTotal).toBe('160.005');
+    const later = oversightAggregateOf(state, VIEW_AT + 20_000);
+    expect(later.fills).toBe(4);                     // the view reached it — the same records, the same fold
+    expect(later.netExposureTotal).toBe('1159.005'); // 100.00 + 50.005 + 999 + 10 — exact, never float
   });
 });

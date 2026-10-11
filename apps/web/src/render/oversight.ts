@@ -33,7 +33,7 @@
 // the wall-clock render guard): same (state, viewAt, view) ->
 // identical serialized bytes.
 
-import { desksLaunchedAfterViewOf, oversightRowsOf, oversightScopeNoteOf, type OversightDeskRow } from '../core/oversight';
+import { desksLaunchedAfterViewOf, oversightAggregateOf, oversightRowsOf, oversightScopeNoteOf, type OversightAggregateRow, type OversightDeskRow } from '../core/oversight';
 import type { StandingRow } from '../core/standing';
 import type { WorkspaceState } from '../core/workspace';
 import type { ShellView } from './shell';
@@ -43,13 +43,17 @@ import { formatInstantUtc } from '../core/format';
 import { formatNumberGrouped } from './numbers';
 import { v, type VNode } from './vtree';
 
-/** One fact row (the panel's own copy of the card language's fact row). */
-function oversightFactRow(label: string, value: string): VNode {
+/** One fact row (the panel's own copy of the card language's fact row — the value is text or a nested affordance the a11y laws can focus). */
+function oversightFactRow(label: string, value: string | VNode): VNode {
   return v('div', { class: 'fact' }, [
     v('span', { class: 'fact-label' }, [label]),
-    v('span', { class: 'fact-value' }, [value]),
+    v('span', { class: 'fact-value' }, [typeof value === 'string' ? value : value]),
   ]);
 }
+
+/** The cockpit's honest-unknown sentences (the shared vocabulary — the card and the aggregate name the same absences the same way). */
+const NO_READ_ON_RECORD = 'unknown — no read on record for this desk yet';
+const NO_STANDING_READ_ON_RECORD = 'unknown — no standing read on record';
 
 /**
  * FW-38-B (G-3): the org-status pill's tone — the boundary's own
@@ -133,11 +137,48 @@ function oversightDeskCard(row: OversightDeskRow, viewAt: number, simulated: boo
     oversightFactRow('project lifecycle', row.status),
     ...(row.orgStatus === null ? [] : [oversightFactRow('organization status', row.orgStatus)]),
     ...standingFactRowsOfDesk(row),
-    oversightFactRow('fills on record (view instant)', String(row.fills)),
-    oversightFactRow('refusals (gateway-stopped)', String(row.refusals)),
-    oversightFactRow('decisions on record (view instant)', String(row.decisions)),
+    // FW-43-A (M1/L1's ask): the per-desk NET-EXPOSURE column — the
+    // gross booked notional of the open positions, the fill-derived
+    // book's OWN composition (the same data the standing rows ride —
+    // exact-decimal strings, never a formatted float). Never a
+    // fabricated number: a desk without a read on record renders the
+    // honest unknown.
+    oversightFactRow('net exposure (gross booked notional)', row.cockpit.netExposure === null
+      ? NO_READ_ON_RECORD
+      : `${row.cockpit.netExposure} across ${row.cockpit.openPositions} open position(s) — the fill-derived book's own composition (the same data the standing rows ride; every fill on record is an open position on the records this console holds — no position store exists on any backing)`),
+    // FW-43-A: the SIMULATED P&L column — the honest derived figures
+    // ONLY (the booked notional + the fees to date + the refusal
+    // count, the numbers the fills themselves carry). NEVER a market
+    // P&L: no mark-to-market exists on any backing, and the render
+    // says so — a true P&L is not derivable from these records.
+    oversightFactRow('simulated P&L basis (booked notional + fees to date)', row.cockpit.netExposure === null
+      ? NO_READ_ON_RECORD
+      : `booked notional ${row.cockpit.netExposure} · fees ${row.cockpit.feeTotal} · refusals ${row.cockpit.refusals} stopped — the SIMULATED world's booked book value to date, NOT a market P&L: no mark-to-market exists on the records this console holds; booked notional, fee total and the refusal count are the honest derived figures (a true P&L is not derivable from them)`),
+    // FW-43-A: the counts ride the cockpit's honest nullables — a desk
+    // without a read on record renders UNKNOWN, never a fabricated 0
+    // (the same numbers the aggregate rolls up, per-field honest).
+    oversightFactRow('fills on record (view instant)', row.cockpit.fills === null ? NO_READ_ON_RECORD : String(row.fills)),
+    oversightFactRow('refusals (gateway-stopped)', row.cockpit.refusals === null ? NO_READ_ON_RECORD : String(row.cockpit.refusals)),
+    oversightFactRow('decisions on record (view instant)', row.cockpit.decisions === null ? NO_READ_ON_RECORD : String(row.cockpit.decisions)),
     oversightFactRow('latest decision', row.latestDecision === null ? 'none visible at this view instant' : `${row.latestDecision.decisionRef} · ${row.latestDecision.disposition}`),
-    oversightFactRow('active breaches (view instant)', String(row.breachesAtView)),
+    // FW-43-A: the breach count IS the drill-through target for
+    // breaches (M1/L1, verbatim): an ACTIVE count is a real BUTTON
+    // landing on THIS desk's Risk section (keyboard focusable, the
+    // house a11y laws); a known 0 renders the plain number (never a
+    // dead affordance); an unknown count renders the honest unknown —
+    // never a fabricated 0.
+    oversightFactRow('active breaches (view instant)', row.cockpit.breaches === null
+      ? NO_STANDING_READ_ON_RECORD
+      : row.breachesAtView > 0
+        ? v('button', {
+            class: 'tm-button oversight-drill',
+            'data-action': 'oversight-open-desk',
+            'data-oversight-open': row.projectId,
+            'data-oversight-section': 'risk',
+            type: 'button',
+            'aria-label': `Open ${row.name} — the Risk section (drill through the ${row.breachesAtView} active breach(es) at this view instant)`,
+          }, [`${row.breachesAtView} active — open Risk`])
+        : String(row.breachesAtView)),
     ...(row.breachesAtView !== row.breachesTotal
       ? [v('p', { class: 'hint', 'data-oversight-breach-note': row.projectId }, [`${row.breachesTotal - row.breachesAtView} standing breach${row.breachesTotal - row.breachesAtView === 1 ? '' : 'es'} observed AFTER this view instant ${formatInstantUtc(viewAt)} — not shown here (L4).`])]
       : []),
@@ -146,6 +187,66 @@ function oversightDeskCard(row: OversightDeskRow, viewAt: number, simulated: boo
       : [v('p', { class: 'hint', 'data-oversight-asof': row.projectId }, [row.standingAsOf === null
           ? `No fill or refusal observation is on record at this view instant — the standing rows above derive from nothing on record. The read itself was captured at ${row.asOf} (the read-capture instant, not the data's as-of).`
           : `Standing book as of ${formatInstantUtc(row.standingAsOf)} — the data's own as-of: the newest fill or refusal observation the rows above derive from. The read itself was captured at ${row.asOf} (the read-capture instant, not the data's as-of).`])]),
+    // FW-43-A: THE DRILL-THROUGH — the per-desk Open affordance (a
+    // real BUTTON, keyboard focusable per the house a11y laws; the
+    // card's other rows stay inert so a nested control never swallows
+    // a click). One click switches the workspace scope to THIS desk
+    // and lands on its Execution blotter — the same reset+switch
+    // transition the switcher rides; the beat's scope-change refetch
+    // then reads this desk's whole world without a reload.
+    v('button', {
+      class: 'tm-button oversight-open',
+      'data-action': 'oversight-open-desk',
+      'data-oversight-open': row.projectId,
+      'data-oversight-section': 'execution',
+      type: 'button',
+      'aria-label': `Open ${row.name} — switch this workspace to the desk and land on its Execution blotter`,
+    }, ['Open this desk — Execution blotter']),
+  ]);
+}
+
+/**
+ * FW-43-A: THE CROSS-DESK AGGREGATE ROW (the headline — M1 + L1's #1
+ * YES-gate item): the roll-up over every desk at the view instant,
+ * rendered ABOVE the desk cards in the same card language. THE HONESTY
+ * LAW: each field is the exact sum of the SAME per-desk numbers the
+ * cards below carry (L4 — the identical projection the cards ride),
+ * and reads UNKNOWN when any desk's own field is unknown — never a
+ * fabricated sum. Carries the visible SIMULATED tag on the demo
+ * adapter (the E-8 row-disclosure law — a copied roll-up never reads
+ * as a production book).
+ */
+function oversightAggregateCard(aggregate: OversightAggregateRow, viewAt: number, simulated: boolean): VNode {
+  // The unknown-cause sentences, composed per family (named — never a
+  // silent absence): the blotter fields share the missing-bundle cause;
+  // the breach field needs the standing read too, so its cause names
+  // whichever gaps exist.
+  const missingRead = aggregate.desksWithoutRead > 0
+    ? `${aggregate.desksWithoutRead} desk${aggregate.desksWithoutRead === 1 ? '' : 's'} without a read on record`
+    : null;
+  const missingStanding = aggregate.desksWithoutStandingRead > 0
+    ? `${aggregate.desksWithoutStandingRead} desk${aggregate.desksWithoutStandingRead === 1 ? '' : 's'} without a standing read on record`
+    : null;
+  const blotterUnknown = missingRead === null ? null : `unknown — ${missingRead}`;
+  const breachUnknown = missingRead === null && missingStanding === null ? null : `unknown — ${[missingRead, missingStanding].filter((part) => part !== null).join(' and ')}`;
+  return v('div', { class: 'card oversight-aggregate', 'data-oversight-aggregate': 'true' }, [
+    v('div', { class: 'card-title' }, ['The cross-desk roll-up — every desk at this view instant']),
+    // E-8 (part 1) at the cockpit's headline: the roll-up carries the
+    // visible SIMULATED tag on the demo adapter (the mirror law: a live
+    // console renders no tag).
+    ...(simulated ? [v('span', { class: 'badge badge-simulated', 'data-simulated-tag': 'true', title: 'this roll-up is simulated demo data — the console runs on the demo adapter' }, ['SIMULATED'])] : []),
+    oversightFactRow('desks', String(aggregate.desks)),
+    oversightFactRow('net exposure (standing book notional, all desks)', blotterUnknown === null
+      ? `${aggregate.netExposureTotal}`
+      : blotterUnknown),
+    oversightFactRow('open positions', blotterUnknown === null ? String(aggregate.openPositions) : blotterUnknown),
+    oversightFactRow('fills on record', blotterUnknown === null ? String(aggregate.fills) : blotterUnknown),
+    oversightFactRow('refusals (gateway-stopped)', blotterUnknown === null ? String(aggregate.refusals) : blotterUnknown),
+    oversightFactRow('decisions on record', blotterUnknown === null ? String(aggregate.decisions) : blotterUnknown),
+    oversightFactRow('active breaches (view instant)', breachUnknown === null ? String(aggregate.breaches) : breachUnknown),
+    v('p', { class: 'hint', 'data-oversight-aggregate-note': 'true' }, [
+      `The roll-up composes the same per-desk numbers the cards below carry at this view instant ${formatInstantUtc(viewAt)} (L4 — the same projection the cards ride); each total is the exact-decimal sum of the known fields, and a field reads unknown when any desk's own field is unknown — never a fabricated sum (the breach total additionally needs every desk's standing read on record).`,
+    ]),
   ]);
 }
 
@@ -190,6 +291,11 @@ export function oversightPanel(state: WorkspaceState, viewAt: number, view: Shel
   return v('section', { class: 'panel oversight', 'data-section': 'oversight' }, [
     v('p', { class: 'hint', 'data-oversight-scope': 'true' }, [oversightScopeNoteOf(state, viewAt, authenticated)]),
     ...(withheldDesks > 0 ? [v('p', { class: 'hint', 'data-oversight-withheld-desks': 'true' }, [`${withheldDesks} desk${withheldDesks === 1 ? '' : 's'} launched after this view instant ${formatInstantUtc(viewAt)} — not shown here (L4; a desk card never renders before the desk's own launch instant).`])] : []),
+    // FW-43-A: THE CROSS-DESK AGGREGATE ROW (the headline) — above the
+    // desk cards, the roll-up of the same numbers the cards carry at
+    // this view instant (honest per-field unknowns, never a fabricated
+    // sum). Rendered whenever the census carries at least one desk.
+    ...(rows.length > 0 ? [oversightAggregateCard(oversightAggregateOf(state, viewAt), viewAt, view.simulated)] : []),
     ...rows.map((row) => oversightDeskCard(row, viewAt, view.simulated)),
     ...(rows.length === 1
       ? [v('p', { class: 'card-note', 'data-oversight-single': 'true' }, [authenticated
