@@ -42,6 +42,7 @@ import {
   accountModeSwitched,
   adoptionOutcomeApplied,
   adoptionRowsOf,
+  adoptionStateResolved,
   anonymousAccountPanel,
   authenticatedAccountPanel,
   createPrincipalAuthClient,
@@ -55,6 +56,8 @@ import {
   persistPrincipalSession,
   readStoredPrincipalSession,
   unavailableAccountPanel,
+  type AdoptionDeskOutcome,
+  type AdoptionDeskRow,
   type PrincipalHeaderState,
   type WhoamiCache,
 } from '../core/principal';
@@ -147,7 +150,11 @@ export async function readAccountBoot(seams: AccountPlaneSeams, cache: WhoamiCac
     const answer = await seams.auth.whoami(stored.token);
     cache.write(stored.token, answer);
     seams.principalHeaders?.setToken(stored.token); // FW-39-3: the validated token goes live for the console's own writes
-    put(seams, { ...authenticatedAccountPanel(answer.name), edits: panelOf(seams).edits, adoption: adoptionRowsOf(seams.directory(), seams.demoProjectId) });
+    // FW-42-B (J-1): the reload path's first authenticated paint reads
+    // the adoption state too — the resolution rides the boot validation
+    // (a failure keeps the offered rows; the session itself stands).
+    const resolved = await resolveAdoptionState(seams, stored.token);
+    put(seams, { ...authenticatedAccountPanel(answer.name), edits: panelOf(seams).edits, adoption: ceremonyRowsOf(seams, resolved) });
     void seams.refresh(); // the re-attach: the listing re-reads for the signed-in session
   } catch (error) {
     // FW-41-C (I-1's client half — THE ORIGIN LAW): the teaching wrapper
@@ -188,6 +195,32 @@ function persistSession(seams: AccountPlaneSeams, mint: { readonly token: string
 }
 
 /**
+ * FW-42-B (Round J register J-1 — 9/9 personas): the ceremony's adoption
+ * state, resolved through the adopt route's idempotent per-desk answer
+ * BEFORE the first authenticated paint. The route adopts the calling
+ * session's desks (the same server effect one click already had) and
+ * answers `already` for every desk that followed the account before
+ * this visit — the ceremony reads that state and never re-offers an
+ * already-adopted desk. A resolution that cannot run answers NULL (a
+ * route failure is NOT a session failure): the ceremony keeps its
+ * offered rows and the one-click idempotent answer stays as defense in
+ * depth.
+ */
+async function resolveAdoptionState(seams: AccountPlaneSeams, token: string): Promise<readonly AdoptionDeskOutcome[] | null> {
+  try {
+    return await seams.auth.adopt(token);
+  } catch {
+    return null;
+  }
+}
+
+/** The ceremony's rows for the current directory, resolved or offered (the J-1 fold's one composition — identical inputs, identical rows). */
+function ceremonyRowsOf(seams: AccountPlaneSeams, resolved: readonly AdoptionDeskOutcome[] | null): readonly AdoptionDeskRow[] {
+  const rows = adoptionRowsOf(seams.directory(), seams.demoProjectId);
+  return resolved === null ? rows : adoptionStateResolved(rows, resolved);
+}
+
+/**
  * THE ONE REGISTER/LOGIN SUBMIT (passphrase-first): local validation
  * first (an empty field is an inline error, never a dead API call),
  * then the documented route. The host's typed answers surface inline;
@@ -211,12 +244,21 @@ async function submitCredentials(seams: AccountPlaneSeams, cache: WhoamiCache, r
     persistSession(seams, mint);
     cache.write(mint.token, { name: mint.name });
     seams.principalHeaders?.setToken(mint.token); // FW-39-3: the minted token goes live for the console's own writes
+    // FW-42-B (J-1): the ceremony reads the adoption state BEFORE the
+    // first authenticated paint — the adopt route's idempotent per-desk
+    // resolution (already-adopted desks render "already yours — following
+    // this account", never the re-offer button; a failure keeps the
+    // offered rows — the one-click idempotent answer as defense in
+    // depth).
+    const resolved = await resolveAdoptionState(seams, mint.token);
     put(seams, {
       ...authenticatedAccountPanel(mint.name),
       edits: before.edits,
-      adoption: adoptionRowsOf(seams.directory(), seams.demoProjectId),
+      adoption: ceremonyRowsOf(seams, resolved),
     });
-    seams.showToast({ kind: 'account', title: register ? 'Account created' : 'Signed in', sentence: register ? `Welcome, ${mint.name} — desks you adopt follow this account across restarts.` : `Welcome back, ${mint.name} — this session's desks can now be adopted.` });
+    seams.showToast({ kind: 'account', title: register ? 'Account created' : 'Signed in', sentence: register
+      ? (resolved === null ? `Welcome, ${mint.name} — desks you adopt follow this account across restarts.` : `Welcome, ${mint.name} — your desks now follow this account across restarts.`)
+      : (resolved === null ? `Welcome back, ${mint.name} — this session's desks can now be adopted.` : `Welcome back, ${mint.name} — this session's desks now follow your account.`) });
     void seams.refresh(); // the re-attach: the listing re-reads for the signed-in session
   } catch (error) {
     // FW-41-C (I-1): the teaching wrapper renders ONLY for the host's

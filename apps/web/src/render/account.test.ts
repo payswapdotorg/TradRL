@@ -140,7 +140,29 @@ describe('the account settings surface — the adoption ceremony + logout', () =
   it('the empty ceremony teaches its own truth (no desks waiting; launched desks follow on their own)', () => {
     const body = serializeVNode({ tag: 'div', attrs: {}, children: accountSettingsBody(authenticatedAccountPanel('desk.owner'), false) });
     expect(body).toContain('data-account-adoption="0"');
-    expect(body).toContain('desks you launch while signed in follow this account on their own');
+    // FW-42-B (the copy-lag): the copy tells the ACCOUNT-SCOPED truth —
+    // "your account", never the session-scoped undersell
+    expect(body).toContain('desks you launch while signed in follow your account on their own');
+    expect(body).toContain("your account's other desks sit in the project list");
+  });
+
+  it('FW-42-B (the copy-lag): the ceremony intro says "Your desks" — the account scope the pure test proved (never the session-scoped undersell)', () => {
+    const panel = { ...authenticatedAccountPanel('desk.owner'), adoption: ADOPTION_ROWS };
+    const body = serializeVNode({ tag: 'div', attrs: {}, children: accountSettingsBody(panel, false) });
+    expect(body).toContain('Your desks, below');
+    expect(body).not.toContain('This session\u2019s own desks, below'); // the pre-fix session-scoped copy is gone (the typographic apostrophe the source uses)
+    expect(body).toContain('a still-offered desk adopts on one click, idempotently'); // the defense-in-depth control is disclosed
+  });
+
+  it('FW-42-B (J-1): the sign-in resolution\'s per-desk states render their own disclosed wording (already-adopted vs adopted-now), never a re-offer button', () => {
+    const resolved = [
+      { projectId: 'prj-signed-in', name: 'desk prj-signed-in', status: 'adopted' as const, detail: 'already yours — following this account' },
+      { projectId: 'prj-anon', name: 'desk prj-anon', status: 'adopted' as const, detail: 'now follows your account — adopted at sign-in' },
+    ];
+    const body = serializeVNode({ tag: 'div', attrs: {}, children: accountSettingsBody({ ...authenticatedAccountPanel('desk.owner'), adoption: resolved }, false) });
+    expect(body).toContain('already yours — following this account');
+    expect(body).toContain('now follows your account — adopted at sign-in');
+    expect(body).not.toContain('data-action="account-adopt"'); // no re-offer button over a resolved desk
   });
 });
 

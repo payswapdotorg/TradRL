@@ -118,7 +118,10 @@ describe('the boot validation (readBoot)', () => {
   });
 
   it('a stored session paints checking, validates via whoami, lands authenticated + re-reads the directory', async () => {
-    const h = harness([ok({ principal: { id: 'prn-1', name: 'desk.owner' } })], STORED);
+    // FW-42-B (J-1): the boot's first authenticated paint rides the adopt
+    // route's resolution too (whoami, then adopt — the ceremony reads the
+    // adoption state; here the desk answers already-adopted)
+    const h = harness([ok({ principal: { id: 'prn-1', name: 'desk.owner' } }), ok({ desks: [{ projectId: 'prj-own-1', adopted: true, already: true }] })], STORED);
     const pending = h.plane.readBoot();
     expect(h.panel()?.surface).toBe('checking'); // painted synchronously before the answer
     await pending;
@@ -150,7 +153,7 @@ describe('the boot validation (readBoot)', () => {
 
 describe('the register/login submit', () => {
   it('login persists the mint, renders the ceremony, toasts, and re-reads the directory', async () => {
-    const h = harness([ok(MINT)]);
+    const h = harness([ok(MINT), ok({ desks: [] })]); // the mint, then the sign-in resolution's answer (no session desks waiting)
     h.plane.interact('account-mode-login', { getAttribute: () => 'account-mode-login' });
     expect(h.panel()?.mode).toBe('login');
     // the J3 edit buffer: the fields buffer without a render
@@ -170,7 +173,7 @@ describe('the register/login submit', () => {
   });
 
   it('register rides the register route when the mode is register', async () => {
-    const h = harness([ok(MINT)]);
+    const h = harness([ok(MINT), ok({ desks: [] })]); // the mint, then the sign-in resolution's answer
     h.plane.interact('account-mode-register', { getAttribute: () => 'account-mode-register' });
     h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'name' : null), value: 'desk.owner' });
     h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'passphrase' : null), value: 'correct horse battery staple' });
@@ -209,7 +212,7 @@ describe('the register/login submit', () => {
 });
 
 describe('the adoption ceremony + logout', () => {
-  /** Sign in through the harness first (one mint answer). */
+  /** Sign in through the harness first (the mint, then the sign-in resolution's adopt answer). */
   async function signedIn(h: ReturnType<typeof harness>): Promise<void> {
     h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'name' : null), value: 'desk.owner' });
     h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'passphrase' : null), value: 'correct horse battery staple' });
@@ -218,22 +221,25 @@ describe('the adoption ceremony + logout', () => {
   }
 
   it('the adopt press drives the PARAMETERLESS route; the per-desk response folds + toasts + re-reads', async () => {
-    const h = harness([ok(MINT), ok({ desks: [{ projectId: 'prj-own-1', adopted: true }] })]);
+    // FW-42-B (J-1): the sign-in's own resolution answers first (an empty
+    // desks list — nothing adopted yet, the rows stay offered); the PRESS
+    // then drives the route and adopts (the defense-in-depth control path)
+    const h = harness([ok(MINT), ok({ desks: [] }), ok({ desks: [{ projectId: 'prj-own-1', adopted: true }] })]);
     await signedIn(h);
     const handled = h.plane.interact('account-adopt', { getAttribute: (name: string) => (name === 'data-desk' ? 'prj-own-1' : 'account-adopt') });
     expect(handled).toBe(true);
     await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
-    expect(h.requests[1]?.path).toBe('/v1/auth/adopt');
-    expect(h.requests[1]?.body).toEqual({}); // parameterless per the contract — no widening parameter
-    expect(h.requests[1]?.headers['x-tradrl-principal-token']).toBe(TOKEN); // FW-39-3: the principal-token header, never authorization
-    expect(h.requests[1]?.headers['x-tradrl-console-session']).toBe('session-0123456789abcdef');
+    expect(h.requests[2]?.path).toBe('/v1/auth/adopt'); // the press's call (requests[1] was the sign-in resolution's)
+    expect(h.requests[2]?.body).toEqual({}); // parameterless per the contract — no widening parameter
+    expect(h.requests[2]?.headers['x-tradrl-principal-token']).toBe(TOKEN); // FW-39-3: the principal-token header, never authorization
+    expect(h.requests[2]?.headers['x-tradrl-console-session']).toBe('session-0123456789abcdef');
     expect(h.panel()?.adoption?.[0]).toMatchObject({ projectId: 'prj-own-1', status: 'adopted' });
     expect(h.toasts[1]?.title).toBe('Desk adopted');
     expect(h.refreshes()).toBe(2); // login's re-read + adoption's re-read
   });
 
   it('an idempotent replay toasts "Already yours" and keeps the adopted state', async () => {
-    const h = harness([ok(MINT), ok({ desks: [{ projectId: 'prj-own-1', adopted: true }] }), ok({ desks: [{ projectId: 'prj-own-1', already: true }] })]);
+    const h = harness([ok(MINT), ok({ desks: [] }), ok({ desks: [{ projectId: 'prj-own-1', adopted: true }] }), ok({ desks: [{ projectId: 'prj-own-1', already: true }] })]);
     await signedIn(h);
     h.plane.interact('account-adopt', { getAttribute: (name: string) => (name === 'data-desk' ? 'prj-own-1' : 'account-adopt') });
     await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
@@ -245,16 +251,16 @@ describe('the adoption ceremony + logout', () => {
   });
 
   it('logout clears the local session on every completion (a typed failure still signs out)', async () => {
-    const clean = harness([ok(MINT), ok({})]);
+    const clean = harness([ok(MINT), ok({ desks: [] }), ok({})]);
     await signedIn(clean);
     clean.plane.interact('account-logout', { getAttribute: () => 'account-logout' });
     await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
-    expect(clean.requests[1]?.path).toBe('/v1/auth/logout');
+    expect(clean.requests[2]?.path).toBe('/v1/auth/logout');
     expect(clean.panel()?.surface).toBe('anonymous');
     expect(clean.storage.getItem(PRINCIPAL_SESSION_STORAGE_KEY)).toBe('');
     expect(clean.toasts[1]?.title).toBe('Signed out');
 
-    const refused = harness([ok(MINT), envelopeError(503, 'unavailable', 'the auth plane is unreachable')]);
+    const refused = harness([ok(MINT), ok({ desks: [] }), envelopeError(503, 'unavailable', 'the auth plane is unreachable')]);
     await signedIn(refused);
     refused.plane.interact('account-logout', { getAttribute: () => 'account-logout' });
     await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
@@ -324,6 +330,9 @@ describe('FW-41-C (I-1 client half): the origin law — the teaching wrapper vs 
   });
 
   it('a ROUTE FAILURE on the adopt press while SIGNED IN renders the typed failure inline + a retry toast — the signed-in card NEVER collapses to the refusal card and the adopt buttons stay live', async () => {
+    // empty script beyond the mint: BOTH the sign-in resolution's adopt call
+    // and the press's adopt call exhaust the transport — route failures (the
+    // transport refused), never the host's envelope
     const h = harness([ok(MINT)]);
     h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'name' : null), value: 'desk.owner' });
     h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'passphrase' : null), value: 'correct horse battery staple' });
@@ -341,7 +350,9 @@ describe('FW-41-C (I-1 client half): the origin law — the teaching wrapper vs 
   });
 
   it('the HOST\'S OWN typed 503 on the adopt press while signed in ALSO renders inline — the teaching wrapper is GONE from the signed-in path entirely (a deployment the user signed in to has accounts)', async () => {
-    const h = harness([ok(MINT), envelopeError(503, 'unavailable', 'accounts are not available on this deployment (R46)')]);
+    // FW-42-B (J-1): requests[1] is the sign-in resolution's adopt answer (an
+    // empty desks list); the PRESS then receives the host's own 503
+    const h = harness([ok(MINT), ok({ desks: [] }), envelopeError(503, 'unavailable', 'accounts are not available on this deployment (R46)')]);
     h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'name' : null), value: 'desk.owner' });
     h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'passphrase' : null), value: 'correct horse battery staple' });
     h.plane.interact('account-submit', { getAttribute: () => 'account-submit' });
@@ -351,5 +362,80 @@ describe('FW-41-C (I-1 client half): the origin law — the teaching wrapper vs 
     expect(h.panel()?.surface).toBe('authenticated'); // RED pre-fix: 'unavailable'
     expect(h.panel()?.error).toContain('not available on this deployment'); // the host's own words, inline + retryable
     expect(h.toasts.some((toast) => toast.title === 'Adoption failed — try again')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-42-B (Round J register J-1 — the ceremony display defect, 9/9
+// personas): the sign-in ceremony's waiting-to-adopt list rendered an
+// "Adopt this desk" button for desks ALREADY ADOPTED server-side until
+// one click (which answered "already yours — adopted before this
+// visit"); a plain reload rendered the correct state. THE LAW: the
+// ceremony READS THE ADOPTION STATE at sign-in render time — the adopt
+// route's per-desk resolution (idempotent; the same server effect one
+// click already had) runs BEFORE the first authenticated paint, so an
+// already-adopted desk renders "already yours — following this account"
+// with NO re-offer button. A resolution that cannot run (a route
+// failure is not a session failure) keeps the offered rows — the
+// one-click idempotent answer stays as defense in depth.
+// ---------------------------------------------------------------------------
+
+describe('FW-42-B (J-1): the ceremony reads the adoption state at sign-in render time', () => {
+  /** The sign-in edits + submit (the harness's own grammar). */
+  async function signIn(h: ReturnType<typeof harness>): Promise<void> {
+    h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'name' : null), value: 'desk.owner' });
+    h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'passphrase' : null), value: 'correct horse battery staple' });
+    h.plane.interact('account-submit', { getAttribute: () => 'account-submit' });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+  }
+
+  it('the SIGN-IN resolves the adoption state through the adopt route BEFORE the authenticated paint — an already-adopted desk renders "already yours — following this account", never the re-offer button', async () => {
+    // the 9/9 shape: the desk was launched while signed in (adopted at
+    // launch server-side), the session signed out and back in — the
+    // waiting list must not re-offer it
+    const h = harness([ok(MINT), ok({ desks: [{ projectId: 'prj-own-1', adopted: true, already: true }] })]);
+    await signIn(h);
+    expect(h.requests[1]?.path).toBe('/v1/auth/adopt'); // the resolution rode the sign-in — the ceremony reads the state
+    expect(h.requests[1]?.headers['x-tradrl-principal-token']).toBe(TOKEN);
+    expect(h.panel()?.surface).toBe('authenticated');
+    expect(h.panel()?.adoption?.[0]).toMatchObject({ projectId: 'prj-own-1', status: 'adopted', detail: 'already yours — following this account' }); // RED pre-fix: status 'offered'
+    expect(h.toasts[0]?.sentence).toBe('Welcome back, desk.owner — this session\'s desks now follow your account.');
+    expect(h.refreshes()).toBe(1);
+  });
+
+  it('a desk the resolution ADOPTS NOW names its sign-in adoption — the first-run promise ("create an account so your desks survive restarts") lands without a click', async () => {
+    const h = harness([ok(MINT), ok({ desks: [{ projectId: 'prj-own-1', adopted: true, already: false }] })]);
+    await signIn(h);
+    expect(h.panel()?.adoption?.[0]).toMatchObject({ projectId: 'prj-own-1', status: 'adopted', detail: 'now follows your account — adopted at sign-in' });
+  });
+
+  it('the REGISTER path resolves too (the account creation adopts the session\'s desks — the offer\'s own promise)', async () => {
+    const h = harness([ok(MINT), ok({ desks: [{ projectId: 'prj-own-1', adopted: true, already: true }] })]);
+    h.plane.interact('account-mode-register', { getAttribute: () => 'account-mode-register' });
+    h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'name' : null), value: 'desk.owner' });
+    h.plane.edit({ getAttribute: (name: string) => (name === 'data-account-field' ? 'passphrase' : null), value: 'correct horse battery staple' });
+    h.plane.interact('account-submit', { getAttribute: () => 'account-submit' });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    expect(h.requests[1]?.path).toBe('/v1/auth/adopt');
+    expect(h.panel()?.adoption?.[0]?.detail).toBe('already yours — following this account');
+    expect(h.toasts[0]?.sentence).toBe('Welcome, desk.owner — your desks now follow this account across restarts.');
+  });
+
+  it('the BOOT VALIDATION (the reload path) resolves the same way — the stored session\'s first authenticated paint carries the truth', async () => {
+    const h = harness([ok({ principal: { id: 'prn-1', name: 'desk.owner' } }), ok({ desks: [{ projectId: 'prj-own-1', adopted: true, already: true }] })], STORED);
+    await h.plane.readBoot();
+    expect(h.requests[1]?.path).toBe('/v1/auth/adopt'); // whoami, then the resolution
+    expect(h.panel()?.adoption?.[0]).toMatchObject({ status: 'adopted', detail: 'already yours — following this account' }); // RED pre-fix: 'offered'
+    expect(h.refreshes()).toBe(1);
+  });
+
+  it('a resolution that CANNOT RUN keeps the offered rows + the honest can-now-adopt toast — the one-click idempotent answer stays as defense in depth', async () => {
+    const h = harness([ok(MINT)]); // the script holds only the mint — the resolution's adopt call fails as a route failure
+    await signIn(h);
+    expect(h.panel()?.surface).toBe('authenticated'); // a resolution failure is NOT a session failure
+    expect(h.panel()?.adoption?.[0]?.status).toBe('offered'); // the ceremony keeps its controls
+    expect(h.panel()?.error).toBeNull(); // never a wall over a working session
+    expect(h.toasts[0]?.sentence).toBe('Welcome back, desk.owner — this session\'s desks can now be adopted.'); // the honest unresolved copy
+    expect(h.refreshes()).toBe(1);
   });
 });

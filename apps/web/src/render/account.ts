@@ -109,8 +109,12 @@ export function accountSettingsBody(panel: AccountPanelState, simulated: boolean
       ]),
       v('div', { class: 'card-note', 'data-account-adoption': String(rows.length) }, [
         v('p', {}, [rows.length === 0
-          ? 'No desks from this session are waiting to be adopted — desks you launch while signed in follow this account on their own.'
-          : 'This session\'s own desks, below — adopt the ones you want to follow your account (idempotent; adopting is per-desk and disclosed). The shared demo desk is everyone\'s teaching desk and never adopts.']),
+          ? 'No desks from this session are waiting — desks you launch while signed in follow your account on their own, and your account\'s other desks sit in the project list.'
+          // FW-42-B (the copy-lag + J-1): the ceremony copy tells the
+          // account-scoped truth — the desks follow YOUR ACCOUNT (the
+          // sign-in resolved each row; a still-offered desk keeps its
+          // one-click adopt, idempotently — the defense-in-depth path).
+          : 'Your desks, below — desks you launch while signed in follow your account on their own, and this session\'s earlier desks follow it too (per-desk and disclosed; a still-offered desk adopts on one click, idempotently). The shared demo desk is everyone\'s teaching desk and never adopts.']),
         v('dl', { class: 'def-grid' }, rows.map((row) => adoptionRow(row, panel.busy))),
       ]),
       v('div', { class: 'tm-playback' }, [
