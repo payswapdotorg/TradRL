@@ -1137,7 +1137,11 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
     sentence: 'The compiled team working your goal.',
     details: [
       ['Tenant', state.scope.tenantId],
-      ['Project', state.scope.projectId],
+      // FW-42-B (J-3, L2/M2's find): while the boot listing resolves a
+      // stored scope that differs from the env pin, the Project line
+      // teaches the resolving marker — never the env pin's id flashing
+      // ahead of the remembered desk's arrival.
+      ['Project', view.bootScopeResolving === true ? 'resolving your desk…' : state.scope.projectId],
       ['Instances', snapshot === null ? '0' : String(snapshot.instanceRefs.length)],
     ],
   });

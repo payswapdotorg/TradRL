@@ -29,7 +29,7 @@ import type { PlaybackSpeedKey } from '../core/timemachine';
 import { notificationBell, toastRecord } from './flow';
 import { paletteAffordance, paletteOverlay, fuzzyScore } from '../core/palette';
 import { onboardingPanel, onboardingReopenAffordance, type OnboardingState } from '../core/onboarding';
-import { accountPanelOf, accountSettingsBody, rememberedScopeCopy } from './account';
+import { accountPanelOf, accountSettingsBody, rememberedScopeCopy, switcherListScopeCopy } from './account';
 import type { AccountPanelState } from '../core/principal';
 import { v, type VNode } from './vtree';
 
@@ -158,6 +158,20 @@ export interface ShellView {
    * writer (null = the retired hint).
    */
   readonly launchDraftRestored?: number | null;
+  /**
+   * FW-42-B (Round J register J-3 — L2/M2's find, the prj-demo-console
+   * flash): TRUE while the boot listing is still resolving a STORED scope
+   * that differs from the env pin — the first paint would otherwise teach
+   * the env pin's desk id on the Home tile's Project line for the whole
+   * listing latency, then flash to the remembered desk. The Home tile's
+   * Project detail teaches the resolving marker instead; the console seam
+   * (app/console.ts, the boot/resume plane's flag) is the only writer and
+   * the listing read's tail retires it. OPTIONAL by design (the
+   * account-field precedent): undefined is the default every prior
+   * surface keeps, byte-for-byte — a fresh browser stores no scope, so
+   * the demo flow never carries it.
+   */
+  readonly bootScopeResolving?: boolean;
 }
 
 /**
@@ -553,6 +567,12 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
   // must be true or change; per-account POSTURE is Phase 2, the copy
   // changes now).
   const remembered = rememberedScopeCopy(accountPanelOf(view));
+  // FW-42-B (the Round J copy-lag — 6/6 pure testers): the list's scope
+  // disclosure rides the same account fold as the persistence promise —
+  // "your projects" under a signed-in principal (the desks follow the
+  // account across browsers, the pure test's proof), the exact
+  // session-scoped sentence for an anonymous session (honest for it).
+  const listScope = switcherListScopeCopy(accountPanelOf(view));
   return v('section', { class: 'panel', 'data-section': 'settings' }, [
     // D7 row 1 — theme (with the persistence seam write-through)
     settingsRow('Theme', `Choose light or dark; your choice is ${remembered}.`, [
@@ -601,7 +621,7 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
     // the filtered view: when the filter hides the current project, the
     // disabled current-scope option renders (selected) so the value
     // still mirrors the truth.
-    settingsRow('Project', `Switch the workspace to another project; every section refetches for the project you choose, and your choice is ${remembered}. The list is your session\u2019s own projects plus the shared demo project; type to filter by name or id.`, [
+    settingsRow('Project', `Switch the workspace to another project; every section refetches for the project you choose, and your choice is ${remembered}. The list is ${listScope} plus the shared demo project; type to filter by name or id.`, [
       shellFactRow('current project', isLaunchpadScope(state.scope.projectId) ? 'the launchpad (no project yet)' : state.scope.projectId),
       ...(state.projectDirectory.length > 1
         ? [v('input', {

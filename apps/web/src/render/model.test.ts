@@ -1632,3 +1632,76 @@ describe('FW-41-C (I-3b): the hydration PENDING marker — "Reading the world…
     expect(landedBytes).not.toContain('No organization snapshots at this view instant.');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-42-B (Round J register I-3b — the reload-path hydration marker, the
+// render half). The register's quantification (M2, L2): on a COMPILED
+// desk the post-reload window taught the bare "Not compiled yet" on the
+// Home ORGANIZATION tile for ~3-8.5s before the late "Reading the
+// world…" marker — the honest-empty wording MISSTATING a compiled desk
+// (the launch/switch path is prompt: its project record lands with the
+// adoption). THE LAW: the boot/reload path's hydration state is PENDING
+// from the first paint until the read completes — the same marker the
+// launch path uses; "Not compiled yet" renders ONLY after the read
+// completes empty (the launchpad — no desk exists at all).
+// ---------------------------------------------------------------------------
+
+describe('FW-42-B (I-3b): the reload-path pending window on the Home ORGANIZATION tile', () => {
+  /** The reload window on a COMPILED desk: connected, the stored scope adopted, the project record not yet read, no snapshot ever. */
+  function reloadingWorkspace(): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'project-adopted', at: T0 + 2, projectId: 'proj-a' }, // the stored-scope adoption — the read bundle is in flight
+      { kind: 'view-live', at: T0 + 50 }, // the live edge (the reload's own posture)
+    ]);
+  }
+
+  it('the reload window over a COMPILED desk teaches PENDING — never the bare "Not compiled yet" (the misstatement)', () => {
+    const bytes = serializeVNode(renderConsoleModel(reloadingWorkspace(), T0 + 50, { ...defaultShellView(reloadingWorkspace()), accountView: 'home' }));
+    expect(bytes).toContain('data-rich-stat="ORGANIZATION"');
+    expect(bytes).toContain('Reading the world…'); // the same marker the launch path uses
+    expect(bytes).not.toContain('Not compiled yet'); // RED pre-fix: the bare honest-empty wording over a compiled desk
+  });
+
+  it('the launchpad boot stays the honest terminal empty (no desk exists at all — the marker never lies about nothing)', () => {
+    const launchpad = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: '(launchpad)' }, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(launchpad, T0 + 50, { ...defaultShellView(launchpad), accountView: 'home' }));
+    expect(bytes).toContain('Not compiled yet'); // the honest terminal — nothing was ever launched
+    expect(bytes).not.toContain('data-hydration-pending="true"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-42-B (Round J register J-3 — the prj-demo-console flash on the
+// Project line during reload, L2/M2's find): the Home ORGANIZATION tile's
+// Project detail taught the ENV PIN's desk id for the whole listing
+// latency, then flashed to the remembered desk when the stored-scope
+// adoption landed. THE LAW: while the boot listing resolves a stored
+// scope that differs from the env pin, the Project line teaches the
+// resolving marker — never a wrong desk id.
+// ---------------------------------------------------------------------------
+
+describe('FW-42-B (J-3): the Home tile\'s Project line resolves during the boot-scope window', () => {
+  it('the resolving marker renders while the listing is in flight (the view flag the boot/resume plane owns)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'home', bootScopeResolving: true }));
+    expect(bytes).toContain('<dt>Project</dt><dd>resolving your desk…</dd>'); // the marker, never the env pin's flash
+    expect(bytes).not.toContain(`<dt>Project</dt><dd>${SCOPE.projectId}</dd>`);
+  });
+
+  it('the settled render keeps the exact pre-fix bytes (undefined flag = the default every prior surface keeps)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'home' }));
+    expect(bytes).toContain(`<dt>Project</dt><dd>${SCOPE.projectId}</dd>`);
+    expect(bytes).not.toContain('resolving your desk…'); // a fresh boot (no stored scope) NEVER carries the marker — the demo flow untouched
+  });
+});

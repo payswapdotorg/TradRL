@@ -31,9 +31,17 @@
 //     user is never clobbered, the D-15 law); the write-through
 //     persists every committed edit/step under the CURRENT scope (the
 //     store records INVESTMENT — a merely opened blank wizard never
-//     persists); a SUCCESSFUL LAUNCH or an explicit RESET clears the
-//     record (best-effort, the posture seam's law; the restore's own
-//     dispatches never re-write). Full rationale:
+//     persists) and is PHASE-GATED to the OPEN wizard (phase 'draft' —
+//     FW-42-B, Round J register J-2: the reducer keeps the draft in
+//     state after a launch, so a late draft event over a concluded
+//     launch must never re-persist it); THE LAUNCH'S ACCEPTANCE clears
+//     the record (launch-submitted — the host took the create + the
+//     research job; FW-42-B, J-2: a snapshot surviving the acceptance
+//     is M2's double-launch hazard, and the later poll-beat clear could
+//     be missed entirely by a mid-launch scope switch), with the
+//     conclusion (launch-completed) and an explicit RESET re-clearing
+//     as defense in depth (best-effort, the posture seam's law; the
+//     restore's own dispatches never re-write). Full rationale:
 //     core/launch-draft-store.ts.
 //   - BOTH restored disclosures (the TM bar's heal note, the wizard
 //     card's draft-restored hint) are HELD here pre-mount and ride the
@@ -58,12 +66,31 @@ export type RestoredViewHealSetter = (note: TmHealNote | null) => void;
 /** The restored-draft hint's mount-bound view setter (null = the retired hint). */
 export type DraftRestoredSetter = (savedAt: number | null) => void;
 
+/**
+ * FW-42-B (Round J register J-3): the boot-scope resolving marker's
+ * mount-bound view setter (false = the listing resolved the scope; the
+ * tmHealNote holder+setter precedent — the console's mount binds it, the
+ * listing read's tail retires through it).
+ */
+export type BootScopeResolvingSetter = (resolving: boolean) => void;
+
 /** The seams the console provides: the live state + dispatch (never owned here), the boot scope + instant source + storage seam. */
 export interface BootResumeSeams {
   /** The console's scope-storage seam (localStorage in production; undefined = the draft persistence is session-only). */
   readonly storage: LaunchDraftStorage | undefined;
   /** The boot-pinned scope (tenant + the normalized project id — the plane reads the record against it). */
   readonly scope: WorkspaceScope;
+  /**
+   * FW-42-B (Round J register J-3, L2/M2's find): the boot-captured
+   * STORED SCOPE POINTER (the session posture's scopeProjectId, the
+   * legacy key its fallback — the SAME value the console's own listing
+   * read resolves; null when the browser stored none). When it differs
+   * from the boot-pinned scope, the first paint sits on the env pin's
+   * desk while the listing read is still resolving the remembered one
+   * — the Home tile's Project line teaches the resolving marker until
+   * the listing lands (never the env pin's flash).
+   */
+  readonly storedScope: string | null;
   /** The injected instant source (never a wall clock — the test seam's discipline). */
   readonly instants: InstantSource;
   /** LIVE state read — the plane never owns the workspace. */
@@ -85,7 +112,11 @@ export interface BootResumePlane {
   /** Attempt the stored-draft restore against the SETTLED scope (the listing read's tail; exactly once, never over a driving user). */
   restoreStoredDraft(): void;
   /** Mount: bind the view setters + apply any disclosure that landed BEFORE mount. */
-  bindView(setHealNote: RestoredViewHealSetter, setDraftRestored: DraftRestoredSetter): void;
+  bindView(setHealNote: RestoredViewHealSetter, setDraftRestored: DraftRestoredSetter, setBootScopeResolving?: BootScopeResolvingSetter): void;
+  /** FW-42-B (J-3): true while the boot listing is still resolving a stored scope that differs from the env pin (the console's mount reads it into the first view). */
+  bootScopeResolving(): boolean;
+  /** FW-42-B (J-3): the listing read's tail — settle the resolution (true when this call flipped it; the held view setter retires the marker). */
+  scopeResolutionSettled(): boolean;
 }
 
 /**
@@ -106,6 +137,14 @@ export function createBootResumePlane(seams: BootResumeSeams): BootResumePlane {
   let restoringLaunchDraft = false;
   let launchDraftRestoredAt: number | null = null;
   let showLaunchDraftRestored: DraftRestoredSetter | null = null;
+  // FW-42-B (J-3): the boot-scope resolution — a stored scope differing
+  // from the boot pin means the first paint sits on the env pin's desk
+  // while the listing read resolves the remembered one (L2/M2's
+  // prj-demo-console flash on the Project line). The flag rides the
+  // shell view; the listing read's tail settles it (the render then
+  // shows the resolved desk, never a flashed wrong one).
+  let scopeResolving = seams.storedScope !== null && seams.storedScope.length > 0 && seams.storedScope !== seams.scope.projectId;
+  let showBootScopeResolving: BootScopeResolvingSetter | null = null;
 
   const showHeal = (note: TmHealNote | null): void => {
     restoredViewHeal = note;
@@ -201,18 +240,31 @@ export function createBootResumePlane(seams: BootResumeSeams): BootResumePlane {
     afterReduce(event) {
       // THE DRAFT WRITE-THROUGH + CLEAR: a committed wizard edit or step
       // move persists the draft + step under the CURRENT scope (the
-      // store records INVESTMENT, never a mere open); a SUCCESSFUL
-      // LAUNCH or an explicit RESET clears the record (best-effort, the
-      // posture seam's law; the restore's own dispatches never
-      // re-write).
+      // store records INVESTMENT, never a mere open); the launch's
+      // ACCEPTANCE clears the record — FW-42-B (Round J register J-2):
+      // the clear must be ATOMIC with the confirm acceptance
+      // ('launch-submitted': the host created the project and took the
+      // research job — the draft became a desk server-side), never at a
+      // later snapshot beat (the pre-fix 'launch-completed' clear rode
+      // the poll cadence, which a mid-launch scope switch skips
+      // entirely — M2's record survived and restored on every scope
+      // open). The conclusion and an explicit reset re-clear as defense
+      // in depth (best-effort, the posture seam's law; the restore's own
+      // dispatches never re-write).
       if (seams.storage === undefined) return;
-      if (event.kind === 'launch-completed' || event.kind === 'launch-reset') {
+      if (event.kind === 'launch-submitted' || event.kind === 'launch-completed' || event.kind === 'launch-reset') {
         clearStoredLaunchDraft(seams.storage);
         return;
       }
       if (restoringLaunchDraft) return;
       if (event.kind !== 'launch-draft-edited' && event.kind !== 'launch-step-changed') return;
       const state = seams.state();
+      // FW-42-B (J-2) THE RESURRECTION GUARD: the write-through serves the
+      // OPEN wizard only (phase 'draft'). The reducer keeps the draft in
+      // state after a launch (only 'launch-reset' clears it), so a draft
+      // event landing over a launching/launched/failed launch is a stale
+      // flush — never a re-persist. A draft must NEVER outlive its launch.
+      if (state.launch.phase !== 'draft') return;
       if (state.launch.draft !== null) persistLaunchDraft(seams.storage, state.scope, state.launch.draft, state.launch.step, seams.instants.nowMs());
     },
     landRestoredView(viewAt) {
@@ -220,9 +272,17 @@ export function createBootResumePlane(seams: BootResumeSeams): BootResumePlane {
     },
     validateRestoredView,
     restoreStoredDraft,
-    bindView(setHealNote, setDraftRestored) {
+    bootScopeResolving: () => scopeResolving,
+    scopeResolutionSettled() {
+      if (!scopeResolving) return false;
+      scopeResolving = false;
+      if (showBootScopeResolving !== null) showBootScopeResolving(false);
+      return true;
+    },
+    bindView(setHealNote, setDraftRestored, setBootScopeResolving) {
       showRestoredViewHeal = setHealNote;
       showLaunchDraftRestored = setDraftRestored;
+      showBootScopeResolving = setBootScopeResolving ?? null;
       // A disclosure that landed BEFORE mount (the boot listing read
       // races it) is held plane-side and applies to this first view.
       if (restoredViewHeal !== null) setHealNote(restoredViewHeal);

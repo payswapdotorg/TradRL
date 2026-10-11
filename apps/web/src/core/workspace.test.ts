@@ -22,6 +22,7 @@ import {
   earliestRecordInstantOf,
   EXPORT_SIMULATED_FLAG_RULE,
   historyFloorOf,
+  hydrationReadPendingOf,
   openWorkspace,
   reduceAll,
   reduceWorkspace,
@@ -1485,5 +1486,53 @@ describe('FW-41-C (I-3a): the post-launch hand-off — launchCompletionHandOff a
     expect(pb.timeMachine.playback?.fromAt).toBe(Math.min(historyFloorOf(pb).floorAt, pb.timeMachine.anchorAt)); // RED pre-fix: T0-600
     expect(pb.timeMachine.playback?.ticks).toBe(0);
     expect(pb.timeMachine.playback?.stepMs).toBe(1_000); // the analyst's chosen step survives the hand-off
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-42-B (Round J register I-3b — the reload-path hydration marker, the
+// state half). M2's quantification: on a COMPILED desk the post-reload
+// window taught the bare "Not compiled yet" (the honest-empty wording,
+// MISSTATING a compiled desk) for ~3-8.5s before the late "Reading the
+// world…" marker (the marker arrived at ~9-10s, healed ~12.4s; one run:
+// no marker in 9s). The launch/switch path is prompt because its
+// project record lands synchronously with the adoption. THE LAW: the
+// boot/reload path's hydration state is PENDING FROM THE FIRST PAINT
+// until the read completes — a REAL desk is scoped, the connection is
+// live, and NO organization snapshot has ever landed: the console is
+// reading the world, whatever the project read's own latency. The
+// terminal "Not compiled yet" renders ONLY after the read completes
+// empty (the launchpad — no desk exists at all).
+// ---------------------------------------------------------------------------
+
+describe('FW-42-B (I-3b): the reload-path hydration pending window (hydrationReadPendingOf)', () => {
+  /** The boot/reload window on a COMPILED desk: connected, the stored scope adopted, the project record NOT yet read. */
+  function bootWindowWorkspace(): WorkspaceState {
+    return reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: 'prj-compiled' }, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'projects-listed', at: T0 + 2, records: [] },
+      { kind: 'project-adopted', at: T0 + 2, projectId: 'prj-compiled' }, // the stored-scope adoption — the read bundle is in flight
+    ]);
+  }
+
+  it('a REAL desk scoped + connected + no snapshot ever = PENDING (the console is reading the world — never the terminal "Not compiled yet")', () => {
+    expect(hydrationReadPendingOf(bootWindowWorkspace())).toBe(true); // RED pre-fix: the fold required the project record on hand, so the reload window read terminal
+  });
+
+  it('the launchpad is the honest terminal: no desk exists at all — NOT pending', () => {
+    const launchpad = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: '(launchpad)' }, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+    ]);
+    expect(hydrationReadPendingOf(launchpad)).toBe(false);
+  });
+
+  it('a DEGRADED connection is never pending (the amber bar carries that honesty) and a landed snapshot ends the seek', () => {
+    const degraded = reduceAll(bootWindowWorkspace(), [{ kind: 'degraded-read', at: T0 + 3, route: 'GET /v1/projects/:id', family: 'not-found', message: 'x' }]);
+    expect(hydrationReadPendingOf(degraded)).toBe(false); // the connection dropped off 'connected' — the pending marker is the connected read's own truth
+    const landed = reduceAll(bootWindowWorkspace(), [
+      { kind: 'project-loaded', at: T0 + 3, project: { id: 'prj-compiled', tenantId: 'tenant-a', name: 'compiled', executionMode: 'simulation', lifecycle: { projectId: 'prj-compiled', status: 'active', acceptanceCriteriaId: null, organizationRef: 'org:c' }, createdAt: T0, updatedAt: T0 } as unknown as ProjectRecord },
+      { kind: 'org-snapshot', at: T0 + 4, snapshot: { organizationRef: 'org:c', tenant: 'tenant-a', project: 'prj-compiled', status: 'active', at: T0 + 4, instanceRefs: ['inst:1'] } },
+    ]);
+    expect(hydrationReadPendingOf(landed)).toBe(false); // the read completed — the snapshot renders, no marker anywhere
   });
 });

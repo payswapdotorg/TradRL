@@ -37,6 +37,7 @@ import { desksLaunchedAfterViewOf, oversightRowsOf, oversightScopeNoteOf, type O
 import type { StandingRow } from '../core/standing';
 import type { WorkspaceState } from '../core/workspace';
 import type { ShellView } from './shell';
+import { accountPanelOf } from './account';
 import { emptyState, loadingState, statusPill } from './components';
 import { formatInstantUtc } from '../core/format';
 import { formatNumberGrouped } from './numbers';
@@ -157,6 +158,13 @@ function oversightDeskCard(row: OversightDeskRow, viewAt: number, simulated: boo
  * for).
  */
 export function oversightPanel(state: WorkspaceState, viewAt: number, view: ShellView): VNode {
+  // FW-42-B (the Round J copy-lag — 6/6 pure testers): under a signed-in
+  // principal the panel's copy says "your desks" (the account scope the
+  // pure test proved — the desks follow the account across browsers);
+  // an anonymous session keeps the exact session-scoped bytes (honest
+  // for it — this device's storage is the only thing that remembers an
+  // anonymous session's desks). The L12 wall clause holds in both.
+  const authenticated = accountPanelOf(view).surface === 'authenticated';
   if (state.projectDirectory.length === 0 && state.connection === 'connecting') {
     return v('section', { class: 'panel oversight', 'data-section': 'oversight' }, [loadingState('rows')]);
   }
@@ -165,7 +173,9 @@ export function oversightPanel(state: WorkspaceState, viewAt: number, view: Shel
       emptyState({
         icon: 'layers',
         title: 'No desks readable yet.',
-        sentence: 'This workspace\'s desk registry is empty or still loading — the desks this session owns appear here the moment the directory read answers.',
+        sentence: authenticated
+          ? 'This workspace\'s desk registry is empty or still loading — your desks appear here the moment the directory read answers.'
+          : 'This workspace\'s desk registry is empty or still loading — the desks this session owns appear here the moment the directory read answers.',
         action: { label: 'Refresh', action: 'refresh' },
       }),
     ]);
@@ -178,11 +188,13 @@ export function oversightPanel(state: WorkspaceState, viewAt: number, view: Shel
   // that existed at the instant under review.
   const withheldDesks = desksLaunchedAfterViewOf(state.projectDirectory, viewAt);
   return v('section', { class: 'panel oversight', 'data-section': 'oversight' }, [
-    v('p', { class: 'hint', 'data-oversight-scope': 'true' }, [oversightScopeNoteOf(state, viewAt)]),
+    v('p', { class: 'hint', 'data-oversight-scope': 'true' }, [oversightScopeNoteOf(state, viewAt, authenticated)]),
     ...(withheldDesks > 0 ? [v('p', { class: 'hint', 'data-oversight-withheld-desks': 'true' }, [`${withheldDesks} desk${withheldDesks === 1 ? '' : 's'} launched after this view instant ${formatInstantUtc(viewAt)} — not shown here (L4; a desk card never renders before the desk's own launch instant).`])] : []),
     ...rows.map((row) => oversightDeskCard(row, viewAt, view.simulated)),
     ...(rows.length === 1
-      ? [v('p', { class: 'card-note', 'data-oversight-single': 'true' }, ['One desk so far — this view consolidates every desk this session owns; launch another from Home and it joins this monitor (each desk keeps its own workspace when you switch into it).'])]
+      ? [v('p', { class: 'card-note', 'data-oversight-single': 'true' }, [authenticated
+        ? 'One desk so far — this view consolidates every desk that follows your account; launch another from Home and it joins this monitor (each desk keeps its own workspace when you switch into it).'
+        : 'One desk so far — this view consolidates every desk this session owns; launch another from Home and it joins this monitor (each desk keeps its own workspace when you switch into it).'])]
       : []),
   ]);
 }

@@ -42,6 +42,7 @@ import type { ProjectRecord } from '../api/contracts';
 import {
   adoptionOutcomeApplied,
   adoptionRowsOf,
+  adoptionStateResolved,
   accountFormEdited,
   accountModeSwitched,
   anonymousAccountPanel,
@@ -402,6 +403,33 @@ describe('the account panel folds', () => {
     const refused = adoptionOutcomeApplied(rows, [{ projectId: 'prj-own-1', adopted: false, already: false }]);
     expect(refused.find((row) => row.projectId === 'prj-own-1')?.status).toBe('failed');
     expect(refused.find((row) => row.projectId === 'prj-own-2')?.status).toBe('offered');
+  });
+
+  // FW-42-B (Round J register J-1 — 9/9 personas): the waiting-to-adopt
+  // list re-offered ALREADY-ADOPTED desks until one click. THE LAW: the
+  // sign-in render resolves the adoption state through the adopt route's
+  // per-desk answer BEFORE the first authenticated paint — an
+  // already-adopted desk renders "already yours — following this account"
+  // (NO re-offer button), a desk the resolution just adopted names its
+  // sign-in adoption, a refused desk renders the failed state, and a row
+  // the answer does not name keeps the offered state (the one-click
+  // idempotent answer stays as defense in depth).
+  it('FW-42-B (J-1): the sign-in resolution fold marks already-adopted desks "already yours — following this account" — never the re-offer', () => {
+    const rows = adoptionRowsOf([directoryRow('prj-demo-console', 'tenant-available'), directoryRow('prj-launched-signed-in', 'session-owned'), directoryRow('prj-launched-anon', 'session-owned')], 'prj-demo-console');
+    const resolved = adoptionStateResolved(rows, [
+      { projectId: 'prj-launched-signed-in', adopted: true, already: true }, // the 9/9 shape: adopted at launch, re-offered at re-sign-in
+      { projectId: 'prj-launched-anon', adopted: true, already: false }, // the resolution adopted it now
+    ]);
+    expect(resolved.find((row) => row.projectId === 'prj-launched-signed-in')).toMatchObject({ status: 'adopted', detail: 'already yours — following this account' });
+    expect(resolved.find((row) => row.projectId === 'prj-launched-anon')).toMatchObject({ status: 'adopted', detail: 'now follows your account — adopted at sign-in' });
+    expect(resolved.every((row) => row.status !== 'offered' || row.projectId === 'prj-demo-console')).toBe(true); // no re-offer button for a resolved desk
+  });
+
+  it('FW-42-B (J-1): a refused desk fails honestly; an unnamed row keeps its offered state (the defense-in-depth click)', () => {
+    const rows = adoptionRowsOf([directoryRow('prj-own-1', 'session-owned'), directoryRow('prj-own-2', 'session-owned')], 'prj-demo-console');
+    const resolved = adoptionStateResolved(rows, [{ projectId: 'prj-own-1', adopted: false, already: false }]);
+    expect(resolved.find((row) => row.projectId === 'prj-own-1')?.status).toBe('failed');
+    expect(resolved.find((row) => row.projectId === 'prj-own-2')?.status).toBe('offered'); // the answer never named it — the ceremony keeps its control
   });
 });
 

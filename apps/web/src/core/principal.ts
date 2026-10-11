@@ -524,3 +524,31 @@ export function adoptionOutcomeApplied(rows: readonly AdoptionDeskRow[], outcome
     return { ...row, status: 'failed', detail: 'the host refused this desk\'s adoption (its per-desk answer names the reason)' };
   });
 }
+
+/**
+ * FW-42-B (Round J register J-1 — 9/9 personas): fold the adopt route's
+ * per-desk resolution into the ceremony's rows AT SIGN-IN RENDER TIME,
+ * before the first authenticated paint. THE DEFECT: the waiting-to-adopt
+ * list re-offered desks ALREADY ADOPTED server-side until one click
+ * (which answered "already yours — adopted before this visit"); the
+ * list composed without reading the adoption state. THE FIX reads it
+ * through the route's idempotent per-desk answer (the same server
+ * effect one click already had — the ceremony loses no choice, only
+ * the redundant click): an `already` desk renders "already yours —
+ * following this account" (NO re-offer button), a desk the resolution
+ * just adopted names its sign-in adoption, a refused desk renders the
+ * failed state, and a row the answer does not name keeps its prior
+ * state (offered — the one-click idempotent answer stays as defense in
+ * depth when the resolution cannot run). Pure: identical (rows,
+ * outcomes) pairs fold identically.
+ */
+export function adoptionStateResolved(rows: readonly AdoptionDeskRow[], outcomes: readonly AdoptionDeskOutcome[]): readonly AdoptionDeskRow[] {
+  return rows.map((row) => {
+    const outcome = outcomes.find((entry) => entry.projectId === row.projectId);
+    if (outcome === undefined) return row;
+    if (outcome.adopted) {
+      return { ...row, status: 'adopted', detail: outcome.already ? 'already yours — following this account' : 'now follows your account — adopted at sign-in' };
+    }
+    return { ...row, status: 'failed', detail: 'the host refused this desk\'s adoption (its per-desk answer names the reason)' };
+  });
+}

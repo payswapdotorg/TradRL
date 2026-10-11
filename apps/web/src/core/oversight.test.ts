@@ -482,3 +482,39 @@ describe('FW-41-C (I-7): the served-read sidecar withholds before its own serve 
     expect(fold.rows.find((row) => row.constraintId === 'k-turnover')?.served).toBeNull(); // RED pre-fix: rendered (the asOf was never read)
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-42-B (the Round J copy-lag — 6/6 pure testers): the scope note under a
+// signed-in principal tells the ACCOUNT-SCOPED truth. The Round J pure test
+// (clear localStorage → reload → same-account sign-in) proved the desks
+// follow the ACCOUNT (M3's six, L2's six, L1's five — all in the switcher
+// from a wiped context), while the copy still said "this session's own
+// desks" (the register: "the copy undersells the fix"). THE LAW: an
+// authenticated principal reads "your desks" (every desk that follows the
+// account, whatever browser launched it); an anonymous session keeps the
+// exact session-scoped sentence — honest for it (this device's storage is
+// the only thing that remembers an anonymous session's desks). The L12
+// wall clause stays in both.
+// ---------------------------------------------------------------------------
+
+describe('FW-42-B (the copy-lag): the scope note is account-scoped under a signed-in principal', () => {
+  it('authenticated: "your desks" + the account-following wording — never the session-scoped undersell', () => {
+    const note = oversightScopeNoteOf(oversightWorkspace(), VIEW_AT, true);
+    expect(note).toContain('One governed view of your desks in workspace tenant-a');
+    expect(note).toContain('every desk that follows your account, whatever browser launched it');
+    expect(note).toContain('3 desks at this view instant');
+    expect(note).not.toContain("this session's own desks"); // the undersell is gone under a principal
+  });
+
+  it('the L12 wall clause stays in BOTH postures (other sessions\' desks never appear here)', () => {
+    expect(oversightScopeNoteOf(oversightWorkspace(), VIEW_AT, true)).toContain("Other sessions' desks in this workspace never appear here");
+    expect(oversightScopeNoteOf(oversightWorkspace(), VIEW_AT, false)).toContain("Other sessions' desks in this workspace never appear here");
+  });
+
+  it('anonymous keeps the exact pre-fix sentence (the session-scoped copy is HONEST for it)', () => {
+    const note = oversightScopeNoteOf(oversightWorkspace(), VIEW_AT);
+    expect(note).toContain("One governed view of this session's own desks in workspace tenant-a");
+    expect(note).toContain('the session\'s own launched projects plus the shared demo desk');
+    expect(note).not.toContain('your desks');
+  });
+});

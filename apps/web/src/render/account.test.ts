@@ -38,6 +38,7 @@ import {
   accountPanelOf,
   accountSettingsBody,
   rememberedScopeCopy,
+  switcherListScopeCopy,
 } from './account';
 import {
   anonymousAccountPanel,
@@ -140,7 +141,29 @@ describe('the account settings surface — the adoption ceremony + logout', () =
   it('the empty ceremony teaches its own truth (no desks waiting; launched desks follow on their own)', () => {
     const body = serializeVNode({ tag: 'div', attrs: {}, children: accountSettingsBody(authenticatedAccountPanel('desk.owner'), false) });
     expect(body).toContain('data-account-adoption="0"');
-    expect(body).toContain('desks you launch while signed in follow this account on their own');
+    // FW-42-B (the copy-lag): the copy tells the ACCOUNT-SCOPED truth —
+    // "your account", never the session-scoped undersell
+    expect(body).toContain('desks you launch while signed in follow your account on their own');
+    expect(body).toContain("your account's other desks sit in the project list");
+  });
+
+  it('FW-42-B (the copy-lag): the ceremony intro says "Your desks" — the account scope the pure test proved (never the session-scoped undersell)', () => {
+    const panel = { ...authenticatedAccountPanel('desk.owner'), adoption: ADOPTION_ROWS };
+    const body = serializeVNode({ tag: 'div', attrs: {}, children: accountSettingsBody(panel, false) });
+    expect(body).toContain('Your desks, below');
+    expect(body).not.toContain('This session\u2019s own desks, below'); // the pre-fix session-scoped copy is gone (the typographic apostrophe the source uses)
+    expect(body).toContain('a still-offered desk adopts on one click, idempotently'); // the defense-in-depth control is disclosed
+  });
+
+  it('FW-42-B (J-1): the sign-in resolution\'s per-desk states render their own disclosed wording (already-adopted vs adopted-now), never a re-offer button', () => {
+    const resolved = [
+      { projectId: 'prj-signed-in', name: 'desk prj-signed-in', status: 'adopted' as const, detail: 'already yours — following this account' },
+      { projectId: 'prj-anon', name: 'desk prj-anon', status: 'adopted' as const, detail: 'now follows your account — adopted at sign-in' },
+    ];
+    const body = serializeVNode({ tag: 'div', attrs: {}, children: accountSettingsBody({ ...authenticatedAccountPanel('desk.owner'), adoption: resolved }, false) });
+    expect(body).toContain('already yours — following this account');
+    expect(body).toContain('now follows your account — adopted at sign-in');
+    expect(body).not.toContain('data-action="account-adopt"'); // no re-offer button over a resolved desk
   });
 });
 
@@ -244,5 +267,36 @@ describe('the wall census under a principal (own + demo only — the marker law 
   it('the account panel fold defaults the absent field to the anonymous surface (never a half surface)', () => {
     expect(accountPanelOf({}).surface).toBe('anonymous');
     expect(accountPanelOf({ account: authenticatedAccountPanel('desk.owner') }).principalName).toBe('desk.owner');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-42-B (the Round J copy-lag — 6/6 pure testers): the switcher's LIST
+// copy under a signed-in principal tells the ACCOUNT-SCOPED truth. The
+// Round J pure test proved the desks follow the ACCOUNT (a wiped context +
+// one sign-in listed every desk — "your session's own projects" undersold
+// it, 6/6 noted). THE LAW: an authenticated principal reads "your
+// projects"; an anonymous session keeps the exact session-scoped bytes
+// (honest for it — the device's storage is the only thing that remembers
+// an anonymous session's projects).
+// ---------------------------------------------------------------------------
+
+describe('FW-42-B (the copy-lag): the switcher list copy is account-scoped under a signed-in principal', () => {
+  it('authenticated: "your projects" + the account-following wording — never the session-scoped undersell', () => {
+    const bytes = serializeVNode(settingsPanel(stateAt(), view({ account: authenticatedAccountPanel('desk.owner') })));
+    expect(bytes).toContain('The list is your projects — every desk that follows your account, from any browser — plus the shared demo project');
+    expect(bytes).not.toContain('your session\u2019s own projects'); // the undersell is gone under a principal
+  });
+
+  it('anonymous keeps the exact pre-fix bytes (the session-scoped copy is HONEST for it)', () => {
+    const bytes = serializeVNode(settingsPanel(stateAt(), view()));
+    expect(bytes).toContain('The list is your session\u2019s own projects plus the shared demo project');
+    expect(bytes).not.toContain('every desk that follows your account');
+  });
+
+  it('the fold itself: authenticated vs anonymous (the rememberedScopeCopy precedent)', () => {
+    expect(switcherListScopeCopy(authenticatedAccountPanel('desk.owner'))).toBe('your projects — every desk that follows your account, from any browser —');
+    expect(switcherListScopeCopy(anonymousAccountPanel())).toBe('your session\u2019s own projects');
+    expect(switcherListScopeCopy(unavailableAccountPanel('x'))).toBe('your session\u2019s own projects'); // the teaching posture is not a signed-in principal
   });
 });
