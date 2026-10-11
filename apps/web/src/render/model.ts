@@ -51,7 +51,7 @@ import {
 import type { SectionId } from '../core/sections';
 import { scopedInbox, unreadCountAt, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
-import { viewAtOf, watchEventsOf, historyFloorOf, hydrationReadPendingOf, type WorkspaceState } from '../core/workspace';
+import { viewAtOf, watchEventsOf, historyFloorOf, type WorkspaceState } from '../core/workspace';
 import { parseInstantUtc } from '../core/format';
 import { standingReadFoldOf, type StandingRow } from '../core/standing';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
@@ -935,38 +935,6 @@ function timeMachineBar(state: WorkspaceState, viewAt: number, view: ShellView):
   ]);
 }
 
-/**
- * FW-41-C (Round I register I-3b — the hydration PENDING marker, the
- * render half over core/workspace.ts's hydrationReadPendingOf): true
- * while the console's read cadence is ACTIVELY seeking this desk's
- * compiled records AND the view is the LIVE edge (viewAt at the anchor —
- * the pending state is about NOW, never a claim about the past: a
- * scrubbed PAST view keeps the honest "nothing at this view instant"
- * empty state + the beyond-view hint, exactly as before). The surfaces
- * below teach "Reading the world…" on TRUE — distinct from the honest
- * terminal "Not compiled yet" / "No organization snapshots at this view
- * instant", which after the fix render ONLY when the seek is not active
- * at the view (S3/L1/L3/M3's 10-22s post-boot window taught a terminal
- * absence over an active read; the register's own words: "reads 'Not
- * compiled yet' with no pending marker").
- */
-function hydrationPendingAtView(state: WorkspaceState, viewAt: number): boolean {
-  return viewAt >= state.timeMachine.anchorAt && hydrationReadPendingOf(state);
-}
-
-/**
- * The pending marker's own card (the wizard-open card's grammar — a
- * titled note, never an EmptyState: there is NOTHING to act on while
- * the read is in flight, so the empty state's exactly-one-action law
- * must not be coerced into a dead button).
- */
-function hydrationPendingCard(noun: string): VNode {
-  return v('div', { class: 'card', 'data-hydration-pending': 'true' }, [
-    v('div', { class: 'card-title' }, ['Reading the world…']),
-    v('p', { class: 'card-note' }, [`The console is reading this desk's records — the ${noun} appears here the moment the read lands.`]),
-  ]);
-}
-
 /** The per-section teaching empty states (§4.12): the pinned T042 titles + ONE sentence + exactly ONE action. */
 const SECTION_EMPTY_STATES: Readonly<Record<SectionId | 'inbox', { readonly icon: ComponentIcon; readonly title: string; readonly sentence: string; readonly action: { readonly label: string; readonly target?: string; readonly action?: string } }>> = Object.freeze({
   'inbox': { icon: 'inbox', title: 'No notices at this view instant.', sentence: 'Notifications from your organization appear here as they happen.', action: { label: 'Open the overview', target: 'home' } },
@@ -1127,12 +1095,7 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
   ]);
   const organization = richStatCard({
     eyebrow: 'ORGANIZATION',
-    // FW-41-C (I-3b): the live view over an in-flight read teaches
-    // PENDING ('Reading the world…'), never the terminal 'Not compiled
-    // yet' (a scrubbed past view keeps the honest terminal text).
-    value: snapshot === null
-      ? (hydrationPendingAtView(state, viewAt) ? 'Reading the world…' : 'Not compiled yet')
-      : snapshot.status,
+    value: snapshot === null ? 'Not compiled yet' : snapshot.status,
     ...(snapshot === null ? {} : { qualifier: `observed ${formatTimeUtc(snapshot.at)}` }),
     sentence: 'The compiled team working your goal.',
     details: [
@@ -1577,12 +1540,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       const cards = projected.map((snapshot) => orgSnapshotCard(scope, snapshot, viewAt));
       return v('section', { class: 'panel', 'data-section': 'organization' }, [
         ...cards,
-        // FW-41-C (I-3b): while the read cadence is actively seeking at
-        // the LIVE view, the PENDING card teaches the seek — the honest
-        // "No organization snapshots at this view instant" renders only
-        // once the seek is not active at the view (a scrubbed instant, a
-        // degraded connection, or a read that landed).
-        ...(projected.length === 0 ? [hydrationPendingAtView(state, viewAt) ? hydrationPendingCard('organization') : sectionEmpty('organization')] : []),
+        ...(projected.length === 0 ? [sectionEmpty('organization')] : []),
         // FW-40-B (H-5): the projection hid snapshots this desk carries —
         // the section says so (S3's divergence: this empty state over a
         // COMPILED org read as "not compiled"; the disclosure names what

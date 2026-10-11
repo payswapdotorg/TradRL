@@ -6383,9 +6383,15 @@ describe('executed boot: FW-41-C — the client ceremony half (I-3a console + I-
 // ---------------------------------------------------------------------------
 
 describe('executed boot: FW-41-C (I-5 client half) — the org-compile poll retries a snapshot-less read', () => {
-  /** A desk whose org ref is bound but whose FIRST org-status read lands on a snapshot-less instance (the 404), the SECOND serves it. */
-  function compileStallTransport(): { readonly transport: ApiTransport; readonly orgReads: { count: number } } {
+  /**
+   * A desk whose org ref is BOUND but whose org-status reads land on a snapshot-less instance (the typed 404)
+   * until the host's own heal lands the snapshot — modeled by the explicit release() (the host's 10s staleness
+   * heal / a fresh instance serving the watch store). The boot cadence reads the org status per refresh through
+   * BOTH the bundle and the oversight plane, so the test reads the DELTA around each beat, never an absolute count.
+   */
+  function compileStallTransport(): { readonly transport: ApiTransport; readonly orgReads: { count: number }; readonly release: () => void } {
     const orgReads = { count: 0 };
+    const serving = { now: false };
     const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-fw41c', data } });
     const notFound = () => ({ status: 404, headers: {}, body: { requestId: 'req-fw41c', error: { code: 'not_found', message: 'no snapshot on this instance yet', status: 404 } } });
     const project = {
@@ -6401,7 +6407,7 @@ describe('executed boot: FW-41-C (I-5 client half) — the org-compile poll retr
       if (key === 'GET /v1/projects/prj-stall') return ok(project);
       if (key.startsWith('GET /v1/organizations/')) {
         orgReads.count += 1;
-        if (orgReads.count === 1) return notFound(); // the boot's org read lands on a snapshot-less instance (S1's D1)
+        if (!serving.now) return notFound(); // the read lands on a snapshot-less instance (S1's D1 — every read until the host heals)
         return ok({ organizationRef: 'org:stall-prj-stall', tenant: 'tenant-a', project: 'prj-stall', status: 'active', at: T0 + 80, instanceRefs: ['ai:director-1'] });
       }
       if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
@@ -6409,21 +6415,26 @@ describe('executed boot: FW-41-C (I-5 client half) — the org-compile poll retr
       if (key === 'GET /v1/jobs') return ok({ items: [] });
       return notFound(); // the host-owned goal + risk-utilization routes answer the typed 404
     };
-    return { transport, orgReads };
+    return { transport, orgReads, release: () => { serving.now = true; } };
   }
 
-  it('while the ref is BOUND but no snapshot is on record, the beat RE-READS the org status until it lands — a snapshot-less first read is retried in-session (never a 15-minute stall)', async () => {
+  it('while the ref is BOUND but no snapshot is on record, EVERY BEAT re-reads the org status until it lands — a snapshot-less read is retried in-session (never a 15-minute stall)', async () => {
     const api = compileStallTransport();
     const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-stall');
     expect(rig.handle.state().project?.lifecycle.organizationRef).not.toBeNull(); // the ref is bound (the backing's own clock)
-    expect(api.orgReads.count).toBe(1); // the boot's bundle read the org status once — and landed on a snapshot-less instance
+    const before = api.orgReads.count;
+    expect(before).toBeGreaterThan(0); // the boot cadence read the org status (the bundle + the oversight plane) — every read landed on the snapshot-less instance
     expect(rig.handle.state().orgSnapshots).toHaveLength(0);
-    await rig.handle.beat(); // the next beat
-    expect(api.orgReads.count).toBe(2); // RED pre-fix: 1 — the poll stopped once the ref bound (the in-session stall)
+    await rig.handle.beat(); // the next beat — the instance STILL serves no snapshot
+    expect(api.orgReads.count).toBe(before + 1); // RED pre-fix: before + 0 — the poll stopped once the ref bound (the in-session stall)
+    expect(rig.handle.state().orgSnapshots).toHaveLength(0); // still honestly empty — the retry found nothing yet
+    api.release(); // the host's own heal lands the snapshot (the staleness back-fill / a fresh instance)
+    await rig.handle.beat();
+    expect(api.orgReads.count).toBe(before + 2); // the beat kept seeking
     expect(rig.handle.state().orgSnapshots).toHaveLength(1); // the retry landed — the desk compiles without a reload
     expect(rig.handle.state().orgSnapshots[0]?.status).toBe('active');
     // self-terminating: once the snapshot is on record, the next beat does NOT re-read the org status
     await rig.handle.beat();
-    expect(api.orgReads.count).toBe(2); // the seek ended — the dedup branch no longer fires
+    expect(api.orgReads.count).toBe(before + 2); // the seek ended — the branch no longer fires
   });
 });

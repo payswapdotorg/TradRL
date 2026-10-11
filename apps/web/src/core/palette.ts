@@ -77,6 +77,17 @@ export function paletteIndex(state: WorkspaceState, capsulesOf: CapsulesOf): rea
     // state — a concluded launch's own scope included — with no scope
     // switch and no reload (the handler's in-progress guard keeps an
     // open draft untouched).
+    // FW-41-C-cont (the red-run repair): the haystack is the entry's OWN
+    // vocabulary — NEVER a narration of the flow. The inherited draft
+    // narrated the subtitle ("start the primary flow"), and the fuzzy
+    // matcher's scattered-subsequence tolerance then matched NAVIGATION
+    // queries against the ACTION group ('risk' via r-i-(start)-k(desk),
+    // 'time' via t(start)-i(m-prim*)-m(primary)-e(another)) — the ACTION
+    // group ranks first, so the hijacked Enter opened the WIZARD for a
+    // query that meant the Time Machine. The command is findable by its
+    // own words (describe / new / goal / launch / desk / wizard) and
+    // steals nothing: every navigation query below keeps exactly its
+    // pre-I-8 results.
     {
       kind: 'ACTION',
       title: 'Describe a new goal',
@@ -84,7 +95,7 @@ export function paletteIndex(state: WorkspaceState, capsulesOf: CapsulesOf): rea
       target: null,
       action: 'launch-start',
       ref: 'action:launch-start',
-      haystack: 'describe a new goal start the primary flow launch another desk wizard',
+      haystack: 'describe a new goal launch another desk wizard',
     },
   ];
   for (const target of SHELL_TARGETS) {
