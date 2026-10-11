@@ -194,8 +194,43 @@ describe('the console boot payload budgets (the no-build console\'s boot transfe
   //   (every law kept, zero code lines touched, the FW-39-3/d2727da
   //   precedent). No single-file raise: console.ts stays under its own
   //   line untouched; the file count stays 53 of 64.
+  // Re-recorded (FW-43-C, the union payload-budget repair; every number
+  //   measured by the FW-43-C worker on the merged tree, main @ 54f0ee0 —
+  //   the FW-43-A + FW-43-B union): 54 files, 1,192,098 bytes total
+  //   (1164.2 of the 1152 KiB budget — OVER by 12,450 bytes). Each wave
+  //   INDIVIDUALLY paid the 1152 line: FW-43-A (main @ 8a8ace9) measured
+  //   53 files / 1,176,589 bytes (1149.0 of 1152 — 3,059 under), and
+  //   FW-43-B alone on the shared base (main @ 838a8a0, 53 files /
+  //   1,159,727 bytes = 1132.6 of 1152 — 19,921 under) adds +15,509 for
+  //   1147.7 of 1152 — but the UNION stacks both product growths on ONE
+  //   base: 1149.0 + 1147.7 − the shared 1132.6 ≈ the union 1164.2. The
+  //   byte budget is CONSCIOUSLY raised 1152 -> 1168 KiB per this file's
+  //   own protocol ("growing past one is a CONSCIOUS decision") — the
+  //   SAME CLASS as the FW-40-B precedent (1088 -> 1152 when the product
+  //   grew the draft store): two PRODUCT features landed, not bloat. The
+  //   additions, itemized (net bytes, measured): FW-43-A's Oversight
+  //   cockpit +16,862 — src/core/oversight.ts +8,234 (the cross-desk
+  //   aggregate fold, one L4 fold over the same rows the cards ride) +
+  //   src/render/oversight.ts +8,150 (the per-desk net-exposure +
+  //   simulated-book columns + the drill-through buttons) +
+  //   src/shell/shell.css +440 (the cockpit styling) + src/app/console.ts
+  //   +38 NET (the drill-through wiring riding the switcher transition);
+  //   FW-43-B +15,509 — ONE NEW MODULE src/core/export-record.ts +12,490
+  //   (the export full-record scope: the record-derived event prefix,
+  //   one event per durable row, stamped at each record's own instant) +
+  //   src/core/workspace.ts +3,019 (the prefix's composition wiring + the
+  //   manifest recordScopeNote + the additive derived label — the
+  //   extraction pattern the budget exists to encourage; the
+  //   deliverable's derived-statistics block itself rides the SERVER
+  //   runtime in deploy/vercel/runtime/deliverable.ts, outside this boot
+  //   payload). The new line leaves 4,318 bytes (0.36%) of headroom over
+  //   the measured union. No single-file raise: console.ts measures
+  //   163,799 of the 163,840-byte (160 KiB) single-file budget — 41
+  //   bytes of headroom, the tightest this file has ever recorded; the
+  //   next wave that grows it crosses that one too. The file count stays
+  //   54 of 64.
   const FILE_COUNT_BUDGET = 64; // each source is one boot fetch — the fetch count stays bounded
-  const TOTAL_BYTES_BUDGET = 1152 * 1024; // 1152 KiB — the whole boot transfer (raised from 1088 KiB at FW-40-B — see the note above)
+  const TOTAL_BYTES_BUDGET = 1168 * 1024; // 1168 KiB — the whole boot transfer (raised from 1152 KiB at FW-43-C, the FW-43 union — see the note above)
   const LARGEST_FILE_BUDGET = 160 * 1024; // 160 KiB — one fetch + one strip pass (raised from 128 KiB at FW-34-B — see the note above)
 
   it('the payload is the copy spec\'s set on the real tree: index.html + non-test sources, NO test sources, the loader\'s critical path present', () => {
