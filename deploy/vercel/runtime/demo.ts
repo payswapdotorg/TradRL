@@ -849,6 +849,20 @@ export function durableDeliverableSourceOf(
       const decision = promotions === null ? null : promotions.decisionOfJob(tenant, jobId);
       return decision === null ? null : { outcomeId: decision.outcomeId };
     },
+    // FW-42-A (I-4 — the write-then-read law at the compose site): the
+    // seam SIGHTED a declared world for the project (this instance's port
+    // accepted the console-launch spec) but the goal read currently
+    // carries NO world — the read is STALE relative to the write the
+    // launch submitted. The machinery tick holds the completion (the
+    // mandateDegradedOf/G-6 precedent): the job stays non-terminal until
+    // the projection catches up (the heal's quiet refresh), and the next
+    // tick composes the REAL world.
+    ...(source.declaredWorldOf === undefined ? {} : {
+      worldReadStaleOf: (project: string) => {
+        if (source.declaredWorldOf!(project) === null) return false; // no declaration ever sighted — an absent world is the honest absence
+        return (source.goalSetOf(project)?.world ?? null) === null; // declared, but the read carries none — STALE, never an honest absence
+      },
+    }),
   };
 }
 
@@ -887,6 +901,19 @@ export interface DurableEvidenceSource {
   readonly goalSetDegradedOf?: (project: string) => boolean;
   /** The organization ref of one project of one tenant (null when unbound, unknown or degraded). */
   organizationRefOf(tenant: string, project: string): string | null;
+  /**
+   * FW-42-A (Round J register I-4 — the lying record, THE WRITE-THEN-READ
+   * LAW): the launch world this seam's job port SIGHTED for the project
+   * (the last world-carrying console-launch spec that crossed it; null
+   * when none ever did). The compose-site guard reads it: a launch
+   * accepted with a DECLARED world must never compose its deliverable
+   * while the goal read carries no world — "no launch world on record"
+   * for a declared-world launch is the lying record, so the machinery
+   * tick holds the completion until the projection catches up. Optional +
+   * additive (the mandateDegradedOf precedent): a source whose seam never
+   * sights specs (the demo arm's per-instance capture) omits it.
+   */
+  readonly declaredWorldOf?: (project: string) => LaunchWorldRecord | null;
 }
 
 /** THE DURABLE ARM'S PER-PROJECT EVIDENCE FOLD (the same gates as the demo arm's, over the seam's own surfaces). */
@@ -1793,6 +1820,24 @@ export function demoMachineryTick(service: ApiService, context: DemoMachineryCon
     // nothing is on record) is the honest pre-fix case and composes exactly
     // as before (THE HONESTY LAW).
     if (status === 'complete' && job.kind === 'research' && context.deliverables.mandateDegradedOf !== undefined && context.deliverables.mandateDegradedOf(job.project)) {
+      continue;
+    }
+    // FW-42-A (Round J register I-4 — THE lying record, the write-then-read
+    // law's read half): a research job whose launch DECLARED a world (the
+    // seam sighted the console-launch spec) must not complete while the
+    // goal read carries NO world. The pre-fix law flattened the stale read
+    // into an honest absence, so the deliverable composed "Simulated
+    // research session with no launch world on record for <project>"
+    // (markets/venues []) while the same project's export CARRIED the full
+    // launchWorld record — the record sat one drawer away (L3's
+    // draft-restored read race). The job stays non-terminal (honest: the
+    // completion transition simply has not fired) and the next tick —
+    // after the projection catches up (the heal's quiet refresh / a
+    // re-projection) — composes the REAL world. An ABSENT world with NO
+    // declaration (a world-less launch) is the honest pre-fix case and
+    // composes exactly as before (THE HONESTY LAW — absent is absent; a
+    // declared-but-unread world is never absent).
+    if (status === 'complete' && job.kind === 'research' && context.deliverables.worldReadStaleOf !== undefined && context.deliverables.worldReadStaleOf(job.project)) {
       continue;
     }
     // FW-31-B: the DEMO project's seeded jobs complete at their OWN

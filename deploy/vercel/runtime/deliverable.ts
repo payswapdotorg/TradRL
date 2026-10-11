@@ -212,6 +212,24 @@ export interface DeliverableSource {
    * mandate.
    */
   readonly mandateDegradedOf?: (project: string) => boolean;
+  /**
+   * FW-42-A (Round J register I-4 — THE lying record, the write-then-read
+   * law): true when the launch DECLARED a world (the backing's job port
+   * sighted the console-launch spec for the project) but the goal read
+   * currently carries NO world — the read is STALE relative to the write
+   * the launch submitted, and the machinery tick must NOT complete the
+   * research job in that state (the G-6 mandateDegradedOf precedent,
+   * extended to the world). The composition must observe the launch world
+   * a declared-world launch wrote — a deliverable that says "no launch
+   * world on record" while the launch was accepted with a declared world
+   * is a LYING RECORD, never acceptable. The job stays non-terminal and
+   * the next tick — after the read catches up — composes the real world.
+   * Optional + additive: a backing that never sights specs (the demo
+   * arm's per-instance capture) omits it, and an absent world with NO
+   * declaration composes the honest no-launch-world sentence exactly as
+   * before (THE HONESTY LAW).
+   */
+  readonly worldReadStaleOf?: (project: string) => boolean;
   /** The markets/venues the world actually served, null when nothing is on record. */
   readonly observedOf: (project: string) => DeliverableObservedState | null;
   /** The promoted decision a job's deliverable led to, when one exists at composition time (else null — the honest pending statement). */

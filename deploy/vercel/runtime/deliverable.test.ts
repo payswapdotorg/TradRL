@@ -594,7 +594,7 @@ describe('deploy/vercel — FW-42-A (I-4): the tick never completes a research j
     }) as LaunchWorldRecord;
     let worldOnRecord: LaunchWorldRecord | null = null; // the goal READ's world (null while the projection predates the write)
     const deliverables: DeliverableSource = {
-      mandateOf: () => ({ goal: validGoal(TENANT) as unknown as GoalStatement, constraintSet: validConstraintSet(TENANT), world: worldOnRecord }),
+      mandateOf: () => ({ goal: validGoal(TENANT) as unknown as GoalStatement, constraintSet: validConstraintSet(TENANT) as unknown as ConstraintSetStatement, world: worldOnRecord }),
       worldReadStaleOf: () => worldOnRecord === null, // the seam sighted `declared`; the read carries none — STALE
       observedOf: () => (worldOnRecord === null ? null : { markets: worldOnRecord.markets, venues: worldOnRecord.venues }),
       promotionOf: () => null,
