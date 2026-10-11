@@ -53,6 +53,10 @@ import type {
   ServedKnowledge,
 } from '../api/contracts';
 import { DEFAULT_SECTION, isSectionId, type SectionId } from './sections';
+// FW-43-B: the export's record-derived event prefix (core/export-record.ts
+// — the boot-resume-plane precedent: its back-import of this module is
+// TYPE-ONLY, so the module graph stays acyclic at runtime).
+import { deriveRecordEventsOf, EXPORT_DERIVED_EVENT_RULE, recordScopeNoteOf } from './export-record';
 import { assertProjectScope, assertTenantScope, isLaunchpadScope, isWorkspaceScope, type WorkspaceScope } from './tenant';
 import type { OversightDeskRead } from './oversight';
 import { canonicalJson, sha256Hex, sha256Of } from './digest';
@@ -933,6 +937,17 @@ export interface ExportChainEntry {
    * EXPORT_ACTOR_RULE.
    */
   readonly actor?: string;
+  /**
+   * FW-43-B (the export's FULL-RECORD scope): `true` on every
+   * RECORD-DERIVED entry — composed at export time from the project's
+   * own durable rows (each stamped at its own record's instant), chained
+   * ahead of the current page session's linked history. ADDITIVE +
+   * DELIBERATELY NON-DIGESTED (the simulated flag / actor placement
+   * class — the digest rule covers exactly
+   * {seq,tenantId,projectId,payload}). See EXPORT_DERIVED_EVENT_RULE
+   * (core/export-record.ts).
+   */
+  readonly derived?: boolean;
 }
 
 /**
@@ -979,6 +994,16 @@ export interface ExportManifest {
    * is single-project (or empty): nothing to disclose.
    */
   readonly chainScopeNote?: string;
+  /**
+   * FW-43-B (the export's FULL-RECORD scope): THE RECORD-SCOPE NOTE —
+   * present exactly when the events chain carries RECORD-DERIVED entries
+   * (the project's full record on file, each labeled `derived: true`,
+   * chained ahead of the current page session's history). The note
+   * states the split and the honest boundary (prior sessions' UI events
+   * were never records on file and cannot be recovered). Absent = the
+   * empty workspace (nothing on file — nothing to disclose).
+   */
+  readonly recordScopeNote?: string;
   /**
    * FW-36-B (E-8, part 2): THE PUBLISHED SIMULATED-FLAG RULE, verbatim
    * (the EXPORT_SIMULATED_FLAG_RULE constant) — the per-record flag's
@@ -1058,18 +1083,37 @@ export interface WorkspaceExportDocument {
 export function composeWorkspaceExport(state: WorkspaceState, simulated = false, actor: string | null = null): WorkspaceExportDocument {
   const events: ExportChainEntry[] = [];
   let priorHead = CHAIN_GENESIS;
+  // FW-43-B (the export's FULL-RECORD scope): THE RECORD-DERIVED PREFIX —
+  // every event the durable rows hold for the scope (derived from the
+  // state's own folded rows, one per record, each stamped at ITS OWN
+  // RECORD'S instant), chained AHEAD of the current page session's linked
+  // history. The chain rules are UNCHANGED (a longer chain under the same
+  // laws); the `derived: true` label rides OUTSIDE every digest (the
+  // simulated/actor placement class). The prefix is what a compliance
+  // officer's export carries after a reload — the pre-fix export started
+  // a fresh chain at the reload and omitted the pre-reload record.
+  let recordDerivedEvents = 0;
+  for (const payload of deriveRecordEventsOf(state)) {
+    const seq = events.length + 1;
+    const digest = chainDigestOf(seq, state.scope.tenantId, state.scope.projectId, payload);
+    const chainHead = chainLinkOf(priorHead, digest);
+    events.push({ seq, tenantId: state.scope.tenantId, projectId: state.scope.projectId, payload, digest, chainHead, simulated, ...(actor === null ? {} : { actor }), derived: true });
+    priorHead = chainHead;
+    recordDerivedEvents += 1;
+  }
+  const sessionEvents = state.history.length;
   for (const entry of state.history) {
     if (typeof entry.payload !== 'object' || entry.payload === null) {
       throw new Error(`composeWorkspaceExport: history entry ${entry.seq} retains no payload — the chain cannot be rebuilt honestly`);
     }
-    const digest = chainDigestOf(entry.seq, entry.tenantId, entry.projectId, entry.payload);
+    const digest = chainDigestOf(events.length + 1, entry.tenantId, entry.projectId, entry.payload);
     const chainHead = chainLinkOf(priorHead, digest);
     // E-8, part 2: the flag rides as a NON-DIGESTED sibling of the
     // payload (the entry's own digest/chainHead/kind class) — the
     // digest rule is untouched, so the rebuilt chain is byte-identical
     // to a pre-flag export's chain over the same events. FW-39-3: the
     // actor rides the same envelope class (absent when anonymous).
-    events.push({ seq: entry.seq, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload, digest, chainHead, simulated, ...(actor === null ? {} : { actor }) });
+    events.push({ seq: events.length + 1, tenantId: entry.tenantId, projectId: entry.projectId, payload: entry.payload, digest, chainHead, simulated, ...(actor === null ? {} : { actor }) });
     priorHead = chainHead;
   }
 
@@ -1132,6 +1176,7 @@ export function composeWorkspaceExport(state: WorkspaceState, simulated = false,
       'launchWorld',
       'workspace.state',
       'events.chain',
+      ...(recordDerivedEvents > 0 ? ['events.record' as const] : []),
       'evidence.capsules',
       'decisions.watch',
       'decisions.gateway',
@@ -1140,6 +1185,10 @@ export function composeWorkspaceExport(state: WorkspaceState, simulated = false,
     counts: {
       launchWorld: launchWorld === null ? 0 : 1,
       events: events.length,
+      // FW-43-B: the record/session split, counted (the compliance
+      // officer reads the manifest alone).
+      recordDerivedEvents,
+      sessionEvents,
       capsules: capsules.length,
       decisionsWatch: decisions.watch.length,
       decisionsGateway: decisions.gateway.length,
@@ -1147,6 +1196,7 @@ export function composeWorkspaceExport(state: WorkspaceState, simulated = false,
       readNotices: readNoticeIds.length,
       unreadNotices: unreadNoticeIds.length,
     },
+    ...(recordScopeNoteOf(recordDerivedEvents, sessionEvents) === undefined ? {} : { recordScopeNote: recordScopeNoteOf(recordDerivedEvents, sessionEvents) as string }),
     ...(chainScopeNote === undefined ? {} : { chainScopeNote }),
     // FW-36-B (E-8, part 2): the published simulated-flag rule rides the
     // manifest on every export (the reader of the manifest alone knows
