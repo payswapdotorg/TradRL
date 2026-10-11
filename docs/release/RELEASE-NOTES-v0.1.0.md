@@ -554,3 +554,22 @@ fallback); the desk-list respects the view instant.
   scope-keyed storage record observed in localStorage); the identity surface
   still live (Sign in / Create account). The Round H register is CLOSED; Round I
   (the identity-origin re-measurement) follows.
+
+### Round I — the identity-origin re-measurement (0/8/1, every leaning firmer)
+
+9/9 personas re-surveyed on the FW-40 origin (b4b120a, dpl_8CLqCZpm). The
+Round H register's every fixable item verified DEAD from the users' seats
+(the wizard race 9/9, the draft persistence 9/9, H-1..H-7, g1 — verbatim
+evidence in docs/release/ROUND-I-REPORT.md). The identity substrate itself
+is live and honest (register/sign-in/sign-out, typed refusals, salted-
+verifier disclosure, actor stamps on every record; five full export chains
+recomputed from the file alone, every head exact). **The first-YES gate is
+now a SHORT list, topped by a SEAM:** I-1 the adopt route (9/9 — "the adopt
+route answered without its per-desk response" wrapped in a FALSE
+"Accounts are not available" note to a signed-in user; desks follow the
+session, not the account), I-2 the executionMode select display residual
+(7/7), I-3 the post-launch instant + untaught hydration window, I-4 the
+intermittent deliverable stub (1/~50), I-5 the deep-project compile stall.
+FW-41 targets the register. The structural decisions beyond the seam wave:
+E-6 (the closed research world — M3's decisive NO), E-7 (pricing), M1's
+Oversight cockpit.
