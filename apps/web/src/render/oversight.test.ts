@@ -236,7 +236,13 @@ describe('FW-37-B (F-2): the oversight panel render', () => {
   it('a desk without a read on record renders its honest absence — never a fabricated number', () => {
     const bytes = oversightBytes(oversightState());
     const betaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-b"'), bytes.indexOf('data-oversight-desk="prj-demo-console"'));
-    expect(betaCard).toContain('none declared in this desk\'s standing read'); // no utilization in the bundle — the honest absence
+    // FW-44-A (L-1) pin update, justified: prj-b's fixture bundle is the
+    // ALL-EMPTY shape (no standing read, no submissions, no decisions, no
+    // org snapshot — the S1 window's unconfirmed read), which the fold now
+    // treats as NO read on record — so the standing note reads the honest
+    // absence, never "none declared in this desk's standing read" (the
+    // pre-fix copy claimed a read that never answered).
+    expect(betaCard).toContain('no read on record for this desk yet'); // the unconfirmed bundle is the honest absence — nothing is claimed
     expect(betaCard).toContain('No standing utilization read is on record for this desk');
     expect(betaCard).toContain('none visible at this view instant');
   });
@@ -483,11 +489,15 @@ describe('FW-43-A: the cross-desk aggregate row (the headline)', () => {
   });
 
   it('a field reads UNKNOWN when any desk\'s field is unknown — never a fabricated sum (the demo desk without a read makes the blotter fields unknown)', () => {
-    // the default fixture: prj-a + prj-b bundled, the demo desk NEVER read
+    // the default fixture: prj-a confirmed, prj-b's bundle the ALL-EMPTY
+    // unconfirmed shape, the demo desk NEVER read. FW-44-A (L-1) pin
+    // update, justified: the unconfirmed bundle now counts as no read on
+    // record, so the unknown cause names BOTH desks (pre-fix it named
+    // only the demo desk and prj-b's zeros folded into the sums).
     const bytes = oversightBytes(oversightState());
     const aggregate = bytes.slice(bytes.indexOf('data-oversight-aggregate="true"'), bytes.indexOf('data-oversight-desk="prj-a"'));
     expect(aggregate).toContain('>3<'); // the census itself is known
-    expect(aggregate).toContain('unknown — 1 desk without a read on record');
+    expect(aggregate).toContain('unknown — 2 desks without a read on record');
     expect(aggregate).toContain('never a fabricated sum');
   });
 
@@ -526,11 +536,20 @@ describe('FW-43-A: the per-desk net-exposure + simulated P&L columns', () => {
   });
 
   it('a bundled desk without a standing read keeps its KNOWN blotter numbers but renders the breach count unknown (per-field honesty)', () => {
-    const bytes = oversightBytes(oversightState());
+    // FW-44-A (L-1) pin update, justified: the pre-fix fixture rode prj-b's
+    // ALL-EMPTY bundle and called its zeros "the host's own answer" — the
+    // exact unconfirmed shape S1's window proved can be a degraded read
+    // (the fold now renders it unknown; pinned in the FW-44-A describe
+    // below). The per-field honesty this test exists for needs a CONFIRMED
+    // blotter without a standing read — prj-b re-read with one fill.
+    const confirmedBlotter = reduceAll(oversightState(), [
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-b', utilization: null, submissions: [routedFill('xgs:b-1', VIEW_AT - 1500, '10')], decisions: [], readAt: VIEW_AT } },
+    ]);
+    const bytes = oversightBytes(confirmedBlotter);
     const betaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-b"'), bytes.indexOf('data-oversight-desk="prj-demo-console"'));
-    // prj-b's bundle answered an EMPTY blotter — the host's own answer, an honest known 0 (never an invented unknown)
+    // the blotter answered — its numbers are known (never an invented unknown)
     expect(betaCard).toContain('net exposure (gross booked notional)');
-    expect(betaCard).toContain('0 across 0 open position');
+    expect(betaCard).toContain('10 across 1 open position');
     // the standing read never answered — the breach count is UNKNOWN, never 0
     expect(betaCard).toContain('active breaches (view instant)');
     expect(betaCard).toContain('unknown — no standing read on record');
@@ -565,5 +584,82 @@ describe('FW-43-A: the drill-through affordances (the cards become interactive �
     expect(demoCard).toContain('active breaches (view instant)');
     expect(demoCard).toContain('>0<'); // the honest known zero
     expect(demoCard.includes('data-oversight-section="risk"')).toBe(false); // a 0 count never wears the drill
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-44-A (Round L register L-1 — S1's find): the READ-ABSENCE CARD. The
+// register's exact rendering: during the window 3 desks' cards read "fills
+// 0", "net 0", "org not compiled" — literal zeros contradicting the durable
+// compile record and the desks' own live blotters — while the roll-up summed
+// them as knowns (understated, no unknown marker on the money fields). The
+// card and the roll-up must render unknown-not-on-file vs confirmed-empty
+// DISTINCTLY: an unconfirmed read (the present-but-empty bundle) renders the
+// honest unknown on every money/count field, and the org pill never claims
+// "not compiled" for a desk the durable record itself shows compiled.
+// ---------------------------------------------------------------------------
+
+describe('FW-44-A (Round L register L-1): the read-absence card — an unconfirmed read renders unknown, never zeros', () => {
+  it('THE S1 CARD: a present-but-empty bundle renders the honest unknown on every money/count field and the standing note — never "fills 0 / net 0"', () => {
+    // the default fixture's prj-b IS the S1 shape: a bundle on record with
+    // nothing confirmed (no standing read, no submissions, no decisions,
+    // no org snapshot — every route answered nothing in the window).
+    const bytes = oversightBytes(oversightState());
+    const betaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-b"'), bytes.indexOf('data-oversight-desk="prj-demo-console"'));
+    expect(betaCard).toContain('net exposure (gross booked notional)');
+    expect(betaCard).toContain('unknown — no read on record for this desk yet');
+    expect(betaCard).toContain('simulated P&amp;L basis (booked notional + fees to date)');
+    expect(betaCard).toContain('unknown — no read on record for this desk yet');
+    expect(betaCard).toContain('fills on record (view instant)');
+    expect(betaCard).toContain('unknown — no read on record for this desk yet');
+    expect(betaCard).toContain('standing rows');
+    expect(betaCard).toContain('no read on record for this desk yet'); // never "none declared in this desk's standing read" — the read did not answer, so nothing is claimed
+    expect(betaCard).not.toContain('0 across 0 open position');        // the literal zero, dead on this card
+  });
+
+  it('a CONFIRMED empty read keeps its zeros — "0 across 0 open position" renders when the standing read answered (the card renders unknown-not-on-file vs confirmed-empty distinctly)', () => {
+    // the same desk, its standing read answered this time: the empty
+    // blotter is the host's own positive claim, and the card says so.
+    const confirmed = reduceAll(oversightState(), [
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-b', utilization: utilizationOf('prj-b'), submissions: [], decisions: [], readAt: VIEW_AT } },
+    ]);
+    const bytes = oversightBytes(confirmed);
+    const betaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-b"'), bytes.indexOf('data-oversight-desk="prj-demo-console"'));
+    expect(betaCard).toContain('0 across 0 open position');
+    expect(betaCard).not.toContain('unknown — no read on record for this desk yet');
+  });
+
+  it('the org pill never claims "not compiled" for a desk the durable record shows COMPILED (organizationRef on record, no status snapshot): the honest "org status unknown"', () => {
+    // the register's third literal: "org not compiled" on desks the
+    // durable compile record itself shows compiled. The pill's claim is
+    // a positive one — only the record may make it: organizationRef
+    // null = not compiled (the record's own fact); organizationRef set
+    // with no snapshot = compiled, status unknown (never "not compiled").
+    const compiledNoSnapshot = { ...project('prj-a', 'Alpha Desk', 'session-owned'), lifecycle: { projectId: 'prj-a', status: 'active' as const, acceptanceCriteriaId: null, organizationRef: 'org:a' } };
+    const state = reduceAll(oversightState(), [
+      { kind: 'projects-listed', at: VIEW_AT, records: [
+        compiledNoSnapshot,
+        project('prj-b', 'Beta Desk', 'session-owned'),
+        project(DEMO_PROJECT_ID, 'the TradRL demo project', 'tenant-available'),
+      ] },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-a', utilization: utilizationOf('prj-a'), submissions: [routedFill('xgs:a-1', VIEW_AT - 1000)], decisions: [], readAt: VIEW_AT } },
+    ]);
+    const bytes = oversightBytes(state);
+    const alphaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-a"'), bytes.indexOf('data-oversight-desk="prj-b"'));
+    expect(alphaCard).toContain('<span class="pill-label">org status unknown</span>');
+    expect(alphaCard).not.toContain('<span class="pill-label">org not compiled</span>');
+    expect(alphaCard).toContain('compiled on the durable record'); // the honest named cause, as its own fact row
+    // the not-compiled pill stays EXACTLY what it was for a desk with no organization on record (the record's own fact)
+    const betaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-b"'), bytes.indexOf('data-oversight-desk="prj-demo-console"'));
+    expect(betaCard).toContain('<span class="pill-label">org not compiled</span>');
+  });
+
+  it('the roll-up names the unconfirmed desks as the unknown cause on every money field — never the understated known sum (the register\'s fabricated-sum class, dead at the render)', () => {
+    const bytes = oversightBytes(oversightState());
+    const aggregate = bytes.slice(bytes.indexOf('data-oversight-aggregate="true"'), bytes.indexOf('data-oversight-desk="prj-a"'));
+    // prj-b's unconfirmed bundle + the demo desk's absent bundle = TWO desks
+    // without a (confirmed) read on record — named, never summed over.
+    expect(aggregate).toContain('unknown — 2 desks without a read on record');
+    expect(aggregate).toContain('never a fabricated sum');
   });
 });
