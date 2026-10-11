@@ -6623,3 +6623,134 @@ describe('executed boot: FW-41-C (I-5 client half) — the org-compile poll retr
     expect(api.orgReads.count).toBe(before + 2); // the seek ended — the branch no longer fires
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-43-A (Round K register §3.2 — the product list's #2, M1 + L1's #1
+// YES-gate item, DOM-verified absent three rounds): THE OVERSIGHT
+// COCKPIT's interaction half — the DRILL-THROUGH. L1's verbatim ask:
+// "drill-through from breach counts to blotters"; M1: "drill-through
+// from breach counts". THE LAW: a desk card's Open affordance (or its
+// ACTIVE breach count) switches the workspace scope to that desk and
+// lands on its Execution blotter (Risk for the breach drill) — the
+// SAME reset+switch transition the switcher rides (project-adopted +
+// the H-4 view-live), the beat's scope-change refetch reads the opened
+// desk's whole world without a reload, and the current desk's own
+// affordance lands on the section with NO adoption churn.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-43-A — the Oversight cockpit drill-through (the cards become interactive)', () => {
+  /** The cockpit transport: prj-a + prj-b session-owned + the demo desk; every desk's bundle answers (risk + blotter); prj-b carries ONE pre-view breach and one fill. */
+  function cockpitTransport(): { readonly transport: ApiTransport; readonly riskReads: string[] } {
+    const riskReads: string[] = [];
+    const ok = (data: unknown) => ({ status: 200, headers: {}, body: { requestId: 'req-fw43a', data } });
+    const notFound = () => ({ status: 404, headers: {}, body: { requestId: 'req-fw43a', error: { code: 'not_found', message: 'no route', status: 404 } } });
+    const projectOf = (id: string, name: string, marker?: 'session-owned' | 'tenant-available'): Record<string, unknown> => ({
+      id, tenantId: 'tenant-a', name, executionMode: 'simulation', consoleSessionScope: marker,
+      lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null },
+      lineage: { projectId: id, createdAt: T0, createdBy: 'worker', priorVersion: null, version: 1, goal: { goalId: 'goal-1', version: 1 }, constraintSet: { id: 'cs-1', version: 1 } },
+      createdAt: T0, updatedAt: T0,
+    });
+    const utilizationOf = (projectId: string, breachAt: number | null) => ({
+      projectId,
+      asOf: formatInstantUtc(T0 + 999),
+      bounds: [
+        { constraintId: 'k-capital-budget', metric: 'outcome.capital.budget', boundMax: '2000000', severity: 'blocking', current: null, source: 'the standing read serves no observation current on this backing', status: 'unknown' },
+      ],
+      activeBreaches: breachAt === null ? [] : [{ kind: 'risk_limits_refusal', submissionId: 'xgs:breach-1', auditId: 'xga:breach-1', stage: 'risk_limits', at: formatInstantUtc(breachAt), violations: [{ constraintId: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', severity: 'blocking', predicate: { kind: 'limit.max', bound: 2000000 }, observed: '2359999.92' }] }],
+      disclosure: 'the read\'s own disclosure',
+    });
+    const fillOf = (id: string, notional: string): Record<string, unknown> => ({
+      kind: 'routed', submissionId: id, decisionId: `xd:${id}`, auditId: `xga:${id}`, requestRef: `gor:${id}`,
+      venue: 'BROKER-FIX', adapterRef: 'adapter:demo-broker', channelRef: 'chan:demo-main', routedAt: T0 + 120,
+      fill: { state: 'filled', quantity: '0.75', price: '61000.50', notional, fee: '0.02', filledAt: T0 + 130 },
+    });
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      const key = `${request.method} ${path}`;
+      const projectOfQuery = decodeURIComponent(new URLSearchParams(request.path.split('?')[1] ?? '').get('project') ?? '');
+      if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+      if (key === 'GET /v1/projects') return ok({ items: [
+        projectOf('prj-a', 'Alpha Desk', 'session-owned'),
+        projectOf('prj-b', 'Beta Desk', 'session-owned'),
+        projectOf('prj-demo-console', 'the TradRL demo project', 'tenant-available'),
+      ] });
+      if (key === 'GET /v1/projects/prj-a') return ok(projectOf('prj-a', 'Alpha Desk', 'session-owned'));
+      if (key === 'GET /v1/projects/prj-b') return ok(projectOf('prj-b', 'Beta Desk', 'session-owned'));
+      if (key === 'GET /v1/projects/prj-a/goal' || key === 'GET /v1/projects/prj-b/goal') return notFound(); // the host-owned route's typed 404
+      if (key === 'GET /v1/risk/utilization') {
+        riskReads.push(projectOfQuery);
+        if (projectOfQuery === 'prj-a') return ok(utilizationOf('prj-a', T0 + 500));
+        if (projectOfQuery === 'prj-b') return ok(utilizationOf('prj-b', T0 + 500));
+        return ok(utilizationOf(projectOfQuery, null));
+      }
+      if (key === 'GET /v1/execution/submissions') {
+        if (projectOfQuery === 'prj-a') return ok({ items: [fillOf('xgs:a-1', '45750.375')] });
+        if (projectOfQuery === 'prj-b') return ok({ items: [fillOf('xgs:b-1', '20472.60')] });
+        return ok({ items: [] });
+      }
+      if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+      if (key === 'GET /v1/jobs') return ok({ items: [] });
+      return notFound();
+    };
+    return { transport, riskReads };
+  }
+
+  /** The Open affordance of one desk in the CURRENT projection (the tree rebuilds per render — find fresh each time). */
+  function openButtonOf(rig: Rig, desk: string, section: string): FakeElement {
+    const button = elementsOf(rig.root).find((element) => element.tagName === 'BUTTON'
+      && element.getAttribute('data-action') === 'oversight-open-desk'
+      && element.getAttribute('data-oversight-open') === desk
+      && element.getAttribute('data-oversight-section') === section);
+    if (button === undefined) throw new Error(`no ${section} drill affordance for ${desk}`);
+    return button;
+  }
+
+  it('the per-desk Open affordance ADOPTS the clicked desk and lands on its Execution blotter — one click, the scope switches, the beat refetches the opened world without a reload, and the choice persists', async () => {
+    const api = cockpitTransport();
+    const scopeStorage = new MapStorage();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a', { scopeStorage });
+    clickNav(rig, 'oversight');
+    // the cockpit renders: the aggregate row + every desk card carries its own Open affordance
+    expect(findByData(rig.root, 'data-oversight-aggregate', 'true')).not.toBeNull();
+    expect(findByData(rig.root, 'data-oversight-desk', 'prj-b')).not.toBeNull();
+    // THE DRILL: Beta Desk's open affordance — the workspace scope switches AND the Execution blotter lands
+    click(rig, openButtonOf(rig, 'prj-b', 'execution'));
+    expect(rig.handle.state().scope.projectId).toBe('prj-b');      // adopted — the same reset+switch transition the switcher rides
+    expect(rig.handle.state().selectedSection).toBe('execution');  // landed on the Execution blotter
+    expect(findByData(rig.root, 'data-scaffold', 'execution')).not.toBeNull();
+    expect(shellOf(rig.root).getAttribute('data-active-target')).toBe('execution');
+    expect(readStoredScopeProject(scopeStorage)).toBe('prj-b');    // the drill persists the choice (the R6b write-through)
+    // the beat's scope-change refetch reads the opened desk's whole world — no reload, ever
+    await rig.handle.beat();
+    expect(rig.handle.state().project?.id).toBe('prj-b');
+    expect(rig.handle.state().submissions.map((submission) => submission.submissionId)).toEqual(['xgs:b-1']); // Beta Desk's blotter
+    expect(findByData(rig.root, 'data-section', 'execution')).not.toBeNull(); // the section panel renders the adopted desk's world
+  });
+
+  it('the breach count drills to the desk\'s Risk section (the count itself is the target — an ACTIVE count only)', async () => {
+    const api = cockpitTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'oversight');
+    // prj-b carries one pre-view breach — its count is a drill affordance landing on RISK
+    click(rig, openButtonOf(rig, 'prj-b', 'risk'));
+    expect(rig.handle.state().scope.projectId).toBe('prj-b');
+    expect(rig.handle.state().selectedSection).toBe('risk');
+    expect(findByData(rig.root, 'data-scaffold', 'risk')).not.toBeNull();
+    // the demo desk's clean card (no active breach) carries NO risk drill — a 0 count never wears the affordance
+    const demoRiskDrill = elementsOf(rig.root).some((element) => element.getAttribute('data-oversight-open') === 'prj-demo-console' && element.getAttribute('data-oversight-section') === 'risk');
+    expect(demoRiskDrill).toBe(false);
+  });
+
+  it('the CURRENT desk\'s own affordance lands on the section with NO adoption churn (the loaded world is never reset)', async () => {
+    const api = cockpitTransport();
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    await rig.handle.beat(); // the boot world is fully loaded
+    expect(rig.handle.state().project?.id).toBe('prj-a');
+    clickNav(rig, 'oversight');
+    click(rig, openButtonOf(rig, 'prj-a', 'execution'));
+    expect(rig.handle.state().scope.projectId).toBe('prj-a');      // never moved — the desk was already the workspace's world
+    expect(rig.handle.state().project?.id).toBe('prj-a');          // never reset — no record churn, exactly the switcher's no-op law
+    expect(rig.handle.state().selectedSection).toBe('execution');
+    expect(findByData(rig.root, 'data-scaffold', 'execution')).not.toBeNull();
+  });
+});

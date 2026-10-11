@@ -430,3 +430,136 @@ describe('FW-42-B (the copy-lag): the Oversight panel copy is account-scoped und
     expect(singleBytes).not.toContain('every desk that follows your account');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-43-A (Round K register §3.2 — the product list's #2, M1 + L1's #1
+// YES-gate item, DOM-verified absent three rounds running): THE OVERSIGHT
+// COCKPIT — the cross-desk aggregate row (the headline), the per-desk
+// net-exposure + simulated-P&L columns, and the drill-through from the
+// cards (the per-desk Open affordance + the breach count) to the desk's
+// own working surfaces. "A census, not yet a PM cockpit" — now a cockpit.
+// ---------------------------------------------------------------------------
+
+describe('FW-43-A: the cross-desk aggregate row (the headline)', () => {
+  /** Every desk bundled (prj-a 2 fills + 1 refusal + 1 decision + 1 pre-view breach; prj-b 1 fill; the demo desk an honest empty book) — the KNOWN roll-up. */
+  function allBundledState(): WorkspaceState {
+    return reduceAll(oversightState(), [
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-b', utilization: utilizationOf('prj-b'), submissions: [routedFill('xgs:b-1', VIEW_AT - 1500, '10')], decisions: [], readAt: VIEW_AT } },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: DEMO_PROJECT_ID, utilization: utilizationOf(DEMO_PROJECT_ID), submissions: [], decisions: [], readAt: VIEW_AT } },
+    ]);
+  }
+
+  it('renders ABOVE the desk cards: the roll-up of the same numbers the cards carry, SIMULATED-tagged, with the honest-sum law disclosed', () => {
+    const bytes = oversightBytes(allBundledState());
+    expect(bytes).toContain('data-oversight-aggregate="true"');
+    // ABOVE the cards: the aggregate renders before the first desk card in the serialized bytes
+    expect(bytes.indexOf('data-oversight-aggregate="true"')).toBeLessThan(bytes.indexOf('data-oversight-desk="prj-a"'));
+    expect(bytes).toContain('The cross-desk roll-up');
+    // the numbers: desks 3, net exposure 110.00 (100.00 + 10 + 0 — the exact-decimal sum of the view-instant books),
+    // open positions 2, fills 2 (the post-view fill never enters — L4), decisions 1, breaches 3 (one view-instant breach per desk's read)
+    const aggregate = bytes.slice(bytes.indexOf('data-oversight-aggregate="true"'), bytes.indexOf('data-oversight-desk="prj-a"'));
+    expect(aggregate).toContain('desks');
+    expect(aggregate).toContain('>3<');
+    expect(aggregate).toContain('net exposure (standing book notional, all desks)');
+    expect(aggregate).toContain('110.00');
+    expect(aggregate).toContain('open positions');
+    expect(aggregate).toContain('>2<');
+    expect(aggregate).toContain('fills on record');
+    expect(aggregate).toContain('>2<');
+    expect(aggregate).toContain('refusals (gateway-stopped)');
+    expect(aggregate).toContain('decisions on record');
+    expect(aggregate).toContain('>1<');
+    expect(aggregate).toContain('active breaches (view instant)');
+    expect(aggregate).toContain('>3<');
+    // the disclosure: the same projection the cards ride, exact sums, never fabricated
+    expect(aggregate).toContain('never a fabricated sum');
+    expect(aggregate).toContain('the same per-desk numbers the cards below carry');
+    // the SIMULATED tag rides the aggregate row too (the E-8 row-disclosure law — a copied roll-up never reads as production)
+    expect(aggregate).toContain('data-simulated-tag="true"');
+  });
+
+  it('a field reads UNKNOWN when any desk\'s field is unknown — never a fabricated sum (the demo desk without a read makes the blotter fields unknown)', () => {
+    // the default fixture: prj-a + prj-b bundled, the demo desk NEVER read
+    const bytes = oversightBytes(oversightState());
+    const aggregate = bytes.slice(bytes.indexOf('data-oversight-aggregate="true"'), bytes.indexOf('data-oversight-desk="prj-a"'));
+    expect(aggregate).toContain('>3<'); // the census itself is known
+    expect(aggregate).toContain('unknown — 1 desk without a read on record');
+    expect(aggregate).toContain('never a fabricated sum');
+  });
+
+  it('the aggregate is honest on the live console too: the roll-up renders WITHOUT the SIMULATED tag (the mirror law)', () => {
+    const live = oversightBytes(allBundledState(), { simulated: false });
+    const aggregate = live.slice(live.indexOf('data-oversight-aggregate="true"'), live.indexOf('data-oversight-desk="prj-a"'));
+    expect(aggregate.includes('data-simulated-tag')).toBe(false);
+  });
+});
+
+describe('FW-43-A: the per-desk net-exposure + simulated P&L columns', () => {
+  it('each card carries the net exposure (the gross booked notional of the open positions — the fill-derived book\'s composition) + the SIMULATED book value, honestly labeled NOT a market P&L', () => {
+    const bytes = oversightBytes(oversightState());
+    const alphaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-a"'), bytes.indexOf('data-oversight-desk="prj-b"'));
+    // net exposure: 100.00 (the one pre-view fill; the post-view one never enters — L4) across 1 open position
+    expect(alphaCard).toContain('net exposure (gross booked notional)');
+    expect(alphaCard).toContain('100.00 across 1 open position');
+    expect(alphaCard).toContain('the same data the standing rows ride');
+    // the simulated P&L basis: the booked notional + fees to date, honestly labeled
+    expect(alphaCard).toContain('simulated P&L basis (booked notional + fees to date)');
+    expect(alphaCard).toContain('booked notional 100.00 · fees 0.10');
+    expect(alphaCard).toContain('NOT a market P&L');
+    expect(alphaCard).toContain('no mark-to-market exists on the records this console holds');
+    expect(alphaCard).toContain('refusals 0 stopped'); // the honest derived figures named (the refusal count beside the money)
+  });
+
+  it('a desk without a read renders unknown for the exposure, the P&L basis and every count — never a fabricated 0', () => {
+    const bytes = oversightBytes(oversightState());
+    const demoCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-demo-console"'));
+    expect(demoCard).toContain('net exposure (gross booked notional)');
+    expect(demoCard).toContain('unknown — no read on record for this desk yet');
+    expect(demoCard).toContain('simulated P&L basis (booked notional + fees to date)');
+    expect(demoCard).toContain('unknown — no read on record for this desk yet');
+    expect(demoCard).toContain('fills on record (view instant)');
+    expect(demoCard).toContain('unknown — no read on record for this desk yet');
+  });
+
+  it('a bundled desk without a standing read keeps its KNOWN blotter numbers but renders the breach count unknown (per-field honesty)', () => {
+    const bytes = oversightBytes(oversightState());
+    const betaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-b"'), bytes.indexOf('data-oversight-desk="prj-demo-console"'));
+    // prj-b's bundle answered an EMPTY blotter — the host's own answer, an honest known 0 (never an invented unknown)
+    expect(betaCard).toContain('net exposure (gross booked notional)');
+    expect(betaCard).toContain('0 across 0 open position');
+    // the standing read never answered — the breach count is UNKNOWN, never 0
+    expect(betaCard).toContain('active breaches (view instant)');
+    expect(betaCard).toContain('unknown — no standing read on record');
+  });
+});
+
+describe('FW-43-A: the drill-through affordances (the cards become interactive — keyboard focusable)', () => {
+  it('each card carries a real BUTTON "Open this desk" that drills to the desk\'s Execution blotter (data-oversight-open + the execution landing)', () => {
+    const bytes = oversightBytes(oversightState());
+    const alphaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-a"'), bytes.indexOf('data-oversight-desk="prj-b"'));
+    expect(alphaCard).toContain('<button class="tm-button');
+    expect(alphaCard).toContain('data-action="oversight-open-desk"');
+    expect(alphaCard).toContain('data-oversight-open="prj-a"');
+    expect(alphaCard).toContain('data-oversight-section="execution"');
+    expect(alphaCard).toContain('Open this desk');
+    expect(alphaCard).toContain('aria-label="Open Alpha Desk'); // the a11y law: the affordance names its desk
+  });
+
+  it('the breach count is the drill-through target for breaches: an ACTIVE count is a button landing on the desk\'s Risk section', () => {
+    // prj-a carries one pre-view breach + one post-view breach (the fixture) — the view-instant count is 1, an ACTIVE count
+    const bytes = oversightBytes(oversightState());
+    const alphaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-a"'), bytes.indexOf('data-oversight-desk="prj-b"'));
+    expect(alphaCard).toContain('data-action="oversight-open-desk"');
+    expect(alphaCard).toContain('data-oversight-section="risk"');
+    expect(alphaCard).toContain('1 active — open Risk');
+    // the zero-count desk renders the plain number (nothing to drill into — never a dead affordance)
+    const cleanRead = reduceAll(oversightState(), [
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: DEMO_PROJECT_ID, utilization: { ...utilizationOf(DEMO_PROJECT_ID), activeBreaches: [] }, submissions: [], decisions: [], readAt: VIEW_AT } },
+    ]);
+    const clean = oversightBytes(cleanRead);
+    const demoCard = clean.slice(clean.indexOf('data-oversight-desk="prj-demo-console"'));
+    expect(demoCard).toContain('active breaches (view instant)');
+    expect(demoCard).toContain('>0<'); // the honest known zero
+    expect(demoCard.includes('data-oversight-section="risk"')).toBe(false); // a 0 count never wears the drill
+  });
+});
