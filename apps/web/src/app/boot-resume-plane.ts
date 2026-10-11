@@ -66,12 +66,31 @@ export type RestoredViewHealSetter = (note: TmHealNote | null) => void;
 /** The restored-draft hint's mount-bound view setter (null = the retired hint). */
 export type DraftRestoredSetter = (savedAt: number | null) => void;
 
+/**
+ * FW-42-B (Round J register J-3): the boot-scope resolving marker's
+ * mount-bound view setter (false = the listing resolved the scope; the
+ * tmHealNote holder+setter precedent — the console's mount binds it, the
+ * listing read's tail retires through it).
+ */
+export type BootScopeResolvingSetter = (resolving: boolean) => void;
+
 /** The seams the console provides: the live state + dispatch (never owned here), the boot scope + instant source + storage seam. */
 export interface BootResumeSeams {
   /** The console's scope-storage seam (localStorage in production; undefined = the draft persistence is session-only). */
   readonly storage: LaunchDraftStorage | undefined;
   /** The boot-pinned scope (tenant + the normalized project id — the plane reads the record against it). */
   readonly scope: WorkspaceScope;
+  /**
+   * FW-42-B (Round J register J-3, L2/M2's find): the boot-captured
+   * STORED SCOPE POINTER (the session posture's scopeProjectId, the
+   * legacy key its fallback — the SAME value the console's own listing
+   * read resolves; null when the browser stored none). When it differs
+   * from the boot-pinned scope, the first paint sits on the env pin's
+   * desk while the listing read is still resolving the remembered one
+   * — the Home tile's Project line teaches the resolving marker until
+   * the listing lands (never the env pin's flash).
+   */
+  readonly storedScope: string | null;
   /** The injected instant source (never a wall clock — the test seam's discipline). */
   readonly instants: InstantSource;
   /** LIVE state read — the plane never owns the workspace. */
@@ -93,7 +112,11 @@ export interface BootResumePlane {
   /** Attempt the stored-draft restore against the SETTLED scope (the listing read's tail; exactly once, never over a driving user). */
   restoreStoredDraft(): void;
   /** Mount: bind the view setters + apply any disclosure that landed BEFORE mount. */
-  bindView(setHealNote: RestoredViewHealSetter, setDraftRestored: DraftRestoredSetter): void;
+  bindView(setHealNote: RestoredViewHealSetter, setDraftRestored: DraftRestoredSetter, setBootScopeResolving?: BootScopeResolvingSetter): void;
+  /** FW-42-B (J-3): true while the boot listing is still resolving a stored scope that differs from the env pin (the console's mount reads it into the first view). */
+  bootScopeResolving(): boolean;
+  /** FW-42-B (J-3): the listing read's tail — settle the resolution (true when this call flipped it; the held view setter retires the marker). */
+  scopeResolutionSettled(): boolean;
 }
 
 /**
@@ -114,6 +137,14 @@ export function createBootResumePlane(seams: BootResumeSeams): BootResumePlane {
   let restoringLaunchDraft = false;
   let launchDraftRestoredAt: number | null = null;
   let showLaunchDraftRestored: DraftRestoredSetter | null = null;
+  // FW-42-B (J-3): the boot-scope resolution — a stored scope differing
+  // from the boot pin means the first paint sits on the env pin's desk
+  // while the listing read resolves the remembered one (L2/M2's
+  // prj-demo-console flash on the Project line). The flag rides the
+  // shell view; the listing read's tail settles it (the render then
+  // shows the resolved desk, never a flashed wrong one).
+  let scopeResolving = seams.storedScope !== null && seams.storedScope.length > 0 && seams.storedScope !== seams.scope.projectId;
+  let showBootScopeResolving: BootScopeResolvingSetter | null = null;
 
   const showHeal = (note: TmHealNote | null): void => {
     restoredViewHeal = note;
@@ -241,9 +272,17 @@ export function createBootResumePlane(seams: BootResumeSeams): BootResumePlane {
     },
     validateRestoredView,
     restoreStoredDraft,
-    bindView(setHealNote, setDraftRestored) {
+    bootScopeResolving: () => scopeResolving,
+    scopeResolutionSettled() {
+      if (!scopeResolving) return false;
+      scopeResolving = false;
+      if (showBootScopeResolving !== null) showBootScopeResolving(false);
+      return true;
+    },
+    bindView(setHealNote, setDraftRestored, setBootScopeResolving) {
       showRestoredViewHeal = setHealNote;
       showLaunchDraftRestored = setDraftRestored;
+      showBootScopeResolving = setBootScopeResolving ?? null;
       // A disclosure that landed BEFORE mount (the boot listing read
       // races it) is held plane-side and applies to this first view.
       if (restoredViewHeal !== null) setHealNote(restoredViewHeal);

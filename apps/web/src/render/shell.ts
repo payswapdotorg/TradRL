@@ -158,6 +158,20 @@ export interface ShellView {
    * writer (null = the retired hint).
    */
   readonly launchDraftRestored?: number | null;
+  /**
+   * FW-42-B (Round J register J-3 — L2/M2's find, the prj-demo-console
+   * flash): TRUE while the boot listing is still resolving a STORED scope
+   * that differs from the env pin — the first paint would otherwise teach
+   * the env pin's desk id on the Home tile's Project line for the whole
+   * listing latency, then flash to the remembered desk. The Home tile's
+   * Project detail teaches the resolving marker instead; the console seam
+   * (app/console.ts, the boot/resume plane's flag) is the only writer and
+   * the listing read's tail retires it. OPTIONAL by design (the
+   * account-field precedent): undefined is the default every prior
+   * surface keeps, byte-for-byte — a fresh browser stores no scope, so
+   * the demo flow never carries it.
+   */
+  readonly bootScopeResolving?: boolean;
 }
 
 /**

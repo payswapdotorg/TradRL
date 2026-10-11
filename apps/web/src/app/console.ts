@@ -85,7 +85,7 @@ export type WorkspaceListener = (next: WorkspaceState) => void;
 /** The unsubscribe handle a listener registration returns (the erasable-subset law: same — named alias). */
 export type Unsubscribe = () => void;
 
-/** One degraded-read task (the erasable-subset law: function types live in named aliases, never inline at annotation depth zero). */
+/** One degraded-read task (the erasable-subset law: same — named alias). */
 export type ReadTask = () => Promise<void>;
 
 /** The boot bundle — every seam INJECTED (transport, instants, scheduler, mounts). */
@@ -196,15 +196,15 @@ export interface DelegatedFieldEvent {
 }
 
 /**
- * MI-D7 (S5's ask — the in-UI chain verify): the selected export file's
- * read surface — the browser's File, structurally (a name plus the
- * async text read). Named with METHOD syntax per the erasable-subset
- * law (no inline function types at depth zero).
+ * MI-D7 (S5's ask — the in-UI chain verify): the selected export
+ * file's read surface — the browser's File, structurally (a name +
+ * the async text read). METHOD syntax per the erasable-subset law
+ * (no inline function types at depth zero).
  */
 export interface SelectedExportFile {
   /** The file's name (shown in the verification result card). */
   readonly name: string;
-  /** The async text read (File.text() — the modern browser surface; absent when the selection cannot be read). */
+  /** The async text read (File.text(); absent when the selection cannot be read). */
   text?(): Promise<string>;
 }
 
@@ -219,7 +219,7 @@ export interface MountDocument {
   readonly activeElement?: Element | null;
   /** Optional: the document head (the browser binding provides it) — the R8 interaction supplement's injection target (W-19). */
   readonly head?: Element | null;
-  /** Optional: the document's root element (the browser binding provides it). D-6d (W-25C): the html element's `data-theme` is synced to the active theme at every paint — tokens.css keys the html background on it; a stale attribute flashes the wrong overscroll color. */
+  /** Optional: the document's root element (the browser binding). D-6d (W-25C): the html element's `data-theme` syncs to the active theme at every paint — tokens.css keys the html background on it; a stale attribute flashes the wrong overscroll color. */
   readonly documentElement?: Element | null;
 }
 
@@ -263,41 +263,40 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   const scope: WorkspaceScope = { tenantId: options.scope.tenantId, projectId: options.scope.projectId.length > 0 ? options.scope.projectId : LAUNCHPAD_PROJECT_ID };
   const beatMs = options.beatMs ?? 1000;
   // D-15 (W-29 wave 2) — THE SESSION-SCOPE DISCIPLINE, part 1: the
-  // persisted scope is captured ONCE, synchronously, at boot — before
-  // any user interaction and before the first read resolves (the
-  // pre-fix restore read the storage LATE, inside the async projects
-  // read, racing a user scope change landed in between). With the
-  // generation guard below the restore is exactly-once, boot-scoped,
-  // and never clobbers a user's choice.
+  // persisted scope is captured ONCE, synchronously, at boot, before
+  // any interaction or first read resolves (the pre-fix restore read
+  // the storage LATE, inside the async projects read, racing a user
+  // scope change landed in between); with the generation guard below
+  // the restore is exactly-once and never clobbers a user's choice.
   const bootStoredScope = options.scopeStorage === undefined ? null : readStoredScopeProject(options.scopeStorage);
   // D-15 part 2 — THE SCOPE GENERATION: 0 until the first scope move
-  // this session (switcher choice, palette jump, launch adoption, or
-  // the boot-restore's own adoption — every one rides dispatch). The
-  // boot-restore applies ONLY at generation 0: after ANY scope move it
-  // is done forever — rehydration never overwrites a driving user (the
-  // switcher-rebind race the Lead reproduced twice: "the first select
-  // change did not take").
+  // this session (switcher, palette, launch adoption, or the
+  // boot-restore's own — every one rides dispatch). The restore applies
+  // ONLY at generation 0; after ANY move it is done forever —
+  // rehydration never overwrites a driving user (the switcher-rebind
+  // race the Lead reproduced twice: "the first select change did not
+  // take").
   let scopeGeneration = 0;
-  // FW-34-B (Round C register §3.1 — the browser-restart residuals):
-  // THE SESSION POSTURE. One validated record (core/posture.ts) carries
-  // the wizard's dismissal, the scope pointer and the Time Machine's
-  // mode + speed — read ONCE, synchronously, at boot (the D-15
-  // discipline), written through on every posture change, riding the
-  // SAME seam as the scope (options.scopeStorage — localStorage in
-  // production). Its legacy-key writes keep the pre-FW-34-B keys alive,
-  // so a downgrade never loses the user's world. The TM restore runs
-  // inside the listing read, only while the machine still sits at its
-  // boot 'live' mode (a user who touched the TM first is driving,
-  // never overwritten).
+  // FW-34-B (Round C §3.1 — the browser-restart residuals): THE
+  // SESSION POSTURE. One validated record (core/posture.ts) carries
+  // the wizard's dismissal, the scope pointer and the TM's mode +
+  // speed — read ONCE, synchronously, at boot (the D-15 discipline),
+  // written through on every change, riding the SAME seam as the scope
+  // (options.scopeStorage). The legacy-key writes keep the
+  // pre-FW-34-B keys alive (a downgrade never loses the user's world);
+  // the TM restore runs inside the listing read, only while the
+  // machine still sits at its boot 'live' mode (a user who touched
+  // the TM first is driving).
   let sessionPosture: ConsoleSessionPosture = options.scopeStorage === undefined
     ? initialConsolePosture()
     : (readStoredPosture(options.scopeStorage) ?? initialConsolePosture());
-  // FW-34-B: the stored TM posture captured ONCE at boot — the restore
-  // own source, immune to the write-through fold that lands during the
-  // boot listing (a scope adoption RESETS the machine to live before the
-  // restore re-lands the analyst instant — without the capture, the
-  // fold would clobber the stored posture to live a dispatch before the
-  // restore reads it; bootStoredScope own law, the TM own form).
+  // FW-34-B: the stored TM posture captured ONCE at boot — the
+  // restore's own source, immune to the write-through fold that lands
+  // during the boot listing (a scope adoption RESETS the machine to
+  // live before the restore re-lands the analyst instant — without the
+  // capture the fold would clobber the stored posture a dispatch
+  // before the restore reads it; bootStoredScope own law, the TM own
+  // form).
   const bootStoredTimeMachine: ConsoleSessionPosture['timeMachine'] = sessionPosture.timeMachine;
   // FW-41-C (I-3a): the boot TM restore's once-flag — set the moment the
   // restore dispatches, so no later listing read re-lands the stale boot
@@ -308,19 +307,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     persistPosture(options.scopeStorage, sessionPosture);
   };
 
-  // FW-40-B (Round H — the boot/resume cluster: H-4 the stale view-instant
-  // resume trap + the boot-seam draft persistence): THE BOOT/RESUME PLANE
+  // FW-40-B (Round H — H-4 the stale view-instant resume trap + the
+  // boot-seam draft persistence): THE BOOT/RESUME PLANE
   // (app/boot-resume-plane.ts, the oversight-plane extraction pattern —
-  // console.ts's 160 KiB single-file payload budget) owns the resume state
-  // + cadences: the restored-view validation (the pending instant + the
+  // this file's 160 KiB single-file budget) owns the resume state +
+  // cadences: the restored-view validation (the pending instant + the
   // post-hydration heal to LIVE + the teaching note holder), the draft
   // restore/write-through/clear laws (core/launch-draft-store.ts), and
-  // both restored disclosures' pre-mount holders. The console keeps the
-  // thin wiring (the dispatch hooks, the TM-restore hand-off, the
-  // listing-read restore, the validation cadences). Full laws: the plane.
+  // both disclosures' pre-mount holders. The console keeps the thin
+  // wiring (the dispatch hooks, the TM-restore hand-off, the
+  // listing-read restore, the validation cadences). Full laws: the
+  // plane.
   const resume: BootResumePlane = createBootResumePlane({
     storage: options.scopeStorage,
     scope,
+    storedScope: sessionPosture.scopeProjectId ?? bootStoredScope, // FW-42-B (J-3): the listing read resolves THIS pointer — the plane's resolving marker rides the same truth
     instants,
     state: () => state,
     dispatch,
@@ -330,10 +331,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
   const listeners: WorkspaceListener[] = [];
   // THE DURABLE READ-STATE (D-6c, W-25C): the persisted read-mark map,
   // read once at boot and held for the session — every mark-read /
-  // mark-all-read updates it in place (the dispatch write-through
-  // below) and the mount's rehydration pass applies it to every notice
-  // the workspace folds, so the unread badge + mark-read flows survive
-  // scope-switch + reload for the same browser.
+  // mark-all-read updates it in place (the write-through below) and the
+  // mount's rehydration pass applies it to every notice the workspace
+  // folds, so the unread badge + mark-read flows survive scope-switch +
+  // reload for the same browser.
   let storedNoticeReads: StoredNoticeReads = options.noticeReadStorage === undefined
     ? {}
     : parseStoredNoticeReads(options.noticeReadStorage.getItem(NOTICE_READ_STORAGE_KEY));
@@ -344,17 +345,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     resume.beforeReduce(event);
     const scopeBefore = state.scope.projectId;
     state = reduceWorkspace(state, event);
-    // D-15 (W-29 wave 2): every scope move advances the generation — the
-    // boot-restore's own adoption included (one-shot by construction).
+    // D-15 (W-29 wave 2): every scope move advances the generation — the boot-restore's own adoption included.
     if (state.scope.projectId !== scopeBefore) scopeGeneration += 1;
     // THE SCOPE PERSISTENCE WRITE-THROUGH (R6b, W-22): the workspace
     // moved to another project (a launch adoption, a switcher choice,
-    // a stored-scope restore) — persist the current project id so a
-    // reload reopens THE USER'S world, not the env pin's (the 69-friction-row
-    // finding: reload silently reset the scope to the demo project).
-    // The launchpad placeholder never persists (no project yet).
-    // FW-34-B: the same move rides THE POSTURE RECORD (the scope field's
-    // write-through is one with the record's — the legacy key keeps its
+    // a stored-scope restore) — persist the id so a reload reopens THE
+    // USER'S world, not the env pin's (the 69-friction-row finding:
+    // reload silently reset the scope to the demo project). The
+    // launchpad placeholder never persists (no project yet). FW-34-B:
+    // the same move rides THE POSTURE RECORD (the legacy key keeps its
     // own write inside persistPosture).
     if (state.scope.projectId !== scopeBefore && state.scope.projectId !== LAUNCHPAD_PROJECT_ID && options.scopeStorage !== undefined) {
       persistScopeProject(options.scopeStorage, state.scope.projectId);
@@ -416,26 +415,24 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       dispatch({ kind: 'degraded-read', at: instants.nowMs(), route, family, message: (error as Error)?.message ?? String(error) });
       // THE J09 TRIAGE (the W-14c fix): a TRANSPORT-level failure (the
       // unavailable family) while the workspace knows NOTHING (the Home
-      // freshness gate) is the API being UNREACHABLE, not a degraded read:
-      // dispatch the offline state so the rose UNREACHABLE connection
-      // block + Home's ErrorState with its Try again pill render (the
-      // catalog's J9 surface — 'offline' was state-machine+test-only
-      // pre-fix). A failure WITH the last known world present stays
-      // DEGRADED (amber); a typed API error (the API ANSWERED) is never
-      // offline — the family gate.
+      // freshness gate) is the API being UNREACHABLE, not a degraded
+      // read: dispatch the offline state so the rose UNREACHABLE
+      // connection block + Home's ErrorState with its Try again pill
+      // render (J9's surface). A failure WITH the last known world
+      // stays DEGRADED (amber); a typed API error (the API ANSWERED)
+      // is never offline — the family gate.
       if (family === 'unavailable' && homeFresh(state)) {
         dispatch({ kind: 'connection-changed', at: instants.nowMs(), status: 'offline' });
       }
     }
   }
 
-  // THE SCOPE-CHANGE SEAM (R6a, the W-22 fix — the architectural
-  // blocker's read half): the console read its world ONCE at boot, so
-  // after a launch ADOPTED a project (project-adopted resets every
-  // record + moves the scope) NO read ever ran for the adopted scope —
-  // every section showed the RESET (empty) world. The beat tracks the
-  // last-fetched scope; when state.scope.projectId differs, it re-runs
-  // the full read bundle for the adopted scope.
+  // THE SCOPE-CHANGE SEAM (R6a, the W-22 fix): the console read its
+  // world ONCE at boot, so after a launch ADOPTED a project
+  // (project-adopted resets every record + moves the scope) NO read
+  // ever ran for the adopted scope — every section showed the RESET
+  // (empty) world. The beat tracks the last-fetched scope; when
+  // state.scope.projectId differs, it re-runs the full bundle.
   let lastFetchedScope: string | null = null;
 
   /** Dispatch a read result ONLY while the workspace still carries the scope it was read for — a mid-flight adoption (a launch, a switch) supersedes the scope and the stale dispatch is dropped (the typed assertProjectScope would refuse it; the beat's scope-change refetch re-reads the adopted scope). */
@@ -478,20 +475,20 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // THE PROJECT DIRECTORY + THE STORED-SCOPE RESTORE (R6b/R6c,
       // W-22): the tenant's readable projects list once per bundle (the
       // scope switcher's data) and the validation surface for the
-      // persisted scope. THE STORED-SCOPE RESTORE below (D-15/W-29):
-      // the boot-captured stored scope restores ONLY at generation 0,
-      // exactly once (never over a user switch — the switcher-rebind
-      // race); a stored id in the directory differing from the booted
-      // scope is ADOPTED (the launch's reset+switch); a stale id
-      // (deleted upstream) is cleared — the env pin holds.
+      // persisted scope. THE STORED-SCOPE RESTORE (D-15/W-29): the
+      // boot-captured stored scope restores ONLY at generation 0, exactly
+      // once (never over a user switch — the switcher-rebind race); a
+      // stored id in the directory differing from the booted scope is
+      // ADOPTED (the launch's reset+switch); a stale id (deleted
+      // upstream) is cleared — the env pin holds.
       // FW-34-B (§3.1) — THE TIME-MACHINE POSTURE RESTORE, same pass,
       // AFTER the scope branch: when the stored posture left the machine
       // at a selected instant (scrubbed / t-x / paused) and the machine
       // STILL sits at its boot 'live' mode, the console REOPENS VIEWING
       // THAT INSTANT (L3: the incident view was lost on every reload);
       // a user who touched the TM first left 'live' already — their
-      // choice stands (D-15). Clamped to [floor, anchor] exactly like
-      // the scrubber's commit — never a fabricated instant.
+      // choice stands (D-15). Clamped to [floor, anchor] like the
+      // scrubber's commit — never a fabricated instant.
       await read('GET /v1/projects', async () => {
         const records = await client.projects.listAll();
         dispatch({ kind: 'projects-listed', at: instants.nowMs(), records: [...records] });
@@ -548,6 +545,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // record's scope gate compares against the desk this console
         // actually opens into (the plane's own law).
         resume.restoreStoredDraft();
+        // FW-42-B (J-3): the listing resolved the scope (the adoption, the
+        // stale clear, or a same-id settle) — retire the Project line's
+        // resolving marker (the bound setter re-renders; a pre-mount flip
+        // already read false at the mount's own view literal).
+        resume.scopeResolutionSettled();
       });
       // FW-37-B (F-2) + FW-38-B (G-3 — the org-status bundle field): THE
       // OVERSIGHT READ CADENCE, one bundle per SESSION-OWN desk
@@ -786,14 +788,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // idempotent). D-7 (W-27): the read pairs the ref with the
       // RE-OBSERVED record of THIS scope — never the mutable
       // state.project (a mid-beat scope move could cross the pair).
-      // FW-41-C (I-5's client half — S1's D1, the 15+ min compile stall):
-      // the ref flip triggered the org-status read EXACTLY ONCE pre-fix
-      // and this branch STOPPED once the ref bound — a read landing on a
-      // snapshot-less serverless instance (the bind + the snapshot report
-      // are TWO writes; the watch store is per-instance, back-filled only
-      // by the host's 10s staleness heal) was NEVER retried in-session.
-      // The branch now also runs while the ref is BOUND but no snapshot is
-      // on record — the beat re-reads the org status until it lands.
+      // FW-41-C (I-5, S1's D1 compile stall): pre-fix the branch STOPPED
+      // once the ref bound — a read landing on a snapshot-less serverless
+      // instance (the bind + the snapshot report are TWO writes; the
+      // watch store is per-instance, back-filled only by the host's 10s
+      // staleness heal) was NEVER retried in-session. The branch now also
+      // runs while the ref is BOUND but no snapshot is on record — the
+      // beat re-reads the org status until it lands.
       await read('GET /v1/projects/:id', async () => {
         const project = await client.projects.get(scopeNow);
         dispatchIfCurrent(scopeNow, { kind: 'project-loaded', at: instants.nowMs(), project });
@@ -915,6 +916,9 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       playbackSpeed: sessionPosture.timeMachine.speed,
       playbackCustomSpeed: sessionPosture.timeMachine.freeSpeed,
       playbackCustomSpeedError: null,
+      // FW-42-B (J-3): a stored scope differing from the boot pin keeps
+      // the Home tile's Project line resolving until the listing lands.
+      ...(resume.bootScopeResolving() ? { bootScopeResolving: true } : {}),
     };
     // FW-40-B: bind the boot/resume plane's view setters (the
     // holder+setter pattern — a disclosure that landed BEFORE mount is
@@ -923,6 +927,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     resume.bindView(
       (note) => { view = { ...view, tmHealNote: note }; },
       (savedAt) => { view = { ...view, launchDraftRestored: savedAt }; },
+      (resolving) => { view = { ...view, bootScopeResolving: resolving }; render(); }, // FW-42-B (J-3): the listing's settle retires the marker
     );
     let paletteResults: readonly PaletteEntry[] = [];
     // §4.10's once-per-notice toast guard: the id of the notice the
@@ -1400,7 +1405,7 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       refresh,
     });
 
-    /** The palette's live results for the current query (§4.14; D4's 100% coverage). FW-37-B (Round F register F-3 — the institutional disqualifier): the desks the index rides are the SESSION'S OWN, ALWAYS — computed INSIDE core/palette.ts with no widening parameter (the FW-34-B "all desks" override is removed at the module level; a wall a caller can widen is not a wall). The Round F evidence (L1 and L3 each read another session's full blotter; M1: "157 other desks"; L3: "199 other desks") ruled explicit disclosure insufficient — foreign desks never appear by name in the switcher or the palette (the L12 boundary, now hard). */
+    /** The palette's live results for the current query (§4.14; D4's 100% coverage). FW-37-B (Round F F-3 — the institutional disqualifier): the desks the index rides are the SESSION'S OWN, ALWAYS — computed INSIDE core/palette.ts with no widening parameter (the FW-34-B "all desks" override is gone at the module level; a wall a caller can widen is not a wall). The Round F evidence (L1 and L3 each read another session's full blotter; M1: "157 other desks") ruled disclosure insufficient — foreign desks never appear by name in the switcher or palette (L12, now hard). */
     const refreshPalette = (): void => {
       if (view.palette === null) { paletteResults = []; return; }
       paletteResults = rankPalette(paletteIndex(state, capsulesForPalette), view.palette.query);
@@ -1897,23 +1902,21 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     // THE DELEGATION LAW (W-10b): the navigation branch acts ONLY on a
     // [data-target] match that is an interactive BUTTON (nav items,
     // brand rows, the bell, palette items, empty-state actions); a
-    // non-button match (an ancestor state marker, a stray container)
-    // falls through to the action branches — when T051 put data-target
-    // on the .tradrl-shell root, every click was intercepted as
-    // navigation and silently returned before any [data-action] branch
-    // could run (the J1 hard block).
+    // non-button match falls through to the action branches — when T051
+    // put data-target on the .tradrl-shell root, every click was
+    // intercepted as navigation before any [data-action] branch could
+    // run (the J1 hard block).
     /**
-     * FW-34-B (§3.6 — the Mark-read incident, L4) — THE ONE INTERACTION
-     * RESOLVER: the delegated click handler's whole body, lifted so the
-     * KEYBOARD path can run the IDENTICAL branches. The beat
-     * re-projection replaces the tree ~every 500ms-1s; when it lands
-     * between a focused button's keydown and the browser's composed
-     * click, the click composes on the DETACHED node and never bubbles
-     * (L4: "button vanished on the beat, action never fired"). The
-     * keyboard path dispatches on the SETTLED state — the live focused
-     * element at keydown (its identity D-10's restore keeps fresh) —
-     * and cancels the browser's click synthesis, so the action fires
-     * EXACTLY once, on the element the user sees.
+     * FW-34-B (§3.6, L4) — THE ONE INTERACTION RESOLVER: the delegated
+     * click handler's whole body, lifted so the KEYBOARD path runs the
+     * IDENTICAL branches. The beat re-projection replaces the tree
+     * ~every 500ms-1s; when it lands between a focused button's keydown
+     * and the browser's composed click, the click composes on the
+     * DETACHED node and never bubbles (L4: "button vanished on the
+     * beat"). The keyboard path dispatches on the SETTLED state — the
+     * live focused element at keydown (its identity D-10's restore
+     * keeps fresh) — and cancels the browser's click synthesis, so the
+     * action fires EXACTLY once, on the element the user sees.
      */
     const interactionAt = (rawTarget: ClickTarget | null): void => {
       let target = rawTarget?.closest?.('[data-target]');

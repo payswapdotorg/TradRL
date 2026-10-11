@@ -6172,6 +6172,80 @@ function draftStored(shared: MapStorage): boolean {
   return parseStoredLaunchDraft(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY) ?? null) !== null;
 }
 
+// ---------------------------------------------------------------------------
+// FW-42-B (Round J register J-3 — the prj-demo-console flash on the
+// Project line during reload, L2's words: "the Project line flashes
+// prj-demo-console before settling on the remembered project; corrects
+// after the read completes"). THE LAW: while the boot listing resolves a
+// stored scope that differs from the env pin, the Home ORGANIZATION
+// tile's Project detail teaches the resolving marker — never the env
+// pin's id. A fresh browser (no stored scope) keeps the exact pre-fix
+// bytes (the demo flow untouched).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-42-B (J-3) — the boot-scope resolving marker on the Project line', () => {
+  /** The Home ORGANIZATION tile's Project detail line (the flash's exact surface). */
+  function homeProjectLineOf(root: FakeElement): string {
+    for (const item of elementsOf(root).filter((element) => element.hasClass('rich-dl-item'))) {
+      const pair = item.children.filter((child) => child.tagName === 'DT' || child.tagName === 'DD');
+      if (pair.length === 2 && pair[0].tagName === 'DT' && textOf(pair[0]) === 'Project' && pair[1].tagName === 'DD') return textOf(pair[1]);
+    }
+    return '';
+  }
+
+  /** A transport whose LISTING read is gated (the boot's resolve window, held open); every other boot read answers instantly. */
+  function gatedListingTransport(gate: Promise<void>): ApiTransport {
+    const ok = (data: unknown): SdkResponse => ({ status: 200, headers: {}, body: { requestId: 'req-1', data } });
+    const projectOf = (id: string): Record<string, unknown> => ({ id, tenantId: 'tenant-a', name: `desk ${id}`, executionMode: 'simulation', lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: null }, createdAt: T0, updatedAt: T0 });
+    return async (request) => {
+      const key = `${request.method} ${request.path.split('?')[0]}`;
+      if (key === 'GET /v1/meta') return ok({ apiVersion: 'v1', supportedVersions: ['v1'], routeFamilies: [] });
+      if (key === 'GET /v1/projects') { await gate; return ok({ items: [projectOf('prj-compiled'), projectOf('prj-remembered')] }); }
+      if (key === 'GET /v1/projects/prj-compiled' || key === 'GET /v1/projects/prj-remembered') return ok(projectOf(key.split('/').pop() as string));
+      if (key === 'POST /v1/knowledge/query' || key === 'POST /v1/outcomes/query' || key === 'POST /v1/post-mortems/query') return ok({ items: [] });
+      if (key === 'GET /v1/execution/submissions' || key === 'GET /v1/jobs') return ok({ items: [] });
+      return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'no route', status: 404 } } };
+    };
+  }
+
+  /** Boot the real console against the gated transport (mount + let the meta read land; the listing stays gated). */
+  async function bootGated(scopeStorage: MapStorage): Promise<{ handle: ConsoleHandle; root: FakeElement; doc: FakeDocument; releaseListing(): void }> {
+    let releaseListing: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { releaseListing = resolve; });
+    const handle = bootConsole({
+      baseUrl: 'http://scripted.invalid', token: 'token-test',
+      scope: { tenantId: 'tenant-a', projectId: 'prj-compiled' },
+      transport: gatedListingTransport(gate),
+      instants: { nowMs: () => T0 + 1000 },
+      storage: scopeStorage, onboardingStorage: scopeStorage, simulated: true, scopeStorage,
+    });
+    const doc = new FakeDocument();
+    const root = new FakeElement('div');
+    handle.mount(root as unknown as Parameters<ConsoleHandle['mount']>[0], doc as unknown as Parameters<ConsoleHandle['mount']>[1]);
+    await new Promise((resolve) => { setTimeout(resolve, 0); }); // the meta read lands (connected paint); the listing stays gated
+    return { handle, root, doc, releaseListing: () => releaseListing() };
+  }
+
+  it('J-3 THE LAW: a stored scope differing from the env pin resolves on the Project line — the first tile paint never teaches the env pin\'s id', async () => {
+    const storage = new MapStorage();
+    storage.map.set('tradrl_console_posture', JSON.stringify({ onboarded: true, scopeProjectId: 'prj-remembered', timeMachine: { speed: '1x', freeSpeed: '', mode: 'live', viewAt: null } }));
+    const booted = await bootGated(storage);
+    expect(homeProjectLineOf(booted.root)).toBe('resolving your desk…'); // RED pre-fix: 'prj-compiled' — the env pin's flash
+    booted.releaseListing();
+    await booted.handle.refresh();
+    expect(booted.handle.state().scope.projectId).toBe('prj-remembered'); // the stored scope adopted
+    expect(homeProjectLineOf(booted.root)).toBe('prj-remembered'); // the settled line — the remembered desk; the flash never rendered
+  });
+
+  it('J-3 the demo flow stays untouched: a browser with NO stored scope renders the env pin\'s id from the first tile paint (never a marker)', async () => {
+    const booted = await bootGated(new MapStorage());
+    expect(homeProjectLineOf(booted.root)).toBe('prj-compiled'); // the env pin, byte-for-byte the pre-fix surface
+    booted.releaseListing();
+    await booted.handle.refresh();
+    expect(homeProjectLineOf(booted.root)).toBe('prj-compiled'); // the same id settles — no flash was possible, no marker ever rendered
+  });
+});
+
 
 // ---------------------------------------------------------------------------
 // FW-40-C (the wizard race cluster + H-1 + the g1 export seam) — executed.

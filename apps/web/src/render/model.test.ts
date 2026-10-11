@@ -1673,3 +1673,35 @@ describe('FW-42-B (I-3b): the reload-path pending window on the Home ORGANIZATIO
     expect(bytes).not.toContain('data-hydration-pending="true"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-42-B (Round J register J-3 — the prj-demo-console flash on the
+// Project line during reload, L2/M2's find): the Home ORGANIZATION tile's
+// Project detail taught the ENV PIN's desk id for the whole listing
+// latency, then flashed to the remembered desk when the stored-scope
+// adoption landed. THE LAW: while the boot listing resolves a stored
+// scope that differs from the env pin, the Project line teaches the
+// resolving marker — never a wrong desk id.
+// ---------------------------------------------------------------------------
+
+describe('FW-42-B (J-3): the Home tile\'s Project line resolves during the boot-scope window', () => {
+  it('the resolving marker renders while the listing is in flight (the view flag the boot/resume plane owns)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'home', bootScopeResolving: true }));
+    expect(bytes).toContain('<dt>Project</dt><dd>resolving your desk…</dd>'); // the marker, never the env pin's flash
+    expect(bytes).not.toContain(`<dt>Project</dt><dd>${SCOPE.projectId}</dd>`);
+  });
+
+  it('the settled render keeps the exact pre-fix bytes (undefined flag = the default every prior surface keeps)', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'home' }));
+    expect(bytes).toContain(`<dt>Project</dt><dd>${SCOPE.projectId}</dd>`);
+    expect(bytes).not.toContain('resolving your desk…'); // a fresh boot (no stored scope) NEVER carries the marker — the demo flow untouched
+  });
+});
