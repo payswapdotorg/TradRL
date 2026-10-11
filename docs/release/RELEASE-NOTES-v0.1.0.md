@@ -573,3 +573,32 @@ intermittent deliverable stub (1/~50), I-5 the deep-project compile stall.
 FW-41 targets the register. The structural decisions beyond the seam wave:
 E-6 (the closed research world — M3's decisive NO), E-7 (pricing), M1's
 Oversight cockpit.
+
+### FW-41 — the seam wave (the Round I register's top items) + the Neon quota incident
+
+- **PR #93 (the adopt route — THE Round I headline, 9/9 personas):** the route
+  now answers the shipped client parser contract (desks array + {projectId,
+  adopted, already}) and PERSISTS adoption server-side — identity-derived,
+  fail-closed, idempotent, demo-excluded, no-expropriation. Live-verified
+  end-to-end: a desk launched while signed in no longer reappears un-adopted
+  after sign-out/sign-in.
+- **PR #92 (the select display law):** the form-control identity law's
+  select-class gap fixed at the class level — a `<select>` never carries a
+  `value` content attribute, so the beat transplant wiped the display every
+  ~500ms; the display now re-syncs on every projection. Live-verified: the
+  execution select displays "simulation".
+- **PR #94 (the client ceremony half):** the false "Accounts are not
+  available" wrapper (a route failure while signed in now renders the TYPED
+  failure; the signed-in card never collapses), the post-launch LIVE
+  hand-off, the hydration pending marker, I-6 (the launch-draft event's span
+  label), I-8 (the next-launch entry), + the I-4/I-5 host-side diagnoses.
+- **The Neon 402 quota incident (resolved by migration):** the org-level
+  free-tier quota hard-blocked the durable store (5.94 GB data transfer;
+  even `SELECT 1` answered 402). Production migrated to a fresh project
+  under the operator's second org (tradrl-durable-fresh, 14/14 DDL applied
+  single-statement, the demo world self-seeds idempotently per instance).
+  The old data remains locked until the quota window resets (~Oct 15).
+- Gates: #92 8547+1skip · #93 8539+1skip · #94 8570+1skip — all ZERO
+  failures, D-1 quiet. The D-023 batteries satisfied by tree-identity +
+  superset proofs (four standalone runs OOM-died on the 4GB box under
+  worker concurrency — the documented house rule going forward).
