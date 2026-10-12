@@ -7171,3 +7171,174 @@ describe('executed boot: FW-47-B (M-6) — the wizard Preferences validation tea
     expect(textOf(errors[0] as FakeElement)).toBe(offenderMessageOf('rebalance daily'));
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-47-B (the minors — S1's finding, L2-cont's dead worker's 12s-apart
+// duplicate): a re-declare over the host route's IDEMPOTENT-PER-CONTENT
+// law (a re-declare returns the STORED record — the first mint stands,
+// durable.ts's own law) never duplicates a session chain row: ONE
+// record, ONE alert-declared session event + ONE derived-prefix event.
+// The fix is the console's DISPATCH SITE (the fold stays a pure
+// append-only event log): an answer for a record the workspace already
+// carries (by id) is a NO-OP, no dispatch.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-47-B (the minors) — the re-declare dedupe (one record, one alert-declared session row)', () => {
+  /** Type into the alert-declare form's field (the FW-46 harness's own helper, local to this block). */
+  function typeAlertField(rig: Rig, field: string, value: string): void {
+    const input = findByData(rig.root, 'data-alert-field', field);
+    if (input === null) throw new Error(`no alert field ${field} in the current tree`);
+    input.value = value;
+    rig.doc.fire('input', { target: input });
+  }
+
+  /**
+   * A DURABLE-LAW transport fixture: POST /v1/projects/:id/alerts and
+   * POST /v1/projects/:id/notes are IDEMPOTENT PER CONTENT (the host
+   * route's own law) — the FIRST submit mints the record (the inner
+   * route's one mint, counted); a re-submit of the same content is
+   * answered BY THE WRAPPER with the STORED record (the host's
+   * idempotent answer, never a swallow — the POST crossed the
+   * transport, counted at postsReached / notePostsReached). All four
+   * counters belong to the TRANSPORT fixture, never the host.
+   */
+  function durableLawAlertsTransport(inner: ApiTransport): {
+    readonly transport: ApiTransport;
+    readonly postsReached: { count: number };
+    readonly declares: { count: number };
+    readonly notePostsReached: { count: number };
+    readonly attaches: { count: number };
+  } {
+    const postsReached = { count: 0 };
+    const declares = { count: 0 };
+    const notePostsReached = { count: 0 };
+    const attaches = { count: 0 };
+    const storedByContent = new Map<string, Record<string, unknown>>();
+    const storedNotesByContent = new Map<string, Record<string, unknown>>();
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      const noteMatch = /^\/v1\/projects\/([^/]+)\/notes$/.exec(path);
+      if (request.method === 'POST' && noteMatch !== null) {
+        notePostsReached.count += 1; // EVERY submit crosses the transport (the wrapper answers the second, never swallows it)
+        const noteProject = noteMatch[1] ?? '';
+        const noteBody = request.body as Record<string, unknown>;
+        const noteKey = `${noteProject}:${String(noteBody.title ?? '')}:${String(noteBody.text ?? '')}`;
+        const storedNote = storedNotesByContent.get(noteKey);
+        if (storedNote !== undefined) {
+          return { status: 200, headers: {}, body: { requestId: 'req-n', data: { note: storedNote } } }; // the host's idempotent answer: the STORED record, the first mint stands
+        }
+        attaches.count += 1; // the first mint — the only attach the inner route ever sees
+        const mintedNote = {
+          noteId: `note:fw47b-${attaches.count}`,
+          tenant: 'tenant-a',
+          project: noteProject,
+          attachedAt: T0 + 500 + attaches.count,
+          title: String(noteBody.title ?? ''),
+          text: String(noteBody.text ?? ''),
+        };
+        storedNotesByContent.set(noteKey, mintedNote);
+        return { status: 200, headers: {}, body: { requestId: 'req-n', data: { note: mintedNote } } };
+      }
+      const declareMatch = /^\/v1\/projects\/([^/]+)\/alerts$/.exec(path);
+      if (request.method === 'POST' && declareMatch !== null) {
+        postsReached.count += 1; // EVERY submit crosses the transport (the console sent it — the wrapper answers the second, never swallows it)
+        const project = declareMatch[1] ?? '';
+        const body = request.body as Record<string, unknown>;
+        const contentKey = `${project}:${String(body.market ?? '')}:${String(body.direction ?? '')}:${String(body.level ?? '')}`;
+        const stored = storedByContent.get(contentKey);
+        if (stored !== undefined) {
+          return { status: 200, headers: {}, body: { requestId: 'req-a', data: { alert: stored } } }; // the host's idempotent answer: the STORED record, the first mint stands
+        }
+        declares.count += 1; // the first mint — the only declare the inner route ever sees
+        const alert = {
+          alertId: `alert:fw47b-${declares.count}`,
+          tenant: 'tenant-a',
+          project,
+          declaredAt: T0 + 400 + declares.count,
+          market: String(body.market ?? ''),
+          direction: body.direction,
+          level: String(body.level ?? ''),
+        };
+        storedByContent.set(contentKey, alert);
+        return { status: 200, headers: {}, body: { requestId: 'req-a', data: { alert } } };
+      }
+      return inner(request);
+    };
+    return { transport, postsReached, declares, notePostsReached, attaches };
+  }
+
+  it('a DOUBLE-SUBMIT of the same envelope (the 12s-apart shape: re-open the form, re-declare) mints ONCE and attests ONCE — both submits cross the transport (postsReached 2), the first mint stands (api.declares.count 1), and the export carries ONE alert-declared session row + ONE derived-prefix row', async () => {
+    const api = durableLawAlertsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'market-world');
+    // THE FIRST DECLARE
+    clickAction(rig, 'alert-declare-open');
+    typeAlertField(rig, 'market', 'BTC-USD');
+    typeAlertField(rig, 'level', '61500');
+    clickAction(rig, 'alert-declare');
+    await settle();
+    expect(api.postsReached.count).toBe(1);  // the submit crossed the transport
+    expect(api.declares.count).toBe(1);      // the first mint
+    expect(rig.handle.state().alerts.map((alert) => alert.alertId)).toEqual(['alert:fw47b-1']);
+    expect(findByData(rig.root, 'data-price-alerts', 'closed')).not.toBeNull(); // success closed the form
+
+    // THE DOUBLE-SUBMIT (S1's finding, the dead worker's 12s-apart shape): the
+    // user re-opens the declare form and submits the SAME envelope again. The
+    // host route answers the STORED record (idempotent per content) — and the
+    // console must NOT dispatch alert-declared for a record the workspace
+    // already carries (by id): one record, one attestation.
+    clickAction(rig, 'alert-declare-open');
+    typeAlertField(rig, 'market', 'BTC-USD');
+    typeAlertField(rig, 'level', '61500');
+    clickAction(rig, 'alert-declare');
+    await settle();
+    expect(api.postsReached.count).toBe(2);  // the second submit crossed the transport too (the console sent it — the wrapper answered it, never a swallow)
+    expect(api.declares.count).toBe(1);      // THE FIRST-MINT LAW: the re-declare never minted a second record
+    expect(rig.handle.state().alerts.map((alert) => alert.alertId)).toEqual(['alert:fw47b-1']); // still ONE record row
+
+    // THE SYMMETRIC NOTE-ATTACH SHAPE (the guard held SYMMETRIC at the
+    // note-attach dispatch site — the same route law, the same duplicate
+    // shape): a re-attach of the same content answers the STORED record,
+    // and the console must NOT dispatch note-attached for a record the
+    // workspace already carries (by id): one record, one attestation.
+    clickNav(rig, 'research');
+    clickAction(rig, 'note-attach-open');
+    typeNoteField(rig, 'title', 'Factset export notes');
+    typeNoteField(rig, 'text', 'fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4');
+    clickAction(rig, 'note-attach');
+    await settle();
+    expect(api.notePostsReached.count).toBe(1); // the submit crossed the transport
+    expect(api.attaches.count).toBe(1);         // the first mint
+    expect(rig.handle.state().notes.map((note) => note.noteId)).toEqual(['note:fw47b-1']);
+    expect(findByData(rig.root, 'data-note-attach', 'closed')).not.toBeNull(); // success closed the form
+    // THE DOUBLE-SUBMIT (the same 12s-apart shape, the note route's own law):
+    // re-open the attach form and submit the SAME content again — the host
+    // answers the STORED record and the console dispatches NOTHING for it.
+    clickAction(rig, 'note-attach-open');
+    typeNoteField(rig, 'title', 'Factset export notes');
+    typeNoteField(rig, 'text', 'fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4');
+    clickAction(rig, 'note-attach');
+    await settle();
+    expect(api.notePostsReached.count).toBe(2); // the second submit crossed the transport too (the wrapper answered it, never a swallow)
+    expect(api.attaches.count).toBe(1);         // THE FIRST-MINT LAW: the re-attach never minted a second record
+    expect(rig.handle.state().notes.map((note) => note.noteId)).toEqual(['note:fw47b-1']); // still ONE record row
+
+    // THE CHAIN PIN: ONE alert-declared session row + ONE derived-prefix row —
+    // never the pre-fix duplicate (the fold deduped state.alerts while the
+    // session's linked history carried BOTH attestations). The SAME law pins
+    // the note-attach class symmetric: ONE note-attached session row + ONE
+    // derived-prefix row over the whole double-double-submit session.
+    const doc = JSON.parse(serializeWorkspaceExport(rig.handle.state())) as { events: Array<Record<string, unknown>> };
+    const alertDeclaredEvents = doc.events.filter((entry) => (entry.payload as { kind?: string } | undefined)?.kind === 'alert-declared');
+    const derivedPrefixRows = alertDeclaredEvents.filter((entry) => entry.derived === true);
+    const sessionRows = alertDeclaredEvents.filter((entry) => entry.derived !== true);
+    expect(derivedPrefixRows).toHaveLength(1); // one per declared-alert row on record
+    expect(sessionRows).toHaveLength(1);       // ONE attestation — the duplicate session row is dead
+    const noteAttachedEvents = doc.events.filter((entry) => (entry.payload as { kind?: string } | undefined)?.kind === 'note-attached');
+    const noteDerivedRows = noteAttachedEvents.filter((entry) => entry.derived === true);
+    const noteSessionRows = noteAttachedEvents.filter((entry) => entry.derived !== true);
+    expect(noteDerivedRows).toHaveLength(1); // one per attached-note row on record
+    expect(noteSessionRows).toHaveLength(1); // ONE attestation — the symmetric duplicate is dead
+    expect(verifyWorkspaceExport(doc)).toEqual({ ok: true }); // the chain laws hold end to end
+  });
+});
