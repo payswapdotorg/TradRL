@@ -110,7 +110,7 @@ let buildB: ReturnType<typeof import('./build-console.mjs').buildPrebuiltOutput>
 // an implicit default again. The beforeAll's own 120s hook timeout is
 // deliberately untouched (never flaked in the record — raising it would be
 // un-evidenced scope growth).
-const DETERMINISM_TEST_TIMEOUT_MS = 5_000; // the pre-raise value (vitest's implicit default, now NAMED) — the D-1 raise lands on this surface
+const DETERMINISM_TEST_TIMEOUT_MS = 60_000; // the D-1 raise (FW-49): the W-8/FW-2-b documented-safe ceiling — a 12x margin over the ~4.4s warm measure, floor-pinned by the D-1 test below
 
 beforeAll(async () => {
   const build = await import('./build-console.mjs');
