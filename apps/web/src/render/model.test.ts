@@ -472,6 +472,39 @@ describe('render model: the job RESULT section (§4.5a — the R1 fix, W-19)', (
     expect(section?.pairs).toContainEqual(['epochs', '3']);            // numbers render grouped/deterministic
     expect(section?.pairs).toContainEqual(['deliverable', 'training summary']);
   });
+
+  it('FW-48 keep-green: the RESULT section\'s projection is TOTAL over the compute\'s structured blocks — a payload carrying the inputs + noteAnalysis blocks renders them (readable JSON, never a silent drop; the console needs ZERO changes for the E-6 compute layer)', () => {
+    // The FW-48 server-side compute rides the job record's result payload as
+    // two ADDITIVE structured blocks. The console's projection is already
+    // total over the payload's fields (the D-9/R1 law), so the blocks render
+    // without a single console change — pinned green HERE so a future
+    // purpose-built card never silently drops them (the FW-47-A pattern).
+    const job = completedResearchJob({
+      kind: 'release-candidate', specId: 'spec-launch-director', version: 1, project: 'proj-a',
+      inputs: {
+        notes: [{ noteId: 'note:78705f8a', attachedAt: T0 + 40, title: 'M2 Round M desk research priors', contributed: '1 typed parameter' }],
+        parameters: [{ id: 'c-1', domain: 'outcome', subject: 'order.notional', kind: 'limit.max', bound: '30000', severity: 'blocking', fromNote: 'note:78705f8a' }],
+        disclosure: 'the compute layer read them: 1 typed parameter(s) parsed with per-parameter provenance',
+      },
+      noteAnalysis: {
+        evaluations: [{ id: 'c-1', subject: 'order.notional', kind: 'limit.max', bound: '30000', fromNote: 'note:78705f8a', subjectClass: 'order_notional', status: 'evaluated', observed: '45750.375', verdict: 'exceeded', basis: 'the largest single booked fill\'s notional', note: 'post-hoc observation' }],
+        statement: 'post-hoc observation over the desk\'s own booked fill records — analysis, never enforcement (L20)',
+      },
+    });
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'job-updated', at: T0 + 40, job },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section', sheet: { kind: 'job', id: 'job-r1' } }));
+    expect(bytes).toContain('data-def="RESULT"');
+    expect(bytes).toContain('note:78705f8a');      // the per-parameter provenance renders
+    expect(bytes).toContain('45750.375');          // the observed figure renders
+    expect(bytes).toContain('analysis, never enforcement'); // the L20 statement renders
+    // The pure projection carries both blocks as pairs (the structured law, directly).
+    const section = jobResultSectionOf(job);
+    expect(section?.pairs.some(([label]) => label === 'inputs')).toBe(true);
+    expect(section?.pairs.some(([label]) => label === 'noteAnalysis')).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1759,6 +1792,21 @@ describe('FW-45: the research-note ingestion surface (the E-6 MVP — boundary-t
     expect(bytes).toContain('data-note-attach="open"');
     expect(bytes).toContain('the note text is required');
     expect(bytes).toContain('value="A title"'); // the buffered edit survives the error render
+  });
+
+  it('FW-48: the note paste target TEACHES the typed-declaration boundary at the point of ingestion — a line in the constraint grammar is parsed as a typed parameter; every other line rides as evidence only, never fabricated into parameters', () => {
+    // M3's flip condition is answered at the point of ingestion: the analyst
+    // is taught WHAT the compute reads BEFORE pasting (the anti-deception
+    // law's own surface — the same grammar the wizard's Constraints step
+    // teaches, so the typed vocabulary is never a hidden protocol).
+    const state = reduceAll(populatedWorkspace(), [
+      { kind: 'section-selected', at: T0 + 50, section: 'research' as never },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    const open = { ...defaultShellView(state), noteAttach: { edits: {}, error: null } as never };
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, open));
+    expect(bytes).toContain('A line in the constraint grammar (id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2) is parsed as a typed parameter of this project\'s research jobs; every other line rides as evidence only, never fabricated into parameters');
+    expect(bytes).toContain('data-note-field="text"'); // the paste target itself still renders
   });
 
   it('the notes list is L4-PROJECTED: a note attached after the view instant is hidden (never a future note rendered)', () => {

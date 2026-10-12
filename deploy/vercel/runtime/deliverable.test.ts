@@ -24,6 +24,7 @@
 import { describe, expect, it } from 'vitest';
 import { validConstraintSet, validCreateProjectRequest, validGoal } from '../../../services/api/src/fixtures';
 import type { ConstraintSetStatement, GoalStatement, TimestampMs } from '../../../services/api/src/index';
+import type { ResearchNoteRecord } from './notes';
 import {
   composeResearchDeliverableResult,
   declaredConstraintFacts,
@@ -37,6 +38,7 @@ import {
 } from './deliverable';
 import {
   DEMO_PROJECT_ID,
+  attachDemoNote,
   demoControlPlane,
   demoDeliverableSourceOf,
   demoExecutionGateway,
@@ -1076,5 +1078,291 @@ describe('deploy/vercel — FW-46: the deliverable\'s provenance names the decla
     });
     expect(unwired.summary as string).toContain('no price alerts declared on this project on record'); // the optional source degrades to the same honest sentence
     expect(unwired.alerts).toEqual({ count: 0, refs: [] } as never);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-48 (the E-6 compute layer — M3's second YES-flip condition: "the day
+// the compute layer reads what I ingest AND pricing publishes sanely, my
+// verdict flips"): the attached research notes are part of the research
+// job's INPUT SET with full provenance — the deliverable discloses the
+// compute's ACTUAL input set (the notes at their own instants, the parsed
+// parameters with "from note:<id>" provenance), its analysis cites the
+// note-derived inputs tested against the desk's OWN booked fills, and the
+// pre-FW-48 false tail "nothing computes over it here" is DEAD. THE HONEST
+// BOUNDARY holds everywhere: a note carrying no typed declaration rides as
+// evidence only, never fabricated into parameters.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — FW-48: the deliverable discloses the compute\'s actual input set and cites the note-derived parameters', () => {
+  const AT_NOTE = AT + 500;
+
+  /** M2's own marker note (note:78705f8a, the id the Round M export carried) — free-text priors + ONE grammar line. */
+  function markerNoteWithDeclaration(): ResearchNoteRecord {
+    return {
+      noteId: 'note:78705f8a',
+      tenant: TENANT,
+      project: 'prj-fw48-deep',
+      attachedAt: AT_NOTE,
+      title: 'M2 Round M desk research priors',
+      text: 'P2M desk research priors — the sizing discipline the analysts run.\n'
+        + 'c-1:outcome:order.notional:limit.max:30000\n'
+        + 'half-life 6.4d, z-entry 1.8/z-exit 0.4, overlay correlation 0.62, turnover 8.3x/month, fee budget 2.5 bps',
+    } as ResearchNoteRecord;
+  }
+
+  /** The control note — the same digest family, ZERO grammar lines (evidence only). */
+  function controlNote(): ResearchNoteRecord {
+    return {
+      noteId: 'note:43b8a354',
+      tenant: TENANT,
+      project: 'prj-fw48-deep',
+      attachedAt: AT_NOTE + 1_000,
+      title: 'Factset export notes',
+      text: 'fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4',
+    } as ResearchNoteRecord;
+  }
+
+  /** The desk's own session records: the seeded blotter's rows (2 booked fills + 1 refusal — the standing book). */
+  function computeSessionRecords(): DeliverableSessionRecords {
+    return { submissions: [...demoSubmissionBlotter()], decisions: [] };
+  }
+
+  it('THE INPUT SET at the notes\' OWN instants: the payload\'s inputs block carries both notes at their OWN attachedAt (never the composition clock) with what each contributed, and the parsed parameter with its "from note:<id>" provenance', () => {
+    const payload = composeResearchDeliverableResult({
+      project: 'prj-fw48-deep',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      records: computeSessionRecords(),
+      notes: [{ noteId: 'note:78705f8a', title: 'M2 Round M desk research priors' }, { noteId: 'note:43b8a354', title: 'Factset export notes' }],
+      noteRecords: [markerNoteWithDeclaration(), controlNote()],
+    });
+    const inputs = payload.inputs as { notes: readonly { noteId: string; attachedAt: number; title: string; contributed: string }[]; parameters: readonly { subject: string; kind: string; bound: string; fromNote: string }[]; disclosure: string };
+    expect(inputs.notes).toEqual([
+      { noteId: 'note:78705f8a', attachedAt: AT_NOTE, title: 'M2 Round M desk research priors', contributed: '1 typed parameter' },
+      { noteId: 'note:43b8a354', attachedAt: AT_NOTE + 1_000, title: 'Factset export notes', contributed: 'evidence only' },
+    ]);
+    expect(inputs.notes[0]!.attachedAt).toBe(AT_NOTE); // the note's OWN attachedAt — L4, never the composition clock
+    expect(inputs.parameters).toEqual([
+      { id: 'c-1', domain: 'outcome', subject: 'order.notional', kind: 'limit.max', bound: '30000', severity: 'blocking', fromNote: 'note:78705f8a' },
+    ]);
+    expect(inputs.disclosure).toContain('constraint grammar'); // the boundary taught in the disclosure itself
+  });
+
+  it('THE SUMMARY NAMES THE COMPUTE\'S ACTUAL INPUT SET + THE ANALYSIS CITES THE NOTE-DERIVED PARAMETER — the note-declared bound tested against the desk\'s own booked fills, the false tail never rendered', () => {
+    const payload = composeResearchDeliverableResult({
+      project: 'prj-fw48-deep',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      records: computeSessionRecords(),
+      notes: [{ noteId: 'note:78705f8a', title: 'M2 Round M desk research priors' }],
+      noteRecords: [markerNoteWithDeclaration(), controlNote()],
+    });
+    const summary = payload.summary as string;
+    expect(summary).toContain('the compute layer read them: 1 typed parameter(s) parsed with per-parameter provenance (order.notional limit.max 30000 from note:78705f8a)');
+    expect(summary).toContain('Note-derived analysis: 1 note-declared bound tested against the desk\'s own records — order.notional limit.max 30000 from note:78705f8a: exceeded (observed 45750.375)');
+    expect(summary).not.toContain('nothing computes over it here'); // the pre-FW-48 false tail is DEAD — the seam this wave closes
+    // The structured noteAnalysis block carries the same evaluation (text and fields can never disagree).
+    const analysis = payload.noteAnalysis as { evaluations: readonly { subject: string; status: string; observed: string | null; verdict: string | null; fromNote: string }[]; statement: string } | null;
+    expect(analysis).not.toBeNull();
+    expect(analysis!.evaluations).toHaveLength(1);
+    expect(analysis!.evaluations[0]!.subject).toBe('order.notional');
+    expect(analysis!.evaluations[0]!.status).toBe('evaluated');
+    expect(analysis!.evaluations[0]!.observed).toBe('45750.375'); // the demo blotter's own largest booked fill — exact decimals
+    expect(analysis!.evaluations[0]!.verdict).toBe('exceeded');
+    expect(analysis!.evaluations[0]!.fromNote).toBe('note:78705f8a');
+    expect(analysis!.statement).toContain('analysis, never enforcement'); // L20 on the block itself
+  });
+
+  it('THE CONTROL NOTE RIDES AS EVIDENCE ONLY — named in the input set, never fabricated into a parameter; its digest parses zero declarations (the honest boundary at the composition)', () => {
+    const payload = composeResearchDeliverableResult({
+      project: 'prj-fw48-deep',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      records: computeSessionRecords(),
+      notes: [{ noteId: 'note:43b8a354', title: 'Factset export notes' }],
+      noteRecords: [controlNote()],
+    });
+    const inputs = payload.inputs as { notes: readonly { noteId: string; contributed: string }[]; parameters: readonly unknown[] };
+    expect(inputs.notes).toEqual([{ noteId: 'note:43b8a354', attachedAt: AT_NOTE + 1_000, title: 'Factset export notes', contributed: 'evidence only' }]);
+    expect(inputs.parameters).toEqual([]); // never a fabricated parameter from free text
+    expect(payload.noteAnalysis).toBeNull(); // nothing parsed — nothing tested; no fabricated analysis block
+    const summary = payload.summary as string;
+    expect(summary).toContain('the compute layer read them: 0 typed parameters parsed'); // the evidence-only teaching
+    expect(summary).toContain('evidence only');
+    expect(summary).not.toContain('Note-derived analysis:'); // no analysis sentence without a parsed parameter
+    expect(summary).not.toContain('nothing computes over it here');
+  });
+
+  it('THE PRE-FW-48 KEEP-GREEN CALLER: a composition passing NO note records composes the honest empty-input-set sentence — the empty set disclosed as empty, never a fabricated entry', () => {
+    // The pre-FW-48 caller shape (no noteRecords on the input): the honest
+    // absence + the empty input set, disclosed as empty.
+    const unwired = composeResearchDeliverableResult({
+      project: 'prj-fw48-absent',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+    });
+    expect(unwired.summary as string).toContain('no research notes attached to this project on record'); // the FW-45 honest absence stays
+    expect(unwired.summary as string).toContain('read no attached notes'); // the empty input set, disclosed as empty
+    expect(unwired.inputs).toEqual({ notes: [], parameters: [], disclosure: expect.any(String) } as never);
+    expect(unwired.noteAnalysis).toBeNull();
+    // The explicit empty list composes the same honest empty set.
+    const emptyList = composeResearchDeliverableResult({
+      project: 'prj-fw48-absent',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      noteRecords: [],
+    });
+    expect(emptyList.inputs).toEqual({ notes: [], parameters: [], disclosure: expect.any(String) } as never);
+    expect(emptyList.noteAnalysis).toBeNull();
+  });
+
+  it('THE ONE-SOURCE-OF-TRUTH LAW: the note-derived evaluations fold the SAME rows the derived-statistics block folds — the citation\'s row count and the observed figures reconcile with the statistics block over the same session records', () => {
+    const records = computeSessionRecords();
+    const payload = composeResearchDeliverableResult({
+      project: 'prj-fw48-deep',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      records,
+      noteRecords: [markerNoteWithDeclaration()],
+    });
+    const statistics = payload.statistics as DerivedSessionStatistics;
+    const analysis = payload.noteAnalysis as { evaluations: readonly { subject: string; observed: string | null; basis: string }[] };
+    // The statistics block's own fold over the SAME records: 2 booked fills, total 66222.975.
+    expect(statistics.fills.count).toBe(2);
+    expect(statistics.fills.notionalTotal).toBe('66222.975');
+    // The evaluation's observed is the SAME rows' largest single fill, and its
+    // citation names the SAME row count the statistics block counted.
+    expect(analysis.evaluations[0]!.observed).toBe('45750.375');
+    expect(analysis.evaluations[0]!.basis).toContain(`${statistics.fills.count} booked fill`); // the count reconciles — one source of truth
+    // The book-notional class observes the SAME total the statistics block serves.
+    const capitalNote: ResearchNoteRecord = {
+      ...markerNoteWithDeclaration(),
+      text: 'c-4:outcome:capital.budget:limit.max:60000',
+    };
+    const capitalPayload = composeResearchDeliverableResult({
+      project: 'prj-fw48-deep',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      records,
+      noteRecords: [capitalNote],
+    });
+    const capitalRow = (capitalPayload.noteAnalysis as { evaluations: readonly { observed: string | null }[] }).evaluations[0]!;
+    expect(capitalRow.observed).toBe(statistics.fills.notionalTotal); // 66222.975 — the same exact-decimal fold, never a second arithmetic
+  });
+
+  it('THE HONEST DEGRADED SHAPES: no session records vs no fill records — the two DISTINCT honest causes taught in the summary\'s analysis sentence, never one blanket absence', () => {
+    // No session records on file (the pre-F-12 caller shape): the parsed bound is named with its honest untestable cause.
+    const noRecords = composeResearchDeliverableResult({
+      project: 'prj-fw48-norecords',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      noteRecords: [markerNoteWithDeclaration()],
+    });
+    const noRecordsSummary = noRecords.summary as string;
+    expect(noRecordsSummary).toContain('Note-derived analysis: 1 note-declared bound');
+    expect(noRecordsSummary).toContain('no session records on file');
+    expect(noRecordsSummary).not.toContain('no fill records on file');
+    // Session records on file but ZERO booked fills (a desk that executed nothing): the DISTINCT cause.
+    const noFills = composeResearchDeliverableResult({
+      project: 'prj-fw48-nofills',
+      director: 'spec-launch-director',
+      mandate: DENSE_MANDATE,
+      observed: { markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues },
+      promotion: null,
+      records: { submissions: [], decisions: [] },
+      noteRecords: [markerNoteWithDeclaration()],
+    });
+    const noFillsSummary = noFills.summary as string;
+    expect(noFillsSummary).toContain('no fill records on file');
+    expect(noFillsSummary).not.toContain('no session records on file');
+  });
+
+  it('THE WIRING PIN (the third commit\'s own verification): the machinery tick passes noteRecords through — a tick completing a research job over a source serving noteRecordsOf + sessionRecordsOf composes the input set + the note-derived analysis on the job record itself; the demo arm\'s own builder serves the FULL records from the same rows the goal route serves', () => {
+    // THE TICK HARNESS (the F-12 tick pin's own shape): a fake service
+    // capturing the transition the tick drives, over the seeded backing.
+    const handled: { readonly method: string; readonly path: string; readonly body: Record<string, unknown> }[] = [];
+    const job = { jobId: 'job-fw48-tick', kind: 'research', project: 'prj-fw48-wired', tenant: TENANT, status: 'running', submittedAt: AT_NOTE } as never;
+    const service = {
+      jobs: () => [job],
+      handle: (request: { method: string; path: string; body: Record<string, unknown> }) => {
+        handled.push({ method: request.method, path: request.path, body: request.body });
+        return { status: 202, headers: {}, body: {} } as never;
+      },
+      orgStatusSnapshots: () => [],
+    } as never;
+    const ports = seedDemoBacking(TENANT);
+    // A source serving noteRecordsOf + sessionRecordsOf — the wiring the
+    // tick must consume (the durable arm's builder is additionally pinned
+    // end-to-end by the full-handler test; this pin holds the TICK itself).
+    const deliverables: DeliverableSource = {
+      mandateOf: () => DENSE_MANDATE,
+      observedOf: () => ({ markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues }),
+      promotionOf: () => null,
+      sessionRecordsOf: () => computeSessionRecords(),
+      notesOf: () => [{ noteId: 'note:78705f8a', title: 'M2 Round M desk research priors' }],
+      noteRecordsOf: () => [markerNoteWithDeclaration(), controlNote()],
+    };
+    const context = { ports, deliverables, tenant: TENANT, developerToken: 'tok-fw48', internalToken: 'tok-fw48-internal' } as never;
+    demoMachineryTick(service, context, AT_NOTE + 10_000);
+    expect(handled).toHaveLength(1);
+    expect(handled[0]!.body).toMatchObject({ jobId: 'job-fw48-tick', status: 'complete' });
+    const result = (handled[0]!.body as { readonly result: Record<string, unknown> }).result;
+    // The compute's own output rides the job record's result: the input set
+    // (both notes at their OWN instants, the parsed parameter with its
+    // per-parameter provenance) + the note-derived analysis.
+    expect(result.inputs).toEqual({
+      notes: [
+        { noteId: 'note:78705f8a', attachedAt: AT_NOTE, title: 'M2 Round M desk research priors', contributed: '1 typed parameter' },
+        { noteId: 'note:43b8a354', attachedAt: AT_NOTE + 1_000, title: 'Factset export notes', contributed: 'evidence only' },
+      ],
+      parameters: [{ id: 'c-1', domain: 'outcome', subject: 'order.notional', kind: 'limit.max', bound: '30000', severity: 'blocking', fromNote: 'note:78705f8a' }],
+      disclosure: expect.any(String),
+    } as never);
+    const analysis = result.noteAnalysis as { evaluations: readonly { subject: string; status: string; observed: string | null; verdict: string | null; fromNote: string }[]; statement: string };
+    expect(analysis.evaluations).toHaveLength(1);
+    expect(analysis.evaluations[0]!.subject).toBe('order.notional');
+    expect(analysis.evaluations[0]!.observed).toBe('45750.375'); // the desk's own booked fills — the session records the source served
+    expect(analysis.evaluations[0]!.verdict).toBe('exceeded');
+    expect(analysis.evaluations[0]!.fromNote).toBe('note:78705f8a');
+    expect(analysis.statement).toContain('analysis, never enforcement'); // L20 on the block itself
+    const summary = result.summary as string;
+    expect(summary).toContain('the compute layer read them: 1 typed parameter(s) parsed with per-parameter provenance');
+    expect(summary).toContain('Note-derived analysis: 1 note-declared bound');
+    expect(summary).not.toContain('nothing computes over it here'); // the seam this wave closes
+    // THE DEMO ARM'S OWN BUILDER: noteRecordsOf serves the FULL records
+    // from the SAME capture the goal route serves — one source of truth,
+    // the same rows notesOf cites as refs (the durable arm's builder is
+    // pinned end-to-end by the full-handler test; this holds the demo arm).
+    const created = ports.controlPlane.createProject({
+      ...validCreateProjectRequest(TENANT, 'prj-fw48-wired'),
+      tenantId: TENANT,
+      goal: numbersDenseGoal(),
+      constraintSet: numbersDenseConstraintSet(),
+    } as Parameters<typeof ports.controlPlane.createProject>[0]);
+    expect(created.ok).toBe(true);
+    expect(attachDemoNote(ports.controlPlane, TENANT, 'prj-fw48-wired', markerNoteWithDeclaration()).ok).toBe(true);
+    expect(attachDemoNote(ports.controlPlane, TENANT, 'prj-fw48-wired', controlNote()).ok).toBe(true);
+    const builder = demoDeliverableSourceOf(TENANT, ports, { decisionOfJob: () => null, outcomesOf: () => [] }, ports);
+    expect(builder.noteRecordsOf).toBeDefined();
+    expect(builder.noteRecordsOf!('prj-fw48-wired')).toEqual([markerNoteWithDeclaration(), controlNote()]); // the FULL records — verbatim, round-tripped through the capture
+    expect(builder.noteRecordsOf!('prj-fw48-foreign')).toBeNull(); // nothing on record — the honest absence
+    expect(builder.noteRecordsOf!(DEMO_PROJECT_ID)).toBeNull(); // the demo project carries no notes — never a fabricated row
   });
 });

@@ -252,6 +252,22 @@ export function sumExactDecimalStrings(values: readonly string[]): string | null
   return total;
 }
 
+/**
+ * FW-48 (the E-6 compute layer): the EXACT-DECIMAL COMPARE of two canonical
+ * decimal strings — the shared fold behind the note-derived evaluation
+ * (deploy/vercel/runtime/note-compute.ts: each note-declared bound tested
+ * against the desk's own booked fills BY VALUE, with the pre-trade gate's
+ * own per-kind breach law). -1 when a < b, 0 when equal, 1 when a > b; null
+ * on a malformed input (the caller skips the comparison honestly — never a
+ * float, never a fabricated verdict). Exported for the one source of truth
+ * (the sumExactDecimalStrings precedent): the same string-money law this
+ * module's own arithmetic and the pre-trade gate ride, never a second
+ * implementation.
+ */
+export function compareExactDecimalStrings(a: string, b: string): -1 | 0 | 1 | null {
+  return compareDecimals(a, b);
+}
+
 // ---------------------------------------------------------------------------
 // The envelope (the project's own captured records)
 // ---------------------------------------------------------------------------

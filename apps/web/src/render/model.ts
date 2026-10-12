@@ -1297,7 +1297,12 @@ function researchNotesCard(state: WorkspaceState, view: ShellView, viewAt: numbe
     v('div', { class: 'card-title' }, ['Attach a research note']),
     v('p', { class: 'card-note' }, [NOTE_INGESTION_BOUNDARY]),
     ...labeledInput({ label: 'Title', name: 'title', value: typeof edits.title === 'string' ? edits.title : '', required: true, hint: 'The note\'s own title (1..120 characters).', vocabulary: 'note' }),
-    ...labeledInput({ label: 'Note text', name: 'text', value: typeof edits.text === 'string' ? edits.text : '', required: true, hint: 'Paste the note\'s own text — it is stored verbatim and fetches nothing.', vocabulary: 'note' }),
+    // FW-48 (the E-6 compute layer): the paste target TEACHES the
+    // typed-declaration boundary AT THE POINT OF INGESTION — the same
+    // grammar the wizard's Constraints step teaches (one law, two
+    // surfaces), so the typed vocabulary is never a hidden protocol: the
+    // analyst knows WHAT the compute reads BEFORE pasting.
+    ...labeledInput({ label: 'Note text', name: 'text', value: typeof edits.text === 'string' ? edits.text : '', required: true, hint: 'Paste the note\'s own text — it is stored verbatim and fetches nothing. A line in the constraint grammar (id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2) is parsed as a typed parameter of this project\'s research jobs; every other line rides as evidence only, never fabricated into parameters.', vocabulary: 'note' }),
     ...(view.noteAttach.error === null ? [] : [v('p', { class: 'field-error', role: 'alert', 'data-note-error': view.noteAttach.error }, [view.noteAttach.error])]),
     v('div', { class: 'tm-playback' }, [
       v('button', { class: 'tm-button', 'data-action': 'note-attach', type: 'button' }, ['Attach note']),
