@@ -272,3 +272,58 @@ describe('render market: FW-47-B — the honest waiting copy (true in every wait
     expect(row).toContain(formatInstantUtc(T0 + 50)); // the declaration's own instant, named
   });
 });
+
+// ---------------------------------------------------------------------------
+// N-1 (Round N register — the read-lag class, the market-facing surfaces):
+// M2's evidence — "the alert first rendering 'waiting' after its own FIRED
+// record exists ~10s" and "'No execution submissions at this view instant'
+// ~3 min while the fills HAD booked". The firing verdict and the chart's
+// no-prices line both fold over the FILLS read; while that read is IN
+// FLIGHT at the LIVE view they teach "Reading the world…", never a
+// durable verdict/no-record claim. THE LAW: the pre-read state is a
+// LOADING state (the honest-copy law, the FW-41-C precedent) — the
+// waiting verdict and the no-prices line render ONLY when the fills read
+// has answered.
+// ---------------------------------------------------------------------------
+
+describe('render market: N-1 — the read-lag class on the market-facing surfaces', () => {
+  /** The mid-read state: the goal bundle answered (alerts on record), the fills read still in flight, the LIVE view. */
+  function fillsReadInFlight(alerts: readonly PriceAlertRecord[]): ReturnType<typeof openWorkspace> {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'goal-loaded', at: T0 + 5, goal: goalRecord(), constraintSet: constraintSetRecord(), alerts: [...alerts] },
+      { kind: 'section-selected', at: LIVE_AT, section: 'market-world' as const },
+      { kind: 'view-live', at: LIVE_AT },
+    ]);
+  }
+
+  it('an alert row over an IN-FLIGHT fills read teaches "Reading the world…" — never a waiting verdict (M2: the waiting copy rendered while the FIRED record stood)', () => {
+    const state = fillsReadInFlight([priceAlert({ alertId: 'alert:lag-1', market: 'BTC-USD', direction: 'above', level: '61000', declaredAt: T0 + 40 })]);
+    const bytes = serializeConsoleModel(state, LIVE_AT);
+    expect(bytes).toContain('data-alert-row="alert:lag-1"');
+    const row = bytes.slice(bytes.indexOf('data-alert-row="alert:lag-1"'), bytes.indexOf('data-alert-row="alert:lag-1"') + 420);
+    expect(row).toContain('data-hydration-pending="true"'); // the marker
+    expect(row).toContain('Reading the world…');       // the loading vocabulary
+    expect(row).not.toContain('waiting');              // RED pre-fix: a verdict over an unanswered read
+  });
+
+  it('the same alert, fills read ANSWERED (empty blotter), renders the honest waiting copy (the FW-47-B law, unchanged) — and the reads-settled marker alone resolves the row (an empty blotter is the read\'s answer)', () => {
+    const answered = reduceAll(fillsReadInFlight([priceAlert({ alertId: 'alert:lag-2', market: 'BTC-USD', direction: 'above', level: '61000', declaredAt: T0 + 40 })]), [
+      { kind: 'reads-settled', at: T0 + 100 },
+    ]);
+    const bytes = serializeConsoleModel(answered, LIVE_AT);
+    expect(bytes).toContain('data-alert-row="alert:lag-2"');
+    const row = bytes.slice(bytes.indexOf('data-alert-row="alert:lag-2"'), bytes.indexOf('data-alert-row="alert:lag-2"') + 420);
+    expect(row).toContain('BTC-USD above 61000 — waiting'); // the true waiting copy — the fold's own L4 verdict over the answered read
+    expect(row).not.toContain('data-hydration-pending');
+  });
+
+  it('the chart\'s no-prices line over an IN-FLIGHT fills read teaches "Reading the world…" — never "No prices on record yet" as a durable claim', () => {
+    const state = fillsReadInFlight([]);
+    const bytes = serializeConsoleModel(state, LIVE_AT);
+    expect(bytes).toContain('data-hydration-pending="true"');
+    expect(bytes).not.toContain('No prices on record yet'); // RED pre-fix: the durable claim over the in-flight fills read
+    const settled = reduceAll(fillsReadInFlight([]), [{ kind: 'reads-settled', at: T0 + 100 }]);
+    expect(serializeConsoleModel(settled, LIVE_AT)).toContain('No prices on record yet'); // the read answered — the honest empty
+  });
+});

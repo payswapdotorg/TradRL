@@ -358,6 +358,16 @@ export function timeMachineControls(options: {
    * unpaired single quote — the strip lexer reads it as a string.)
    */
   readonly playbackStepMs?: number;
+  /**
+   * N-1 (Round N register — the read-lag class): true while the read of
+   * the PROJECT family is in flight at this view — the SESSION-floor
+   * range note ("No project history is on record yet") then teaches the
+   * seek instead, never a durable absence claim over an unanswered read
+   * (the honest-copy law). Absent = the pre-N-1 behavior (the pure
+   * callers keep their exact bytes). (The apostrophe law: no unpaired
+   * single quote inside a TYPE region comment.)
+   */
+  readonly readPending?: boolean;
 }): VNode {
   const bounds = scrubberBoundsOf(options.range);
   const value = Math.min(Math.max(options.viewAt, bounds.min), bounds.max);
@@ -462,8 +472,14 @@ export function timeMachineControls(options: {
     // FW-32-B: the range's honest-derivation note — the derivation
     // stated with the instant it derived (or the session fallback
     // taught plainly). aria-hidden: the scrubber's own min/max
-    // attributes carry the same facts to assistive tech.
-    v('span', { class: 'tm-range-note', 'data-tm-range-derived': options.range.derived }, [scrubberRangeNoteOf(options.range)]),
+    // attributes carry the same facts to assistive tech. N-1: while the
+    // project family's read is in flight and the floor is the SESSION
+    // fallback, the note teaches the seek instead — never "No project
+    // history is on record yet" as a durable claim over an unanswered
+    // read (the honest-copy law).
+    v('span', { class: 'tm-range-note', 'data-tm-range-derived': options.range.derived, ...(options.readPending === true && options.range.derived === 'session' ? { 'data-hydration-pending': 'true' } : {}) }, [options.readPending === true && options.range.derived === 'session'
+      ? 'Reading the world… — the project history appears here the moment the read lands.'
+      : scrubberRangeNoteOf(options.range)]),
     // FW-33-B + FW-34-B + FW-35-B: the speed's own honest caption — what
     // playback does at the EFFECTIVE real-time multiple (the free
     // speed's when one is armed), one sentence, never a claim the
@@ -633,6 +649,58 @@ export function labeledInput(options: {
         ...(invalid ? { 'aria-invalid': 'true' } : {}),
         [fieldAttr]: options.name,
       }, []),
+      ...(options.hint === undefined ? [] : [v('p', { class: 'field-hint' }, [options.hint])]),
+      ...(options.validation === undefined ? [] : [fieldError(options.validation)]),
+    ]),
+  ];
+}
+
+/**
+ * N-2 (Round N register — the single-line note input, M3's top friction,
+ * 6+ seats): ONE labeled MULTI-LINE textarea — the paste-target fields
+ * (the note-attach form's Note text). The labeledInput scaffold (the
+ * label above, the hint + validation below, the vocabulary's own
+ * delegated data-field attribute), with the model's value painted BOTH
+ * as the value ATTRIBUTE (the identity law's paint carrier —
+ * render/dom.ts's transplant reads it to detect the user's in-flight
+ * edit across every beat re-projection, the exact mirror of
+ * labeledInput) AND as the CHILD TEXT (the real DOM's textarea displays
+ * its child content, never a value attribute — the first-paint carrier).
+ * A multi-line note (a grammar line plus free-text digest lines) now
+ * survives the surface, the beat, the route, and the chain VERBATIM.
+ */
+export function labeledTextArea(options: {
+  readonly label: string;
+  readonly name: string;
+  readonly value: string;
+  /** The visible row count (a paste target earns its height; the default 4). */
+  readonly rows?: number;
+  readonly hint?: string;
+  readonly validation?: FieldValidation;
+  readonly required?: boolean;
+  readonly vocabulary?: 'launch' | 'research' | 'account' | 'note' | 'alert';
+}): VNode[] {
+  const invalid = options.validation?.touched === true && (options.validation?.message.length ?? 0) > 0;
+  const idPrefix = options.vocabulary === 'research' ? 'research' : options.vocabulary === 'account' ? 'account' : options.vocabulary === 'note' ? 'note' : options.vocabulary === 'alert' ? 'alert' : 'launch';
+  const fieldAttr = options.vocabulary === 'research' ? 'data-research-field' : options.vocabulary === 'account' ? 'data-account-field' : options.vocabulary === 'note' ? 'data-note-field' : options.vocabulary === 'alert' ? 'data-alert-field' : 'data-launch-field';
+  const stickyClearance: Readonly<Record<string, string>> = options.vocabulary === 'launch' ? { style: WIZARD_STICKY_CLEARANCE } : {};
+  return [
+    v('div', { class: `field${invalid ? ' field-invalid' : ''}`, 'data-field': options.name }, [
+      v('label', { class: 'field-label', for: `${idPrefix}-${options.name}` }, [options.label, ...(options.required === true ? [' *'] : [])]),
+      v('textarea', {
+        class: 'field-input',
+        id: `${idPrefix}-${options.name}`,
+        name: options.name,
+        rows: String(options.rows ?? 4),
+        // N-2: the value attribute is the identity law's paint carrier
+        // (the transplant's user-edit detection reads it); the CHILD TEXT
+        // below is the real DOM's display carrier — both carry the model's
+        // value, newlines and all.
+        value: options.value,
+        ...stickyClearance,
+        ...(invalid ? { 'aria-invalid': 'true' } : {}),
+        [fieldAttr]: options.name,
+      }, [options.value]),
       ...(options.hint === undefined ? [] : [v('p', { class: 'field-hint' }, [options.hint])]),
       ...(options.validation === undefined ? [] : [fieldError(options.validation)]),
     ]),

@@ -683,6 +683,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       await pollJobs();
     } finally {
       lastFetchedScope = bundleScope;
+      // N-1 (the read-lag class): the bundle's end ANSWERS every family
+      // (landed, empty/absent, or degraded-with-its-own-note) — the render
+      // surfaces' durable empty-state copy composes ONLY from here, and a
+      // mid-flight scope move drops this with the rest (the beat re-reads
+      // the adopted scope, dispatchIfCurrent's own law).
+      dispatchIfCurrent(bundleScope, { kind: 'reads-settled', at: instants.nowMs() });
       // FW-40-B (H-4): the bundle's records are on hand — validate a
       // pending restored view instant NOW (the finally keeps the heal
       // independent of any single read's degradation).
@@ -758,17 +764,17 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     } else if (scopeNow !== LAUNCHPAD_PROJECT_ID && state.project !== null
       && (state.project.lifecycle.organizationRef === null || orgSnapshotMissingFor(state.project.lifecycle.organizationRef))) {
       // THE ORG-COMPILE POLL (R6a's second half): the backing binds the org
-      // ref on its OWN clock, so the one refetch above can still miss the
-      // compiled snapshot. While the CURRENT project record carries no ref,
-      // each beat re-observes the project; the moment it flips, the
-      // org-status read runs — no reload. Self-terminating (the org-snapshot
-      // dedup). D-7 (W-27): the read pairs the ref with the RE-OBSERVED
-      // record of THIS scope, never the mutable state.project (a mid-beat
-      // scope move could cross the pair). FW-41-C (I-5, S1's D1 compile
-      // stall): pre-fix the branch STOPPED once the ref bound — a read
-      // landing on a snapshot-less serverless instance (TWO writes; the
-      // watch store heals only via the host's 10s staleness pass) was NEVER
-      // retried in-session; the branch also runs while the ref is BOUND but
+      // ref on its OWN clock (the one refetch above can still miss the
+      // compiled snapshot), so while the CURRENT project record carries no
+      // ref each beat re-observes the project; the moment it flips, the
+      // org-status read runs — no reload; self-terminating (the
+      // org-snapshot dedup). D-7 (W-27): the read pairs the ref with the
+      // RE-OBSERVED record of THIS scope, never the mutable state.project
+      // (a mid-beat scope move could cross the pair). FW-41-C (I-5, S1's
+      // D1 compile stall): pre-fix the branch STOPPED once the ref bound —
+      // a read landing on a snapshot-less serverless instance (TWO writes;
+      // the watch store heals only via the host's 10s staleness pass) was
+      // NEVER retried in-session; it also runs while the ref is BOUND but
       // no snapshot is on record.
       await read('GET /v1/projects/:id', async () => {
         const project = await client.projects.get(scopeNow);
@@ -2084,17 +2090,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           } else {
             // FW-34-B (§3.2 — the live-edge anchor, L1/M5/S5/L3): THE ARM
             // PLAYS FORWARD FROM WHERE THE ANALYST STANDS (the pre-fix arm
-            // was ALWAYS a computed instant — max(openedAt, floor) —
-            // discarding L3's scrub, never reaching L1's launch-to-now
-            // arc). The arm follows the machine's mode:
-            //   - TIMESTAMP / T-MINUS (a selected past instant): the arm
-            //     IS that instant, clamped to [the history floor, the
-            //     anchor] like the scrubber's commit — the incident
-            //     review plays forward FROM the incident.
-            //   - LIVE (no instant selected): the arm IS the range floor
-            //     (capped at the anchor) — the launch-to-now arc replays
-            //     from the start, and the FW-33-B anchor clamp still lands
-            //     a crossing tick AT "now", paused.
+            // was ALWAYS max(openedAt, floor) — discarding L3's scrub,
+            // never reaching L1's launch-to-now arc), following the
+            // machine's mode: TIMESTAMP / T-MINUS (a selected past
+            // instant) — the arm IS that instant, clamped to [the history
+            // floor, the anchor] like the scrubber's commit (the incident
+            // review plays forward FROM the incident); LIVE (no instant
+            // selected) — the arm IS the range floor capped at the anchor
+            // (the launch-to-now arc replays; the FW-33-B anchor clamp
+            // still lands a crossing tick AT "now", paused).
             const anchor = state.timeMachine.anchorAt;
             // FW-34-B (§3.1 + the MI-D9 law): the SELECTED-instant arm's
             // floor clamp is the RECORD-DERIVED floor only (the session-open
@@ -2552,13 +2556,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
               // Only the still-current scope receives the record (the reducer's scope gate is the law; defense in depth).
               // FW-47-B (the minors — S1's duplicate-session-row finding): the host
               // route is IDEMPOTENT PER CONTENT — a re-attach returns the STORED
-              // record (the first mint stands, durable.ts's own law) — and the console
-              // dispatched note-attached on EVERY answer, so the reducer's noteId
-              // dedup kept state.notes at one row while the session's linked history
-              // carried BOTH attestations. The fix at THIS dispatch site (the fold
-              // stays a pure append-only event log): an answer for a record the
-              // workspace already carries (by id) is a NO-OP, no dispatch — symmetric
-              // with the alert-declare flow below (the same route law).
+              // record (the first mint stands, durable.ts's own law) — but the console
+              // dispatched note-attached on EVERY answer, so the noteId dedup kept
+              // state.notes at one row while the linked history carried BOTH
+              // attestations. The fix at THIS dispatch site (the fold stays a pure
+              // append-only event log): an already-carried record (by id) is a
+              // NO-OP, no dispatch.
               if (state.scope.projectId === projectId && !state.notes.some((note) => note.noteId === attached.note.noteId)) {
                 dispatch({ kind: 'note-attached', at: instants.nowMs(), note: attached.note });
               }
@@ -2625,16 +2628,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
               // Only the still-current scope receives the record (the
               // reducer's scope gate is the law; defense in depth).
               // FW-47-B (the minors — S1's finding, L2-cont's dead worker's
-              // 12s-apart duplicate): the host route is IDEMPOTENT PER
-              // CONTENT — a re-declare returns the STORED record (the first
-              // mint stands, durable.ts's own law) — and the console
-              // dispatched alert-declared on EVERY answer, so the reducer's
-              // alertId dedup kept state.alerts at one row while the
-              // session's linked history carried BOTH attestations. The fix
-              // at THIS dispatch site (the fold stays a pure append-only
-              // event log): an answer for a record the workspace already
-              // carries (by id) is a NO-OP, no dispatch — held SYMMETRIC
-              // for note-attach above (the same route law).
+              // 12s-apart duplicate): the alert-declare twin of the
+              // note-attach fix above — the same route law (idempotent per
+              // content; a re-declare returns the STORED record, the first
+              // mint stands, durable.ts's own law) and the same
+              // dispatch-site fix: an already-carried record (by id) is a
+              // NO-OP, no dispatch (the fold stays a pure append-only event
+              // log).
               if (state.scope.projectId === projectId && !state.alerts.some((alert) => alert.alertId === declared.alert.alertId)) {
                 dispatch({ kind: 'alert-declared', at: instants.nowMs(), alert: declared.alert });
               }

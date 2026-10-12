@@ -1979,3 +1979,133 @@ describe('FW-46: the price-alert record class — the fold, the alert-declared e
     expect(doc.manifest.derivedEventRule).toContain('declared price alert'); // the published rule names it too
   });
 });
+
+// ---------------------------------------------------------------------------
+// N-1 (Round N register — the read-lag class, the round's TOP friction,
+// 5+ seats): the state half — the per-family ANSWERED markers. The law:
+// a family's surface renders its durable empty-state copy ONLY when the
+// family's read has ANSWERED — its own landing event (the bundle's
+// loaded events dispatch even when the read serves zero rows) or the
+// bundle's reads-settled (every read answered, landed empty/absent, or
+// degraded-with-its-own-note). A scope move resets every family. The
+// render half (the "Reading the world…" pending vocabulary) is pinned in
+// render/model.test.ts + render/market.test.ts.
+// ---------------------------------------------------------------------------
+
+describe('N-1: the per-family read answers (the read-lag fold\'s state half)', () => {
+  /** One desk MID-READ-BUNDLE: connected, the project record on hand (the bundle's first family answered), every other family's read still in flight. */
+  function midReadWorkspace(): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
+    ]);
+  }
+
+  it('a fresh scope starts every family UNANSWERED (the durable empty copy is never a claim over an in-flight read)', () => {
+    const state = openWorkspace(SCOPE, T0);
+    expect(state.readAnswers).toBeDefined(); // RED pre-fix: the state carries no per-family markers at all
+    expect(state.readAnswers).toEqual({ project: false, goalBundle: false, knowledge: false, outcomes: false, postMortems: false, submissions: false, jobs: false, riskUtilization: false });
+  });
+
+  it('the bundle\'s landing events mark their OWN families answered (project-loaded answers the project family; the others stay in flight — the per-family granularity, never lockstep)', () => {
+    const state = midReadWorkspace();
+    expect(state.readAnswers.project).toBe(true); // RED pre-fix: undefined
+    expect(state.readAnswers.goalBundle).toBe(false);
+    expect(state.readAnswers.jobs).toBe(false);
+  });
+
+  it('reads-settled answers EVERY family (the bundle ran to its end — an empty jobs list is the read\'s answer, never a read still in flight)', () => {
+    const state = reduceAll(midReadWorkspace(), [{ kind: 'reads-settled', at: T0 + 10 }]); // RED pre-fix: the event kind does not exist
+    expect(state.readAnswers).toEqual({ project: true, goalBundle: true, knowledge: true, outcomes: true, postMortems: true, submissions: true, jobs: true, riskUtilization: true });
+  });
+
+  it('a scope move (project-adopted) RESETS every family — the new scope\'s reads start unanswered (the settling flash never crosses desks)', () => {
+    const settled = reduceAll(midReadWorkspace(), [{ kind: 'reads-settled', at: T0 + 10 }]);
+    const moved = reduceAll(settled, [{ kind: 'project-adopted', at: T0 + 20, projectId: 'proj-b' }]);
+    expect(moved.readAnswers).toEqual({ project: false, goalBundle: false, knowledge: false, outcomes: false, postMortems: false, submissions: false, jobs: false, riskUtilization: false }); // RED pre-fix: undefined
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N-3 (Round N register — M2's degraded-export composition seam): an
+// export composed while the connection read DEGRADED (M2: 7 of 14
+// derived families silently omitted, still head-exact, still promising
+// "the compliance officer's FULL RECORD") or while the read bundle was
+// still IN FLIGHT DISCLOSES the shortfall — the manifest carries an
+// explicit degraded-reads note naming what a degraded/unanswered read
+// omitted. NEVER the FULL-RECORD promise over a partial read.
+// ---------------------------------------------------------------------------
+
+describe('N-3: the degraded-export composition disclosure (the manifest names the shortfall)', () => {
+  /**
+   * M2's shape: a desk whose bundle landed SOME families (the project
+   * record, the goal bundle with its alerts, one job row) while the
+   * jobs/outcomes reads DEGRADED mid-bundle — the records on file at
+   * composition time, exactly the partial prefix M2's first F3 export
+   * carried (7 derived events) while the manifest still promised the
+   * full record.
+   */
+  function degradedCompositionWorkspace(): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
+      { kind: 'goal-loaded', at: T0 + 3, goal: goalRecord(), constraintSet: constraintSetRecord() },
+      { kind: 'job-updated', at: T0 + 4, job: jobRecord('complete') },
+      { kind: 'degraded-read', at: T0 + 5, route: 'GET /v1/jobs', family: 'unavailable', message: 'the jobs read degraded mid-bundle' },
+      { kind: 'degraded-read', at: T0 + 6, route: 'POST /v1/outcomes/query', family: 'unavailable', message: 'the outcomes read degraded mid-bundle' },
+      { kind: 'reads-settled', at: T0 + 7 },
+    ]);
+  }
+
+  it('a DEGRADED composition DISCLOSES: the manifest carries the degraded-reads note naming the failed routes + the record families they feed — never the unqualified FULL-RECORD promise over a partial read', () => {
+    const state = degradedCompositionWorkspace();
+    expect(state.connection).toBe('degraded'); // the composing connection (M2's shape)
+    const doc = composeWorkspaceExport(state);
+    expect(doc.manifest.counts.recordDerivedEvents).toBeGreaterThan(0); // a partial prefix IS on file
+    const note = doc.manifest.degradedReadsNote; // RED pre-fix: the field does not exist — the shortfall was silent
+    expect(typeof note).toBe('string');
+    expect(note).toContain('GET /v1/jobs');            // the failed read named
+    expect(note).toContain('POST /v1/outcomes/query'); // the failed read named
+    expect(note).toContain('the job rows');            // the record family it feeds, named
+    expect(note).toContain('the outcome records');     // the record family it feeds, named
+    expect(note).toContain('may omit');                // the shortfall stated, never the unqualified full record
+    expect(note).toContain('re-take');                 // the way to the unqualified full record
+    // the partial prefix still verifies head-exact under the published rules (M2's own observation — the chain laws hold; the DISCLOSURE was the gap)
+    expect(verifyWorkspaceExport(JSON.parse(serializeWorkspaceExport(state)))).toEqual({ ok: true });
+  });
+
+  it('the settled re-export carries NO note (the register\'s own resolution: minutes later the re-export carried all FOURTEEN families — a recovered composition needs no disclosure)', () => {
+    // the same desk re-read healthy: the failed families\' reads landed, the connection recovered, the bundle settled
+    const settled = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
+      { kind: 'goal-loaded', at: T0 + 3, goal: goalRecord(), constraintSet: constraintSetRecord() },
+      { kind: 'job-updated', at: T0 + 4, job: jobRecord('complete') },
+      { kind: 'outcomes-loaded', at: T0 + 5, records: [outcomeRecord()] },
+      { kind: 'reads-settled', at: T0 + 7 },
+    ]);
+    const doc = composeWorkspaceExport(settled);
+    expect(doc.manifest.degradedReadsNote).toBeUndefined(); // nothing to disclose — every read answered over a connected composition
+    expect(doc.manifest.recordScopeNote).toContain('FULL RECORD ON FILE'); // the unqualified promise is TRUE here
+  });
+
+  it('an IN-FLIGHT composition (the bundle still reading over a connected console) discloses the unanswered families by name — the same law at the export seam', () => {
+    // mid-bundle: the project record landed, the rest of the reads are in flight (an export taken in the read-lag window)
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
+    ]);
+    const doc = composeWorkspaceExport(state);
+    expect(doc.manifest.counts.recordDerivedEvents).toBeGreaterThan(0); // the project record derived
+    const note = doc.manifest.degradedReadsNote; // RED pre-fix: the field does not exist
+    expect(typeof note).toBe('string');
+    expect(note).toContain('the job rows');            // an unanswered family, named
+    expect(note).toContain('the standing risk read');  // an unanswered family, named
+  });
+
+  it('the EMPTY workspace discloses nothing (no records on file — no full-record promise to qualify; the recordScopeNote\'s own gate)', () => {
+    const doc = composeWorkspaceExport(openWorkspace(SCOPE, T0));
+    expect(doc.manifest.recordScopeNote).toBeUndefined();
+    expect(doc.manifest.degradedReadsNote).toBeUndefined();
+  });
+});

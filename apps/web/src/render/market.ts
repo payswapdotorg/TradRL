@@ -23,7 +23,7 @@ import { alertFiringOf, fillPriceObservationsOf, priceSeriesOf, type PriceObserv
 import { isExactDecimal } from '../core/decimals';
 import { isLaunchpadScope } from '../core/tenant';
 import { availabilityOfSubmission, projectToView } from '../core/availability';
-import type { WorkspaceState } from '../core/workspace';
+import { readPendingAtView, type WorkspaceState } from '../core/workspace';
 import { formatInstantUtc } from '../core/format';
 import { labeledInput } from './flow';
 import { v, type VNode } from './vtree';
@@ -102,9 +102,16 @@ export function marketViewCards(state: WorkspaceState, viewAt: number): readonly
   const projected = projectToView(state.submissions, viewAt, availabilityOfSubmission);
   const series = priceSeriesOf(fillPriceObservationsOf(projected));
   const cards: VNode[] = series.map((market) => marketChartCard(market.market, market.observations));
+  // N-1 (the read-lag class, M2's blotter shape): while the FILLS read is
+  // in flight at the LIVE view, the no-prices lines teach the seek — never
+  // a durable no-record claim over an unanswered read (the honest-copy
+  // law; the repo's own FW-41-C vocabulary).
+  const fillsPending = readPendingAtView(state, viewAt, 'submissions');
   // The declared world's markets with NO observations name themselves honestly; a world-less scope with no observations says the same of its whole view.
   const observed = new Set(series.map((market) => market.market));
-  const emptyLines: VNode[] = state.world === null
+  const emptyLines: VNode[] = fillsPending
+    ? [v('p', { class: 'card-note', 'data-hydration-pending': 'true' }, ['Reading the world… — this desk\'s own fill prices appear here the moment the read lands.'])]
+    : state.world === null
     ? (series.length === 0 ? [v('p', { class: 'card-note' }, ['No prices on record yet — this desk\'s own fill prices chart here as they exist on record.'])] : [])
     : state.world.markets.filter((market) => !observed.has(market)).map((market) => v('p', { class: 'card-note', 'data-market-empty': market }, [`No prices on record for ${market} yet — this desk's own fill prices chart here as they exist on record.`]));
   cards.push(v('div', { class: 'card market-view', 'data-market-view': 'live' }, [
@@ -115,10 +122,13 @@ export function marketViewCards(state: WorkspaceState, viewAt: number): readonly
   return cards;
 }
 
-/** One alert row's own sentence: the declared envelope verbatim + its honest state (FIRED at the observed instant against the recorded price, or waiting). FW-47-B (the waiting-copy imprecision, carried since Round L): the waiting copy is TRUE in every waiting shape — a pre-declaration crossing stays waiting because no price recorded AT-OR-AFTER the alert's own declaration has crossed it (forward-only is the fold's own L4, core/market alertFiringOf), so the sentence teaches that law instead of the pre-fix false "no recorded price has crossed it yet" (false whenever an on-record price crossed the level before the declaration). */
-function alertRowOf(alert: PriceAlertRecord, observations: readonly PriceObservation[]): VNode {
-  const firing = alertFiringOf(alert, observations);
+/** One alert row's own sentence: the declared envelope verbatim + its honest state (FIRED at the observed instant against the recorded price, or waiting). FW-47-B (the waiting-copy imprecision, carried since Round L): the waiting copy is TRUE in every waiting shape — a pre-declaration crossing stays waiting because no price recorded AT-OR-AFTER the alert's own declaration has crossed it (forward-only is the fold's own L4, core/market alertFiringOf), so the sentence teaches that law instead of the pre-fix false "no recorded price has crossed it yet" (false whenever an on-record price crossed the level before the declaration). N-1 (M2's pre-firing shape: the waiting copy rendered while the FIRED record stood): while the FILLS read is in flight at the LIVE view the row teaches the seek — never a verdict over an unanswered read (the honest-copy law). */
+function alertRowOf(alert: PriceAlertRecord, observations: readonly PriceObservation[], fillsPending: boolean): VNode {
   const envelope = `${alert.market} ${alert.direction} ${alert.level}`;
+  if (fillsPending) {
+    return v('p', { class: 'card-note', 'data-alert-row': alert.alertId, 'data-hydration-pending': 'true' }, [`${envelope} — Reading the world… (the verdict appears here the moment the fills read lands; declared ${formatInstantUtc(alert.declaredAt)}).`]);
+  }
+  const firing = alertFiringOf(alert, observations);
   const sentence = firing.fired && firing.at !== null && firing.observedPrice !== null
     ? `${envelope} — FIRED at ${formatInstantUtc(firing.at)} against the recorded price ${firing.observedPrice} (declared ${formatInstantUtc(alert.declaredAt)}).`
     : `${envelope} — waiting (no price recorded at-or-after its declaration has crossed it yet — an alert watches forward from its own declaration, never the prices already on record; declared ${formatInstantUtc(alert.declaredAt)}).`;
@@ -141,7 +151,7 @@ export function priceAlertsCard(state: WorkspaceState, view: ShellView, viewAt: 
       v('p', { class: 'card-note' }, [PRICE_ALERT_BOUNDARY]),
       ...(projectedAlerts.length === 0
         ? [v('p', { class: 'card-note' }, ['No price alerts declared on this project on record yet — declare one below; it is stored on this project\'s own record and rides its export chain.'])]
-        : projectedAlerts.map((alert) => alertRowOf(alert, observations))),
+        : projectedAlerts.map((alert) => alertRowOf(alert, observations, readPendingAtView(state, viewAt, 'submissions')))),
       v('div', { class: 'tm-playback' }, [
         v('button', { class: 'tm-button', 'data-action': 'alert-declare-open', type: 'button' }, ['Declare a price alert']),
       ]),

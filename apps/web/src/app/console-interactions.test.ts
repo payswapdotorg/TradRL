@@ -4266,6 +4266,106 @@ function typeResearchField(rig: Rig, field: string, value: string): void {
   rig.doc.fire('input', { target: input });
 }
 
+// ---------------------------------------------------------------------------
+// N-2 (Round N register — the single-line note input, M3's verbatim top
+// friction, 6+ seats): the note text field was a single-line
+// <input type=text> — the browser's value sanitization strips newlines
+// before the edit buffer ever sees them, so a real multi-line research
+// note (a typed-declaration grammar line plus free-text digest lines in
+// ONE note) could not be entered by any user, while the card's own
+// "stored verbatim" promise and the field's whole-line parsing teaching
+// promised exactly that. THE FIX: a multi-line TEXTAREA — the
+// verbatim-storage law holds end to end. (The compute layer's parse law
+// over multi-line text was already correct and pinned server-side —
+// deploy/vercel/runtime/note-compute.test.ts — the surface was the only
+// broken link.)
+// ---------------------------------------------------------------------------
+
+describe('executed boot: N-2 — the multi-line note (the verbatim-storage law, end to end)', () => {
+  /** The register's own shape: ONE note carrying a typed-declaration grammar line + a free-text digest line. */
+  const GRAMMAR_LINE = 'c-1:outcome:risk.maxDrawdown:limit.max:0.2';
+  const DIGEST_LINE = 'Desk-head digest: half-life 6.4d, z-entry 1.8/z-exit 0.4, overlay correlation 0.62.';
+  const MULTI_LINE_NOTE = `${GRAMMAR_LINE}\n${DIGEST_LINE}`;
+
+  /**
+   * A notes transport wrapper (the FW-45 pattern, the deep-freeze lesson
+   * applied — the served arrays are rebuilt, never mutated in place).
+   */
+  function notesTransport(inner: ApiTransport): {
+    readonly transport: ApiTransport;
+    readonly attaches: { count: number; bodies: unknown[] };
+  } {
+    const attaches = { count: 0, bodies: [] as unknown[] };
+    const notesByProject = new Map<string, Record<string, unknown>[]>();
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      const attachMatch = /^\/v1\/projects\/([^/]+)\/notes$/.exec(path);
+      if (request.method === 'POST' && attachMatch !== null) {
+        attaches.count += 1;
+        const project = attachMatch[1] ?? '';
+        const body = request.body as Record<string, unknown>;
+        attaches.bodies.push(body);
+        const note = {
+          noteId: `note:n2-${attaches.count}`,
+          tenant: 'tenant-a',
+          project,
+          attachedAt: T0 + 400 + attaches.count,
+          title: String(body.title ?? ''),
+          text: String(body.text ?? ''),
+        };
+        const existing = notesByProject.get(project) ?? [];
+        if (!existing.some((entry) => entry.noteId === note.noteId)) notesByProject.set(project, [...existing, note]);
+        return { status: 200, headers: {}, body: { requestId: 'req-n2', data: { note } } };
+      }
+      if (request.method === 'GET' && path.startsWith('/v1/projects/') && path.endsWith('/goal')) {
+        const project = path.slice('/v1/projects/'.length, -'/goal'.length);
+        const notes = notesByProject.get(project);
+        const served = await inner(request);
+        if (notes === undefined || notes.length === 0) return served;
+        const body = (served as { readonly body?: { readonly data?: Record<string, unknown> } }).body;
+        if (body?.data === undefined) return served;
+        return { ...served, body: { ...body, data: { ...body.data, notes } } };
+      }
+      return inner(request);
+    };
+    return { transport, attaches };
+  }
+
+  it('the note text field is a TEXTAREA: a grammar-line-plus-digest note attaches, lists, and exports VERBATIM — the newline survives the surface, the buffer, the route, the record, and the chain', async () => {
+    const api = notesTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'research');
+    clickAction(rig, 'note-attach-open');
+    // THE SURFACE: the paste target is a multi-line TEXTAREA carrying the note form's own field vocabulary — never the single-line input whose browser value sanitization strips newlines (M3: "newlines stripped, a grammar-line-plus-digest-lines note cannot be entered by any user")
+    const textField = findByData(rig.root, 'data-note-field', 'text');
+    if (textField === null) throw new Error('no note text field in the open form');
+    expect(textField.tagName).toBe('TEXTAREA'); // RED pre-fix: INPUT — the surface class the register measured
+    typeNoteField(rig, 'title', 'Sizing discipline priors');
+    typeNoteField(rig, 'text', MULTI_LINE_NOTE);
+    // THE BEAT-SAFE BUFFER: a full re-projection keeps the buffered multi-line value (the identity law — the element survives, the paint carries the newlines)
+    clickNav(rig, 'research');
+    const after = findByData(rig.root, 'data-note-field', 'text');
+    if (after === null) throw new Error('the note form vanished on the re-projection');
+    expect(after.tagName).toBe('TEXTAREA');
+    expect(after.getAttribute('value')).toBe(MULTI_LINE_NOTE); // the model's paint carries both lines, newline intact
+    // ATTACH: the host route receives the multi-line text VERBATIM
+    clickAction(rig, 'note-attach');
+    await settle();
+    expect(api.attaches.count).toBe(1);
+    expect(api.attaches.bodies[0]).toEqual({ title: 'Sizing discipline priors', text: MULTI_LINE_NOTE });
+    // LIST: the minted record entered the fold, its text verbatim (the record the compute layer reads — one source of truth)
+    expect(rig.handle.state().notes[0]?.text).toBe(MULTI_LINE_NOTE);
+    const cardTexts = elementsOf(rig.root).map((element) => textOf(element)).filter((text) => text.length > 0).join(' | ');
+    expect(cardTexts).toContain('Sizing discipline priors'); // the note's own row renders from the minted record
+    // EXPORT: the note-attached event carries the VERBATIM multi-line text IN the chain
+    const doc = JSON.parse(serializeWorkspaceExport(rig.handle.state())) as { events: Array<Record<string, unknown>> };
+    const noteEvents = doc.events.filter((entry) => (entry.payload as { kind?: string } | undefined)?.kind === 'note-attached');
+    const payload = noteEvents[0]?.payload as { note?: { text?: string } };
+    expect(payload?.note?.text).toBe(MULTI_LINE_NOTE); // both lines, the newline between — "stored verbatim" now true
+    expect(verifyWorkspaceExport(doc)).toEqual({ ok: true });
+  });
+});
+
 /** Type into the note-attach form's field (the same browser semantics on the note form's own data-note-field vocabulary). */
 function typeNoteField(rig: Rig, field: string, value: string): void {
   const input = findByData(rig.root, 'data-note-field', field);

@@ -58,7 +58,7 @@ import { DEFAULT_SECTION, isSectionId, type SectionId } from './sections';
 // FW-43-B: the export's record-derived event prefix (core/export-record.ts
 // — the boot-resume-plane precedent: its back-import of this module is
 // TYPE-ONLY, so the module graph stays acyclic at runtime).
-import { deriveRecordEventsOf, EXPORT_DERIVED_EVENT_RULE, recordScopeNoteOf } from './export-record';
+import { degradedReadsNoteOf, deriveRecordEventsOf, EXPORT_DERIVED_EVENT_RULE, recordScopeNoteOf } from './export-record';
 import { assertProjectScope, assertTenantScope, isLaunchpadScope, isWorkspaceScope, type WorkspaceScope } from './tenant';
 import type { OversightDeskRead } from './oversight';
 import { canonicalJson, sha256Hex, sha256Of } from './digest';
@@ -134,6 +134,42 @@ export interface HistoryEntry {
   readonly chainHead: string;
 }
 
+/**
+ * N-1 (Round N register — the read-lag class, the round's top friction,
+ * 5+ seats): the read families the console's read bundle reads. The honest-
+ * copy law: a family's surface renders its durable empty-state copy ONLY
+ * when the family's read has ANSWERED — never over an in-flight fetch
+ * (M1/S2/S3/L1/L3's ~3-10s stale-empty frames phrased as durable claims
+ * over reads that had not landed; "from a compliance seat those seconds
+ * read as missing books").
+ */
+export type ReadFamily = 'project' | 'goalBundle' | 'knowledge' | 'outcomes' | 'postMortems' | 'submissions' | 'jobs' | 'riskUtilization';
+
+/**
+ * N-1: the per-family ANSWERED markers (the read-lag fold's own shape). A
+ * family is answered by its own read's landing event (the bundle's loaded
+ * events dispatch even when the read serves zero rows) or by the bundle's
+ * completion (reads-settled — every read answered, landed empty/absent, or
+ * degraded-with-its-own-note). A scope move (project-adopted) resets every
+ * family: the new scope's reads start unanswered.
+ */
+export interface ReadAnswers {
+  readonly project: boolean;
+  readonly goalBundle: boolean;
+  readonly knowledge: boolean;
+  readonly outcomes: boolean;
+  readonly postMortems: boolean;
+  readonly submissions: boolean;
+  readonly jobs: boolean;
+  readonly riskUtilization: boolean;
+}
+
+/** N-1: the unanswered shape (a fresh scope — the bundle has not run for it). */
+const READS_UNANSWERED: ReadAnswers = Object.freeze({ project: false, goalBundle: false, knowledge: false, outcomes: false, postMortems: false, submissions: false, jobs: false, riskUtilization: false });
+
+/** N-1: the settled shape (the bundle ran to its end — every family answered). */
+const READS_SETTLED: ReadAnswers = Object.freeze({ project: true, goalBundle: true, knowledge: true, outcomes: true, postMortems: true, submissions: true, jobs: true, riskUtilization: true });
+
 /** THE WORKSPACE STATE — one tenant/project scope, the twelve sections' data, the Time Machine, the inbox, the launch flow, the chain. */
 export interface WorkspaceState {
   readonly scope: WorkspaceScope;
@@ -195,6 +231,13 @@ export interface WorkspaceState {
    * the panel never fakes point-in-time risk.
    */
   readonly riskUtilization: RiskUtilizationRead | null;
+  /**
+   * N-1 (the read-lag class): the per-family answered markers — the state
+   * half of the honest-copy law (see ReadAnswers). The render teaches
+   * "Reading the record…" at the LIVE view while a family is unanswered,
+   * never the durable empty-state copy over an in-flight read.
+   */
+  readonly readAnswers: ReadAnswers;
   /** The tenant's project directory (R6c, W-22): every project the credential can read — the scope switcher's list. Cross-project by design (the workspace stays ONE project's world; this is the directory you may switch that world to). */
   readonly projectDirectory: readonly ProjectRecord[];
   /**
@@ -239,6 +282,7 @@ export function openWorkspace(scope: WorkspaceScope, at: number): WorkspaceState
     knowledge: [],
     submissions: [],
     riskUtilization: null,
+    readAnswers: READS_UNANSWERED,
     projectDirectory: [],
     oversight: [],
     timeMachine: liveTimeMachine(at),
@@ -268,6 +312,7 @@ export type WorkspaceEvent =
   | { readonly kind: 'knowledge-loaded'; readonly at: number; readonly records: readonly ServedKnowledge[] }
   | { readonly kind: 'submission-recorded'; readonly at: number; readonly submission: GatewaySubmissionRecord }
   | { readonly kind: 'risk-utilization-loaded'; readonly at: number; readonly read: RiskUtilizationRead }
+  | { readonly kind: 'reads-settled'; readonly at: number; /** N-1: the read bundle ran to its end — every family answered (landed, landed empty/absent, or degraded-with-its-own-note). Dispatched by the console's refresh() finally (dispatchIfCurrent — a mid-flight scope move drops it with the rest). */ }
   | { readonly kind: 'outcome-recorded'; readonly at: number; readonly outcome: OutcomeRecord }
   | { readonly kind: 'projects-listed'; readonly at: number; readonly records: readonly ProjectRecord[] }
   | { readonly kind: 'oversight-read'; readonly at: number; readonly read: OversightDeskRead }
@@ -463,11 +508,15 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         knowledge: [],
         submissions: [],
         riskUtilization: null,
+        // N-1: a scope move resets every family's read answer — the new
+        // scope's reads start unanswered (the settling flash never crosses
+        // desks; the console's beat re-runs the bundle for the adopted scope).
+        readAnswers: READS_UNANSWERED,
       };
       return { ...superseded, scope: { tenantId: state.scope.tenantId, projectId: event.projectId } };
   } else if (selector === 'project-loaded') {
       assertProjectScope(state.scope, event.project);
-      const next: WorkspaceState = { ...withHistory, project: event.project };
+      const next: WorkspaceState = { ...withHistory, project: event.project, readAnswers: { ...state.readAnswers, project: true } };
       return { ...next, inbox: refoldNotices(next) };
   } else if (selector === 'goal-loaded') {
       if (event.goal.tenantId !== state.scope.tenantId) {
@@ -482,7 +531,7 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       // FW-45: the ADDITIVE `notes` field rides the SAME law — a read
       // that serves none clears, one that serves them replaces wholesale.
       // FW-46: `alerts` rides the SAME law too.
-      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet, world: event.world ?? null, notes: event.notes === undefined ? [] : Object.freeze([...event.notes]), alerts: event.alerts === undefined ? [] : Object.freeze([...event.alerts]) };
+      return { ...withHistory, goal: event.goal, constraintSet: event.constraintSet, world: event.world ?? null, notes: event.notes === undefined ? [] : Object.freeze([...event.notes]), alerts: event.alerts === undefined ? [] : Object.freeze([...event.alerts]), readAnswers: { ...state.readAnswers, goalBundle: true } };
   } else if (selector === 'note-attached') {
       // FW-45: ONE ATTACHED NOTE enters the state — the note route's minted
       // record. THE INGEST GATES: the scope gate (a foreign note is the
@@ -547,25 +596,30 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
           launch = { ...launch, phase: 'failed', error: `the kickoff job ${event.job.jobId} failed` };
         }
       }
-      return { ...next, launch, timeMachine, inbox: refoldNotices({ ...next, launch }) };
+      // N-1: a job row landing answers the jobs family (the bundle's
+      // per-row read dispatches these; an EMPTY page dispatches nothing —
+      // reads-settled answers that shape at the bundle's end).
+      return { ...next, launch, timeMachine, readAnswers: { ...state.readAnswers, jobs: true }, inbox: refoldNotices({ ...next, launch }) };
   } else if (selector === 'outcomes-loaded') {
       for (const record of event.records) assertProjectScope(state.scope, record);
-      const next: WorkspaceState = { ...withHistory, outcomes: Object.freeze([...event.records]) };
+      const next: WorkspaceState = { ...withHistory, outcomes: Object.freeze([...event.records]), readAnswers: { ...state.readAnswers, outcomes: true } };
       return { ...next, inbox: refoldNotices(next) };
   } else if (selector === 'post-mortems-loaded') {
       for (const record of event.records) {
         assertProjectScope(state.scope, { tenant: record.lineage.tenant, project: record.lineage.project });
       }
-      return { ...withHistory, postMortems: Object.freeze([...event.records]) };
+      return { ...withHistory, postMortems: Object.freeze([...event.records]), readAnswers: { ...state.readAnswers, postMortems: true } };
   } else if (selector === 'knowledge-loaded') {
       for (const record of event.records) assertProjectScope(state.scope, record.record);
-      const next: WorkspaceState = { ...withHistory, knowledge: Object.freeze([...event.records]) };
+      const next: WorkspaceState = { ...withHistory, knowledge: Object.freeze([...event.records]), readAnswers: { ...state.readAnswers, knowledge: true } };
       return { ...next, inbox: refoldNotices(next) };
   } else if (selector === 'submission-recorded') {
       const seen = state.submissions.some((existing) => existing.submissionId === event.submission.submissionId);
+      // N-1: a blotter row landing answers the submissions family (the
+      // per-row read dispatches these; an empty page — reads-settled).
       const next: WorkspaceState = seen
-        ? withHistory
-        : { ...withHistory, submissions: [...state.submissions, event.submission] };
+        ? { ...withHistory, readAnswers: { ...state.readAnswers, submissions: true } }
+        : { ...withHistory, submissions: [...state.submissions, event.submission], readAnswers: { ...state.readAnswers, submissions: true } };
       return { ...next, inbox: refoldNotices(next) };
   } else if (selector === 'risk-utilization-loaded') {
       // FW-32-A (Round A blocker 1): the standing read enters ONLY for its
@@ -577,7 +631,14 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
       if (event.read.projectId !== state.scope.projectId) {
         throw new Error(`reduceWorkspace: risk-utilization-loaded requires the read's own project scope (got ${JSON.stringify(event.read.projectId)}, the workspace holds ${JSON.stringify(state.scope.projectId)})`);
       }
-      return { ...withHistory, riskUtilization: event.read };
+      return { ...withHistory, riskUtilization: event.read, readAnswers: { ...state.readAnswers, riskUtilization: true } };
+  } else if (selector === 'reads-settled') {
+      // N-1: the read bundle ran to its end — every family is ANSWERED
+      // (landed, landed empty/absent, or degraded-with-its-own-note; a
+      // degraded read carries its own disclosure — the CONNECTION panel
+      // — never a pending marker). The render surfaces compose their
+      // durable empty-state copy ONLY from here (the honest-copy law).
+      return { ...withHistory, readAnswers: READS_SETTLED };
   } else if (selector === 'outcome-recorded') {
       // FW-32-A (Round A blocker 2): ONE outcome record enters the state
       // (the promote route's minted decision — the org's own decision-stream
@@ -1072,6 +1133,21 @@ export interface ExportManifest {
    */
   readonly derivedEventRule?: string;
   /**
+   * N-3 (Round N register — M2's degraded-export composition seam): THE
+   * DEGRADED-READS DISCLOSURE (core/export-record.ts degradedReadsNoteOf)
+   * — present exactly when the export was composed over INCOMPLETE reads
+   * (a DEGRADED/UNREACHABLE connection with failed reads on file, or a
+   * read bundle still in flight) AND the chain carries record-derived
+   * entries (the recordScopeNote's own gate — no records on file, no
+   * full-record promise to qualify): names the failed routes + the record
+   * families they feed, and the read families that had not answered, so
+   * the FULL-RECORD promise never stands unqualified over a partial read
+   * (M2's file evidence: 7 of 14 families silently omitted, head-exact,
+   * no disclosure). ADDITIVE: pre-N-3 v2 documents carry no such field
+   * and still verify.
+   */
+  readonly degradedReadsNote?: string;
+  /**
    * FW-36-B (E-8, part 2): THE PUBLISHED SIMULATED-FLAG RULE, verbatim
    * (the EXPORT_SIMULATED_FLAG_RULE constant) — the per-record flag's
    * semantics + digest-rule placement. ADDITIVE: pre-E-8 v2 documents
@@ -1264,6 +1340,11 @@ export function composeWorkspaceExport(state: WorkspaceState, simulated = false,
       unreadNotices: unreadNoticeIds.length,
     },
     ...(recordScopeNoteOf(recordDerivedEvents, sessionEvents) === undefined ? {} : { recordScopeNote: recordScopeNoteOf(recordDerivedEvents, sessionEvents) as string, derivedEventRule: EXPORT_DERIVED_EVENT_RULE }),
+    // N-3: the degraded-composition disclosure rides beside the
+    // full-record note exactly when the composition was partial over
+    // records on file (the note's own gate + the recordScopeNote's own
+    // recordDerivedEvents gate — never a disclosure over nothing).
+    ...(degradedReadsNoteOf(state) === undefined || recordDerivedEvents === 0 ? {} : { degradedReadsNote: degradedReadsNoteOf(state) as string }),
     ...(chainScopeNote === undefined ? {} : { chainScopeNote }),
     // FW-36-B (E-8, part 2): the published simulated-flag rule rides the
     // manifest on every export (the reader of the manifest alone knows
@@ -1589,6 +1670,63 @@ export function hydrationReadPendingOf(state: WorkspaceState): boolean {
   if (state.connection !== 'connected' || state.orgSnapshots.length > 0) return false;
   if (state.project !== null) return true;
   return !isLaunchpadScope(state.scope.projectId);
+}
+
+/**
+ * N-1 (Round N register — the read-lag class): true when EVERY family's
+ * read has ANSWERED (its own landing event or the bundle's reads-settled)
+ * — the notices surfaces' gate (the Inbox + Home's activity timeline fold
+ * over the record families: project, org snapshots, jobs, knowledge,
+ * outcomes, submissions — the bundle in flight is their honest pending
+ * state, whatever any single family's own latency).
+ */
+export function readsSettledOf(state: WorkspaceState): boolean {
+  const answers = state.readAnswers;
+  return answers.project && answers.goalBundle && answers.knowledge && answers.outcomes && answers.postMortems && answers.submissions && answers.jobs && answers.riskUtilization;
+}
+
+/**
+ * N-1: ONE family's own pending fold — true while the console is
+ * CONNECTED, that family's read has NOT answered, and a real desk exists
+ * (a project on hand, or a non-launchpad scope — the launchpad has no
+ * desk to read, so its honest terminal empty stands, exactly the
+ * hydrationReadPendingOf law). NEVER over a degraded connection: a
+ * degraded read answered-with-a-failure and carries its OWN disclosure
+ * (the CONNECTION panel), never a pending marker. The render composes
+ * this with the view instant (readPendingAtView — the pending state is
+ * about NOW, never a claim about the past).
+ */
+export function readPendingOf(state: WorkspaceState, family: ReadFamily): boolean {
+  if (state.connection !== 'connected' || state.readAnswers[family]) return false;
+  if (state.project !== null) return true;
+  return !isLaunchpadScope(state.scope.projectId);
+}
+
+/**
+ * N-1: the notices surfaces' pending fold (the Inbox + Home's activity
+ * timeline) — the bundle-in-flight gate (see readsSettledOf), the same
+ * connection/desk/degraded laws as readPendingOf.
+ */
+export function noticesReadPendingOf(state: WorkspaceState): boolean {
+  if (state.connection !== 'connected' || readsSettledOf(state)) return false;
+  if (state.project !== null) return true;
+  return !isLaunchpadScope(state.scope.projectId);
+}
+
+/**
+ * N-1: the LIVE-edge composition of one family's pending fold (the
+ * hydrationPendingAtView law, generalized): the pending marker renders
+ * ONLY at the live edge — a scrubbed PAST view keeps the honest durable
+ * empty-state copy (the pending state is about NOW, never a claim about
+ * the past).
+ */
+export function readPendingAtView(state: WorkspaceState, viewAt: number, family: ReadFamily): boolean {
+  return viewAt >= state.timeMachine.anchorAt && readPendingOf(state, family);
+}
+
+/** N-1: the notices surfaces' LIVE-edge composition (see readPendingAtView). */
+export function noticesReadPendingAtView(state: WorkspaceState, viewAt: number): boolean {
+  return viewAt >= state.timeMachine.anchorAt && noticesReadPendingOf(state);
 }
 
 /**

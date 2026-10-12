@@ -52,7 +52,7 @@ import {
 import type { SectionId } from '../core/sections';
 import { scopedInbox, unreadCountAt, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
-import { viewAtOf, watchEventsOf, historyFloorOf, hydrationReadPendingOf, type WorkspaceState } from '../core/workspace';
+import { viewAtOf, watchEventsOf, historyFloorOf, hydrationReadPendingOf, noticesReadPendingAtView, readPendingAtView, type WorkspaceState } from '../core/workspace';
 import { parseInstantUtc } from '../core/format';
 import { standingReadFoldOf, type StandingRow } from '../core/standing';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
@@ -93,6 +93,7 @@ import {
   capsuleSurface,
   labeledInput,
   labeledSelect,
+  labeledTextArea,
   noticeCopyOf,
   notificationBell,
   NOTICE_SENTENCES,
@@ -874,7 +875,10 @@ function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
     v('p', { class: 'hint', 'data-inbox-scope': state.scope.projectId }, [`Notices for this project (${state.scope.projectId}) — each desk sees its own; cross-project notices stay in their own desk's inbox.`]),
     v('button', { class: 'inbox-read-all', 'data-action': 'notices-read-all', type: 'button' }, ['Mark all read']),
     ...rows,
-    ...(projected.length === 0 ? [sectionEmpty('inbox')] : []),
+    // N-1: the notices fold rides the record families' own reads (M1's
+    // ~6s demo-Inbox flash) — the bundle-in-flight pending card, never the
+    // durable copy over reads that have not answered.
+    ...(projected.length === 0 ? [noticesReadPendingAtView(state, viewAt) ? hydrationPendingCard('notices') : sectionEmpty('inbox')] : []),
     // FW-40-B (H-5): the projection hid notices this desk carries — the
     // panel says so (never a bare empty state over a folded inbox).
     ...beyondViewHint(inbox.notices.length, projected.length, 'notice'),
@@ -924,6 +928,11 @@ function timeMachineBar(state: WorkspaceState, viewAt: number, view: ShellView):
       speed: view.playbackSpeed,
       customSpeed: view.playbackCustomSpeed,
       customSpeedError: view.playbackCustomSpeedError,
+      // N-1 (L3's "No project history is on record yet" ~5-10s frame): the
+      // session-floor range note over an IN-FLIGHT project read teaches the
+      // seek at the TM bar — never a durable absence claim (the honest-copy
+      // law; the project family's own gate, composed at the view).
+      readPending: readPendingAtView(state, viewAt, 'project'),
     }),
     v('p', { class: 'hint' }, ['Every visible datum passed the availability projection for this view instant (L4).']),
     // FW-40-B (Round H register H-4 — the resume trap's teaching line):
@@ -971,6 +980,18 @@ function hydrationPendingCard(noun: string): VNode {
     v('div', { class: 'card-title' }, ['Reading the world…']),
     v('p', { class: 'card-note' }, [`The console is reading this desk's records — the ${noun} appears here the moment the read lands.`]),
   ]);
+}
+
+/**
+ * N-1 (Round N register — the read-lag class): ONE family's inline pending
+ * line (the FW-41-C 'Reading the world…' vocabulary + the marker, the
+ * hydrationPendingCard's own words in a single-line shape) — replaces a
+ * card-internal durable empty COPY (never a section's empty STATE, which
+ * takes the full card) while the family's read is in flight at the LIVE
+ * view.
+ */
+function readPendingLine(noun: string): VNode {
+  return v('p', { class: 'card-note', 'data-hydration-pending': 'true' }, [`Reading the world… — the ${noun} appear here the moment the read lands.`]);
 }
 
 /** The per-section teaching empty states (§4.12): the pinned T042 titles + ONE sentence + exactly ONE action. */
@@ -1148,7 +1169,11 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
       // teaches the resolving marker — never the env pin's id flashing
       // ahead of the remembered desk's arrival.
       ['Project', view.bootScopeResolving === true ? 'resolving your desk…' : state.scope.projectId],
-      ['Instances', snapshot === null ? '0' : String(snapshot.instanceRefs.length)],
+      // N-1 (L3's post-reload "Instances 0" frame): while the org seek is
+      // active at the view, the Instances row reads the SAME 'Reading the
+      // world…' the tile's value reads — never a bare terminal "0" over an
+      // in-flight read (the FW-41-C precedent, extended to the row).
+      ['Instances', snapshot === null ? (hydrationPendingAtView(state, viewAt) ? 'Reading the world…' : '0') : String(snapshot.instanceRefs.length)],
     ],
   });
   // FW-36-B (Round E register E-8, part 3 — the demo-tenant
@@ -1175,8 +1200,14 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
   // the false diagnosis) and the beyond-the-view hint below teaches the
   // count + the way back.
   const noticesHiddenBeyondView = scopedNotices.notices.length - notices.length;
+  // N-1: the notices fold rides the record families' own reads — the
+  // honest-copy law ("No activity yet" over an in-flight bundle read as
+  // "this desk never did anything").
+  const activityPending = noticesReadPendingAtView(state, viewAt);
   const activity = buckets.length === 0
-    ? v('div', { class: 'empty' }, [noticesHiddenBeyondView > 0
+    ? v('div', { class: 'empty', ...(activityPending ? { 'data-hydration-pending': 'true' as const } : {}) }, [activityPending
+      ? 'Reading the world… — the activity appears here the moment the reads land.'
+      : noticesHiddenBeyondView > 0
       ? 'No notices at this view instant.'
       : 'No activity yet — notices from your organization appear here.'])
     : timelineList(buckets);
@@ -1290,7 +1321,9 @@ function researchNotesCard(state: WorkspaceState, view: ShellView, viewAt: numbe
       v('div', { class: 'card-title' }, ['Attached research notes']),
       v('p', { class: 'card-note' }, [NOTE_INGESTION_BOUNDARY]),
       ...(projected.length === 0
-        ? [v('p', { class: 'card-note' }, ['No research notes attached to this project on record yet — attach one below; it is stored verbatim and rides this project\'s export chain.'])]
+        // N-1: the goal-bundle read in flight (L3's ~6s "No research notes
+        // attached…" over a desk that carried 3 notes) — the honest-copy law.
+        ? [readPendingAtView(state, viewAt, 'goalBundle') ? readPendingLine('attached research notes') : v('p', { class: 'card-note' }, ['No research notes attached to this project on record yet — attach one below; it is stored verbatim and rides this project\'s export chain.'])]
         : projected.map((note) => v('p', { class: 'card-note', 'data-note-row': note.noteId }, [`${note.title} — ${note.noteId}, attached ${formatInstantUtc(note.attachedAt)}`]))),
       v('div', { class: 'tm-playback' }, [
         v('button', { class: 'tm-button', 'data-action': 'note-attach-open', type: 'button' }, ['Attach a research note']),
@@ -1302,12 +1335,16 @@ function researchNotesCard(state: WorkspaceState, view: ShellView, viewAt: numbe
     v('div', { class: 'card-title' }, ['Attach a research note']),
     v('p', { class: 'card-note' }, [NOTE_INGESTION_BOUNDARY]),
     ...labeledInput({ label: 'Title', name: 'title', value: typeof edits.title === 'string' ? edits.title : '', required: true, hint: 'The note\'s own title (1..120 characters).', vocabulary: 'note' }),
-    // FW-48 (the E-6 compute layer): the paste target TEACHES the
-    // typed-declaration boundary AT THE POINT OF INGESTION — the same
-    // grammar the wizard's Constraints step teaches (one law, two
-    // surfaces), so the typed vocabulary is never a hidden protocol: the
-    // analyst knows WHAT the compute reads BEFORE pasting.
-    ...labeledInput({ label: 'Note text', name: 'text', value: typeof edits.text === 'string' ? edits.text : '', required: true, hint: 'Paste the note\'s own text — it is stored verbatim and fetches nothing. A line in the constraint grammar (id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2) is parsed as a typed parameter of this project\'s research jobs; every other line rides as evidence only, never fabricated into parameters.', vocabulary: 'note' }),
+    // N-2 (the single-line note input, M3's top friction): the paste
+    // target is a MULTI-LINE textarea — the browser's <input type=text>
+    // value sanitization strips newlines before the edit buffer ever
+    // sees them, so a grammar-line-plus-digest-lines note could not be
+    // entered by any user while the card promised "stored verbatim" and
+    // the field taught whole-line parsing. The textarea receives it; the
+    // compute layer's whole-line parse law (deploy/vercel/runtime/
+    // note-compute.ts) was already correct — the surface was the only
+    // broken link.
+    ...labeledTextArea({ label: 'Note text', name: 'text', value: typeof edits.text === 'string' ? edits.text : '', required: true, hint: 'Paste the note\'s own text — it is stored verbatim and fetches nothing. A line in the constraint grammar (id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2) is parsed as a typed parameter of this project\'s research jobs; every other line rides as evidence only, never fabricated into parameters.', vocabulary: 'note' }),
     ...(view.noteAttach.error === null ? [] : [v('p', { class: 'field-error', role: 'alert', 'data-note-error': view.noteAttach.error }, [view.noteAttach.error])]),
     v('div', { class: 'tm-playback' }, [
       v('button', { class: 'tm-button', 'data-action': 'note-attach', type: 'button' }, ['Attach note']),
@@ -1714,7 +1751,12 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...(notesCard === null ? [] : [notesCard]),
         ...cards,
         ...(projected.length === 0
-          ? [submitCard === null
+          // N-1: the jobs read in flight (M1's job list ~10s) — the FW-41-C
+          // pending card, never the durable teaching copy over an
+          // unanswered read (the honest-copy law).
+          ? [readPendingAtView(state, viewAt, 'jobs')
+              ? hydrationPendingCard('research jobs')
+              : submitCard === null
               ? sectionEmpty('research')
               // The affordance changes what the teaching sentence must
               // say: a research job no longer requires a launch.
@@ -1802,7 +1844,10 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           submissionCard(scope, submission, viewAt, view.simulated),
           capsuleInline(capsuleFromSubmission(scope, submission), viewAt, view.openCapsule),
         ])),
-        ...(submissions.length === 0 ? [sectionEmpty('execution')] : []),
+        // N-1: the submissions read in flight (M2's "'No execution
+        // submissions at this view instant' ~3 min while the fills HAD
+        // booked") — the honest-copy law.
+        ...(submissions.length === 0 ? [readPendingAtView(state, viewAt, 'submissions') ? hydrationPendingCard('execution submissions') : sectionEmpty('execution')] : []),
       ]);
   } else if (selector === 'risk') {
       const rows: VNode[] = [];
@@ -2017,7 +2062,14 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         // The honest pre-read absence: the bounds are declared and enforced
         // (the gate's refusals carry receipts), but no standing read is on
         // record for this scope — a teaching note, never a fabricated meter.
-        rows.push(v('p', { class: 'hint', 'data-risk-utilization': 'absent' }, ['No standing utilization read is on record for this scope — the declared bounds above are taught here exactly as the boundary enforces them (see the enforcement note); the utilization read serves when the host route answers this project.']));
+        // N-1: while the standing read itself is IN FLIGHT (M1's ~15min
+        // standing read — the read simply has not answered yet), the pending
+        // line teaches the seek, never the durable absence (the honest-copy
+        // law; the host route's silent-absent answer renders only once the
+        // bundle has settled).
+        rows.push(readPendingAtView(state, viewAt, 'riskUtilization')
+          ? v('p', { class: 'hint', 'data-risk-utilization': 'pending', 'data-hydration-pending': 'true' }, ['Reading the world… — the standing utilization read appears here the moment the read lands.'])
+          : v('p', { class: 'hint', 'data-risk-utilization': 'absent' }, ['No standing utilization read is on record for this scope — the declared bounds above are taught here exactly as the boundary enforces them (see the enforcement note); the utilization read serves when the host route answers this project.']));
       }
       const riskPolicies: Map<string, string> = new Map();
       for (const outcome of projectToView(state.outcomes, viewAt, availabilityOfOutcome)) {
@@ -2026,7 +2078,10 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
       rows.push(v('div', { class: 'card' }, [
         v('div', { class: 'card-title' }, ['Risk policies (outcome lineage)']),
         ...[...riskPolicies.entries()].map(([policyId, version]) => factRow(policyId, version)),
-        ...(riskPolicies.size === 0 ? [factRow('risk policies', 'none at this view instant')] : []),
+        // N-1 (L3's "risk policies none at this view instant" frame): the
+        // outcomes read in flight — the row reads the seek, never a durable
+        // 'none' over an unanswered read.
+        ...(riskPolicies.size === 0 ? [factRow('risk policies', readPendingAtView(state, viewAt, 'outcomes') ? 'Reading the world…' : 'none at this view instant')] : []),
       ]));
       return v('section', { class: 'panel', 'data-section': 'risk' }, rows);
   } else if (selector === 'evidence') {

@@ -122,6 +122,19 @@ describe('deploy/vercel — FW-48: the typed-declaration parse (the constraint g
     expect(multi.map((entry) => entry.id)).toEqual(['c-1', 'c-2']);
   });
 
+  it('N-2 (Round N register — the single-line note input, now closed at the console surface): the register\'s own multi-line shape — a typed-declaration grammar line plus a free-text desk-head digest line in ONE note — parses the grammar line as ONE typed parameter while the digest line rides EVIDENCE ONLY (the compute layer was already whole-line correct; the console\'s single-line input was the only broken link)', () => {
+    // the exact shape the console's N-2 pin attaches through the now-multi-line textarea (apps/web console-interactions: the grammar line + the digest line, newline-separated)
+    const registerNote = 'c-1:outcome:risk.maxDrawdown:limit.max:0.2\nDesk-head digest: half-life 6.4d, z-entry 1.8/z-exit 0.4, overlay correlation 0.62.';
+    const parsed = parseNoteTypedDeclarations(registerNote, 'note:n2-1');
+    expect(parsed).toEqual([
+      { id: 'c-1', domain: 'outcome', subject: 'risk.maxDrawdown', kind: 'limit.max', bound: '0.2', severity: 'blocking', fromNote: 'note:n2-1' }, // the grammar line — ONE typed parameter
+    ]);
+    // the digest line rode as evidence only (never a fabricated parameter) — the same fold the input set names
+    const inputs = noteComputeInputsOf([{ noteId: 'note:n2-1', tenant: 'tenant-a', project: 'prj-a', attachedAt: AT, title: 'Sizing discipline priors', text: registerNote } as ResearchNoteRecord]);
+    expect(inputs.notes[0]?.contributed).toBe('1 typed parameter');
+    expect(inputs.parameters).toHaveLength(1);
+  });
+
   it('WHOLE-LINE ONLY — grammar text embedded mid-sentence, prefixed, or suffixed NEVER parses (no NLP, no mid-sentence extraction, never a fabricated parameter)', () => {
     const from = 'note:78705f8a';
     expect(parseNoteTypedDeclarations('see c-1:outcome:order.notional:limit.max:30000 above', from)).toEqual([]);
