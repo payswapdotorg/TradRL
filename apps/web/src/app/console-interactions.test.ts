@@ -87,7 +87,7 @@ const T0 = 1_700_000_000_000;
 // the build-shaped cost class — and deliberately stays at the implicit
 // default (the FW-49 beforeAll precedent: raising what has never flaked
 // would be un-evidenced scope growth).
-const BOOT_TEST_TIMEOUT_MS = 5_000; // the RED state (FW-50-B): vitest's implicit default made EXPLICIT — the D-1 floor pin at the end of this file fails until the 60,000 raise
+const BOOT_TEST_TIMEOUT_MS = 60_000; // the D-1 extension (FW-50-B): the FW-49 documented-safe ceiling — floor-pinned by the D-1 test at the end of this file
 
 // ---------------------------------------------------------------------------
 // THE FAKE DOCUMENT (the minimal MountDocument surface + the Element

@@ -56,7 +56,7 @@ const LOADER_SOURCE = readFileSync(join(HERE, 'strip-types.ts'), 'utf8');
 // default: they measure in single-digit milliseconds and have never
 // flaked in the record (the FW-49 beforeAll precedent — raising them
 // would be un-evidenced scope growth).
-const BOOT_TEST_TIMEOUT_MS = 5_000; // the RED state (FW-50-B): vitest's implicit default made EXPLICIT — the D-1 floor pin at the end of this file fails until the 60,000 raise
+const BOOT_TEST_TIMEOUT_MS = 60_000; // the D-1 extension (FW-50-B): the FW-49 documented-safe ceiling — floor-pinned by the D-1 test at the end of this file
 
 /** Every non-test TS module under apps/web/src (the graph pin must cover them all). */
 function allSourceModules(): string[] {
