@@ -703,3 +703,66 @@ imprecision, S3's dateless notice rows, Market-World first-frame staleness
 after a switch, the stale-empty Research list, the launch-entry rename, the
 stale toast re-fire, the honest 0.10→"0.1" normalization). NEXT: FW-47
 (the durability + read-model waves) → Round N.
+
+### Round N — the YES-vote round re-measured: THE FIRST UNANIMOUS YES (the arc 0/9/0 → 9/9/0); every standing flip condition honored
+
+9/9 personas on the rebuild-lane origin (b814ea1, tradrl-console-isuug2kmn
+— FW-47-A #103 + FW-47-B #104 + FW-48 #105 + FW-49 #106 + E-7 #107, the
+certification chain 8706 → 8715 → 8727 → 8751 → 8763+1skip), 54 ledger
+rows, tasks 189/189 (100% — the survey rows, the instrument's canonical
+per-seat counter; the ledger's raw column sums read 188/350, a SCHEMA
+ARTIFACT disclosed in the report — the L1/L2 rows omit tasks_completed,
+the S3/L3 rows carry it as a sequential row index), friction 34 (survey) /
+30 (ledger, the +5 L3-continuation / −1 S3 variance reconciled in the
+report), 0 protocol violations. **deltas: durable_records 9 pass /
+compute_layer 9 pass / pricing_published 9 pass — 27/27.** The named
+builds verified from every seat: the durable record classes DEAD in every
+form (the FIRED verdict at the observed fill's OWN filledAt to the
+millisecond from ALL NINE seats — Round M: zero alert-fired entries in
+six exports; the reload survival at 14-55 minutes' distance across
+worker-deaths, reloads and switches; the record-prefix events at the
+records' OWN instants; the double-submit one row; the forward-only law in
+both directions); the compute layer READS WHAT THE ANALYST INGESTS (the
+input set at the notes' own attachedAt, the from-note provenance, the
+note-derived analysis over the desk's own booked fills in exact decimals
+in BOTH arms — 'within' and 'exceeded' with the offending fill itemized
+by execution id — while the digest shapes and every mid-string fragment
+parse ZERO; L20 held: the gate alone refuses); E-7 PUBLISHED and sane (the
+seats' arithmetic: 12 desks $348/mo vs QC $720-1,200/mo; 50 desks
+~$17.4k/yr ≈ one-third of QC firm-tier; the 2-person shops $58/mo —
+pricing_fit 4.0 UNIFORM, every seat 2-or-3 → 4); FW-49 first-class; the
+Round M register M-1..M-6 ALL CLOSED (the org-pill leak dead with
+export-verified window timing from 7 seats; the completedAt drift dead —
+L2's job record byte-identical across three exports, 11 minutes, two
+reload). Main-interface **9/9/0 — the first unanimous YES**; would_pilot
+9/9; SWITCH recorded (S3, L3) and the conversions named from every seat.
+TradRL now wins ALL TEN dimensions on means (onboarding 5.00/3.33, TTV
+5.00/3.22, agent_org 4.89/1.00, auditability 5.00/2.22, risk_tooling
+4.78/2.67, time_machine 5.00/2.11, notifications 4.56/2.56, export
+5.00/3.00, discoverability 4.44/3.56, pricing_fit 4.00/3.67 — the Round M
+loss 2.67/4.17 now a WIN on the published model); seven seats recorded no
+losing dimension. **THE COMMITTEE'S MESSAGE: the YES is unanimous and
+every standing flip commitment is honored — the mission's competitive
+question is answered; the remaining seams are the polish register, not
+blockers.** Register: N-1 the read-lag class (the stale-empty first frame
+~3-10s phrased as durable claims — the round's top friction, measured by
+7 seats) + N-2 the single-line note input (newlines stripped — a real
+multi-line note cannot be entered; 6+ seats corroborated) + N-3 the
+degraded-export composition seam (a DEGRADED-connection export carried 7
+of the 14 derived families — silently omitting the alert-fired entry the
+manifest itself promises — yet verified head-exact; no data lost, no
+shortfall disclosure) + N-4 the org-volume tier
+unquantified + N-5 the $29 tier's live-API surfaces forward-looking + N-6
+the ~90s-3min fill window forcing dedicated alert-probe desks, plus the
+minors (the alert form collapse, the identically-labeled Create-account
+buttons, the untaught constraints separator, the horizon spinner trap, no
+inbox notice for a fired alert, 'Start the primary flow' absent
+post-first-launch, the transient-404 DEGRADED latch, the ~10s submitted-job
+lag, the no-equals preferences silent discard, the 'goal-set record'
+wording, the standing-risk-read moving instant, the view-scoped session
+tail, the 0.10→"0.1" normalization). NEXT: the Round N register (the
+read-lag class + the single-line note input above all) → the pilot
+roll-outs (M1's eleven desk heads + L1's desk heads this quarter; S3's
+Monday checklist at $0-to-learn/$58-to-automate; L3's supervised pilot
+with the regulator-facing export chain) + the operator items (the
+org-volume tier quantified; the live-API surfaces the day they exist).
