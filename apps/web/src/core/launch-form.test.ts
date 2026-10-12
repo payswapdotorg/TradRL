@@ -194,6 +194,30 @@ describe('launch-form: the per-field §4.11 validation', () => {
     expect(launchFieldValidation(epochForm, 'horizonStartsAt')).toBe('The horizon must end after it starts.');
   });
 
+  // FW-51 (the Round N minors — S2's one recorded friction event: "the
+  // constraints multi-entry separator still untaught at the field (newline
+  // reads as one malformed entry, comma discovered by trial)", S3
+  // corroborated). THE LAW: the malformed-entry message teaches the LIST
+  // grammar too — the FW-47-B refusal precedent (teach on error: the
+  // offender named + the grammar pre-taught) extended to the separator,
+  // because S2's exact failure shape is two well-formed entries separated
+  // by a newline reading as ONE malformed entry with no named fix.
+  it('FW-51: the malformed-entry message TEACHES THE SEPARATOR — two newline-separated entries read as ONE malformed entry (S2\'s exact shape), and the message names the comma law', () => {
+    const base = validValues();
+    const first = 'c-1:outcome:risk.maxDrawdown:limit.max:0.2';
+    const second = 'c-2:outcome:order.notional:limit.max:30000';
+    const values = { ...base, constraints: `${first}\n${second}` } as LaunchFormValues; // S2's exact input shape: a newline between two well-formed entries
+    // the newline is NOT a separator (parseListValue splits on commas only):
+    // the two entries ride as ONE entry — entry 1, its raw text carrying the newline
+    expect(firstBadConstraintEntry(values.constraints)).toEqual({ index: 1, entry: `${first}\n${second}` });
+    const message = launchFieldValidation(values, 'constraints');
+    expect(message).toContain('Constraints entry 1');
+    // THE SEPARATOR TAUGHT AT THE REFUSAL — the fix is in the sentence
+    // (UX-DESIGN's error-copy convention), so the comma is never discovered
+    // by trial again
+    expect(message).toContain('separate entries with commas — a newline is not a separator');
+  });
+
   it('D-6b: the constraint validation names the OFFENDING entry — a mixed list points at the broken one (index + raw text), the good ones stay unnamed', () => {
     const base = validValues();
     const good = 'c-1:outcome:risk.maxDrawdown:limit.max:0.2';
@@ -354,6 +378,15 @@ describe('launch-form: FW-40-C — H-1 the constraint-grammar vocabulary + the s
 
   it('H-1: the hint renders the FULL grammar — the entry shape, the domains, the kinds (L3\'s \'advisory.max\' pre-taught away), the severity suffix, EVERY accepted subject with its teaching, and the honest taught-never-enforced note', () => {
     const hint = constraintGrammarHint();
+    // FW-51 (the Round N minors — S2's friction, S3 corroborated): the hint
+    // teaches the LIST grammar first — the same comma-separated law the
+    // sibling list fields teach at their own hints (render/model.ts:
+    // markets 'Comma-separated instrument ids.', venues, data sources — one
+    // law, every surface), with the newline anti-trap named (a newline is
+    // part of one entry, never a separator — S2's exact discovery-by-trial
+    // shape pre-taught away).
+    expect(hint).toContain('a comma-separated list of entries');
+    expect(hint).toContain('a newline is not a separator; separate entries with commas');
     expect(hint).toContain('each entry is id:domain:subject:kind:bound');
     expect(hint).toContain('c-1:outcome:risk.maxDrawdown:limit.max:0.2');
     expect(hint).toContain('Domains: observation | state | action | outcome');
