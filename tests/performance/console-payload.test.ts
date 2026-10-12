@@ -336,9 +336,55 @@ describe('the console boot payload budgets (the no-build console\'s boot transfe
   //   line and exceeded on the total by the surface's true size (two new
   //   modules + ten seams, the chart the S2 quote asked for). The file
   //   count stays 56 of 64 (54 + the two new modules).
+  // Re-recorded (FW-50, the Round N register — N-1 the read-lag class,
+  //   N-2 the single-line note input, N-3 the degraded-export composition
+  //   seam; every number measured on the final tree by the FW-50-cont-2
+  //   finisher, 2026-10-12, main @ e9985a0 the base): 56 files, 1,277,711
+  //   bytes total (1247.8 of the 1232 KiB budget — OVER by 16,143).
+  //   THE TRIM CAME FIRST (the FW-44-A/FW-45/FW-46/R-2 law) and it paid
+  //   the wave's OWN single-file crossing in full: the wave's +446
+  //   wiring (the readAnswers state dispatch) took console.ts to
+  //   172,421 — 389 over the 172,032 (168 KiB) line — and the file's
+  //   comment-prose campaign (the FW-47-B idempotent twins' duplicated
+  //   defect narrative, the FW-34-B live-edge arm block, the R6a
+  //   org-compile poll) recovered 520 bytes, every law kept, ZERO code
+  //   lines touched, verified mechanically against main (an independent
+  //   comment stripper: the code-only diff vs main is EXACTLY the wave's
+  //   one code line). console.ts lands 171,901, 131 under the line. The
+  //   TOTAL crossing stays honest: the wave adds +23,080 over the base's
+  //   1,255,151 (the Lead's pre-campaign measurement 1,278,231; the
+  //   campaign's 520 brings the tree to 1,277,711 = +22,560 net), and
+  //   closing the remaining 16,143 by trimming alone would demand
+  //   gutting the wave's own law-documentation AND a compression
+  //   campaign across files this wave never touched — beyond an honest
+  //   in-place trim (the FW-45/FW-46 finding, a fortiori here). The byte
+  //   budget is CONSCIOUSLY RAISED 1232 -> 1280 KiB per this file's own
+  //   protocol ("growing past one is a CONSCIOUS decision"), the latest
+  //   in the recorded line 768 -> 896 -> 1024 -> 1088 -> 1152 -> 1168 ->
+  //   1200 -> 1232 -> 1280 — THE LEAD'S DELEGATED DECISION (2026-10-12,
+  //   never silent): the Round N register's N-1 fix honestly covers the
+  //   13 measured surfaces' loading states (the round's TOP friction,
+  //   5+ seats, the first unanimous-YES round's own top register item)
+  //   with the repo's own law-comment discipline — NOT fixing it to save
+  //   bytes contradicts the campaign's record; the honest fix's prose is
+  //   the cost. The additions, itemized (net bytes, measured):
+  //   src/core/workspace.ts +8,334 (the reads-settled state fold + the
+  //   loading-state projection + the N-2 note text's verbatim storage +
+  //   the manifest's degradedReadsNote), src/core/export-record.ts
+  //   +4,960 (the N-3 degraded-export composition seam — the manifest's
+  //   degradedReadsNote derivation), src/render/flow.ts +4,111 (the N-1
+  //   readPending teaching — the seek note over an unanswered read + the
+  //   N-2 multi-line labeledTextArea), src/render/model.ts +4,091 (the
+  //   N-1 loading states across the measured surfaces), src/render/
+  //   market.ts +1,138 (the market surface's own loading state),
+  //   src/app/console.ts −74 NET (the wave's +446 paid past zero by the
+  //   520-byte campaign). The new line leaves 33,009 bytes (2.5%) of
+  //   headroom over the measured surface. The file count stays 56 of 64.
+  //   NO single-file raise: console.ts stays UNDER its own line — the
+  //   campaign above paid it in full.
   const FILE_COUNT_BUDGET = 64; // each source is one boot fetch — the fetch count stays bounded
-  const TOTAL_BYTES_BUDGET = 1232 * 1024; // 1232 KiB — the whole boot transfer (PROPOSED raise 1200 -> 1232 at FW-46, the S2 market-facing surface's two new modules + ten seams — an EXPLICIT LEAD DECISION REQUEST, see the note above; the Lead decides, never silent)
-  const LARGEST_FILE_BUDGET = 168 * 1024; // 168 KiB — one fetch + one strip pass (raised 160 -> 168 at FW-45, accepted by the Lead; FW-46 stays UNDER this line — console.ts 171,970)
+  const TOTAL_BYTES_BUDGET = 1280 * 1024; // 1280 KiB — the whole boot transfer (raised 1232 -> 1280 at FW-50, the Round N register's honest N-1/N-2/N-3 fixes — the Lead's delegated decision, recorded in the note above; never silent)
+  const LARGEST_FILE_BUDGET = 168 * 1024; // 168 KiB — one fetch + one strip pass (raised 160 -> 168 at FW-45, accepted by the Lead; FW-50 stays UNDER this line — console.ts 171,901, paid by the campaign)
 
   it('the payload is the copy spec\'s set on the real tree: index.html + non-test sources, NO test sources, the loader\'s critical path present', () => {
     const { files, bytes } = consolePayload();
