@@ -683,6 +683,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       await pollJobs();
     } finally {
       lastFetchedScope = bundleScope;
+      // N-1 (the read-lag class): the bundle's end ANSWERS every family
+      // (landed, empty/absent, or degraded-with-its-own-note) — the render
+      // surfaces' durable empty-state copy composes ONLY from here, and a
+      // mid-flight scope move drops this with the rest (the beat re-reads
+      // the adopted scope, dispatchIfCurrent's own law).
+      dispatchIfCurrent(bundleScope, { kind: 'reads-settled', at: instants.nowMs() });
       // FW-40-B (H-4): the bundle's records are on hand — validate a
       // pending restored view instant NOW (the finally keeps the heal
       // independent of any single read's degradation).

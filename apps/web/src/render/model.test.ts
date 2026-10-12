@@ -1795,10 +1795,10 @@ describe('N-1 (Round N register — the read-lag class): "Reading the world…" 
   });
 
   it('the per-family granularity: a goal-bundle read that ANSWERED (no notes on record) resolves the notes card to the durable copy while the jobs empty state still reads PENDING (the families settle at their own reads, never in lockstep)', () => {
-    const state = reduceAll(midReadWorkspace([
+    const state = midReadWorkspace([
       { kind: 'goal-loaded', at: T0 + 10, goal: goalOf(), constraintSet: constraints() }, // the goal read answered — NO notes field (none on record)
       { kind: 'section-selected', at: T0 + 51, section: 'research' },
-    ]));
+    ]);
     const bytes = serializeConsoleModel(state, T0 + 50);
     expect(bytes).toContain('No research notes attached to this project on record yet'); // the read ANSWERED empty — the durable claim is now true
     expect(bytes).toContain('data-hydration-pending="true"'); // the jobs read is still in flight
@@ -1806,11 +1806,11 @@ describe('N-1 (Round N register — the read-lag class): "Reading the world…" 
   });
 
   it('the reads-settled marker resolves EVERY family to its honest durable copy (the bundle ran to its end — an empty jobs list is the read\'s answer, never a read still in flight)', () => {
-    const state = reduceAll(midReadWorkspace([
+    const state = midReadWorkspace([
       { kind: 'goal-loaded', at: T0 + 10, goal: goalOf(), constraintSet: constraints() },
       { kind: 'reads-settled', at: T0 + 20 },
       { kind: 'section-selected', at: T0 + 51, section: 'research' },
-    ]));
+    ]);
     const bytes = serializeConsoleModel(state, T0 + 50);
     expect(bytes).toContain('No research notes attached to this project on record yet');
     expect(bytes).toContain('No research jobs at this view instant.'); // the read answered empty — the honest terminal copy
@@ -1838,19 +1838,19 @@ describe('N-1 (Round N register — the read-lag class): "Reading the world…" 
   });
 
   it('the Risk section mid-read: the standing utilization note AND the risk-policies row teach PENDING — never "no standing read on record" / "none at this view instant" as durable claims (M1\'s ~15min standing read; L3\'s policies row)', () => {
-    const state = reduceAll(midReadWorkspace([
+    const state = midReadWorkspace([
       { kind: 'goal-loaded', at: T0 + 10, goal: goalOf(), constraintSet: constraints() }, // the bounds are declared — the standing read's family is still in flight
       { kind: 'section-selected', at: T0 + 51, section: 'risk' },
-    ]));
+    ]);
     const bytes = serializeConsoleModel(state, T0 + 50);
     expect(bytes).toContain('data-hydration-pending="true"');
     expect(bytes).not.toContain('No standing utilization read is on record for this scope'); // RED pre-fix: the read simply has not answered yet
     expect(bytes).not.toContain('none at this view instant'); // the outcomes read is in flight — 'none' is not yet a claim the state can make
-    const settled = reduceAll(midReadWorkspace([
+    const settled = midReadWorkspace([
       { kind: 'goal-loaded', at: T0 + 10, goal: goalOf(), constraintSet: constraints() },
       { kind: 'reads-settled', at: T0 + 20 },
       { kind: 'section-selected', at: T0 + 51, section: 'risk' },
-    ]));
+    ]);
     const settledBytes = serializeConsoleModel(settled, T0 + 50);
     expect(settledBytes).toContain('No standing utilization read is on record for this scope'); // the host route answered — the honest teaching note
     expect(settledBytes).toContain('none at this view instant'); // the outcomes read answered empty

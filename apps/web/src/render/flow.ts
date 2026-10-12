@@ -358,6 +358,16 @@ export function timeMachineControls(options: {
    * unpaired single quote — the strip lexer reads it as a string.)
    */
   readonly playbackStepMs?: number;
+  /**
+   * N-1 (Round N register — the read-lag class): true while the read of
+   * the PROJECT family is in flight at this view — the SESSION-floor
+   * range note ("No project history is on record yet") then teaches the
+   * seek instead, never a durable absence claim over an unanswered read
+   * (the honest-copy law). Absent = the pre-N-1 behavior (the pure
+   * callers keep their exact bytes). (The apostrophe law: no unpaired
+   * single quote inside a TYPE region comment.)
+   */
+  readonly readPending?: boolean;
 }): VNode {
   const bounds = scrubberBoundsOf(options.range);
   const value = Math.min(Math.max(options.viewAt, bounds.min), bounds.max);
@@ -462,8 +472,14 @@ export function timeMachineControls(options: {
     // FW-32-B: the range's honest-derivation note — the derivation
     // stated with the instant it derived (or the session fallback
     // taught plainly). aria-hidden: the scrubber's own min/max
-    // attributes carry the same facts to assistive tech.
-    v('span', { class: 'tm-range-note', 'data-tm-range-derived': options.range.derived }, [scrubberRangeNoteOf(options.range)]),
+    // attributes carry the same facts to assistive tech. N-1: while the
+    // project family's read is in flight and the floor is the SESSION
+    // fallback, the note teaches the seek instead — never "No project
+    // history is on record yet" as a durable claim over an unanswered
+    // read (the honest-copy law).
+    v('span', { class: 'tm-range-note', 'data-tm-range-derived': options.range.derived, ...(options.readPending === true && options.range.derived === 'session' ? { 'data-hydration-pending': 'true' } : {}) }, [options.readPending === true && options.range.derived === 'session'
+      ? 'Reading the world… — the project history appears here the moment the read lands.'
+      : scrubberRangeNoteOf(options.range)]),
     // FW-33-B + FW-34-B + FW-35-B: the speed's own honest caption — what
     // playback does at the EFFECTIVE real-time multiple (the free
     // speed's when one is armed), one sentence, never a claim the
