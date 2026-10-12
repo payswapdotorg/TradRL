@@ -58,7 +58,7 @@ import { DEFAULT_SECTION, isSectionId, type SectionId } from './sections';
 // FW-43-B: the export's record-derived event prefix (core/export-record.ts
 // — the boot-resume-plane precedent: its back-import of this module is
 // TYPE-ONLY, so the module graph stays acyclic at runtime).
-import { deriveRecordEventsOf, EXPORT_DERIVED_EVENT_RULE, recordScopeNoteOf } from './export-record';
+import { degradedReadsNoteOf, deriveRecordEventsOf, EXPORT_DERIVED_EVENT_RULE, recordScopeNoteOf } from './export-record';
 import { assertProjectScope, assertTenantScope, isLaunchpadScope, isWorkspaceScope, type WorkspaceScope } from './tenant';
 import type { OversightDeskRead } from './oversight';
 import { canonicalJson, sha256Hex, sha256Of } from './digest';
@@ -1133,6 +1133,21 @@ export interface ExportManifest {
    */
   readonly derivedEventRule?: string;
   /**
+   * N-3 (Round N register — M2's degraded-export composition seam): THE
+   * DEGRADED-READS DISCLOSURE (core/export-record.ts degradedReadsNoteOf)
+   * — present exactly when the export was composed over INCOMPLETE reads
+   * (a DEGRADED/UNREACHABLE connection with failed reads on file, or a
+   * read bundle still in flight) AND the chain carries record-derived
+   * entries (the recordScopeNote's own gate — no records on file, no
+   * full-record promise to qualify): names the failed routes + the record
+   * families they feed, and the read families that had not answered, so
+   * the FULL-RECORD promise never stands unqualified over a partial read
+   * (M2's file evidence: 7 of 14 families silently omitted, head-exact,
+   * no disclosure). ADDITIVE: pre-N-3 v2 documents carry no such field
+   * and still verify.
+   */
+  readonly degradedReadsNote?: string;
+  /**
    * FW-36-B (E-8, part 2): THE PUBLISHED SIMULATED-FLAG RULE, verbatim
    * (the EXPORT_SIMULATED_FLAG_RULE constant) — the per-record flag's
    * semantics + digest-rule placement. ADDITIVE: pre-E-8 v2 documents
@@ -1325,6 +1340,11 @@ export function composeWorkspaceExport(state: WorkspaceState, simulated = false,
       unreadNotices: unreadNoticeIds.length,
     },
     ...(recordScopeNoteOf(recordDerivedEvents, sessionEvents) === undefined ? {} : { recordScopeNote: recordScopeNoteOf(recordDerivedEvents, sessionEvents) as string, derivedEventRule: EXPORT_DERIVED_EVENT_RULE }),
+    // N-3: the degraded-composition disclosure rides beside the
+    // full-record note exactly when the composition was partial over
+    // records on file (the note's own gate + the recordScopeNote's own
+    // recordDerivedEvents gate — never a disclosure over nothing).
+    ...(degradedReadsNoteOf(state) === undefined || recordDerivedEvents === 0 ? {} : { degradedReadsNote: degradedReadsNoteOf(state) as string }),
     ...(chainScopeNote === undefined ? {} : { chainScopeNote }),
     // FW-36-B (E-8, part 2): the published simulated-flag rule rides the
     // manifest on every export (the reader of the manifest alone knows

@@ -74,7 +74,7 @@
 // (type-only imports — erased, no runtime cycle; the boot-resume-plane
 // precedent).
 
-import type { WorkspaceEvent, WorkspaceState } from './workspace';
+import type { ReadFamily, WorkspaceEvent, WorkspaceState } from './workspace';
 import { alertFiringOf, fillPriceObservationsOf } from './market';
 
 /**
@@ -251,4 +251,86 @@ export function recordScopeNoteOf(recordDerivedEvents: number, sessionEvents: nu
     'An export taken after a reload carries the record-derived prefix regardless of what the current session observed (the pre-fix export started a fresh chain at the reload and omitted the pre-reload record).',
     'The honest boundary: session-only UI events of PRIOR sessions (view navigation, playback, wizard drafts, notice reads, connection changes) were never records on file — no durable row holds them — and cannot be recovered; the durable rows are the record. Every digest and link verifies under the published rules with or without the derived labels.',
   ].join(' ');
+}
+
+// ---------------------------------------------------------------------------
+// N-3 (Round N register — M2's degraded-export composition seam): the
+// manifest's DEGRADED-READS DISCLOSURE. An export composed while the
+// console's connection read DEGRADED (M2's file evidence: 7 of 14 derived
+// families silently omitted — outcomes, post-mortems, the submission
+// rows, the org snapshot, the alert-fired entry — while the manifest
+// still promised "the compliance officer's FULL RECORD ... regardless of
+// what the current page session observed") or while the read bundle was
+// still IN FLIGHT DISCLOSES the shortfall: the note names the failed
+// routes + the record families they feed, and the read families that had
+// not answered. NEVER the FULL-RECORD promise over a partial read. (The
+// repo's own honest-degradation family: the deliverable composer's G-6
+// mandateDegradedOf law holds a background tick until its read lands;
+// the console's export is a user action — the honest interactive answer
+// is the disclosure, not a hold.)
+// ---------------------------------------------------------------------------
+
+/** The record families each console read route feeds into the derived prefix (unknown routes feed none — named as their own surface). */
+const DEGRADED_ROUTE_RECORD_FAMILIES: Readonly<Record<string, string>> = Object.freeze({
+  'GET /v1/projects/:id': 'the project record',
+  'POST /v1/knowledge/query': 'the knowledge records',
+  'POST /v1/outcomes/query': 'the outcome records',
+  'POST /v1/post-mortems/query': 'the post-mortem records',
+  'GET /v1/execution/submissions': 'the execution submission rows',
+  'GET /v1/jobs': 'the job rows',
+  'GET /v1/jobs/:id': 'the job rows',
+  'GET /v1/organizations/:ref/status': 'the organization-status snapshots',
+});
+
+/** The record families the per-family read answers gate (the N-1 fold's own labels). */
+const READ_FAMILY_RECORD_LABELS: Readonly<Record<ReadFamily, string>> = Object.freeze({
+  project: 'the project record',
+  goalBundle: 'the goal bundle (goal, constraint set, launch world, notes, alerts)',
+  knowledge: 'the knowledge records',
+  outcomes: 'the outcome records',
+  postMortems: 'the post-mortem records',
+  submissions: 'the execution submission rows',
+  jobs: 'the job rows',
+  riskUtilization: 'the standing risk read',
+});
+
+/** The read families in the fold's own declared order (the note names them deterministically). */
+const READ_FAMILY_ORDER: readonly ReadFamily[] = Object.freeze(['project', 'goalBundle', 'knowledge', 'outcomes', 'postMortems', 'submissions', 'jobs', 'riskUtilization']);
+
+/**
+ * N-3: THE DEGRADED-READS DISCLOSURE NOTE — present exactly when the
+ * composing state's reads are NOT all answered over a healthy connection
+ * (a DEGRADED/UNREACHABLE connection with failed reads on file, or a
+ * read bundle still in flight): names what a degraded/unanswered read
+ * omitted, so the manifest never carries the FULL-RECORD promise over a
+ * partial read unqualified. Undefined when every family answered over a
+ * connected composition (the settled re-export — M2's own resolution:
+ * the re-export carried all fourteen families, nothing to disclose). The
+ * recordScopeNote's own gate applies at the caller (no records on file —
+ * no full-record promise to qualify).
+ */
+export function degradedReadsNoteOf(state: Pick<WorkspaceState, 'connection' | 'degraded' | 'readAnswers'>): string | undefined {
+  const failedConnection = state.connection === 'degraded' || state.connection === 'offline';
+  const unanswered = READ_FAMILY_ORDER.filter((family) => !state.readAnswers[family]);
+  if (!failedConnection && unanswered.length === 0) return undefined;
+  const shape = state.connection === 'offline'
+    ? 'connection was UNREACHABLE'
+    : state.connection === 'degraded'
+      ? 'connection read DEGRADED'
+      : 'read bundle was still in flight';
+  const sentences: string[] = [
+    `COMPOSED OVER INCOMPLETE READS: this export was composed while the console's ${shape} — the record-derived entries above may omit whole record families, and the full-record scope note does not cover them.`,
+  ];
+  const routes: string[] = [];
+  for (const note of state.degraded) {
+    if (routes.indexOf(note.route) === -1) routes.push(note.route);
+  }
+  if (routes.length > 0) {
+    sentences.push(`The degraded reads on file at composition: ${routes.map((route) => `${route} (feeds ${DEGRADED_ROUTE_RECORD_FAMILIES[route] ?? 'its own read surface, no record family below'}).`).join(' ')}`);
+  }
+  if (unanswered.length > 0) {
+    sentences.push(`The read families that had not answered at composition: ${unanswered.map((family) => READ_FAMILY_RECORD_LABELS[family]).join(', ')}.`);
+  }
+  sentences.push('Nothing was fabricated — every entry this chain carries is a real record on file; re-take the export after the reads land (Refresh re-reads) for the unqualified full record.');
+  return sentences.join(' ');
 }
