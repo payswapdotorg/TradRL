@@ -741,3 +741,275 @@ describe('deploy/vercel — FW-37-A (F-1 + F-8): the full stream — a desk size
     expect(seed).toBeNull(); // the gate refuses the very first order — the desk honestly executes nothing
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-49 (Round E register E-3, CLOSED WITH EVIDENCE — the investigate-first
+// verdict, re-derived on this tree): the now-correct behavior, pinned.
+// THE VERDICT: CLOSE, not fix. The execution half (Round E's routed fills
+// at up to 180x the declared caps with a fabricated limits:pass stamp) was
+// killed at the root by FW-36-A/37-A — the gate computes every declared
+// constraint's verdict from the TRUE projected book, and the desk sizes its
+// own orders inside the mandate (entry <= 50% of the tightest
+// gate-observable book bound, book <= 75%, turnover-aware,
+// position-room-aware). The residue — the ONE full-capacity concentration
+// attempt per stream — is DELIBERATE since FW-36-A: the honest
+// demonstration of the gate binding against the project's OWN declared
+// constraint, the same demonstration the E-2 battery itself measures
+// (removing it would regress the E-2 battery). The whole-account scoping
+// half is dead: the stream derives per-project from the desk's OWN
+// envelope, the gate projects the desk's OWN book, the FW-43-A cockpit
+// renders per-desk cards — no cross-desk or account-aggregate sizing
+// exists anywhere in the code. Four pins hold this forever.
+// ---------------------------------------------------------------------------
+
+/** One fleet mandate's additive constraint over the base set (the local fixture shape — cast at the boundary, launchedConstraintSet()'s own idiom). */
+interface FleetConstraint {
+  readonly id: string;
+  readonly domain: 'state' | 'action' | 'outcome' | 'observation';
+  readonly subject: string;
+  readonly severity: 'blocking' | 'advisory';
+  readonly predicate: { readonly kind: 'limit.max'; readonly bound: number } | { readonly kind: 'equals'; readonly value: string };
+}
+
+/** One fleet mandate: a desk's OWN envelope numbers + its own additive constraints over the base set (c-1 drawdown + the two budget declarations, at the desk's own numbers). */
+interface FleetMandate {
+  readonly name: string;
+  readonly project: string;
+  readonly capital: string;
+  readonly risk: string;
+  readonly extra: readonly FleetConstraint[];
+}
+
+/** The fleet's own goal (the member's own ids — the branded refs are fixture-shaped literals, cast through unknown per the 7eeecbc discipline). */
+function fleetGoalOf(m: FleetMandate): GoalStatement {
+  return { ...launchedGoal(), id: `goal-${m.project}` } as unknown as GoalStatement;
+}
+
+/** The fleet's own constraint set: the base set's declarations at the member's OWN numbers + its additive constraints (cast through unknown — the branded refs are fixture-shaped literals). */
+function fleetConstraintSetOf(m: FleetMandate): ConstraintSetStatement {
+  return {
+    id: `cs-${m.project}`,
+    version: 1,
+    tenantId: TENANT,
+    constraints: [
+      { id: 'c-1', domain: 'outcome', subject: 'risk.maxDrawdown', predicate: { kind: 'limit.max', bound: 0.2 }, severity: 'blocking', description: 'the drawdown ceiling' },
+      { id: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', predicate: { kind: 'equals', value: m.capital }, severity: 'blocking' },
+      { id: 'k-risk-budget', domain: 'outcome', subject: 'risk.budget', predicate: { kind: 'equals', value: m.risk }, severity: 'blocking' },
+      ...m.extra,
+    ],
+    createdAt: LAUNCH_AT,
+  } as unknown as ConstraintSetStatement;
+}
+
+/** The fleet member's envelope (its OWN goal/constraint-set/world numbers — never another desk's). */
+function fleetEnvelopeOf(m: FleetMandate): ProjectEvidenceEnvelope {
+  return envelope({
+    project: m.project,
+    organizationRef: `org:compiled-${m.project}`,
+    goal: fleetGoalOf(m),
+    constraintSet: fleetConstraintSetOf(m),
+    world: launchedWorld({ capitalBudget: m.capital, riskBudget: m.risk }),
+  });
+}
+
+/**
+ * The E-3 evidence fleet (the mandate shapes the round actually measured):
+ * the base mandate + M1's Round-M DEEP desk + a grossExposure-cap-3 desk +
+ * a turnover-capped desk + a position-cap-1 desk + a tight-capital desk
+ * (whose risk-derived entry sizing would exceed its tight capital — the
+ * sizing law's own capped arm). DISCLOSED: the canonical entry's head-count
+ * says "a five-mandate fleet" while its parenthetical lists six mandates;
+ * the rebuild pins ALL SIX (nothing dropped — the stronger fleet).
+ */
+const FLEET: readonly FleetMandate[] = [
+  { name: 'the base mandate', project: 'prj-evidence-1', capital: '10000.00', risk: '250.00', extra: [] },
+  { name: "M1's Round-M DEEP desk", project: 'prj-m1-deep', capital: '80000.00', risk: '4000.00', extra: [] },
+  { name: 'a grossExposure-cap-3 desk', project: 'prj-evidence-ge3', capital: '10000.00', risk: '250.00', extra: [{ id: 'c-2', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 3 }, severity: 'blocking' }] },
+  { name: 'a turnover-capped desk', project: 'prj-evidence-turnover', capital: '10000.00', risk: '250.00', extra: [{ id: 'c-3', domain: 'action', subject: 'costs.dailyTurnover', predicate: { kind: 'limit.max', bound: 100 }, severity: 'blocking' }] },
+  { name: 'a position-cap-1 desk', project: 'prj-evidence-poscap1', capital: '10000.00', risk: '250.00', extra: [{ id: 'c-2', domain: 'state', subject: 'position.grossExposure', predicate: { kind: 'limit.max', bound: 1 }, severity: 'blocking' }] },
+  { name: 'a tight-capital desk', project: 'prj-evidence-tight', capital: '1000.00', risk: '250000.00', extra: [] },
+];
+
+/** M1's two-desk account (the per-desk scoping pin's own fixture): DEEP 80000/4000 + F1 20000/1000 — the aggregate a 100000 account, each desk its OWN budget. */
+const M1_DEEP: FleetMandate = { name: "M1's Round-M DEEP desk", project: 'prj-m1-deep', capital: '80000.00', risk: '4000.00', extra: [] };
+const M1_F1: FleetMandate = { name: "M1's Round-M F1 desk", project: 'prj-m1-f1', capital: '20000.00', risk: '1000.00', extra: [] };
+
+/** An INDEPENDENT exact-decimal compare (the reconciliation witness — reimplemented here, never imported from the module under test; 6-digit fixed point). */
+function independentCompare(a: string, b: string): -1 | 0 | 1 {
+  const parse = (value: string): bigint => {
+    const negative = value.startsWith('-');
+    const [intPart, fracPart = ''] = value.replace('-', '').split('.');
+    const digits = BigInt(`${intPart}${fracPart}`) * 10n ** BigInt(6 - fracPart.length);
+    return negative ? -digits : digits;
+  };
+  const left = parse(a);
+  const right = parse(b);
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
+/** The fleet's own subject-scale classifier (the independentMultiply idiom — reimplemented for the fleet's closed subject set, never imported from the module under test). */
+function fleetScaleOf(subject: string): 'book' | 'turnover' | 'other' {
+  if (subject === 'capital.budget' || subject === 'book.notional') return 'book';
+  if (subject === 'costs.dailyTurnover') return 'turnover';
+  return 'other'; // risk.budget / risk.maxDrawdown are realized-consumption classes; position.grossExposure is a count class — never book-scale
+}
+
+/** One fleet constraint's canonical bound text (the equals value / the limit.max bound — the grammar's own canonical form). */
+function fleetBoundTextOf(constraint: FleetConstraint): string {
+  return constraint.predicate.kind === 'equals' ? constraint.predicate.value : String(constraint.predicate.bound);
+}
+
+/** The desk's OWN tightest gate-observable book bound — the sizing pool, recomputed independently: every book-class bound + every turnover-class limit.max + the launch world's own declared capital budget. */
+function tightestBoundOf(m: FleetMandate): string {
+  const pool: string[] = [
+    m.capital, // the launch spec's own declared capital budget (the pool's always-member)
+    m.capital, // the base set's k-capital-budget equals declaration (book-scale) — the same declared number, the mandate's own
+  ];
+  for (const constraint of m.extra) {
+    const scale = fleetScaleOf(constraint.subject);
+    if (scale === 'book' || (scale === 'turnover' && constraint.predicate.kind === 'limit.max')) pool.push(fleetBoundTextOf(constraint));
+  }
+  return pool.reduce((tightest, bound) => (independentCompare(bound, tightest) === -1 ? bound : tightest));
+}
+
+/** The routed rows of a seed (the union's routed leg). */
+function routedRowsOf(seed: ReturnType<typeof deriveProjectEvidence>): readonly Extract<ProjectBlotterRow, { readonly kind: 'routed' }>[] {
+  return (seed?.submissions ?? []).filter((row): row is Extract<ProjectBlotterRow, { readonly kind: 'routed' }> => row.kind === 'routed');
+}
+
+/** The standing book of a seed's routed fills (the exact-decimal sum of their own notionals — the reconciliation witness). */
+function standingBookOf(seed: ReturnType<typeof deriveProjectEvidence>): string {
+  return routedRowsOf(seed).reduce((sum, row) => independentAdd(sum, row.fill?.notional ?? '0'), '0');
+}
+
+/** The refusal's citations, read through the STAGE CHECK that narrows the GatewayRefusal union's risk_limits leg (the concentration attempt refuses at the risk-limits stage — the gate's own law, so the check is a runtime assertion, never a formality). */
+function citationsOf(refused: Extract<ProjectBlotterRow, { readonly kind: 'refused' }>): readonly { readonly constraintId: string; readonly subject: string; readonly severity: string; readonly observed: string; readonly predicate: { readonly kind: string; readonly bound?: number; readonly value?: string } }[] {
+  if (refused.refusal.stage !== 'risk_limits') throw new Error(`the concentration attempt must refuse at the risk-limits stage (got ${String(refused.refusal.stage)})`);
+  return refused.refusal.refusals as readonly { readonly constraintId: string; readonly subject: string; readonly severity: string; readonly observed: string; readonly predicate: { readonly kind: string; readonly bound?: number; readonly value?: string } }[];
+}
+
+describe('FW-49 (E-3 closed with evidence): the execution half dead at the root — every ROUTED row\'s limits stamp is the COMPUTED verdict, no blocking breach ever rides a routed row', () => {
+  it('the fleet: across every mandate (base + DEEP + grossExposure cap 3 + turnover-capped + position-cap-1 + tight-capital), every routed row\'s limits stamp is computed-true and every blocking verdict refuses — the Round-E 180x fabrication is dead at the root', () => {
+    for (const m of FLEET) {
+      const seed = deriveProjectEvidence(fleetEnvelopeOf(m));
+      expect(seed, m.name).not.toBeNull();
+      if (seed === null) continue;
+      const routed = routedRowsOf(seed);
+      expect(routed.length, m.name).toBeGreaterThan(0); // every fleet mandate routes at least its entry — a mandate too tight to trade answers null (the zero-budget law)
+      for (const row of routed) {
+        const limitsCheck = (row.riskChecks ?? []).find((check) => check.dimension === 'limits');
+        expect(limitsCheck?.outcome, `${m.name}: the limits stamp is the computed verdict`).toBe('pass');
+        // no blocking breach ever rides a routed row — the pre-FW-36-A defect (a fill at up to 180x the declared cap stamped limits:pass) is dead at the root
+        expect((row.limitsEvaluation ?? []).some((evaluation) => evaluation.verdict === 'breach' && evaluation.severity === 'blocking'), `${m.name}: no blocking breach rides a routed row`).toBe(false);
+        // every DERIVABLE evaluation carries its own observed value + itemized arithmetic (computed, never a fixed stamp)
+        for (const evaluation of row.limitsEvaluation ?? []) {
+          if (!evaluation.derivable) continue;
+          expect(evaluation.observed, `${m.name}: ${evaluation.constraintId} observed`).not.toBeNull();
+          expect(evaluation.arithmetic, `${m.name}: ${evaluation.constraintId} arithmetic`).not.toBeNull();
+        }
+      }
+    }
+  });
+});
+
+describe('FW-49 (E-3 closed with evidence): the SIZING-SPACE law, recomputed independently — entry <= 50%, book <= 75% of the desk\'s OWN tightest bound, exact decimals', () => {
+  it('the fleet: every desk sizes its own orders inside its own mandate — the entry inside 50% and the standing book inside 75% of the tightest gate-observable bound (the turnover pool + the position room honored the same way)', () => {
+    for (const m of FLEET) {
+      const seed = deriveProjectEvidence(fleetEnvelopeOf(m));
+      expect(seed, m.name).not.toBeNull();
+      if (seed === null) continue;
+      const bound = tightestBoundOf(m); // the desk's OWN tightest bound — recomputed from the mandate's own declarations
+      expect(bound, m.name).toMatch(CANONICAL);
+      const routed = routedRowsOf(seed);
+      expect(routed.length, m.name).toBeGreaterThan(0);
+      const entry = routed[0];
+      // the entry: the FIRST routed row's own order line, recomputed from its printed numbers
+      const entryNotional = independentMultiply(entry?.order?.quantity ?? '0', entry?.order?.price ?? '0');
+      // the standing book: the exact-decimal sum of every routed fill's own notional (the fills the desk actually holds)
+      const book = standingBookOf(seed);
+      const entrySpace = independentMultiply(bound, '0.5');
+      const bookSpace = independentMultiply(bound, '0.75');
+      expect(independentCompare(entryNotional, entrySpace), `${m.name}: entry ${entryNotional} <= 50% of ${bound} (${entrySpace})`).toBeLessThanOrEqual(0);
+      expect(independentCompare(book, bookSpace), `${m.name}: book ${book} <= 75% of ${bound} (${bookSpace})`).toBeLessThanOrEqual(0);
+      // The concrete numbers, hand-reconciled per member (the exact decimals the law computes):
+      const expected: Readonly<Record<string, { readonly entry: string; readonly book: string }>> = {
+        'the base mandate': { entry: '6', book: '7.5' },                                  // 0.005 x 1200 = 6; 6 + 1.5 = 7.5, inside 5000/7500
+        "M1's Round-M DEEP desk": { entry: '768', book: '960' },                          // 0.08 x 9600 = 768; 768 + 192 = 960, inside 40000/60000
+        'a grossExposure-cap-3 desk': { entry: '6', book: '7.5' },                        // the position cap binds the trim's room, never the book's scale
+        'a turnover-capped desk': { entry: '6', book: '7.5' },                            // the 100 turnover bound: 6 <= 50, 7.5 <= 75 (the sizing spaces honor the turnover class)
+        'a position-cap-1 desk': { entry: '6', book: '6' },                               // the trim honestly OMITTED — a cap-1 desk has no room for a second position
+        'a tight-capital desk': { entry: '499.99992', book: '649.99992' },                // the CAPPED arm: the risk-derived sizing (5 x 120 = 600) exceeds the tight capital, the sizing law caps the entry at 4.166666 x 120 = 499.99992 <= 500
+      };
+      expect(entryNotional, `${m.name}: the entry's own order line`).toBe(expected[m.name]?.entry);
+      expect(book, `${m.name}: the standing book`).toBe(expected[m.name]?.book);
+    }
+  });
+});
+
+describe('FW-49 (E-3 closed with evidence): the whole-account scoping half dead — the per-desk scoping on M1\'s two-desk account, each desk its OWN', () => {
+  it('DEEP 80000/4000 + F1 20000/1000: standing books 960/60 each desk\'s OWN, concentration candidates 79999.9968/19999.9992 each sized to ITS OWN budget (never the 100000 aggregate, never the sibling\'s), each citing its own k-capital-budget, each stream free of the sibling\'s project id', () => {
+    const deepSeed = deriveProjectEvidence(fleetEnvelopeOf(M1_DEEP));
+    const f1Seed = deriveProjectEvidence(fleetEnvelopeOf(M1_F1));
+    expect(deepSeed).not.toBeNull();
+    expect(f1Seed).not.toBeNull();
+    if (deepSeed === null || f1Seed === null) return;
+    // THE STANDING BOOKS — each desk's OWN (the exact-decimal sums of its own routed fills):
+    expect(standingBookOf(deepSeed)).toBe('960'); // DEEP's own: 0.08 x 9600 = 768 + 0.04 x 4800 = 192
+    expect(standingBookOf(f1Seed)).toBe('60');    // F1's own: 0.02 x 2400 = 48 + 0.01 x 1200 = 12
+    // THE CONCENTRATION CANDIDATES — each sized to ITS OWN budget at its own entry price:
+    const deepRefusal = deepSeed.submissions.find((row) => row.kind === 'refused');
+    const f1Refusal = f1Seed.submissions.find((row) => row.kind === 'refused');
+    expect(deepRefusal).toBeDefined();
+    expect(f1Refusal).toBeDefined();
+    if (deepRefusal === undefined || deepRefusal.kind !== 'refused' || f1Refusal === undefined || f1Refusal.kind !== 'refused') return;
+    const deepCandidate = independentMultiply(deepRefusal.order?.quantity ?? '0', deepRefusal.order?.price ?? '0');
+    const f1Candidate = independentMultiply(f1Refusal.order?.quantity ?? '0', f1Refusal.order?.price ?? '0');
+    expect(deepCandidate).toBe('79999.9968'); // floor(80000 / 9600) x 9600 — DEEP's OWN budget at DEEP's own entry price (M1's own reconciliation)
+    expect(f1Candidate).toBe('19999.9992');   // floor(20000 / 2400) x 2400 — F1's OWN budget at F1's own entry price
+    // never the 100000 AGGREGATE: the aggregate-sized lines would be floor(100000/9600) x 9600 = 99999.9936 (DEEP) and floor(100000/2400) x 2400 = 99999.9984 (F1)
+    expect(deepCandidate).not.toBe('99999.9936');
+    expect(f1Candidate).not.toBe('99999.9984');
+    // never the SIBLING'S budget: each desk's candidate is its own line, never the sibling's
+    expect(deepCandidate).not.toBe('19999.9992');
+    expect(f1Candidate).not.toBe('79999.9968');
+    // EACH CITING ITS OWN k-capital-budget — its own declared bound, verbatim:
+    const deepCitations = citationsOf(deepRefusal);
+    const f1Citations = citationsOf(f1Refusal);
+    expect(deepCitations[0]?.constraintId).toBe('k-capital-budget');
+    expect(deepCitations[0]?.predicate.value).toBe('80000.00'); // DEEP's own declared capital budget, verbatim
+    expect(f1Citations[0]?.constraintId).toBe('k-capital-budget');
+    expect(f1Citations[0]?.predicate.value).toBe('20000.00'); // F1's own declared capital budget, verbatim
+    // THE STREAM SCOPING — each stream free of the sibling's project id, each carrying its own on every record:
+    expect(canonicalJson(deepSeed as never)).not.toContain('prj-m1-f1');
+    expect(canonicalJson(deepSeed as never)).toContain('prj-m1-deep');
+    expect(canonicalJson(f1Seed as never)).not.toContain('prj-m1-deep');
+    expect(canonicalJson(f1Seed as never)).toContain('prj-m1-f1');
+  });
+});
+
+describe('FW-49 (E-3 closed with evidence): the residue is DELIBERATE — exactly ONE full-capacity concentration attempt per stream, reconciling by inspection', () => {
+  it('the fleet + M1\'s two desks: exactly one -0003-class full-capacity candidate per stream, its prior book + candidate = the cited observed value EXACTLY (the honest demonstration the E-2 battery itself measures)', () => {
+    for (const m of [...FLEET, M1_F1]) {
+      const seed = deriveProjectEvidence(fleetEnvelopeOf(m));
+      expect(seed, m.name).not.toBeNull();
+      if (seed === null) continue;
+      // exactly ONE full-capacity candidate per stream (the -0003 row class — the entry is -0001, the trim -0002)
+      const fullCapacity = (seed.submissions ?? []).filter((row) => row.kind === 'refused' && row.order?.clientOrderId === `ord-${m.project}-0003`);
+      expect(fullCapacity, `${m.name}: exactly one full-capacity candidate per stream`).toHaveLength(1);
+      const refused = (seed.submissions ?? []).filter((row) => row.kind === 'refused');
+      expect(refused, `${m.name}: the stream's one refusal IS the demonstration`).toHaveLength(1);
+      const row = fullCapacity[0];
+      if (row === undefined || row.kind !== 'refused') continue;
+      expect(row.refusal.stage, `${m.name}: the concentration attempt refuses at the risk-limits stage`).toBe('risk_limits');
+      if (row.refusal.stage !== 'risk_limits') continue;
+      const citations = citationsOf(row);
+      const primary = citations[0];
+      expect(primary, m.name).toBeDefined();
+      if (primary === undefined) continue;
+      const priorBook = standingBookOf(seed);
+      const candidateNotional = independentMultiply(row.order?.quantity ?? '0', row.order?.price ?? '0');
+      // the itemized arithmetic RECONCILES BY INSPECTION: prior book + candidate = the cited observed value, exactly
+      expect(independentAdd(priorBook, candidateNotional), `${m.name}: prior book ${priorBook} + candidate ${candidateNotional} = the cited observed value`).toBe(primary.observed);
+    }
+  });
+});
