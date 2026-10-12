@@ -336,24 +336,50 @@ describe('shell: the Settings pricing disclosure (W-19 — the S5 CFO finding)',
     expect(settings).toContain('Pricing');
   });
 
-  it('the pricing facts are the CURRENT factual state — pilot free, no billing, commercial pricing not published', () => {
+  it('the pricing facts are the PUBLISHED model — learning free forever, automation $29 per desk per month, orgs volume pricing on request', () => {
     const settings = render(stateAt(), { accountView: 'settings' });
-    expect(settings).toContain('pilot access');
-    expect(settings).toContain('free');
-    expect(settings).toContain('billing today');
-    expect(settings).toContain('no payment is collected');
-    expect(settings).toContain('commercial pricing');
-    expect(settings).toContain('not published yet');
+    // The E-7 decision (2026-10-12, the operator-delegate record at
+    // LEAD-E7-DECISION) is PUBLISHED on this card, render-only, before
+    // the production deploy — Round N's re-measurement reads this price.
+    // LEARNING IS FREE: the whole simulated environment, forever.
+    expect(settings).toContain('learning');
+    expect(settings).toContain('free forever');
+    expect(settings).toContain('the whole simulated environment');
+    // AUTOMATION IS PAID: $29 per desk per month, the value named with
+    // the price (the decision's own words).
+    expect(settings).toContain('automation');
+    expect(settings).toContain('$29 per desk per month');
+    expect(settings).toContain('live API surfaces');
+    expect(settings).toContain('org-level oversight');
+    expect(settings).toContain('priority support');
+    // ORGS: volume pricing on request (the multi-desk seats).
+    expect(settings).toContain('orgs');
+    expect(settings).toContain('volume pricing on request');
   });
 
-  it('the disclosure fabricates NO numbers — no price, no tier, no percentage anywhere in the card', () => {
+  it('the card carries EXACTLY the decided numbers — the $29 price, never an invented tier beyond the decision', () => {
     const settings = render(stateAt(), { accountView: 'settings' });
     const card = settings.slice(settings.indexOf('data-settings="pricing"'), settings.indexOf('data-settings="data export"'));
     expect(card.length).toBeGreaterThan(0); // the slice found the card (it sits between pricing and data export)
-    // no currency, no per-seat/per-month vocabulary, no digits posing as a price
-    expect(card).not.toMatch(/[$€£]\s*\d/);
-    expect(card).not.toMatch(/\d+\s*(?:USD|EUR|per month|per seat|\/mo|\/user)/i);
-    expect(card).not.toContain('per month');
+    // THE DECIDED-NUMBERS LAW — the E-7 decision's own inversion of W-19's
+    // pre-decision no-numbers law ("never an invented number or tier" ->
+    // "exactly the decided numbers, never a tier beyond the decision"):
+    // the only number in the card is the decided 29, every $-figure is
+    // $29 itself, and "per month" appears ONLY inside the decided phrase.
+    const numberFigures = card.match(/\d[\d.,]*/g) ?? [];
+    expect(numberFigures.length).toBeGreaterThan(0);
+    expect(new Set(numberFigures)).toEqual(new Set(['29']));
+    const dollarFigures = card.match(/[$€£]\s*\d[\d.,]*/g) ?? [];
+    expect(dollarFigures.length).toBeGreaterThan(0);
+    expect(dollarFigures.every((figure) => figure === '$29')).toBe(true);
+    const perMonthFigures = card.match(/per month/g) ?? [];
+    const decidedPhrases = card.match(/\$29 per desk per month/g) ?? [];
+    expect(decidedPhrases.length).toBeGreaterThan(0);
+    expect(perMonthFigures).toHaveLength(decidedPhrases.length);
+    // No other invented number beyond the decision: no other currency
+    // vocabulary, no per-seat figure, no percentage anywhere in the card.
+    expect(card).not.toMatch(/\d+\s*(?:USD|EUR|per seat|\/mo|\/user)/i);
+    expect(card).not.toMatch(/\d+(?:\.\d+)?\s*%/);
   });
 });
 
