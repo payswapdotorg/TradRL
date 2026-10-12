@@ -72,10 +72,17 @@
 // derives).
 //
 // DISCLOSED LIMITATIONS (honest — UX-DESIGN §7 anti-deception):
-//   - The note is STORED VERBATIM and REFERENCED — nothing computes over
-//     it (no parsing into parameters, no research-compute over the
-//     analyst's data — M3's actual ask, disclosed as the NEXT step, never
-//     claimed here).
+//   - The note is STORED VERBATIM and REFERENCED — and since FW-48 the
+//     SERVER-SIDE compute layer (runtime/note-compute.ts, the E-6 compute
+//     layer this route's records feed) reads it back: a WHOLE LINE in the
+//     constraint grammar the wizard already teaches parses as a typed
+//     parameter with per-parameter provenance and is tested against the
+//     desk's own booked fills at research-job completion (post-hoc
+//     observation, never enforcement — L20); every other line rides as
+//     evidence only, never fabricated into parameters. The pre-FW-48
+//     "nothing computes over it" disclosure is CLOSED by FW-48, named here
+//     — the route itself still computes nothing at attach time (the parse
+//     happens at the research job's completion composition).
 //   - NO file upload, NO connector, NO live feed: the ingestion surface
 //     is a paste target; 'external' data sources remain accepted, stored
 //     as declarations, and HONESTLY NOT FETCHED (no live external data

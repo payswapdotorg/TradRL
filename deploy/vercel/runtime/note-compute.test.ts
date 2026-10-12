@@ -234,7 +234,8 @@ describe('deploy/vercel — FW-48: the evaluation against the desk\'s own booked
     expect(exceeded[0]!.observed).toBe('45750.375'); // the largest single booked fill — exact decimals, never a float
     expect(exceeded[0]!.verdict).toBe('exceeded');
     expect(exceeded[0]!.basis).toContain('2 booked fill'); // the row count it folded — the one-source-of-truth citation
-    expect(exceeded[0]!.basis).toContain('sub:demo0001'); // the standing fill past the bound, itemized
+    expect(exceeded[0]!.basis).toContain(submissions[0]!.submissionId); // the standing fill past the bound, itemized (the blotter's OWN row id — the content-addressed xgs id, never a guessed literal)
+    expect(exceeded[0]!.basis).not.toContain(submissions[1]!.submissionId); // the within-bound fill is never itemized (only the STANDING rows, never every row id)
     const within = evaluateNoteParameters([orderNotionalParameter('50000')], submissions);
     expect(within[0]!.observed).toBe('45750.375');
     expect(within[0]!.verdict).toBe('within');

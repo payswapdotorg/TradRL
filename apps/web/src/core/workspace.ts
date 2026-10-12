@@ -158,8 +158,12 @@ export interface WorkspaceState {
    * text notes, read back from the goal route's ADDITIVE `notes` field and
    * appended live by `note-attached` events (deduped by noteId). The fold
    * mirrors THIS scope's read-back truth: a notes-less read CLEARS (the
-   * `world` law), a project switch resets. Nothing computes over the text
-   * — the export chain carries it VERBATIM (M3's seam e answered).
+   * `world` law), a project switch resets. The text rides the export chain
+   * VERBATIM (M3's seam e answered), and since FW-48 the SERVER-SIDE
+   * compute layer parses whole-line typed declarations from it at
+   * research-job completion (deploy/vercel/runtime/note-compute.ts — the
+   * input set + the note-derived analysis ride the job record's own
+   * result payload; THIS client fold computes nothing over the text).
    */
   readonly notes: readonly ResearchNoteRecord[];
   /**

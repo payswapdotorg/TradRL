@@ -78,6 +78,8 @@ import {
   type GoalStatement,
 } from '../../../services/api/src/index';
 import { horizonSpanLabel, type LaunchWorldRecord } from './demo';
+import { noteAnalysisOf, noteComputeInputsOf, type NoteComputeInputs } from './note-compute';
+import type { ResearchNoteRecord } from './notes';
 /** The exact-decimal grammar (the boundary's wire grammar — apps/web core/decimals.ts's own pattern, mirrored verbatim). */
 const DECIMAL_PATTERN = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?$/;
 
@@ -363,11 +365,28 @@ export interface ResearchDeliverableInput {
    * payload NAMES them in its provenance (count + titles — where the
    * verbatim text lives is named honestly: the goal-set row + the export
    * chain's note-attached events); an absent read composes the honest
-   * absence, never a fabricated reference, and NOTHING computes over
-   * the notes' text (the disclosed next step, never a claimed
-   * capability).
+   * absence, never a fabricated reference.
    */
   readonly notes?: readonly DeliverableNoteRef[] | null;
+  /**
+   * FW-48 (the E-6 compute layer — M3's second YES-flip condition, "the
+   * compute layer reads what I ingest"): the project's attached research
+   * notes as FULL RECORDS, null/absent when none are on record (the
+   * pre-FW-48 caller passes nothing and composes the honest
+   * empty-input-set sentence). The composed payload gains the compute's
+   * own output: the INPUTS block (the notes at their OWN attachedAt with
+   * what each contributed + the typed declarations parsed from the
+   * constraint grammar the wizard already teaches, each with its
+   * "from note:<id>" per-parameter provenance + the boundary disclosure)
+   * and the NOTE-ANALYSIS block (each note-declared bound tested against
+   * the desk's OWN booked fill records — the same rows the
+   * derived-statistics block folds, ONE SOURCE OF TRUTH — with the honest
+   * not-computable cause named on every row that allows no test; post-hoc
+   * observation, ANALYSIS NEVER ENFORCEMENT, L20). A note carrying no
+   * typed declaration rides as EVIDENCE ONLY, never fabricated into a
+   * parameter — the honest boundary this wave builds and pins.
+   */
+  readonly noteRecords?: readonly ResearchNoteRecord[] | null;
   /**
    * FW-46 (the S2 market surface): the project's declared price alerts as
    * citable refs, null when none are on record. The composed payload
@@ -528,6 +547,19 @@ export interface DeliverableSource {
    */
   readonly notesOf?: (project: string) => readonly DeliverableNoteRef[] | null;
   /**
+   * FW-48 (the E-6 compute layer): the project's attached research notes
+   * as FULL RECORDS (the same rows the goal route serves — one source of
+   * truth), null when none are on record. The composition parses their
+   * typed declarations (the constraint grammar the wizard already
+   * teaches, per-parameter provenance) and evaluates each note-declared
+   * bound against the desk's own booked fills — the input set + the
+   * note-derived analysis ride the job record's result payload. Optional
+   * + additive: a source that serves no note records (the pre-FW-48
+   * callers, a lighter test source) omits it, and the composer discloses
+   * the honestly-empty input set — never a fabricated entry.
+   */
+  readonly noteRecordsOf?: (project: string) => readonly ResearchNoteRecord[] | null;
+  /**
    * FW-46 (the S2 market surface): the project's DECLARED PRICE ALERTS as
    * citable refs (alertId + market + direction + level — count + envelopes
    * is exactly what the deliverable's provenance names; the records live on
@@ -611,14 +643,44 @@ export function composeResearchDeliverableResult(input: ResearchDeliverableInput
   // FW-45 (the E-6 MVP): the NOTES statement rides the same provenance
   // block — the count + every title + WHERE the verbatim text lives (the
   // goal-set row + the workspace export's note-attached events: the
-  // deliverable NAMES the notes, never re-quotes them, and NOTHING
-  // computes over their text — the disclosed next step, never a claimed
-  // capability). An absent/unwired read composes the honest absence
-  // sentence, never a fabricated reference.
+  // deliverable NAMES the notes, never re-quotes them). FW-48 (the E-6
+  // compute layer): the statement's tail now discloses the compute's
+  // ACTUAL input set — the typed parameters parsed with per-parameter
+  // provenance, or the evidence-only teaching, or the honestly-empty set
+  // — and the pre-FW-48 FALSE tail "nothing computes over it here" is
+  // DEAD (the seam this wave closes; a note-derived analysis sentence
+  // follows whenever a parsed parameter was tested against the desk's
+  // own records).
   const notesRefs = input.notes === undefined || input.notes === null ? [] : [...input.notes];
-  const notesStatement = notesRefs.length === 0
-    ? 'no research notes attached to this project on record'
-    : `${notesRefs.length} attached research note${notesRefs.length === 1 ? '' : 's'} (${notesRefs.map((ref) => JSON.stringify(ref.title)).join('; ')}) — their verbatim text lives on this project's goal-set record and in the workspace export's note-attached events, which carry it in the chain; nothing computes over it here`;
+  // FW-48: the compute's own input rows — the FULL note records (the same
+  // rows the goal route serves). An absent/undefined read (the pre-FW-48
+  // caller) is the honestly-empty input set: zero notes, zero parameters,
+  // the empty disclosure — never a fabricated entry.
+  const noteRecords = input.noteRecords === undefined || input.noteRecords === null ? [] : [...input.noteRecords];
+  const noteComputeInputs = noteComputeInputsOf(noteRecords);
+  const parsedCount = noteComputeInputs.parameters.length;
+  const parameterCitations = noteComputeInputs.parameters.map((parameter) => `${parameter.subject} ${parameter.kind} ${parameter.bound} from ${parameter.fromNote}`).join('; ');
+  const computeClause = input.noteRecords === undefined || input.noteRecords === null
+    ? 'the compute layer read no attached notes (the empty input set, disclosed as empty, never a fabricated entry)'
+    : parsedCount === 0
+      ? 'the compute layer read them: 0 typed parameters parsed — every line rides as evidence only, never fabricated into parameters'
+      : `the compute layer read them: ${parsedCount === 1 ? '1 typed parameter(s)' : `${parsedCount} typed parameters`} parsed with per-parameter provenance (${parameterCitations})`;
+  const notesStatement = notesRefs.length > 0
+    ? `${notesRefs.length} attached research note${notesRefs.length === 1 ? '' : 's'} (${notesRefs.map((ref) => JSON.stringify(ref.title)).join('; ')}) — their verbatim text lives on this project's goal-set record and in the workspace export's note-attached events, which carry it in the chain; ${computeClause}`
+    : noteRecords.length > 0
+      ? `${noteRecords.length} attached research note${noteRecords.length === 1 ? '' : 's'} on record (${noteRecords.map((note) => JSON.stringify(note.title)).join('; ')}) — their verbatim text lives on this project's goal-set record and in the workspace export's note-attached events, which carry it in the chain; ${computeClause}`
+      : `no research notes attached to this project on record; ${computeClause}`;
+  // FW-48 (the E-6 compute layer): the NOTE-DERIVED ANALYSIS sentence —
+  // every note-declared bound named with its test against the desk's own
+  // records (the observed figure, or the honest not-computable cause),
+  // post-hoc observation only (L20). Composed exactly when the analysis
+  // block exists (a parsed parameter was evaluated); the control shape —
+  // notes on record, zero typed declarations — carries the evidence-only
+  // teaching and NEVER this sentence (nothing parsed, nothing tested).
+  const noteAnalysis = noteAnalysisOf(noteRecords, input.records === undefined || input.records === null ? null : input.records.submissions);
+  const noteAnalysisSentence = noteAnalysis === null
+    ? ''
+    : ` Note-derived analysis: ${noteAnalysis.evaluations.length} note-declared bound${noteAnalysis.evaluations.length === 1 ? '' : 's'} tested against the desk's own records — ${noteAnalysis.evaluations.map((row) => `${row.subject} ${row.kind} ${row.bound} from ${row.fromNote}: ${row.status === 'evaluated' ? `${row.verdict} (observed ${row.observed})` : `not computable (${row.note})`}`).join('; ')}.`;
   // FW-46 (the S2 market surface): the ALERTS statement rides the same
   // provenance block — the count + every envelope + WHERE the records
   // live (the goal-set row + the workspace export's alert-declared
@@ -630,7 +692,7 @@ export function composeResearchDeliverableResult(input: ResearchDeliverableInput
   const alertsStatement = alertRefs.length === 0
     ? 'no price alerts declared on this project on record'
     : `${alertRefs.length} declared price alert${alertRefs.length === 1 ? '' : 's'} (${alertRefs.map((ref) => `${ref.market} ${ref.direction} ${ref.level}`).join('; ')}) — the declarations live on this project's goal-set record and in the workspace export's alert-declared events; their firing is evaluated only against this desk's own recorded fill prices, never a live feed`;
-  const summary = `${worldSentence}. ${mandateSentence}. ${statisticsStatement}. Research provenance: ${notesStatement}. ${alertsStatement}. Downstream lineage: ${lineageStatement}. This is ${disclosure}.`;
+  const summary = `${worldSentence}. ${mandateSentence}. ${statisticsStatement}. Research provenance: ${notesStatement}.${noteAnalysisSentence} ${alertsStatement}. Downstream lineage: ${lineageStatement}. This is ${disclosure}.`;
 
   return deepFreeze({
     kind: 'release-candidate',
@@ -664,6 +726,20 @@ export function composeResearchDeliverableResult(input: ResearchDeliverableInput
     alerts: Object.freeze(alertRefs.length === 0
       ? { count: 0, refs: Object.freeze([]) }
       : { count: alertRefs.length, refs: Object.freeze(alertRefs.map((ref) => Object.freeze({ alertId: ref.alertId, market: ref.market, direction: ref.direction, level: ref.level }))), statement: alertsStatement }),
+    // FW-48 (the E-6 compute layer): the INPUTS block — the compute's own
+    // input set (the notes at their OWN attachedAt with what each
+    // contributed, the parsed typed declarations with per-parameter
+    // provenance, the boundary disclosure). ALWAYS present — an empty
+    // input set carries the empty notes/parameters arrays + the empty-set
+    // disclosure (the pre-FW-48 caller's honest shape, pinned keep-green).
+    inputs: noteComputeInputs,
+    // FW-48: the NOTE-ANALYSIS block — the evaluations (each note-declared
+    // bound tested against the desk's own booked fills, or its honest
+    // not-computable cause on the row) + the post-hoc-observation
+    // statement. Null exactly when no typed declaration parsed (the
+    // evidence-only shape — nothing parsed, nothing tested, never a
+    // fabricated analysis).
+    noteAnalysis,
     lineage: Object.freeze({
       promotedDecision: promotion === null ? null : promotion.outcomeId,
       statement: lineageStatement,

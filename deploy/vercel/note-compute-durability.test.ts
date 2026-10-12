@@ -212,15 +212,17 @@ describe('deploy/vercel — FW-48: the compute\'s own output rides the job recor
       expect(kickoff.status).toBe(202);
       const jobId = (kickoff.body as { data: { jobId: string } }).data.jobId;
 
-      // THE DRAIN + THE COMPLETION (T0+10s/T0+11s): the tick composes the
-      // release candidate over the durable goal-set row — the notes are in
+      // THE DRAIN + THE COMPLETION (T0+13s/T0+14s — the pacing the L2-cont
+      // precedent rides: the job's age crosses the machinery's own
+      // completion threshold, 8s, so the tick composes the release
+      // candidate over the durable goal-set row) — the notes are in
       // the input set, the typed declaration is parsed with provenance, and
       // the note-declared bound is tested against the desk's own records.
       vi.setSystemTime(T0 + 5_000);
       await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: consoleHeaders(SESSION_BOOT) })); // the drain lands both notes on the durable row
-      vi.setSystemTime(T0 + 10_000);
+      vi.setSystemTime(T0 + 13_000);
       await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER }));
-      vi.setSystemTime(T0 + 11_000);
+      vi.setSystemTime(T0 + 14_000);
       await drive(instanceA, streamingRequest({ method: 'GET', url: '/v1/meta', headers: BEARER })); // the drain lands the completed row
 
       // (a) + (b) THE JOB RECORD'S RESULT — the compute's own output.

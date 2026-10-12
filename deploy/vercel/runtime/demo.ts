@@ -872,6 +872,18 @@ export function demoDeliverableSourceOf(
       const notes = researchNotesOf(captured.notes);
       return notes.length === 0 ? null : Object.freeze(notes.map((note) => ({ noteId: note.noteId, title: note.title })) as readonly DeliverableNoteRef[]);
     },
+    // FW-48 (the E-6 compute layer): the FULL note records read from the
+    // SAME capture the goal route serves — one source of truth; the
+    // composition parses their typed declarations (the constraint grammar
+    // the wizard already teaches) and evaluates each note-declared bound
+    // against the desk's own booked fills. An unwired/absent read composes
+    // the honestly-empty input set, never a fabricated entry.
+    noteRecordsOf(project) {
+      const captured = ports.controlPlane.goalSets.get(`${tenant}/${project}`);
+      if (captured === undefined) return null;
+      const notes = researchNotesOf(captured.notes);
+      return notes.length === 0 ? null : notes;
+    },
     // FW-46 (the S2 market surface): the declared price alerts read from the
     // SAME capture the goal route serves — the provenance names them (count
     // + envelopes); an unwired/absent read composes the honest absence.
@@ -928,6 +940,18 @@ export function durableDeliverableSourceOf(
       if (row === null) return null;
       const notes = researchNotesOf(row.notes);
       return notes.length === 0 ? null : Object.freeze(notes.map((note) => ({ noteId: note.noteId, title: note.title })) as readonly DeliverableNoteRef[]);
+    },
+    // FW-48 (the E-6 compute layer): the FULL note records read from the
+    // SAME hydrated goal-set row the goal route serves — one source of
+    // truth; the composition parses their typed declarations (per-parameter
+    // provenance) and evaluates each note-declared bound against the desk's
+    // own booked fills. An unwired/absent read composes the honestly-empty
+    // input set, never a fabricated entry.
+    noteRecordsOf(project) {
+      const row = source.goalSetOf(project);
+      if (row === null) return null;
+      const notes = researchNotesOf(row.notes);
+      return notes.length === 0 ? null : notes;
     },
     // FW-46 (the S2 market surface): the declared price alerts read from the
     // SAME hydrated goal-set row (the row's own additive `alerts` array,
@@ -2078,6 +2102,14 @@ export function demoMachineryTick(service: ApiService, context: DemoMachineryCon
                   // the goal-set row carries; an unwired source composes the
                   // honest absence, never a fabricated reference).
                   notes: context.deliverables.notesOf === undefined ? null : context.deliverables.notesOf(job.project),
+                  // FW-48 (the E-6 compute layer): the FULL note records ride
+                  // the composition (the same rows the goal route serves) —
+                  // the compute parses their typed declarations with
+                  // per-parameter provenance and evaluates each note-declared
+                  // bound against the desk's own booked fills (the same rows
+                  // the derived-statistics block folds); an unwired source
+                  // composes the honestly-empty input set.
+                  noteRecords: context.deliverables.noteRecordsOf === undefined ? null : context.deliverables.noteRecordsOf(job.project),
                   // FW-46 (the S2 market surface): the provenance NAMES the
                   // declared price alerts (count + envelopes; an unwired
                   // source composes the honest absence).
