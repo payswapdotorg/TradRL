@@ -156,7 +156,18 @@ export function accountSettingsBody(panel: AccountPanelState, simulated: boolean
     ...labeledInput({ label: 'Passphrase', name: 'passphrase', value: panel.edits.passphrase ?? '', type: 'password', required: true, hint: register ? 'Choose one — the host stores only a salted verifier, never the passphrase.' : 'Your account\'s passphrase.', vocabulary: 'account' }),
     ...(panel.error === null ? [] : [v('p', { class: 'field-error', role: 'alert', 'data-account-error': panel.error }, [panel.error])]),
     v('div', { class: 'tm-playback' }, [
-      v('button', { class: 'tm-button', 'data-action': 'account-submit', type: 'button', ...(panel.busy ? { 'aria-disabled': 'true' } : {}) }, [panel.busy ? 'Working…' : register ? 'Create account' : 'Sign in']),
+      // FW-51 (the Round N minors — S2's one recorded account friction, S3
+      // corroborated): in register mode the submit named the SAME action as
+      // the already-selected mode segment — two identically-labeled "Create
+      // account" buttons, and the seats clicked the wrong one first. THE
+      // LAW: every button names its OWN action. The segment names the MODE
+      // it selects (the segmented control's own vocabulary, the theme row's
+      // Light/Dark); the submit names what it DOES to the entered fields —
+      // the adoption row's own "Adopt this desk" shape: verb + this + the
+      // noun it acts on. The login face keeps its own honest names (its
+      // collision was never measured across the nine rounds — un-evidenced
+      // scope growth is the campaign's own law against touching it).
+      v('button', { class: 'tm-button', 'data-action': 'account-submit', type: 'button', ...(panel.busy ? { 'aria-disabled': 'true' } : {}) }, [panel.busy ? 'Working…' : register ? 'Create this account' : 'Sign in']),
     ]),
     v('p', { class: 'card-note' }, ['Optional — the console works without an account. An account keeps the desks you adopt across browser restarts and machines; without one, this device\'s browser storage is the only thing that remembers your session.']),
     ...(disclosure === null ? [] : [disclosure]),
