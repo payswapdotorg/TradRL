@@ -219,10 +219,16 @@ export const CONSTRAINT_SUBJECT_VOCABULARY: readonly TaughtConstraintSubject[] =
  * pre-teaches the closed set), the optional severity suffix, the FULL
  * accepted-subject list with one example each, and the honest
  * taught-never-enforced note for every other dotted subject.
+ * FW-51 (the Round N minors — S2's one recorded friction event, S3
+ * corroborated): the hint teaches the LIST grammar FIRST — the
+ * comma-separated law every sibling list field teaches at its own hint
+ * (markets/venues/data sources — 'one law, every surface'), with the
+ * newline anti-trap named so the comma is never discovered by trial (a
+ * newline is part of one entry, never a separator).
  */
 export function constraintGrammarHint(): string {
   const subjects = CONSTRAINT_SUBJECT_VOCABULARY.map((entry) => `${entry.subject} (${entry.teaches})`).join('; ');
-  return `Optional executable limits — each entry is id:domain:subject:kind:bound, e.g. ${CONSTRAINT_GRAMMAR_EXAMPLE}. Domains: ${CONSTRAINT_DOMAINS.join(' | ')}. Kinds: ${CONSTRAINT_PREDICATE_KINDS.join(' | ')} (an optional :advisory or :blocking suffix; blocking is the default). Subjects the gate evaluates, one example each: ${subjects}. Any other dotted subject parses but is taught, never enforced at the gate.`;
+  return `Optional executable limits — a comma-separated list of entries (a newline is not a separator; separate entries with commas); each entry is id:domain:subject:kind:bound, e.g. ${CONSTRAINT_GRAMMAR_EXAMPLE}. Domains: ${CONSTRAINT_DOMAINS.join(' | ')}. Kinds: ${CONSTRAINT_PREDICATE_KINDS.join(' | ')} (an optional :advisory or :blocking suffix; blocking is the default). Subjects the gate evaluates, one example each: ${subjects}. Any other dotted subject parses but is taught, never enforced at the gate.`;
 }
 
 /** The constraint grammar's documented example (the malformed-entry message names it). */
@@ -542,7 +548,12 @@ export function launchFieldValidation(values: LaunchFormValues, field: LaunchFie
   // offender.
   const badConstraint = firstBadConstraintEntry(values.constraints);
   if (badConstraint !== null) {
-    return `Constraints entry ${badConstraint.index} ("${badConstraint.entry}") is malformed — each entry is id:domain:subject:kind:bound, e.g. ${CONSTRAINT_GRAMMAR_EXAMPLE} (kinds: ${CONSTRAINT_PREDICATE_KINDS.join(' | ')}; severities: :advisory | :blocking).`;
+    // FW-51 (S2's friction): the message teaches the LIST grammar too — the
+    // separator named in the same sentence that names the offender (the
+    // FW-47-B refusal precedent: teach on error), because S2's exact shape
+    // (two well-formed entries separated by a newline reading as ONE
+    // malformed entry) left the fix unnamed at the point of refusal.
+    return `Constraints entry ${badConstraint.index} ("${badConstraint.entry}") is malformed — each entry is id:domain:subject:kind:bound, e.g. ${CONSTRAINT_GRAMMAR_EXAMPLE} (kinds: ${CONSTRAINT_PREDICATE_KINDS.join(' | ')}; severities: :advisory | :blocking; separate entries with commas — a newline is not a separator).`;
   }
   return '';
 }

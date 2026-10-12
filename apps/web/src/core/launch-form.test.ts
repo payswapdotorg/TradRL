@@ -172,8 +172,10 @@ describe('launch-form: the per-field §4.11 validation', () => {
       // which one (1-based) + what it says + the expected grammar. FW-40-C
       // (H-1): the message also pre-teaches the closed KIND + SEVERITY sets
       // (L3's 'advisory.max' rejection — a plausible kind under the product's
-      // advisory taxonomy — is now named away at the field itself).
-      ['constraints', 'nope', 'Constraints entry 1 ("nope") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2 (kinds: limit.min | limit.max | equals; severities: :advisory | :blocking).'],
+      // advisory taxonomy — is now named away at the field itself). FW-51:
+      // the LIST grammar rides the same sentence (the separator named —
+      // the message's own surface, updated with the fix).
+      ['constraints', 'nope', 'Constraints entry 1 ("nope") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2 (kinds: limit.min | limit.max | equals; severities: :advisory | :blocking; separate entries with commas — a newline is not a separator).'],
     ];
     for (const [field, value, message] of cases) {
       const values = { ...base, [field]: value } as LaunchFormValues;
@@ -226,7 +228,7 @@ describe('launch-form: the per-field §4.11 validation', () => {
     const values = { ...base, constraints: `${good}, ${alsoGood}, ${broken}` } as LaunchFormValues;
     expect(firstBadConstraintEntry(values.constraints)).toEqual({ index: 3, entry: broken });
     expect(launchFieldValidation(values, 'constraints')).toBe(
-      `Constraints entry 3 ("${broken}") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2 (kinds: limit.min | limit.max | equals; severities: :advisory | :blocking).`,
+      `Constraints entry 3 ("${broken}") is malformed — each entry is id:domain:subject:kind:bound, e.g. c-1:outcome:risk.maxDrawdown:limit.max:0.2 (kinds: limit.min | limit.max | equals; severities: :advisory | :blocking; separate entries with commas — a newline is not a separator).`,
     );
     // the offender rides the REVIEW banner's problem list too (the D-6b surface: "FIX BEFORE LAUNCHING" names its offender)
     const problems = launchDraftProblems(values);
