@@ -7070,3 +7070,275 @@ describe('executed boot: FW-46 — the price-alert declaration (the S2 market su
     expect(textOf(liveRow)).not.toContain('FIRED');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-47-B (Round M register M-6 — L3's find, the NEW product defect of the
+// round): the wizard's Preferences free text TEACHES its typed validation
+// error at the point of refusal on every executed-boot path — the
+// click-refusal gate (the step-advance refusal), the §4.11 blur, and the
+// real-browser press sequence. The pre-fix field rendered the grammar-less
+// one-liner (and L3's production seat measured the refusal teaching
+// nowhere at the point of refusal on the deep launch — ~4 minutes lost,
+// isolated by bisection); the offender-naming message (the D-6b
+// convention, the constraints field's own law) + the grammar-teaching
+// hint at the point of entry close the disclosure gap.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-47-B (M-6) — the wizard Preferences validation teaches at every refusal', () => {
+  /** The offender-naming message the field must render for one typed malformed text (the D-6b convention: the offender NAMED, the grammar taught, the fix in the sentence). */
+  const offenderMessageOf = (typed: string): string =>
+    `Preferences ("${typed}") are malformed — each entry is key=value, e.g. rebalance=daily, report=weekly (optional; leave empty for none).`;
+
+  /** The Preferences field's own grammar hint (the constraints hint's own convention — taught at the point of entry, before any error). */
+  const hintOf = (rig: Rig, field: string): string => {
+    const input = findByData(rig.root, 'data-launch-field', field);
+    if (input === null || input.parent === null) throw new Error(`no ${field} field in the current tree`);
+    const hint = input.parent.children.find((element) => element.hasClass('field-hint'));
+    return hint === undefined ? '' : textOf(hint);
+  };
+
+  /** Drive the wizard to the WORLD step with every other field valid (the step the Preferences field lives on). */
+  async function wizardAtWorldStep(rig: Rig): Promise<void> {
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-world');
+    typeField(rig, 'horizonStartsAt', String(T0));
+    typeField(rig, 'horizonEndsAt', String(T0 + 86_400_000));
+    typeField(rig, 'executionMode', 'simulation');
+    typeField(rig, 'constraints', 'c-1:outcome:risk.maxDrawdown:limit.max:0.2');
+    expect(rig.handle.state().launch.step).toBe('world');
+  }
+
+  it('THE §4.11 BLUR: malformed preferences text validates destructively ON BLUR with the OFFENDER-NAMING message — the typed text named, the grammar taught (never the grammar-less one-liner)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    await wizardAtWorldStep(rig);
+    typeField(rig, 'preferences', 'daily rebalancing'); // free text — not key=value pairs
+    blurField(rig, 'preferences');
+    const errors = elementsOf(rig.root).filter((element) => element.hasClass('field-error'));
+    expect(errors.length).toBe(1); // exactly the one invalid field — the rest of the step is valid
+    expect(textOf(errors[0] as FakeElement)).toBe(offenderMessageOf('daily rebalancing')); // the offender NAMED, the grammar taught
+    // the wizard never left the world step (the refusal is visible, never a silent no-op)
+    expect(rig.handle.state().launch.step).toBe('world');
+    // fixing the grammar goes silent (§4.11: a valid value stays silent even when touched)
+    typeField(rig, 'preferences', 'rebalance=daily');
+    blurField(rig, 'preferences');
+    expect(countByClass(rig.root, 'field-error')).toBe(0);
+  });
+
+  it('THE CLICK-REFUSAL GATE: "Next: review" with malformed preferences REFUSES to advance and TEACHES AT THE FIELD — the offender-naming message renders where the user stands, the review/arm never render, and the fix advances', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    await wizardAtWorldStep(rig);
+    typeField(rig, 'preferences', 'weekly rebalancing report'); // malformed free text
+    clickAction(rig, 'launch-step-review');
+    // THE REFUSAL TEACHES: the wizard stays on world, the step's fields render their messages inline
+    expect(rig.handle.state().launch.step).toBe('world');
+    expect(findByData(rig.root, 'data-review', 'launch')).toBeNull();        // the review never renders
+    expect(findByData(rig.root, 'data-action', 'confirm-arm-launch')).toBeNull(); // the arm stays unreachable
+    const errors = elementsOf(rig.root).filter((element) => element.hasClass('field-error'));
+    expect(errors.length).toBe(1);
+    expect(textOf(errors[0] as FakeElement)).toBe(offenderMessageOf('weekly rebalancing report'));
+    // THE FIX ADVANCES (the refusal was the teaching, never a trap)
+    typeField(rig, 'preferences', 'rebalance=daily, report=weekly');
+    clickAction(rig, 'launch-step-review');
+    expect(rig.handle.state().launch.step).toBe('review');
+    expect(findByData(rig.root, 'data-review', 'launch')).not.toBeNull();
+    expect(findByData(rig.root, 'data-action', 'confirm-arm-launch')).not.toBeNull();
+  });
+
+  it('THE POINT-OF-ENTRY HINT + THE REAL-BROWSER PRESS SEQUENCE: the Preferences field teaches the grammar at the point of entry (the constraints hint\'s own convention), and a press (mousedown + click) on "Next: review" refuses with the SAME offender-naming teaching', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    await wizardAtWorldStep(rig);
+    // THE HINT (the point of entry — taught BEFORE any error, the grammar itself)
+    expect(hintOf(rig, 'preferences')).toBe('Optional key=value pairs, e.g. rebalance=daily, report=weekly — leave empty for none.');
+    // THE PRESS: the real browser's mousedown + composed click on the Next button
+    typeField(rig, 'preferences', 'rebalance daily');
+    const next = findByData(rig.root, 'data-action', 'launch-step-review');
+    if (next === null) throw new Error('the world step renders no Next: review button');
+    rig.doc.fire('mousedown', { target: next });
+    rig.doc.fire('click', { target: next });
+    // the press resolves the IDENTICAL refusal + teaching (never a silent no-op on the press path)
+    expect(rig.handle.state().launch.step).toBe('world');
+    const errors = elementsOf(rig.root).filter((element) => element.hasClass('field-error'));
+    expect(errors.length).toBe(1);
+    expect(textOf(errors[0] as FakeElement)).toBe(offenderMessageOf('rebalance daily'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-47-B (the minors — S1's finding, L2-cont's dead worker's 12s-apart
+// duplicate): a re-declare over the host route's IDEMPOTENT-PER-CONTENT
+// law (a re-declare returns the STORED record — the first mint stands,
+// durable.ts's own law) never duplicates a session chain row: ONE
+// record, ONE alert-declared session event + ONE derived-prefix event.
+// The fix is the console's DISPATCH SITE (the fold stays a pure
+// append-only event log): an answer for a record the workspace already
+// carries (by id) is a NO-OP, no dispatch.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-47-B (the minors) — the re-declare dedupe (one record, one alert-declared session row)', () => {
+  /** Type into the alert-declare form's field (the FW-46 harness's own helper, local to this block). */
+  function typeAlertField(rig: Rig, field: string, value: string): void {
+    const input = findByData(rig.root, 'data-alert-field', field);
+    if (input === null) throw new Error(`no alert field ${field} in the current tree`);
+    input.value = value;
+    rig.doc.fire('input', { target: input });
+  }
+
+  /**
+   * A DURABLE-LAW transport fixture: POST /v1/projects/:id/alerts and
+   * POST /v1/projects/:id/notes are IDEMPOTENT PER CONTENT (the host
+   * route's own law) — the FIRST submit mints the record (the inner
+   * route's one mint, counted); a re-submit of the same content is
+   * answered BY THE WRAPPER with the STORED record (the host's
+   * idempotent answer, never a swallow — the POST crossed the
+   * transport, counted at postsReached / notePostsReached). All four
+   * counters belong to the TRANSPORT fixture, never the host.
+   */
+  function durableLawAlertsTransport(inner: ApiTransport): {
+    readonly transport: ApiTransport;
+    readonly postsReached: { count: number };
+    readonly declares: { count: number };
+    readonly notePostsReached: { count: number };
+    readonly attaches: { count: number };
+  } {
+    const postsReached = { count: 0 };
+    const declares = { count: 0 };
+    const notePostsReached = { count: 0 };
+    const attaches = { count: 0 };
+    const storedByContent = new Map<string, Record<string, unknown>>();
+    const storedNotesByContent = new Map<string, Record<string, unknown>>();
+    const transport: ApiTransport = async (request) => {
+      const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+      const noteMatch = /^\/v1\/projects\/([^/]+)\/notes$/.exec(path);
+      if (request.method === 'POST' && noteMatch !== null) {
+        notePostsReached.count += 1; // EVERY submit crosses the transport (the wrapper answers the second, never swallows it)
+        const noteProject = noteMatch[1] ?? '';
+        const noteBody = request.body as Record<string, unknown>;
+        const noteKey = `${noteProject}:${String(noteBody.title ?? '')}:${String(noteBody.text ?? '')}`;
+        const storedNote = storedNotesByContent.get(noteKey);
+        if (storedNote !== undefined) {
+          return { status: 200, headers: {}, body: { requestId: 'req-n', data: { note: storedNote } } }; // the host's idempotent answer: the STORED record, the first mint stands
+        }
+        attaches.count += 1; // the first mint — the only attach the inner route ever sees
+        const mintedNote = {
+          noteId: `note:fw47b-${attaches.count}`,
+          tenant: 'tenant-a',
+          project: noteProject,
+          attachedAt: T0 + 500 + attaches.count,
+          title: String(noteBody.title ?? ''),
+          text: String(noteBody.text ?? ''),
+        };
+        storedNotesByContent.set(noteKey, mintedNote);
+        return { status: 200, headers: {}, body: { requestId: 'req-n', data: { note: mintedNote } } };
+      }
+      const declareMatch = /^\/v1\/projects\/([^/]+)\/alerts$/.exec(path);
+      if (request.method === 'POST' && declareMatch !== null) {
+        postsReached.count += 1; // EVERY submit crosses the transport (the console sent it — the wrapper answers the second, never swallows it)
+        const project = declareMatch[1] ?? '';
+        const body = request.body as Record<string, unknown>;
+        const contentKey = `${project}:${String(body.market ?? '')}:${String(body.direction ?? '')}:${String(body.level ?? '')}`;
+        const stored = storedByContent.get(contentKey);
+        if (stored !== undefined) {
+          return { status: 200, headers: {}, body: { requestId: 'req-a', data: { alert: stored } } }; // the host's idempotent answer: the STORED record, the first mint stands
+        }
+        declares.count += 1; // the first mint — the only declare the inner route ever sees
+        const alert = {
+          alertId: `alert:fw47b-${declares.count}`,
+          tenant: 'tenant-a',
+          project,
+          declaredAt: T0 + 400 + declares.count,
+          market: String(body.market ?? ''),
+          direction: body.direction,
+          level: String(body.level ?? ''),
+        };
+        storedByContent.set(contentKey, alert);
+        return { status: 200, headers: {}, body: { requestId: 'req-a', data: { alert } } };
+      }
+      return inner(request);
+    };
+    return { transport, postsReached, declares, notePostsReached, attaches };
+  }
+
+  it('a DOUBLE-SUBMIT of the same envelope (the 12s-apart shape: re-open the form, re-declare) mints ONCE and attests ONCE — both submits cross the transport (postsReached 2), the first mint stands (api.declares.count 1), and the export carries ONE alert-declared session row + ONE derived-prefix row', async () => {
+    const api = durableLawAlertsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'market-world');
+    // THE FIRST DECLARE
+    clickAction(rig, 'alert-declare-open');
+    typeAlertField(rig, 'market', 'BTC-USD');
+    typeAlertField(rig, 'level', '61500');
+    clickAction(rig, 'alert-declare');
+    await settle();
+    expect(api.postsReached.count).toBe(1);  // the submit crossed the transport
+    expect(api.declares.count).toBe(1);      // the first mint
+    expect(rig.handle.state().alerts.map((alert) => alert.alertId)).toEqual(['alert:fw47b-1']);
+    expect(findByData(rig.root, 'data-price-alerts', 'closed')).not.toBeNull(); // success closed the form
+
+    // THE DOUBLE-SUBMIT (S1's finding, the dead worker's 12s-apart shape): the
+    // user re-opens the declare form and submits the SAME envelope again. The
+    // host route answers the STORED record (idempotent per content) — and the
+    // console must NOT dispatch alert-declared for a record the workspace
+    // already carries (by id): one record, one attestation.
+    clickAction(rig, 'alert-declare-open');
+    typeAlertField(rig, 'market', 'BTC-USD');
+    typeAlertField(rig, 'level', '61500');
+    clickAction(rig, 'alert-declare');
+    await settle();
+    expect(api.postsReached.count).toBe(2);  // the second submit crossed the transport too (the console sent it — the wrapper answered it, never a swallow)
+    expect(api.declares.count).toBe(1);      // THE FIRST-MINT LAW: the re-declare never minted a second record
+    expect(rig.handle.state().alerts.map((alert) => alert.alertId)).toEqual(['alert:fw47b-1']); // still ONE record row
+
+    // THE SYMMETRIC NOTE-ATTACH SHAPE (the guard held SYMMETRIC at the
+    // note-attach dispatch site — the same route law, the same duplicate
+    // shape): a re-attach of the same content answers the STORED record,
+    // and the console must NOT dispatch note-attached for a record the
+    // workspace already carries (by id): one record, one attestation.
+    clickNav(rig, 'research');
+    clickAction(rig, 'note-attach-open');
+    typeNoteField(rig, 'title', 'Factset export notes');
+    typeNoteField(rig, 'text', 'fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4');
+    clickAction(rig, 'note-attach');
+    await settle();
+    expect(api.notePostsReached.count).toBe(1); // the submit crossed the transport
+    expect(api.attaches.count).toBe(1);         // the first mint
+    expect(rig.handle.state().notes.map((note) => note.noteId)).toEqual(['note:fw47b-1']);
+    expect(findByData(rig.root, 'data-note-attach', 'closed')).not.toBeNull(); // success closed the form
+    // THE DOUBLE-SUBMIT (the same 12s-apart shape, the note route's own law):
+    // re-open the attach form and submit the SAME content again — the host
+    // answers the STORED record and the console dispatches NOTHING for it.
+    clickAction(rig, 'note-attach-open');
+    typeNoteField(rig, 'title', 'Factset export notes');
+    typeNoteField(rig, 'text', 'fitted half-life 6.7 days; z-entry 2.1; z-exit 0.4');
+    clickAction(rig, 'note-attach');
+    await settle();
+    expect(api.notePostsReached.count).toBe(2); // the second submit crossed the transport too (the wrapper answered it, never a swallow)
+    expect(api.attaches.count).toBe(1);         // THE FIRST-MINT LAW: the re-attach never minted a second record
+    expect(rig.handle.state().notes.map((note) => note.noteId)).toEqual(['note:fw47b-1']); // still ONE record row
+
+    // THE CHAIN PIN: ONE alert-declared session row + ONE derived-prefix row —
+    // never the pre-fix duplicate (the fold deduped state.alerts while the
+    // session's linked history carried BOTH attestations). The SAME law pins
+    // the note-attach class symmetric: ONE note-attached session row + ONE
+    // derived-prefix row over the whole double-double-submit session.
+    const doc = JSON.parse(serializeWorkspaceExport(rig.handle.state())) as { events: Array<Record<string, unknown>> };
+    const alertDeclaredEvents = doc.events.filter((entry) => (entry.payload as { kind?: string } | undefined)?.kind === 'alert-declared');
+    const derivedPrefixRows = alertDeclaredEvents.filter((entry) => entry.derived === true);
+    const sessionRows = alertDeclaredEvents.filter((entry) => entry.derived !== true);
+    expect(derivedPrefixRows).toHaveLength(1); // one per declared-alert row on record
+    expect(sessionRows).toHaveLength(1);       // ONE attestation — the duplicate session row is dead
+    const noteAttachedEvents = doc.events.filter((entry) => (entry.payload as { kind?: string } | undefined)?.kind === 'note-attached');
+    const noteDerivedRows = noteAttachedEvents.filter((entry) => entry.derived === true);
+    const noteSessionRows = noteAttachedEvents.filter((entry) => entry.derived !== true);
+    expect(noteDerivedRows).toHaveLength(1); // one per attached-note row on record
+    expect(noteSessionRows).toHaveLength(1); // ONE attestation — the symmetric duplicate is dead
+    expect(verifyWorkspaceExport(doc)).toEqual({ ok: true }); // the chain laws hold end to end
+  });
+});

@@ -143,9 +143,17 @@ function oversightDeskCard(row: OversightDeskRow, viewAt: number, simulated: boo
     oversightFactRow('project', row.projectId),
     oversightFactRow('execution mode', row.executionMode),
     oversightFactRow('project lifecycle', row.status),
+    // FW-47-B (Round M register M-5 — the org-pill leak): the unknown fact
+    // row distinguishes the TWO unknown causes (the fold names which one
+    // this row holds): the pre-existing no-snapshot sentence, or — inside
+    // the pre-snapshot window — the L4 withheld sentence naming the
+    // snapshot's OWN instant (the gate observation's withheldAtView law,
+    // the same shape the standing rows' withheld observation rides).
     ...(row.orgStatus === null
       ? (row.orgCompiled
-        ? [oversightFactRow('organization status', 'unknown — this desk\'s organization is compiled on the durable record, but no status snapshot is on file (the status read has not answered)')]
+        ? [oversightFactRow('organization status', row.orgStatusObservedAt === null
+            ? 'unknown — this desk\'s organization is compiled on the durable record, but no status snapshot is on file (the status read has not answered)'
+            : `withheld — a status snapshot is on record but observed at ${formatInstantUtc(row.orgStatusObservedAt)}, after this view instant (L4; never rendered before its observed instant)`)]
         : [])
       : [oversightFactRow('organization status', row.orgStatus)]),
     ...standingFactRowsOfDesk(row),

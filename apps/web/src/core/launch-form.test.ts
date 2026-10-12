@@ -163,7 +163,11 @@ describe('launch-form: the per-field §4.11 validation', () => {
       ['horizonStartsAt', 'soon', 'Enter the horizon as a UTC date and time, e.g. 2026-01-15T09:30:00 (epoch milliseconds also parse).'],
       ['horizonEndsAt', 'never', 'Enter the horizon as a UTC date and time, e.g. 2026-01-15T09:30:00 (epoch milliseconds also parse).'],
       ['executionMode', 'paper', 'Choose an execution mode.'],
-      ['preferences', 'broken', 'Preferences are key=value pairs, e.g. rebalance=daily.'],
+      // FW-47-B (Round M register M-6, the D-6b convention extended): the
+      // preferences message NAMES the typed offender + teaches the grammar
+      // (the optional/leave-empty contract included) — the pre-fix
+      // grammar-less one-liner taught neither.
+      ['preferences', 'broken', 'Preferences ("broken") are malformed — each entry is key=value, e.g. rebalance=daily, report=weekly (optional; leave empty for none).'],
       // D-6b (W-25C): the constraint message NAMES the offending entry —
       // which one (1-based) + what it says + the expected grammar. FW-40-C
       // (H-1): the message also pre-teaches the closed KIND + SEVERITY sets

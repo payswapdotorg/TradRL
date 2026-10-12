@@ -115,13 +115,13 @@ export function marketViewCards(state: WorkspaceState, viewAt: number): readonly
   return cards;
 }
 
-/** One alert row's own sentence: the declared envelope verbatim + its honest state (FIRED at the observed instant against the recorded price, or waiting). */
+/** One alert row's own sentence: the declared envelope verbatim + its honest state (FIRED at the observed instant against the recorded price, or waiting). FW-47-B (the waiting-copy imprecision, carried since Round L): the waiting copy is TRUE in every waiting shape — a pre-declaration crossing stays waiting because no price recorded AT-OR-AFTER the alert's own declaration has crossed it (forward-only is the fold's own L4, core/market alertFiringOf), so the sentence teaches that law instead of the pre-fix false "no recorded price has crossed it yet" (false whenever an on-record price crossed the level before the declaration). */
 function alertRowOf(alert: PriceAlertRecord, observations: readonly PriceObservation[]): VNode {
   const firing = alertFiringOf(alert, observations);
   const envelope = `${alert.market} ${alert.direction} ${alert.level}`;
   const sentence = firing.fired && firing.at !== null && firing.observedPrice !== null
     ? `${envelope} — FIRED at ${formatInstantUtc(firing.at)} against the recorded price ${firing.observedPrice} (declared ${formatInstantUtc(alert.declaredAt)}).`
-    : `${envelope} — waiting (no recorded price has crossed it yet; declared ${formatInstantUtc(alert.declaredAt)}).`;
+    : `${envelope} — waiting (no price recorded at-or-after its declaration has crossed it yet — an alert watches forward from its own declaration, never the prices already on record; declared ${formatInstantUtc(alert.declaredAt)}).`;
   return v('p', { class: 'card-note', 'data-alert-row': alert.alertId }, [sentence]);
 }
 

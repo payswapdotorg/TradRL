@@ -23,6 +23,7 @@
 // Spec anchors: L4, L9/L20, D-12, UX-DESIGN §7.
 
 import { describe, expect, it } from 'vitest';
+import { formatInstantUtc } from '../core/format';
 import type { ConstraintSetStatement, GatewaySubmissionRecord, GoalStatement, PriceAlertRecord } from '../api/contracts';
 import { openWorkspace, reduceAll } from '../core/workspace';
 import { renderConsoleModel, serializeConsoleModel } from './model';
@@ -191,10 +192,15 @@ describe('render market: FW-46 — the price-alerts card (the record class\'s su
     expect(bytes).toContain('data-alert-row="alert:aaaa1111"');
     expect(bytes).toContain('BTC-USD above 61500 — FIRED');
     expect(bytes).toContain('against the recorded price 62000.00');
-    // the WAITING row: never a fabricated firing
+    // the WAITING row: never a fabricated firing. FW-47-B (the minors): the
+    // waiting copy re-pinned to the honest sentence — a copy correction the
+    // register itself demands (the pre-fix copy was FALSE whenever an
+    // on-record price crossed the level before the declaration); the new
+    // pin below additionally asserts the old false copy NEVER renders.
     expect(bytes).toContain('data-alert-row="alert:bbbb2222"');
     expect(bytes).toContain('BTC-USD below 50000 — waiting');
-    expect(bytes).toContain('no recorded price has crossed it yet');
+    expect(bytes).toContain('no price recorded at-or-after its declaration has crossed it yet — an alert watches forward from its own declaration, never the prices already on record');
+    expect(bytes).not.toContain('no recorded price has crossed it yet');
     // ONE primary action (the D-12 card pattern)
     expect(bytes).toContain('data-action="alert-declare-open"');
     expect(bytes).toContain('Declare a price alert');
@@ -230,5 +236,39 @@ describe('render market: FW-46 — the price-alerts card (the record class\'s su
     expect(bytes).toContain('the alert level must be a positive exact-decimal price');
     expect(bytes).toContain('value="not-a-price"'); // the buffered edit survives the error render
     expect(bytes).toContain('value="BTC-USD"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-47-B (the minors — the waiting-copy imprecision, carried since Round
+// L, re-confirmed by L2-cont/L3): THE LAW untouched (forward-only is the
+// fold's own L4 — core/market alertFiringOf watches from the alert's own
+// declaration forward), THE COPY made true in every waiting shape. A
+// PRE-declaration fill that crosses the declared level never fires, and
+// the waiting sentence must say WHY it stays waiting: no price recorded
+// AT-OR-AFTER its declaration has crossed it — never the pre-fix false
+// "no recorded price has crossed it yet" (a recorded price HAS crossed
+// it; it just predates the declaration).
+// ---------------------------------------------------------------------------
+
+describe('render market: FW-47-B — the honest waiting copy (true in every waiting shape)', () => {
+  it('a PRE-declaration fill @62000 crossing a "BTC-USD above 61000" declared AFTER it stays waiting (forward-only, the fold\'s own L4) — and the waiting copy teaches the law truly: no price recorded AT-OR-AFTER its declaration has crossed it, never the pre-fix false "no recorded price has crossed it yet"', () => {
+    // L2-cont's shape: the fill at 62000.00 (filledAt T0+40) is ON RECORD and
+    // crosses the level — but the alert was declared at T0+50, AFTER it, so the
+    // fold never fires (an alert watches forward from its own declaration).
+    const state = marketWorldState(
+      [filledRow({ submissionId: 'sub-pre', instrument: 'BTC-USD', price: '62000.00', routedAt: T0 + 30, filledAt: T0 + 40 })],
+      [priceAlert({ alertId: 'alert:late-1', market: 'BTC-USD', direction: 'above', level: '61000', declaredAt: T0 + 50 })],
+    );
+    const bytes = serializeConsoleModel(state, LIVE_AT);
+    expect(bytes).toContain('data-alert-row="alert:late-1"');
+    const row = bytes.slice(bytes.indexOf('data-alert-row="alert:late-1"'), bytes.indexOf('data-alert-row="alert:late-1"') + 400);
+    expect(row).toContain('BTC-USD above 61000 — waiting'); // stays waiting — the forward-only law untouched
+    expect(row).not.toContain('FIRED');                     // a pre-declaration crossing NEVER fires
+    // THE HONEST COPY (true in this shape: the 62000.00 crossing predates the declaration)
+    expect(row).toContain('no price recorded at-or-after its declaration has crossed it yet — an alert watches forward from its own declaration, never the prices already on record; declared');
+    // THE OLD FALSE COPY never renders (a recorded price HAS crossed the level — it just predates the declaration)
+    expect(row).not.toContain('no recorded price has crossed it yet');
+    expect(row).toContain(formatInstantUtc(T0 + 50)); // the declaration's own instant, named
   });
 });

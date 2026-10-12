@@ -135,7 +135,18 @@ export async function handleDeploymentRequest(deployment: DeploymentComposition,
       return;
     }
     if (deployment.durable.tick !== null) {
-      deployment.durable.tick(Date.now());
+      // FW-47-B (Round M register M-3 — the direct-submit job record
+      // instability): the durable tick is AWAITED. At the staleness heal's
+      // interval the tick first runs the PRE-SYNC (syncDurableJobTruth —
+      // the terminal-divergence adoption onto this instance's store), and
+      // that adoption must land BEFORE this request's serve AND before the
+      // tick's own machinery advancement — or a warm instance that learned
+      // a job non-terminally would re-derive the completion at the request
+      // clock (L2-cont's measured two-exports divergence). Off the
+      // interval the tick resolves immediately (awaiting it is a no-op);
+      // the demo arm's sync tick above is unaffected. These two arms are
+      // the only .tick( callers in the tree.
+      await deployment.durable.tick(Date.now());
     }
   }
 

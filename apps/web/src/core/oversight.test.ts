@@ -806,3 +806,104 @@ describe('FW-44-A (Round L register L-1 — S1\'s find): the read-absence fold �
     expect(aggregate.breaches).toBe(0);                 // every standing read now on record too
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-47-B (Round M register M-5 — the org-pill leak, 7+ seats with
+// export-verified timing): the fold projects the bundle's org-status
+// snapshot by its OWN observed instant — the FW-44-A read-absence fold's
+// own family (availabilityOfOrgSnapshot). A snapshot observed AFTER the
+// view instant DOES NOT EXIST AT IT: the pre-fix fold served the bundle's
+// snapshot verbatim at every view, so a scrub inside the ~1s window
+// between the project record and its org-snapshot record rendered the
+// pill "active" where the register's third literal "org status unknown"
+// belongs (L3's export-verified shape: project record 18:00:19.627,
+// org-snapshot record 18:00:20.573, the scrub at 18:00:20.100 — every
+// OTHER datum honestly L4-projected at the same instant).
+// ---------------------------------------------------------------------------
+
+describe('FW-47-B (M-5): the org-status snapshot projects by its OWN observed instant (the read-absence fold\'s own family)', () => {
+  /** The M-5 measured shape's desk: a COMPILED project (a non-null organizationRef on the record) — the pill's "org status unknown" arm. */
+  const compiledProject = (id: string): ProjectRecord => ({
+    ...project(id, `Desk ${id.toUpperCase()}`, 'session-owned'),
+    lifecycle: { projectId: id, status: 'active', acceptanceCriteriaId: null, organizationRef: `org:${id}` },
+  });
+
+  /** A compiled workspace with ONE compiled desk carrying an org-status snapshot. */
+  function compiledWorkspaceWithSnapshot(snapshotAt: number): WorkspaceState {
+    return reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: 'prj-a' }, T0), [
+      { kind: 'projects-listed', at: T0 + 1, records: [
+        compiledProject('prj-a'),
+        project('prj-b', 'Desk B', 'session-owned'),
+        project(DEMO_PROJECT_ID, 'the TradRL demo project', 'tenant-available'),
+      ] },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-a', utilization: null, submissions: [], decisions: [], readAt: VIEW_AT, orgStatus: { organizationRef: 'org:prj-a', tenant: 'tenant-a', project: 'prj-a', status: 'active', at: snapshotAt, instanceRefs: ['ai:director-1'] } } },
+    ]);
+  }
+
+  it('THE PRE-SNAPSHOT WINDOW (the leak, measured by 7+ seats): a snapshot observed AFTER the view instant does not exist at it — the fold withholds (orgStatus null) and names the withheld observation\'s OWN instant, never the leaked "active"', () => {
+    // L3's export-verified timing, reproduced at the fold: the project
+    // record landed at VIEW_AT - 500; its org-snapshot record at VIEW_AT +
+    // 400 — the scrub at VIEW_AT sits INSIDE the window.
+    const state = compiledWorkspaceWithSnapshot(VIEW_AT + 400);
+    const row = oversightRowsOf(state, VIEW_AT).find((candidate) => candidate.projectId === 'prj-a');
+    if (row === undefined) throw new Error('prj-a is not in the fold');
+    expect(row.orgCompiled).toBe(true);                       // the durable record's own compile claim — "not compiled" is never this desk's unknown
+    expect(row.orgStatus).toBeNull();                         // the snapshot observed AFTER the view instant DOES NOT EXIST at it — never the leaked 'active'
+    expect(row.orgStatusObservedAt).toBe(VIEW_AT + 400);      // the withheld observation's OWN instant, named — the render's L4 sentence rides it
+    // the neighboring desk's honest absence stays untouched (no snapshot on record at all)
+    const neighbor = oversightRowsOf(state, VIEW_AT).find((candidate) => candidate.projectId === 'prj-b');
+    if (neighbor === undefined) throw new Error('prj-b is not in the fold');
+    expect(neighbor.orgStatus).toBeNull();
+    expect(neighbor.orgStatusObservedAt).toBeNull();
+  });
+
+  it('THE BOUNDARY: at the snapshot\'s own instant it EXISTS (serves verbatim); a view AFTER it serves verbatim; a view BEFORE it does not (withheld, its own instant named)', () => {
+    const snapshotAt = VIEW_AT;
+    const state = compiledWorkspaceWithSnapshot(snapshotAt);
+    // AT the instant = exists: the snapshot serves verbatim (the same law every availability projection rides — a record observed at the view instant is knowable at it)
+    const atTheInstant = oversightRowsOf(state, VIEW_AT).find((candidate) => candidate.projectId === 'prj-a');
+    if (atTheInstant === undefined) throw new Error('prj-a is not in the fold');
+    expect(atTheInstant.orgStatus).toBe('active');
+    expect(atTheInstant.orgStatusObservedAt).toBeNull();      // nothing is withheld at this view
+    // AFTER the instant = serves verbatim
+    const after = oversightRowsOf(state, VIEW_AT + 1).find((candidate) => candidate.projectId === 'prj-a');
+    if (after === undefined) throw new Error('prj-a is not in the fold');
+    expect(after.orgStatus).toBe('active');
+    expect(after.orgStatusObservedAt).toBeNull();
+    // BEFORE the instant = does not exist (withheld — the instant named, the register's third literal at the fold)
+    const before = oversightRowsOf(state, VIEW_AT - 1).find((candidate) => candidate.projectId === 'prj-a');
+    if (before === undefined) throw new Error('prj-a is not in the fold');
+    expect(before.orgStatus).toBeNull();
+    expect(before.orgStatusObservedAt).toBe(snapshotAt);
+  });
+
+  it('THE TWO UNKNOWN CAUSES STAY DISTINCT (the read-absence law\'s own family): no snapshot on record folds orgStatusObservedAt null; a withheld snapshot folds its OWN instant — and the bundle\'s CONFIRMED gate is untouched (a snapshot on record is a confirmed read even when a view withholds it)', () => {
+    // cause 1: a compiled desk with NO snapshot on record (the pre-existing unknown — the status read has not answered)
+    const noSnapshot = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: 'prj-a' }, T0), [
+      { kind: 'projects-listed', at: T0 + 1, records: [
+        compiledProject('prj-a'),
+        project('prj-b', 'Desk B', 'session-owned'),
+        project(DEMO_PROJECT_ID, 'the TradRL demo project', 'tenant-available'),
+      ] },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-a', utilization: null, submissions: [], decisions: [], readAt: VIEW_AT } },
+    ]);
+    const none = oversightRowsOf(noSnapshot, VIEW_AT).find((candidate) => candidate.projectId === 'prj-a');
+    if (none === undefined) throw new Error('prj-a is not in the fold');
+    expect(none.orgStatus).toBeNull();
+    expect(none.orgStatusObservedAt).toBeNull();              // no snapshot on record — nothing to name
+    // cause 2: a compiled desk whose snapshot is withheld before its own instant (the M-5 window)
+    const withheld = compiledWorkspaceWithSnapshot(VIEW_AT + 400);
+    const withheldRow = oversightRowsOf(withheld, VIEW_AT).find((candidate) => candidate.projectId === 'prj-a');
+    if (withheldRow === undefined) throw new Error('prj-a is not in the fold');
+    expect(withheldRow.orgStatus).toBeNull();
+    expect(withheldRow.orgStatusObservedAt).toBe(VIEW_AT + 400); // the withheld observation's own instant — the two unknowns are never conflated
+    // THE CONFIRMED GATE IS UNTOUCHED: the bundle carries a snapshot ON RECORD (a route that
+    // answered), so the read stays a read on record even at a view that withholds the
+    // snapshot — the read-absence law (FW-44-A) never fabricates an absence out of a
+    // projection, and the projection never fabricates a positive out of an absence.
+    expect(withheldRow.read).not.toBeNull();
+    expect(oversightAggregateOf(withheld, VIEW_AT).desksWithoutRead).toBeLessThan(
+      oversightAggregateOf(noSnapshot, VIEW_AT).desksWithoutRead,
+    );
+  });
+});

@@ -1552,7 +1552,39 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
       // — never re-write what did not change.
       if (projectedJobPayload(record.jobId) === canonicalJson(record as never)) continue;
       const job = record;
-      pending.push({ label: 'job.put', run: () => jobStore.putJobRecord(deps.tenant, job) });
+      // FW-47-B (Round M register M-3 — the direct-submit job record
+      // instability): THE IMMUTABLE-ONCE-TERMINAL WRITE GUARD, read-
+      // before-write on the drain (the FW-42-A goalset.world.put
+      // precedent). The pre-fix lane wrote every queued record straight
+      // through, so a WARM instance that had learned a job non-terminally
+      // re-derived the completion at its OWN tick clock and its
+      // write-through CLOBBERED the durable terminal row (L2-cont's
+      // measured two-exports divergence: completedAt 17:57:58.371 ->
+      // 18:00:46.991). The law: a job record is IMMUTABLE ONCE TERMINAL —
+      // a queued write for a job whose durable row is already complete/
+      // failed is the stale projection's re-derivation and is DISCARDED;
+      // a byte-identical write (the pre-sync adoption's write-back — the
+      // replayed record IS the durable row) writes nothing; a NON-terminal
+      // durable row lets the normal progression through (submitted ->
+      // running -> complete, the completing instance's own writes); a
+      // MISSING row writes (the first landing). The no-op return shape
+      // matches putJobRecord's StoreResult — a guarded write is never a
+      // drain failure.
+      pending.push({
+        label: 'job.put',
+        run: async () => {
+          const read = await jobStore.jobRecordsOf(deps.tenant, job.project);
+          if (!read.ok) return read; // the typed read failure — the drain reports it (the write is unconfirmed, the caller learns)
+          const durableRow = read.value.find((row): row is JobRecord => isJobRecord(row) && row.jobId === job.jobId);
+          if (durableRow !== undefined && (durableRow.status === 'complete' || durableRow.status === 'failed')) {
+            if (canonicalJson(durableRow as never) === canonicalJson(job as never)) {
+              return { ok: true, value: { stored: true } }; // byte-identical — the adoption's write-back rides this no-op
+            }
+            return { ok: true, value: { stored: true } }; // DISCARDED — the stale re-derivation never clobbers the durable terminal truth
+          }
+          return jobStore.putJobRecord(deps.tenant, job); // non-terminal or missing — the normal W-27 progression
+        },
+      });
     }
   }
 

@@ -2149,7 +2149,12 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
       ...labeledInput({ label: 'Horizon starts', name: 'horizonStartsAt', value: form.horizonStartsAt, type: 'datetime-local', required: true, hint: 'UTC date and time, e.g. 2026-01-15T09:30:00.', validation: validationOf('horizonStartsAt') }),
       ...labeledInput({ label: 'Horizon ends', name: 'horizonEndsAt', value: form.horizonEndsAt, type: 'datetime-local', required: true, hint: 'UTC date and time — the horizon must end after it starts.', validation: validationOf('horizonEndsAt') }),
       ...labeledSelect({ label: 'Execution mode', name: 'executionMode', value: form.executionMode, required: true, hint: 'Simulation is the safe default — live execution goes through the gateway.', choices: EXECUTION_MODES.map((mode) => [mode, mode] as const), validation: validationOf('executionMode') }),
-      ...labeledInput({ label: 'Preferences', name: 'preferences', value: form.preferences, hint: 'Optional key=value pairs.', validation: validationOf('preferences') }),
+      // FW-47-B (Round M register M-6): the Preferences field's hint
+      // teaches the grammar at the point of entry (the constraints hint's
+      // own convention) — the entry shape, the canonical example, and the
+      // optional/leave-empty contract, so the malformed free text the
+      // validation refuses is pre-taught away.
+      ...labeledInput({ label: 'Preferences', name: 'preferences', value: form.preferences, hint: 'Optional key=value pairs, e.g. rebalance=daily, report=weekly — leave empty for none.', validation: validationOf('preferences') }),
       // FW-40-C (H-1, L1's find): the constraints hint teaches the FULL
       // grammar — the entry shape, the domains, the kinds (L3's
       // 'advisory.max' rejection pre-taught away), the severity suffix,

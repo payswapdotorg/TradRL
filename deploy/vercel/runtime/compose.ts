@@ -290,9 +290,14 @@ export interface DurableDeploymentHandle extends DurableBackingHandle {
    * The per-request machinery tick (W-26B, R2): the SAME demoMachineryTick
    * law (org compile + job advancement through the real private plane) over
    * the seam's HYDRATED control plane. `null` when no internal credential
-   * is configured or when port overrides own the world.
+   * is configured or when port overrides own the world. FW-47-B (M-3):
+   * the tick is now ASYNC at the heal interval — the pre-sync's terminal
+   * adoption must land BEFORE the request's machinery advancement (and
+   * before the serve), so the router AWAITS it (the type widens to
+   * void | Promise<void>; the off-interval path resolves immediately —
+   * awaiting it is a no-op).
    */
-  readonly tick: ((at: number) => void) | null;
+  readonly tick: ((at: number) => void | Promise<void>) | null;
   /**
    * The idempotent boot world (W-26B, R3+R4+R7): the demo world seed + the
    * fixture boot-writes + the org-status snapshot pass, once per instance,
