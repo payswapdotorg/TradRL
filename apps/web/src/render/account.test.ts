@@ -93,6 +93,36 @@ describe('the account settings surface — the anonymous register/login forms', 
     expect(body).toContain('Sign in'); // the default mode is login
   });
 
+  // FW-51 (the Round N minors — S2's one recorded account friction, S3
+  // corroborated: "two identically-labeled 'Create account' buttons (mode
+  // switcher + submit — clicked the wrong one first)"). THE LAW: every
+  // button names its OWN action — the segmented toggle names the MODE it
+  // selects (aria-pressed carries the selection), the submit names the
+  // ACTION it performs on the entered fields (the adoption row's own
+  // "Adopt this desk" vocabulary: verb + this + the noun it acts on).
+  it('FW-51: in REGISTER mode every button names its own action — the toggle keeps the mode\'s name, the submit names the account it creates; never two identically-labeled "Create account" buttons', () => {
+    const panel = { ...anonymousAccountPanel(), mode: 'register' as const };
+    const body = serializeVNode({ tag: 'div', attrs: {}, children: accountSettingsBody(panel, false) });
+    // the mode toggle renders BOTH faces, the register one selected
+    expect(body).toContain('data-action="account-mode-login"');
+    expect(body).toContain('data-action="account-mode-register"');
+    expect(body).toContain('aria-pressed="true"');
+    // THE DUPLICATION PIN: exactly ONE "Create account" renders — the
+    // SEGMENT's own mode name. The submit never repeats it (the pre-fix
+    // tree rendered the label twice: the segment + the submit).
+    expect(body.match(/Create account/g) ?? []).toHaveLength(1);
+    expect(body).toContain('>Create account</button>');
+    // the submit names its own action — the account the entered name +
+    // passphrase create (distinct from the mode's name, so the two
+    // controls can never be confused for each other again)
+    expect(body).toContain('data-action="account-submit"');
+    expect(body).toContain('>Create this account</button>');
+    // and the login face's name renders exactly once too — the login
+    // SEGMENT (in register mode the submit is the create action, never a
+    // second "Sign in")
+    expect(body.match(/Sign in/g) ?? []).toHaveLength(1);
+  });
+
   it('the SIMULATED disclosure rides ADJACENT when the console runs demo data (an account never implies real money)', () => {
     const plain = serializeVNode({ tag: 'div', attrs: {}, children: accountSettingsBody(anonymousAccountPanel(), false) });
     expect(plain).not.toContain('data-account-simulated');
