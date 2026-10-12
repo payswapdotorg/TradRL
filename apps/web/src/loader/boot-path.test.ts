@@ -34,6 +34,30 @@ const APPS_WEB = resolve(HERE, '../..');
 const INDEX_HTML = readFileSync(join(APPS_WEB, 'index.html'), 'utf8');
 const LOADER_SOURCE = readFileSync(join(HERE, 'strip-types.ts'), 'utf8');
 
+// THE D-1 TIMEOUT LAW (FW-50-B — the FW-49 raise extended to the
+// boot-shaped files): the boot-path tests below that compile a module
+// through the REAL data: URL seam (the bootstrap-import pair) or walk
+// the FULL apps/web source graph through the REAL loadModuleGraph (the
+// graph-load family) carry the same build-shaped cost class as the
+// determinism tests FW-49 raised — every module of the graph strips,
+// compiles and resolves per load — and their per-test timeout was
+// vitest's IMPLICIT 5,000ms default. The FW-50 merge-result battery
+// measured it: the shell boot-sequence test at 6,601ms under machine
+// load (and the FW-50 payload grew +23KB — more graph to strip on every
+// load; the pre-fix re-run on this tree measured 7,835ms). A timeout
+// there measures MACHINE LOAD, not the contract. The timeout is
+// therefore declared EXPLICITLY as BOOT_TEST_TIMEOUT_MS, floor-pinned
+// by its own test at the end of this file at the FW-49 documented-safe
+// ceiling (60,000ms), so the D-1 class can never silently regress to an
+// implicit default on the boot-path files either. The two pure
+// string-law pins in the first describe (the bootstrap-pass presence
+// check + the byte-identity compare — regex/byte work over ONE file, no
+// module compilation, no graph walk) deliberately stay at the implicit
+// default: they measure in single-digit milliseconds and have never
+// flaked in the record (the FW-49 beforeAll precedent — raising them
+// would be un-evidenced scope growth).
+const BOOT_TEST_TIMEOUT_MS = 60_000; // the D-1 extension (FW-50-B): the FW-49 documented-safe ceiling — floor-pinned by the D-1 test at the end of this file
+
 /** Every non-test TS module under apps/web/src (the graph pin must cover them all). */
 function allSourceModules(): string[] {
   const found: string[] = [];
@@ -114,7 +138,7 @@ describe('boot path: the shell bootstrap (extracted from the REAL index.html)', 
     expect(bootstrapOut).toBe(fullOut);
   });
 
-  it('the bootstrap-stripped loader imports cleanly as a module and exports the loader surface', async () => {
+  it('the bootstrap-stripped loader imports cleanly as a module and exports the loader surface', { timeout: BOOT_TEST_TIMEOUT_MS }, async () => {
     const bootstrapOut = runBootstrapPass(INDEX_HTML, LOADER_SOURCE);
     const mod = await importStripped(bootstrapOut);
     expect(typeof mod.stripTypes).toBe('function');
@@ -123,7 +147,7 @@ describe('boot path: the shell bootstrap (extracted from the REAL index.html)', 
     expect(typeof mod.lex).toBe('function');
   });
 
-  it('the full stripper output on the loader file imports cleanly as a module too (both sides of the equivalence must be bootable)', async () => {
+  it('the full stripper output on the loader file imports cleanly as a module too (both sides of the equivalence must be bootable)', { timeout: BOOT_TEST_TIMEOUT_MS }, async () => {
     const mod = await importStripped(stripTypes(LOADER_SOURCE));
     expect(typeof mod.stripTypes).toBe('function');
     expect(typeof mod.loadModuleGraph).toBe('function');
@@ -131,7 +155,7 @@ describe('boot path: the shell bootstrap (extracted from the REAL index.html)', 
 });
 
 describe('boot path: the FULL apps/web source graph through the REAL loadModuleGraph', () => {
-  it('the shell boot sequence (app module, then package main) loads: every module strips, compiles and resolves (data: URL imports)', async () => {
+  it('the shell boot sequence (app module, then package main) loads: every module strips, compiles and resolves (data: URL imports)', { timeout: BOOT_TEST_TIMEOUT_MS }, async () => {
     // THE REAL SHELL SEQUENCE (index.html's inline bootstrap):
     //   (1) the app module graph — parked on window.__TRADRL_CONSOLE_BOOT__
     //       before the main loads (the main's own dynamic import of the
@@ -155,12 +179,12 @@ describe('boot path: the FULL apps/web source graph through the REAL loadModuleG
     }
   });
 
-  it('the app module (the shell’s first graph load) boots its exports through the same path', async () => {
+  it('the app module (the shell’s first graph load) boots its exports through the same path', { timeout: BOOT_TEST_TIMEOUT_MS }, async () => {
     const app = (await loadModuleGraph('./src/app/console.ts', diskBindings())) as Record<string, unknown>;
     expect(typeof app.bootConsole).toBe('function');
   });
 
-  it('the app sources carry NO call-site or constructor type arguments (they survive stripping as comparison garbage and throw at runtime)', () => {
+  it('the app sources carry NO call-site or constructor type arguments (they survive stripping as comparison garbage and throw at runtime)', { timeout: BOOT_TEST_TIMEOUT_MS }, () => {
     // The erasable subset allows generics on DECLARATIONS only. A call-site
     // `request<Page<X>>(...)` or a constructor `new Map<K, V>()` is NOT
     // erased by the stripper — it survives as `request < Page < X >> (...)`,
@@ -188,5 +212,20 @@ describe('boot path: the FULL apps/web source graph through the REAL loadModuleG
         }
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE D-1 TIMEOUT FLOOR (FW-50-B): the boot-path tests' per-test timeout
+// is the EXPLICIT BOOT_TEST_TIMEOUT_MS, floor-pinned at the FW-49
+// documented-safe ceiling — the D-1 class (a boot-shaped test timing out
+// at vitest's implicit 5,000ms default under machine load) can never
+// silently regress to an implicit default on the boot-path files either
+// (the FW-49 law, completed to the boot-shaped half).
+// ---------------------------------------------------------------------------
+
+describe('boot path — the D-1 boot timeout floor (FW-50-B)', () => {
+  it('the boot-path tests\' per-test timeout is the explicit constant at the documented-safe ceiling (>= 60,000ms — never vitest\'s implicit 5,000ms default)', () => {
+    expect(BOOT_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
   });
 });

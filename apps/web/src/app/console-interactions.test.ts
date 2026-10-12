@@ -66,6 +66,29 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const APPS_WEB = resolve(HERE, '../..');
 const T0 = 1_700_000_000_000;
 
+// THE D-1 TIMEOUT LAW (FW-50-B — the FW-49 raise extended to the
+// boot-shaped files): the REAL no-build loader test below (the final
+// loader-path describe) loads the stripped app module through the REAL
+// loadModuleGraph with data: URL imports — every module of the apps/web
+// source graph strips, compiles and resolves through the same seam the
+// browser's no-build boot walks, the same build-shaped cost class as
+// the determinism tests FW-49 raised, and its per-test timeout was
+// vitest's IMPLICIT 5,000ms default. The FW-50 merge-result battery
+// measured it: 7,721ms under machine load (and the FW-50 payload grew
+// +23KB — more graph to strip on every load; the pre-fix re-run on this
+// tree timed out at the same 5,000ms default). A timeout there measures
+// MACHINE LOAD, not the contract. The timeout is therefore declared
+// EXPLICITLY as BOOT_TEST_TIMEOUT_MS, floor-pinned by its own test at
+// the end of this file at the FW-49 documented-safe ceiling (60,000ms),
+// so the D-1 class can never silently regress to an implicit default
+// on the boot-shaped files either. Every OTHER test in this file boots
+// the console through vitest's own esbuild import path (the statically
+// imported bootConsole) — no per-module data: URL compilation, never
+// the build-shaped cost class — and deliberately stays at the implicit
+// default (the FW-49 beforeAll precedent: raising what has never flaked
+// would be un-evidenced scope growth).
+const BOOT_TEST_TIMEOUT_MS = 60_000; // the D-1 extension (FW-50-B): the FW-49 documented-safe ceiling — floor-pinned by the D-1 test at the end of this file
+
 // ---------------------------------------------------------------------------
 // THE FAKE DOCUMENT (the minimal MountDocument surface + the Element
 // surface the projector and the delegated handler need — nothing more).
@@ -1775,7 +1798,7 @@ describe('executed boot: J6 — the inbox read toggle + the toast lifecycle', ()
 // ---------------------------------------------------------------------------
 
 describe('executed boot: the REAL no-build loader path', () => {
-  it('the stripped app module boots, mounts and advances the wizard on a delegated click (the loader path executes, not just compiles)', async () => {
+  it('the stripped app module boots, mounts and advances the wizard on a delegated click (the loader path executes, not just compiles)', { timeout: BOOT_TEST_TIMEOUT_MS }, async () => {
     const bindings: LoaderBindings = {
       async readModule(path: string): Promise<string> {
         return readFileSync(resolve(APPS_WEB, path), 'utf8');
@@ -7440,5 +7463,20 @@ describe('executed boot: FW-47-B (the minors) — the re-declare dedupe (one rec
     expect(noteDerivedRows).toHaveLength(1); // one per attached-note row on record
     expect(noteSessionRows).toHaveLength(1); // ONE attestation — the symmetric duplicate is dead
     expect(verifyWorkspaceExport(doc)).toEqual({ ok: true }); // the chain laws hold end to end
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE D-1 TIMEOUT FLOOR (FW-50-B): the REAL no-build loader test's
+// per-test timeout is the EXPLICIT BOOT_TEST_TIMEOUT_MS, floor-pinned at
+// the FW-49 documented-safe ceiling — the D-1 class (a boot-shaped test
+// timing out at vitest's implicit 5,000ms default under machine load)
+// can never silently regress to an implicit default on the boot-shaped
+// files either (the FW-49 law, completed to the boot-shaped half).
+// ---------------------------------------------------------------------------
+
+describe('executed boot — the D-1 boot timeout floor (FW-50-B)', () => {
+  it('the REAL no-build loader test\'s per-test timeout is the explicit constant at the documented-safe ceiling (>= 60,000ms — never vitest\'s implicit 5,000ms default)', () => {
+    expect(BOOT_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
   });
 });
