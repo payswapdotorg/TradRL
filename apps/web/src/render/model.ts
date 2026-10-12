@@ -57,7 +57,7 @@ import { parseInstantUtc } from '../core/format';
 import { standingReadFoldOf, type StandingRow } from '../core/standing';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
 import type { WatchEvent } from '../core/watch';
-import { timelineBucketsOf, formatTimeUtc, type TimelineEntry } from '../core/timeline';
+import { timelineBucketsOf, formatTimeUtc, rowMetaTimeOf, type TimelineEntry } from '../core/timeline';
 import { activeTargetOf, defaultShellView, heroPanel, renderAppShell, settingsPanel, type SheetRef, type ShellView } from './shell';
 // FW-37-B (Round F register F-2): the consolidated multi-desk oversight
 // panel — its own render module (the payload-budget extraction pattern;
@@ -847,7 +847,12 @@ function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
       title: record.title,
       subtitle: copy.sentence,
       ...(isRead ? {} : { pill: { tone: 'live' as PillTone, label: 'new' } }),
-      meta: formatTimeUtc(record.at),
+      // FW-49 (S3, the dateless notice rows): the meta composes through
+      // core/timeline.ts's rowMetaTimeOf — a same-UTC-day record keeps the
+      // compact HH:MM, an earlier-day record carries the timeline's own
+      // bucket label + the time (one law, two surfaces; the details below
+      // keep the full canonical instant either way).
+      meta: rowMetaTimeOf(record.at, viewAt),
       rowId: `notice:${record.noticeId}`,
       attrs: { class: `list-row accordion-row notice notice-${record.kind}${isRead ? ' read' : ' unread'}` },
       details: [
