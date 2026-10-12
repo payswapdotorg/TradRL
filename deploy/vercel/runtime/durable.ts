@@ -327,6 +327,24 @@ export interface DurableRunbook {
 }
 
 /**
+ * The serving projection's record classes for one project (FW-47-A, M-2 —
+ * the servingRecordClassesOf output): the STRUCTURALLY-VALIDATED notes +
+ * alerts the projection's goal-set row carries — the same folds
+ * (researchNotesOf/priceAlertsOf) every consumer applies, so the staleness
+ * heal's content probe (runtime/durable-world.ts) compares like against
+ * like (never a raw row against a fold).
+ */
+export interface ServingRecordClasses {
+  /** The projection's goal-set row's well-formed notes (empty when the row carries none). */
+  readonly notes: readonly ResearchNoteRecord[];
+  /** The projection's goal-set row's well-formed alerts (empty when the row carries none). */
+  readonly alerts: readonly PriceAlertRecord[];
+}
+
+/** The empty record-classes pair (the degraded/no-row answer — frozen, shared, never mutated). */
+const EMPTY_SERVING_RECORD_CLASSES: ServingRecordClasses = Object.freeze({ notes: Object.freeze([]), alerts: Object.freeze([]) });
+
+/**
  * The durable backing handle (what compose.ts carries for the router): the
  * sync ports the composition root is injected with + the projection
  * lifecycle the host drives.
@@ -406,6 +424,23 @@ export interface DurableBackingHandle {
    * read race).
    */
   servingWorldOf(projectId: string): LaunchWorldRecord | null;
+  /**
+   * FW-47-A (M-2 — the citation residue, the servingWorldOf precedent):
+   * the SERVING projection's structurally-validated record classes (the
+   * notes/alerts the projection's goal-set row carries — the same folds
+   * every consumer applies). The staleness heal's derived-truth probe
+   * (runtime/durable-world.ts) compares this against the FRESH session-JOIN
+   * rows: a fresh row whose record classes differ from the serving
+   * projection's is a DIVERGENCE — a note/alert attached on ANOTHER
+   * instance changed the goal-set row's additive arrays without any new id
+   * appearing anywhere the membership probes compare, so pre-fix nothing
+   * ever re-read the row on a warm instance and the next composition's
+   * provenance could cite evidence its own projection could not see
+   * (L2-cont's drift). The quiet re-projection lands it within the heal's
+   * own 10s interval (the same bound the world probe carries — disclosed
+   * as a bound, never an instant guarantee).
+   */
+  servingRecordClassesOf(projectId: string): ServingRecordClasses;
   /**
    * THE DURABLE JOBS READ (W-27, D-7): the projection's job records for
    * one project — the rows tradrl_jobs holds for the credential tenant
@@ -1635,6 +1670,23 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     return isLaunchWorldRecord(world) ? world : null;
   }
 
+  /**
+   * FW-47-A (M-2): the serving projection's record classes for one project
+   * (the heal's content probe reads this) — the STRUCTURALLY-VALIDATED
+   * notes/alerts of the projection's goal-set row, the same folds every
+   * consumer applies (the serving projection never re-validates differently
+   * than the fresh row's fold does — the probe compares like against like).
+   * Empty arrays when the projection holds no row for the project or the row
+   * carries no well-formed records (the probe's fresh-side fold answers the
+   * same empties — never a false divergence).
+   */
+  function servingRecordClassesOf(projectId: string): ServingRecordClasses {
+    if (phase !== 'ready' || current === null) return EMPTY_SERVING_RECORD_CLASSES; // degraded/in flight — the probe's membership gate already skips
+    const row = current.goalSets.get(projectId);
+    if (row === undefined) return EMPTY_SERVING_RECORD_CLASSES;
+    return { notes: researchNotesOf(row.notes), alerts: priceAlertsOf(row.alerts) };
+  }
+
   function goalOf(projectId: string): { readonly ok: true; readonly value: GoalSetRecord | null } | { readonly ok: false; readonly error: StoreFailure } {
     if (phase !== 'ready' || current === null || dirty) {
       const degradedFailure: StoreFailure = failure !== null
@@ -1966,6 +2018,7 @@ export function buildDurableBacking(deps: DurableSeamDeps): DurableBackingHandle
     goalOf,
     declaredWorldOf,
     servingWorldOf,
+    servingRecordClassesOf,
     jobsOf,
     recordJobs,
     beginJobHydration,

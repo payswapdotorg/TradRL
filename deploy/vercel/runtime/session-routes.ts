@@ -138,8 +138,10 @@ import {
 import type { SessionProjectRow, StoreResult } from '../../adapters/neon/stores';
 import type { StoreFailure } from '../../adapters/shared';
 import type { PrincipalResolution, PrincipalTokenVerdict } from './auth-routes';
+import { priceAlertsOf } from './alerts';
 import { DEMO_PROJECT_ID, isLaunchWorldRecord, withDerivedGoalHorizonLabel, withDerivedHorizonLabel } from './demo';
 import { matchProjectHydrationPath } from './hydration';
+import { researchNotesOf } from './notes';
 import { demoRouteError, demoRouteRequestId, demoRouteSuccess, type DemoSubstanceAuthorization, type DemoSubstanceRequest, type VerifyDeveloperAuthorization } from './routes';
 
 /** The console session header (the client mirror: apps/web/src/core/session.ts — same name, same shape law). */
@@ -466,12 +468,30 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
     // session's own goal cards survive a reload onto a stale warm
     // instance; every TENANT registry row serves, the marker law's
     // listing/detail coherence). The ownerSession field NEVER crosses the
-    // wire (only goal + constraintSet + the structurally-validated world).
+    // wire (only goal + constraintSet + the structurally-validated world
+    // +, since FW-47-A, the structurally-validated record classes).
     const row = scope.rows.find((candidate) => projectOfRow(candidate) === goalProject);
     if (row === undefined || row.goalSet === null) {
       return demoRouteError(requestId, apiError('not_found', `no goal statement exists for ${JSON.stringify(goalProject)} in the durable projection of this tenant (the goal read serves the create-project input's persisted goal set)`));
     }
     const goalSet = row.goalSet;
+    // FW-47-A (M-1 — the evaporating note/alert record classes, Round M's
+    // unanimous #1 friction): the row's ADDITIVE notes/alerts serve here
+    // too — the SAME read-back law the durable-substance goal route
+    // (runtime/routes.ts) already gave the HEADERLESS caller (FW-45/FW-46
+    // served the classes only there). The console carries the session
+    // header on EVERY request, so its boot re-read lands HERE, and its
+    // fold law is "a notes-less read CLEARS" (the world law) — pre-fix
+    // this arm served goal + constraintSet + world ONLY, so every boot
+    // re-read wiped state.notes/state.alerts: the cards read "No ... on
+    // record yet" and every post-reload export derived ZERO record-prefix
+    // events for the classes on the same reload the core records survived.
+    // Structurally re-validated (a malformed entry is skipped honestly,
+    // R46) and served EXACTLY when the durable row holds well-formed
+    // records (the additive-absence law — an absent record class never
+    // fabricates an empty array, the `world` precedent).
+    const notes = researchNotesOf(goalSet.notes);
+    const alerts = priceAlertsOf(goalSet.alerts);
     return demoRouteSuccess(requestId, deepFreeze({
       // FW-38-A (G-1): the served goal's horizon label is the SPAN-DERIVED
       // one (withDerivedGoalHorizonLabel) — a row persisted before this
@@ -483,6 +503,8 @@ export async function serveSessionScopedRoute(deployment: SessionScopeDeployment
       // FW-37-A (F-4): the served world's horizon label is the SPAN-DERIVED
       // one — a pre-wave persisted annotation never serves contradictory.
       ...(isLaunchWorldRecord(goalSet.world) ? { world: withDerivedHorizonLabel(goalSet.world) } : {}),
+      ...(notes.length === 0 ? {} : { notes }),
+      ...(alerts.length === 0 ? {} : { alerts }),
     }));
   }
 

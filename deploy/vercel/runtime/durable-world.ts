@@ -127,6 +127,8 @@ import {
 } from './demo';
 import { HYDRATION_AT, type DurableBackingHandle } from './durable';
 import type { DeliverableSource } from './deliverable';
+import { researchNotesOf } from './notes';
+import { priceAlertsOf } from './alerts';
 import { NeonFirmMemoryStore, NeonOutcomeLearningStore, type NeonStoreDeps, type TenantKnowledgeRow, type TenantScopedRecordRow } from '../../adapters/neon/stores';
 
 // ---------------------------------------------------------------------------
@@ -492,6 +494,17 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
    *      undrained writes, and the jobs half's replay queues exactly such
    *      writes — the probe + refresh need the pending lane clean.
    *
+   *      FW-42-A (I-4) extended the probe from IDS to CONTENT: a fresh
+   *      session row carrying a launch world the serving projection does
+   *      not carry IDENTICALLY is a divergence. FW-47-A (M-2) extends the
+   *      CONTENT probe to the RECORD CLASSES: a fresh session row whose
+   *      structurally-validated notes/alerts differ from the serving
+   *      projection's (servingRecordClassesOf) is a divergence — a
+   *      cross-instance attach lands on the composing instance's
+   *      projection within this heal's own interval (no new read: the
+   *      probe rides the SAME session-JOIN rows the world probe reads —
+   *      the W-30 economy is untouched).
+   *
    *   2. THE JOBS HALF (FW-31-B): a fresh tenant-wide durable-jobs read;
    *      every record this instance's job store LACKS (the launch's
    *      kickoff job, its transitions) replays back through the REAL
@@ -588,7 +601,31 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
           const serving = durable.servingWorldOf(projectOfSessionRow(row));
           return serving === null || canonicalJson(serving as never) !== canonicalJson(fresh as never);
         });
-        if (unseenProject || unseenOutcome || unseenPostMortem || unseenKnowledge || unseenWorld) {
+        // FW-47-A (M-2 — the citation residue, L2-cont's drift shape): the
+        // CONTENT probe's record-classes half, the unseenWorld seam extended
+        // to the note/alert rows. A note/alert attached on ANOTHER instance
+        // merges into the goal-set row's ADDITIVE arrays — no new id appears
+        // anywhere the membership probes compare, so a warm instance's
+        // serving projection (and with it the deliverable composition's
+        // notesOf/alertsOf reads over goalOf) could omit a note that IS on
+        // record, and the composed provenance cited evidence the console's
+        // export no longer carried. THE FIX: a fresh session-JOIN row whose
+        // structurally-validated record classes (the same folds every
+        // consumer applies) differ from the serving projection's
+        // (servingRecordClassesOf) is a DIVERGENCE; the quiet re-projection
+        // lands it, and the next machinery tick's deliverable composition
+        // reads the durable truth (never an omitted live note). The
+        // cross-instance staleness window is bounded by the heal's own 10s
+        // interval — the same bound the world probe carries (L2-cont's note
+        // was attached 22s before completion: covered; disclosed honestly as
+        // a bound, never an instant guarantee).
+        const unseenRecordClasses = rows.value.some((row) => {
+          if (row.goalSet === null) return false;
+          const serving = durable.servingRecordClassesOf(projectOfSessionRow(row));
+          return canonicalJson(serving.notes as never) !== canonicalJson(researchNotesOf(row.goalSet.notes) as never)
+            || canonicalJson(serving.alerts as never) !== canonicalJson(priceAlertsOf(row.goalSet.alerts) as never);
+        });
+        if (unseenProject || unseenOutcome || unseenPostMortem || unseenKnowledge || unseenWorld || unseenRecordClasses) {
           // FW-38-A (G-6): the refresh MUST commit before the jobs half may
           // import — an uncommitted (failed/discarded) refresh leaves the
           // serving projection predating the divergence; never import onto it.
