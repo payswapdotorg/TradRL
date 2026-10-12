@@ -7070,3 +7070,104 @@ describe('executed boot: FW-46 — the price-alert declaration (the S2 market su
     expect(textOf(liveRow)).not.toContain('FIRED');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-47-B (Round M register M-6 — L3's find, the NEW product defect of the
+// round): the wizard's Preferences free text TEACHES its typed validation
+// error at the point of refusal on every executed-boot path — the
+// click-refusal gate (the step-advance refusal), the §4.11 blur, and the
+// real-browser press sequence. The pre-fix field rendered the grammar-less
+// one-liner (and L3's production seat measured the refusal teaching
+// nowhere at the point of refusal on the deep launch — ~4 minutes lost,
+// isolated by bisection); the offender-naming message (the D-6b
+// convention, the constraints field's own law) + the grammar-teaching
+// hint at the point of entry close the disclosure gap.
+// ---------------------------------------------------------------------------
+
+describe('executed boot: FW-47-B (M-6) — the wizard Preferences validation teaches at every refusal', () => {
+  /** The offender-naming message the field must render for one typed malformed text (the D-6b convention: the offender NAMED, the grammar taught, the fix in the sentence). */
+  const offenderMessageOf = (typed: string): string =>
+    `Preferences ("${typed}") are malformed — each entry is key=value, e.g. rebalance=daily, report=weekly (optional; leave empty for none).`;
+
+  /** The Preferences field's own grammar hint (the constraints hint's own convention — taught at the point of entry, before any error). */
+  const hintOf = (rig: Rig, field: string): string => {
+    const input = findByData(rig.root, 'data-launch-field', field);
+    if (input === null || input.parent === null) throw new Error(`no ${field} field in the current tree`);
+    const hint = input.parent.children.find((element) => element.hasClass('field-hint'));
+    return hint === undefined ? '' : textOf(hint);
+  };
+
+  /** Drive the wizard to the WORLD step with every other field valid (the step the Preferences field lives on). */
+  async function wizardAtWorldStep(rig: Rig): Promise<void> {
+    clickAction(rig, 'launch-start');
+    typeField(rig, 'name', 'Momentum scout');
+    typeField(rig, 'objective', 'Find and keep an edge in momentum.');
+    clickAction(rig, 'launch-step-budget');
+    typeField(rig, 'capitalBudget', '10000.00');
+    typeField(rig, 'riskBudget', '250.00');
+    clickAction(rig, 'launch-step-markets');
+    typeField(rig, 'markets', 'binance:BTC-USDT');
+    typeField(rig, 'venues', 'binance');
+    typeField(rig, 'dataSources', 'candles:1m');
+    clickAction(rig, 'launch-step-world');
+    typeField(rig, 'horizonStartsAt', String(T0));
+    typeField(rig, 'horizonEndsAt', String(T0 + 86_400_000));
+    typeField(rig, 'executionMode', 'simulation');
+    typeField(rig, 'constraints', 'c-1:outcome:risk.maxDrawdown:limit.max:0.2');
+    expect(rig.handle.state().launch.step).toBe('world');
+  }
+
+  it('THE §4.11 BLUR: malformed preferences text validates destructively ON BLUR with the OFFENDER-NAMING message — the typed text named, the grammar taught (never the grammar-less one-liner)', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    await wizardAtWorldStep(rig);
+    typeField(rig, 'preferences', 'daily rebalancing'); // free text — not key=value pairs
+    blurField(rig, 'preferences');
+    const errors = elementsOf(rig.root).filter((element) => element.hasClass('field-error'));
+    expect(errors.length).toBe(1); // exactly the one invalid field — the rest of the step is valid
+    expect(textOf(errors[0] as FakeElement)).toBe(offenderMessageOf('daily rebalancing')); // the offender NAMED, the grammar taught
+    // the wizard never left the world step (the refusal is visible, never a silent no-op)
+    expect(rig.handle.state().launch.step).toBe('world');
+    // fixing the grammar goes silent (§4.11: a valid value stays silent even when touched)
+    typeField(rig, 'preferences', 'rebalance=daily');
+    blurField(rig, 'preferences');
+    expect(countByClass(rig.root, 'field-error')).toBe(0);
+  });
+
+  it('THE CLICK-REFUSAL GATE: "Next: review" with malformed preferences REFUSES to advance and TEACHES AT THE FIELD — the offender-naming message renders where the user stands, the review/arm never render, and the fix advances', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    await wizardAtWorldStep(rig);
+    typeField(rig, 'preferences', 'weekly rebalancing report'); // malformed free text
+    clickAction(rig, 'launch-step-review');
+    // THE REFUSAL TEACHES: the wizard stays on world, the step's fields render their messages inline
+    expect(rig.handle.state().launch.step).toBe('world');
+    expect(findByData(rig.root, 'data-review', 'launch')).toBeNull();        // the review never renders
+    expect(findByData(rig.root, 'data-action', 'confirm-arm-launch')).toBeNull(); // the arm stays unreachable
+    const errors = elementsOf(rig.root).filter((element) => element.hasClass('field-error'));
+    expect(errors.length).toBe(1);
+    expect(textOf(errors[0] as FakeElement)).toBe(offenderMessageOf('weekly rebalancing report'));
+    // THE FIX ADVANCES (the refusal was the teaching, never a trap)
+    typeField(rig, 'preferences', 'rebalance=daily, report=weekly');
+    clickAction(rig, 'launch-step-review');
+    expect(rig.handle.state().launch.step).toBe('review');
+    expect(findByData(rig.root, 'data-review', 'launch')).not.toBeNull();
+    expect(findByData(rig.root, 'data-action', 'confirm-arm-launch')).not.toBeNull();
+  });
+
+  it('THE POINT-OF-ENTRY HINT + THE REAL-BROWSER PRESS SEQUENCE: the Preferences field teaches the grammar at the point of entry (the constraints hint\'s own convention), and a press (mousedown + click) on "Next: review" refuses with the SAME offender-naming teaching', async () => {
+    const rig = await bootRig({ tradrl_onboarded: 'true' });
+    await wizardAtWorldStep(rig);
+    // THE HINT (the point of entry — taught BEFORE any error, the grammar itself)
+    expect(hintOf(rig, 'preferences')).toBe('Optional key=value pairs, e.g. rebalance=daily, report=weekly — leave empty for none.');
+    // THE PRESS: the real browser's mousedown + composed click on the Next button
+    typeField(rig, 'preferences', 'rebalance daily');
+    const next = findByData(rig.root, 'data-action', 'launch-step-review');
+    if (next === null) throw new Error('the world step renders no Next: review button');
+    rig.doc.fire('mousedown', { target: next });
+    rig.doc.fire('click', { target: next });
+    // the press resolves the IDENTICAL refusal + teaching (never a silent no-op on the press path)
+    expect(rig.handle.state().launch.step).toBe('world');
+    const errors = elementsOf(rig.root).filter((element) => element.hasClass('field-error'));
+    expect(errors.length).toBe(1);
+    expect(textOf(errors[0] as FakeElement)).toBe(offenderMessageOf('rebalance daily'));
+  });
+});

@@ -663,3 +663,65 @@ describe('FW-44-A (Round L register L-1): the read-absence card — an unconfirm
     expect(aggregate).toContain('never a fabricated sum');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FW-47-B (Round M register M-5 — the org-pill leak): the pill rides the
+// FOLDED org status (core/oversight.ts's own-instant projection), so a
+// scrub inside the window between the project record and its org-snapshot
+// record renders the register's third literal 'org status unknown', never
+// the leaked 'active' — and the unknown fact row names WHICH unknown it
+// holds (the pre-existing no-snapshot sentence vs the new L4 withheld
+// sentence naming the snapshot's OWN instant).
+// ---------------------------------------------------------------------------
+
+describe('FW-47-B (M-5): the org pill + the unknown fact row at the pre-snapshot window', () => {
+  /** The M-5 shape's desk: a COMPILED project (the pill's unknown arm) with an org-status snapshot on the bundle. */
+  const compiledAlpha = (snapshotAt: number | null): ReturnType<typeof reduceAll> => {
+    const lifecycle = { projectId: 'prj-a', status: 'active' as const, acceptanceCriteriaId: null, organizationRef: 'org:a' };
+    return reduceAll(oversightState(), [
+      { kind: 'projects-listed', at: VIEW_AT, records: [
+        { ...project('prj-a', 'Alpha Desk', 'session-owned'), lifecycle },
+        project('prj-b', 'Beta Desk', 'session-owned'),
+        project(DEMO_PROJECT_ID, 'the TradRL demo project', 'tenant-available'),
+      ] },
+      ...(snapshotAt === null
+        ? [{ kind: 'oversight-read' as const, at: VIEW_AT, read: { projectId: 'prj-a', utilization: utilizationOf('prj-a'), submissions: [], decisions: [], readAt: VIEW_AT } }]
+        : [{ kind: 'oversight-read' as const, at: VIEW_AT, read: { projectId: 'prj-a', utilization: utilizationOf('prj-a'), submissions: [], decisions: [], readAt: VIEW_AT, orgStatus: { organizationRef: 'org:a', tenant: 'tenant-a', project: 'prj-a', status: 'active', at: snapshotAt, instanceRefs: ['ai:director-1'] } } }]),
+    ]);
+  };
+
+  it('THE PILL INSIDE THE PRE-SNAPSHOT WINDOW: a compiled desk whose snapshot is observed AFTER the view instant renders the register\'s third literal "org status unknown" — NEVER the leaked "active" (L3\'s export-verified shape, dead at the render)', () => {
+    // the window: the project record predates the view (it is in the listing), the
+    // org-snapshot record lands VIEW_AT+400 — the scrub at VIEW_AT sits between them.
+    const bytes = oversightBytes(compiledAlpha(VIEW_AT + 400));
+    const alphaCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-a"'), bytes.indexOf('data-oversight-desk="prj-b"'));
+    expect(alphaCard).toContain('<span class="pill-label">org status unknown</span>'); // the register's third literal
+    expect(alphaCard).not.toContain('<span class="pill-label">active</span>');         // never the leaked positive
+    expect(alphaCard).not.toContain('organization status active');                     // the fact row never leaks it either
+    // the WITHHELD sentence names the snapshot's OWN instant (the gate observation's withheldAtView law)
+    expect(alphaCard).toContain('withheld — a status snapshot is on record but observed at');
+    expect(alphaCard).toContain(`after this view instant (L4; never rendered before its observed instant)`);
+    expect(alphaCard).toContain(formatInstantUtc(VIEW_AT + 400));                      // the snapshot's own instant, named
+  });
+
+  it('THE TWO UNKNOWN CAUSES STAY DISTINCT at the fact row: no snapshot on record keeps the pre-existing sentence; a withheld snapshot names its own instant; a view at-or-after the snapshot\'s own instant serves it verbatim', () => {
+    // cause 1 (the pre-existing unknown): a COMPILED desk with no snapshot on file.
+    const noSnapshotBytes = oversightBytes(compiledAlpha(null));
+    const noSnapshotCard = noSnapshotBytes.slice(noSnapshotBytes.indexOf('data-oversight-desk="prj-a"'), noSnapshotBytes.indexOf('data-oversight-desk="prj-b"'));
+    expect(noSnapshotCard).toContain('<span class="pill-label">org status unknown</span>');
+    expect(noSnapshotCard).toContain("unknown — this desk's organization is compiled on the durable record, but no status snapshot is on file (the status read has not answered)"); // the pre-existing sentence, unchanged
+    expect(noSnapshotCard).not.toContain('withheld — a status snapshot is on record');                                                               // never the withheld sentence without a snapshot
+    // cause 2 (the M-5 window's unknown): the withheld sentence names the snapshot's OWN instant — never the no-snapshot sentence.
+    const withheldBytes = oversightBytes(compiledAlpha(VIEW_AT + 400));
+    const withheldCard = withheldBytes.slice(withheldBytes.indexOf('data-oversight-desk="prj-a"'), withheldBytes.indexOf('data-oversight-desk="prj-b"'));
+    expect(withheldCard).toContain('withheld — a status snapshot is on record but observed at');
+    expect(withheldCard).not.toContain('no status snapshot is on file'); // the two causes are never conflated
+    // the same desk at a view AT-OR-AFTER the snapshot's own instant serves it verbatim (the boundary at the render)
+    const state = compiledAlpha(VIEW_AT + 400);
+    const servedBytes = serializeVNode(renderConsoleModel(state, VIEW_AT + 400, { ...defaultShellView(state), simulated: true, accountView: 'oversight' }));
+    const servedCard = servedBytes.slice(servedBytes.indexOf('data-oversight-desk="prj-a"'), servedBytes.indexOf('data-oversight-desk="prj-b"'));
+    expect(servedCard).toContain('<span class="pill-label">active</span>');            // verbatim, the boundary's own instant
+    expect(servedCard).toContain('organization status');                               // the fact row serves the status
+    expect(servedCard).not.toContain('withheld — a status snapshot is on record');
+  });
+});
