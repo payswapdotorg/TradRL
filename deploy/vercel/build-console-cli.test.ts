@@ -198,3 +198,19 @@ describe('deploy/vercel/build-console.mjs — the CLI entry resolves the repo ro
     expect(readdirSync(FIXTURE_PARENT)).toEqual(['repo']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE D-1 TIMEOUT FLOOR (FW-49, the carried infra item since the FW-2 era):
+// the sibling determinism file's raise, floored HERE too — this file's two
+// CLI spawn cases have carried the W-8 raise since W-8 itself, and the
+// floor pin makes that permanence a test's own law: the D-1 class (a
+// build-shaped determinism test timing out at vitest's implicit 5,000ms
+// default under machine load) can never silently regress to an implicit
+// default on EITHER determinism file.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel/build-console.mjs — the D-1 timeout floor (FW-49)', () => {
+  it('the CLI spawn timeout stays at its own documented ceiling (>= 60,000ms — the W-8 raise, floor-pinned)', () => {
+    expect(FULL_BUILD_SPAWN_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+  });
+});

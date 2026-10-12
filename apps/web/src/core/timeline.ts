@@ -70,6 +70,25 @@ export function formatTimeUtc(at: number): string {
 }
 
 /**
+ * FW-49 (the Round M minors — S3): the ROW-META TIME of a record — the
+ * inbox notice row's summary column. A record from the SAME UTC day as
+ * the view renders the compact HH:MM (unchanged — the same-day row never
+ * carried a date); a record from an EARLIER day renders the timeline's
+ * own bucket label + the time ("Nov 7 21:13") — the SAME bucketLabelOf
+ * vocabulary the Home timeline headers carry, over the same UTC calendar
+ * days against the same injected view instant. The label derives from the
+ * VIEW instant (never a wall clock — the render pass injects its
+ * instant), so a scrubbed view re-buckets the meta exactly as it
+ * re-buckets the timeline headers: one law, two surfaces. The row's
+ * details keep the full canonical instant either way — the meta is the
+ * summary, the details are the record.
+ */
+export function rowMetaTimeOf(at: number, viewAt: number): string {
+  const label = bucketLabelOf(at, viewAt);
+  return label === 'TODAY' ? formatTimeUtc(at) : `${label} ${formatTimeUtc(at)}`;
+}
+
+/**
  * Bucket entries by period, latest bucket first, entries latest-first
  * inside each bucket. Deterministic: same (entries, now) -> same
  * buckets; entry order among equal instants is stable (a stable sort

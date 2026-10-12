@@ -97,6 +97,21 @@ const OUT_B = mkdtempSync(join(tmpdir(), 'tradrl-prebuilt-b-'));
 let buildA: ReturnType<typeof import('./build-console.mjs').buildPrebuiltOutput> | null = null;
 let buildB: ReturnType<typeof import('./build-console.mjs').buildPrebuiltOutput> | null = null;
 
+// THE D-1 TIMEOUT LAW (FW-49, the carried infra item since the FW-2 era):
+// the two build-shaped determinism tests below (the prebuilt-output
+// byte-compare + the static-console determinism test) walk every emitted
+// byte of a REAL build, and their per-test timeout is vitest's IMPLICIT
+// 5,000ms default — the documented flake classes (FW-2-c's 5.1-5.5s under
+// memory pressure, FW-40-F's first-run timeout at load 3.14) measure
+// MACHINE LOAD, not the contract. The timeout is therefore declared
+// EXPLICITLY as DETERMINISM_TEST_TIMEOUT_MS, floor-pinned by its own test
+// at the W-8/FW-2-b documented-safe ceiling (60,000ms — a 12x margin over
+// the ~4.4s warm measure), so the D-1 class can never silently regress to
+// an implicit default again. The beforeAll's own 120s hook timeout is
+// deliberately untouched (never flaked in the record — raising it would be
+// un-evidenced scope growth).
+const DETERMINISM_TEST_TIMEOUT_MS = 60_000; // the D-1 raise (FW-49): the W-8/FW-2-b documented-safe ceiling — a 12x margin over the ~4.4s warm measure, floor-pinned by the D-1 test below
+
 beforeAll(async () => {
   const build = await import('./build-console.mjs');
   // OUT_B is PRE-SEEDED with stale artifacts — the second build must CLEAN
@@ -385,7 +400,7 @@ describe('deploy/vercel — the prebuilt output: the .func law (CommonJS, sealed
 // ---------------------------------------------------------------------------
 
 describe('deploy/vercel — the prebuilt build: determinism + the stale-artifact law', () => {
-  it('identical inputs -> identical bytes across the WHOLE prebuilt output (static + .func + config.json)', () => {
+  it('identical inputs -> identical bytes across the WHOLE prebuilt output (static + .func + config.json)', { timeout: DETERMINISM_TEST_TIMEOUT_MS }, () => {
     const treeA = walkFiles(OUT_A);
     const treeB = walkFiles(OUT_B);
     expect(treeA).toEqual(treeB);
@@ -484,7 +499,7 @@ describe('deploy/vercel — the console build: the shell-config substitution', (
     expect(() => build.substituteShellConfig('<html>no config block</html>', { token: 'x', tenantId: 'y', projectId: null, simulated: true })).toThrow(/anchor is missing/);
   });
 
-  it('the static console build is deterministic on its own (identical inputs -> identical bytes) and copies sources verbatim', async () => {
+  it('the static console build is deterministic on its own (identical inputs -> identical bytes) and copies sources verbatim', { timeout: DETERMINISM_TEST_TIMEOUT_MS }, async () => {
     const build = await import('./build-console.mjs');
     const values = { token: 'tok-demo', tenantId: 'tenant-demo', projectId: null, simulated: true };
     const outA = mkdtempSync(join(tmpdir(), 'tradrl-console-a-'));
@@ -532,5 +547,19 @@ describe('deploy/vercel — secrets never hardcoded + the .env.example inventory
     for (const reserved of ['NEON_API_HOST', 'NEON_DATABASE', 'NEON_API_KEY', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN', 'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET', 'R2_ENDPOINT', 'RESEND_API_KEY', 'RESEND_FROM', 'APIFY_API_TOKEN', 'APIFY_DEFAULT_RUNS_ENDPOINT']) {
       expect(example.includes(`${reserved}=`)).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. THE D-1 TIMEOUT FLOOR (FW-49): the determinism tests' per-test timeout
+// is the EXPLICIT DETERMINISM_TEST_TIMEOUT_MS, floor-pinned at the
+// documented-safe ceiling — the D-1 class (a determinism test timing out
+// at vitest's implicit 5,000ms default under machine load) can never
+// silently regress to an implicit default again.
+// ---------------------------------------------------------------------------
+
+describe('deploy/vercel — the D-1 determinism timeout floor (FW-49)', () => {
+  it('the determinism tests\' per-test timeout is the explicit constant at the documented-safe ceiling (>= 60,000ms — never vitest\'s implicit 5,000ms default)', () => {
+    expect(DETERMINISM_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
   });
 });

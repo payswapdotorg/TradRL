@@ -14,7 +14,7 @@ import type { GatewaySubmissionRecord, OutcomeRecord, ProjectRecord, RiskUtiliza
 import { DEMO_PROJECT_ID } from '../core/tenant';
 import { formatInstantUtc } from '../core/format';
 import { openWorkspace, reduceAll, type WorkspaceState } from '../core/workspace';
-import { desksLaunchedAfterViewOf, oversightRowsOf } from '../core/oversight';
+import { desksLaunchedAfterViewOf, oversightAggregateOf, oversightRowsOf } from '../core/oversight';
 import { renderConsoleModel } from './model';
 import { defaultShellView, type ShellView } from './shell';
 import { authenticatedAccountPanel } from '../core/principal';
@@ -724,5 +724,105 @@ describe('FW-47-B (M-5): the org pill + the unknown fact row at the pre-snapshot
     expect(servedCard).toContain('<span class="pill-label">active</span>');            // verbatim, the boundary's own instant
     expect(servedCard).toContain('organization status');                               // the fact row serves the status
     expect(servedCard).not.toContain('withheld — a status snapshot is on record');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-49 (Round E register E-3, closed with evidence — the render half):
+// the per-desk scoping RENDERS. The whole-account scoping finding is dead:
+// the stream derives per-project, the gate projects the desk's OWN book,
+// and THIS cockpit renders one card per desk — each card carrying its OWN
+// standing stream (its own fills + its own ONE honestly-refused full-
+// capacity concentration candidate, M2's "refusals 5 == 1x5" shape), the
+// account sum appearing ONLY on the aggregate row, where it is the
+// exact-decimal sum of the very numbers the cards carry.
+// ---------------------------------------------------------------------------
+
+describe('FW-49 (E-3 closure): the per-desk scoping RENDERS — a three-desk account, each card its OWN', () => {
+  /** One desk's honest standing refusal — the ONE full-capacity concentration candidate the gate stopped (the deliberate per-stream demonstration, counted per desk). */
+  const concentrationRefusal = (id: string, at: number, capital: string, observed: string): GatewaySubmissionRecord => ({
+    kind: 'refused', submissionId: id, decisionId: null, auditId: `xga:${id}`,
+    refusal: { stage: 'risk_limits', evaluationId: `rev:${id}`, refusals: [{ constraintId: 'k-capital-budget', domain: 'outcome', subject: 'capital.budget', severity: 'blocking', predicate: { kind: 'limit.max', bound: Number(capital) }, observed }] },
+    refusedAt: at,
+  });
+
+  /** Each desk's own standing read (its OWN declared capital budget — the bounds the card renders). */
+  const deskUtilization = (projectId: string, capitalBound: string): RiskUtilizationRead => ({
+    ...utilizationOf(projectId),
+    bounds: [
+      { constraintId: 'k-capital-budget', metric: 'outcome.capital.budget', boundMax: capitalBound, severity: 'blocking', current: null, source: 'the projected cumulative book of every routed fill on record', status: 'ok' },
+      { constraintId: 'k-risk-budget', metric: 'outcome.risk.budget', boundMax: '250.00', severity: 'blocking', current: null, source: 'the outcome records are not readable by this read on this backing', status: 'unknown' },
+    ],
+    activeBreaches: [],
+  });
+
+  /**
+   * The M1-shaped three-desk account: DEEP (book 960.00 — 768.00 + 192.00),
+   * F1 (book 60.00 — 48.00 + 12.00) and a third desk (book 150.005 — the
+   * fractional tail the exact-decimal sum's own witness), each desk carrying
+   * its OWN standing stream: its own fills + its own ONE honestly-refused
+   * full-capacity candidate, citing its OWN declared capital budget.
+   */
+  function threeDeskState(): WorkspaceState {
+    return reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: 'prj-m1-deep' }, VIEW_AT), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'projects-listed', at: T0 + 1, records: [
+        project('prj-m1-deep', 'M1 DEEP Desk', 'session-owned'),
+        project('prj-m1-f1', 'M1 F1 Desk', 'session-owned'),
+        project('prj-m1-third', 'M1 Third Desk', 'session-owned'),
+      ] },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-m1-deep', utilization: deskUtilization('prj-m1-deep', '80000.00'), submissions: [
+        routedFill('xgs:deep-1', VIEW_AT - 3000, '768.00'),
+        routedFill('xgs:deep-2', VIEW_AT - 2000, '192.00'),
+        concentrationRefusal('xgs:deep-3', VIEW_AT - 1000, '80000.00', '80959.9968'), // DEEP's own: prior 960.00 + candidate 79999.9968
+      ], decisions: [], readAt: VIEW_AT } },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-m1-f1', utilization: deskUtilization('prj-m1-f1', '20000.00'), submissions: [
+        routedFill('xgs:f1-1', VIEW_AT - 3000, '48.00'),
+        routedFill('xgs:f1-2', VIEW_AT - 2000, '12.00'),
+        concentrationRefusal('xgs:f1-3', VIEW_AT - 1000, '20000.00', '20059.9992'), // F1's own: prior 60.00 + candidate 19999.9992
+      ], decisions: [], readAt: VIEW_AT } },
+      { kind: 'oversight-read', at: VIEW_AT, read: { projectId: 'prj-m1-third', utilization: deskUtilization('prj-m1-third', '1000.00'), submissions: [
+        routedFill('xgs:third-1', VIEW_AT - 3000, '150.005'),
+        concentrationRefusal('xgs:third-3', VIEW_AT - 1000, '1000.00', '1150.005'), // the third desk's own: prior 150.005 + candidate 1000
+      ], decisions: [], readAt: VIEW_AT } },
+    ]);
+  }
+
+  it('each card carries its OWN book and its OWN refusal count — 960.00 / 60.00 / 150.005, refusals 1 per card (M2\'s "refusals 5 == 1x5" shape at three desks) — NEVER the 1170.005 account sum on any card', () => {
+    const bytes = oversightBytes(threeDeskState());
+    const deepCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-m1-deep"'), bytes.indexOf('data-oversight-desk="prj-m1-f1"'));
+    const f1Card = bytes.slice(bytes.indexOf('data-oversight-desk="prj-m1-f1"'), bytes.indexOf('data-oversight-desk="prj-m1-third"'));
+    const thirdCard = bytes.slice(bytes.indexOf('data-oversight-desk="prj-m1-third"'));
+    // each desk's OWN fill-derived book — the exact decimals the desk's own fills carry:
+    expect(deepCard).toContain('960.00 across 2 open position');
+    expect(f1Card).toContain('60.00 across 2 open position');
+    expect(thirdCard).toContain('150.005 across 1 open position');
+    // the account sum NEVER renders on a card (the per-desk scoping law — the pre-FW-43-A finding, dead at the render):
+    for (const card of [deepCard, f1Card, thirdCard]) {
+      expect(card).not.toContain('1170.005');
+    }
+    // refusals 1 per card — each desk's own ONE honestly-refused standing proposal, counted per desk:
+    expect(deepCard).toContain('refusals 1 stopped');
+    expect(f1Card).toContain('refusals 1 stopped');
+    expect(thirdCard).toContain('refusals 1 stopped');
+    // the fold-level law under the render (the pure fold's own numbers, per desk):
+    const rows = oversightRowsOf(threeDeskState(), VIEW_AT);
+    expect(rows.map((row) => row.cockpit.netExposure)).toEqual(['960.00', '60.00', '150.005']);
+    expect(rows.map((row) => row.cockpit.refusals)).toEqual([1, 1, 1]);
+  });
+
+  it('the cross-desk aggregate is the EXACT-DECIMAL sum of the same per-desk numbers — book 1170.005 == 960.00 + 60.00 + 150.005, refusals 3 == 1 + 1 + 1 (never a float sum, never a fabricated one)', () => {
+    const bytes = oversightBytes(threeDeskState());
+    const aggregate = bytes.slice(bytes.indexOf('data-oversight-aggregate="true"'), bytes.indexOf('data-oversight-desk="prj-m1-deep"'));
+    expect(aggregate).toContain('net exposure (standing book notional, all desks)');
+    expect(aggregate).toContain('1170.005'); // the exact-decimal sum — a float sum would render 1170.0049999999998 (the fractional tail's own witness)
+    expect(aggregate).toContain('refusals (gateway-stopped)');
+    expect(aggregate).toContain('>3<'); // == 1 + 1 + 1
+    expect(aggregate).toContain('never a fabricated sum');
+    // the fold-level law: the aggregate's numbers ARE the sums of the rows' own numbers
+    const aggregateRow = oversightAggregateOf(threeDeskState(), VIEW_AT);
+    expect(aggregateRow.netExposureTotal).toBe('1170.005');
+    expect(aggregateRow.refusals).toBe(3);
+    expect(aggregateRow.refusals).toBe(1 + 1 + 1);
   });
 });

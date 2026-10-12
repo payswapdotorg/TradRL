@@ -23,6 +23,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { JobRecord, OrgStatusSnapshot, OutcomeRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import { formatInstantUtc } from '../core/format';
 import { openWorkspace, reduceAll, type WorkspaceEvent, type WorkspaceState } from '../core/workspace';
 import { capsuleFromOutcome } from '../core/evidence';
 import { renderConsoleModel } from './model';
@@ -236,5 +237,61 @@ describe('applied: determinism with the component system', () => {
   it('the availability law still rules the component surface (L4 from the composed pass)', () => {
     // WITHOUT advancing the anchor, the view instant precedes the job's availability: the sheet's own gate fires.
     expect(() => render(populatedWorkspace(), { accountView: 'section', sheet: { kind: 'job', id: 'job-1' } })).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FW-49 (the Round M minors — S3): the DATELESS NOTICE ROWS. S3's finding:
+// "notice rows show time-of-day only (09:46/14:18/14:21) with NO date —
+// the Shadow degradation notice is actually from Jul 3 per Home timeline,
+// invisible here". The Home timeline buckets by day and the row's own
+// details carry the full canonical instant — the row meta was the ONLY
+// dateless surface: a 7-day-old notice's bare '21:13' reads as today's.
+// The fix (one law, two surfaces): the row meta composes through
+// core/timeline.ts's rowMetaTimeOf — a record from the SAME UTC day as
+// the view renders the compact HH:MM (unchanged); an EARLIER day renders
+// the timeline's own bucket vocabulary + the time ("Nov 7 21:13"),
+// derived from the VIEW instant exactly as the timeline headers are.
+// ---------------------------------------------------------------------------
+
+describe('applied FW-49 (S3): the notice row meta carries the date an earlier-day record deserves', () => {
+  // T0 = 2023-11-14T22:13:20.000Z; the earlier-day notice's own instant is
+  // 2023-11-07T21:13:00.000Z — seven UTC days before the view, so its
+  // bucket label is the "Mon D" form 'Nov 7' (the weekday form stays inside
+  // the week; seven days back is the boundary).
+  const EARLIER_DAY_AT = T0 - 608_420_000; // 2023-11-07T21:13:00.000Z
+
+  /**
+   * The two-notice fixture: the workspace's own org-snapshot folds a SECOND
+   * organization_compiled notice from the EARLIER UTC day (the same
+   * organization, its snapshot observed seven days before the view), beside
+   * the same-day notice populatedWorkspace already folds (T0+10). The
+   * view-live event at T0+50 — the file's own first-test pattern — advances
+   * the anchor so BOTH rows render at the view instant (the original wave's
+   * draft omitted it and its same-day notice sat beyond the view; the
+   * rebuild carries the repair from the start, so the pin fails on exactly
+   * its own seam, never on a missing row).
+   */
+  function noticeWorkspace(): WorkspaceState {
+    return reduceAll(populatedWorkspace(), [
+      { kind: 'org-snapshot', at: T0 + 33, snapshot: { ...orgSnapshot(), at: EARLIER_DAY_AT } },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  it('an earlier-day notice\'s row meta renders the bucket label + the time — "Nov 7 21:13" — never the bare "21:13" reading as today\'s; the same-day notice keeps the compact HH:MM', () => {
+    const bytes = render(noticeWorkspace(), { accountView: 'inbox' });
+    // the earlier-day notice (seven UTC days back): the timeline's own bucket vocabulary + the time — the same vocabulary the Home timeline headers carry
+    expect(bytes).toContain('<span class="row-meta">Nov 7 21:13</span>');
+    // never the bare time-of-day for the earlier-day row (the S3 defect: a seven-day-old notice reading as today's)
+    expect(bytes).not.toContain('<span class="row-meta">21:13</span>');
+    // the same-day notice (T0+10 = 2023-11-14T22:13:20.010Z): the compact HH:MM, unchanged
+    expect(bytes).toContain('<span class="row-meta">22:13</span>');
+  });
+
+  it('the row\'s details keep the FULL canonical instant either way (the L4 record — the meta is the summary, the details are the record)', () => {
+    const bytes = render(noticeWorkspace(), { accountView: 'inbox' });
+    expect(bytes).toContain(formatInstantUtc(EARLIER_DAY_AT)); // the earlier-day notice's own canonical instant, verbatim
+    expect(bytes).toContain(formatInstantUtc(T0 + 10));        // the same-day notice's own canonical instant, verbatim
   });
 });
