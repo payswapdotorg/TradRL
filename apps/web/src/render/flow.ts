@@ -655,6 +655,58 @@ export function labeledInput(options: {
   ];
 }
 
+/**
+ * N-2 (Round N register — the single-line note input, M3's top friction,
+ * 6+ seats): ONE labeled MULTI-LINE textarea — the paste-target fields
+ * (the note-attach form's Note text). The labeledInput scaffold (the
+ * label above, the hint + validation below, the vocabulary's own
+ * delegated data-field attribute), with the model's value painted BOTH
+ * as the value ATTRIBUTE (the identity law's paint carrier —
+ * render/dom.ts's transplant reads it to detect the user's in-flight
+ * edit across every beat re-projection, the exact mirror of
+ * labeledInput) AND as the CHILD TEXT (the real DOM's textarea displays
+ * its child content, never a value attribute — the first-paint carrier).
+ * A multi-line note (a grammar line plus free-text digest lines) now
+ * survives the surface, the beat, the route, and the chain VERBATIM.
+ */
+export function labeledTextArea(options: {
+  readonly label: string;
+  readonly name: string;
+  readonly value: string;
+  /** The visible row count (a paste target earns its height; the default 4). */
+  readonly rows?: number;
+  readonly hint?: string;
+  readonly validation?: FieldValidation;
+  readonly required?: boolean;
+  readonly vocabulary?: 'launch' | 'research' | 'account' | 'note' | 'alert';
+}): VNode[] {
+  const invalid = options.validation?.touched === true && (options.validation?.message.length ?? 0) > 0;
+  const idPrefix = options.vocabulary === 'research' ? 'research' : options.vocabulary === 'account' ? 'account' : options.vocabulary === 'note' ? 'note' : options.vocabulary === 'alert' ? 'alert' : 'launch';
+  const fieldAttr = options.vocabulary === 'research' ? 'data-research-field' : options.vocabulary === 'account' ? 'data-account-field' : options.vocabulary === 'note' ? 'data-note-field' : options.vocabulary === 'alert' ? 'data-alert-field' : 'data-launch-field';
+  const stickyClearance: Readonly<Record<string, string>> = options.vocabulary === 'launch' ? { style: WIZARD_STICKY_CLEARANCE } : {};
+  return [
+    v('div', { class: `field${invalid ? ' field-invalid' : ''}`, 'data-field': options.name }, [
+      v('label', { class: 'field-label', for: `${idPrefix}-${options.name}` }, [options.label, ...(options.required === true ? [' *'] : [])]),
+      v('textarea', {
+        class: 'field-input',
+        id: `${idPrefix}-${options.name}`,
+        name: options.name,
+        rows: String(options.rows ?? 4),
+        // N-2: the value attribute is the identity law's paint carrier
+        // (the transplant's user-edit detection reads it); the CHILD TEXT
+        // below is the real DOM's display carrier — both carry the model's
+        // value, newlines and all.
+        value: options.value,
+        ...stickyClearance,
+        ...(invalid ? { 'aria-invalid': 'true' } : {}),
+        [fieldAttr]: options.name,
+      }, [options.value]),
+      ...(options.hint === undefined ? [] : [v('p', { class: 'field-hint' }, [options.hint])]),
+      ...(options.validation === undefined ? [] : [fieldError(options.validation)]),
+    ]),
+  ];
+}
+
 /** One labeled select (§4.11: the label sits ABOVE the control — the closed-vocabulary fields). */
 export function labeledSelect(options: {
   readonly label: string;
