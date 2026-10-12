@@ -659,3 +659,47 @@ builds are E-6 (the research world) and S2's market-facing surface.** One
 new register item: L-1 the Oversight read-absence fold (S1's 5-poll window:
 absent reads rendered as zeros summed as knowns — the fabricated-sum class;
 recovered on reload; not reproduced by the other 8).
+
+### Round M — the YES-vote round measured: the FIRST UNANIMOUS LEANING (the arc 0/2/7 → 0/9/0); the YES waits on the operator's price list + one durability wave
+
+9/9 personas on the FW-46 origin (e9b4a33, tradrl-console-81qb8fafu), 67
+ledger rows, tasks 335/341 (98.2%), 39 friction events, 0 protocol
+violations. **fw46 deltas: read_absence_fold 6 pass / 3 partial (the
+org-pill leak's seats); notes_ingestion 1 pass (M3) / 8 partial;
+market_surface 9 partial; fw46_overall 9 partial.** The named builds
+verified from every seat: the notes REACH THE CHAIN (M3's marker re-test —
+17 occurrences live vs Round L's ZERO of eleven needles; M3, the lone NO
+holder since Round E, flipped NO→LEANING — the first unanimous leaning);
+the market surface LANDED (S2's decisive item — the chart of exactly the
+desk's own fill prices, sparse stays sparse AND SAYS SO, the honest
+live-snapshot teaching, and the FIRED alert verdict verified at the observed
+fill's OWN filledAt to the millisecond from 5 seats); FW-44-A held (no
+fabricated zeros anywhere; every seat's roll-up exact at an atomic view
+instant). Main-interface 0/9/0; would_pilot 9/9; decision UNDECIDED 9/9;
+TradRL beats the incumbent 9/10 dimensions (onboarding 4.89/3.50, TTV
+5.00/3.33, agent_org 4.67/1.00, auditability 4.89/2.17, risk_tooling
+4.67/2.67, time_machine 4.89/2.33, notifications 3.89/2.83, export
+5.00/3.00, discoverability 4.33/3.67) — the ONLY loss pricing_fit 2.67/4.17
+(E-7 read verbatim twice from every seat: "commercial pricing: not
+published yet"). **THE COMMITTEE'S MESSAGE: the first-YES distance is no
+longer engineering — the standing YES-flip commitments (now EIGHT, M3
+joined, every one additionally gated on the record-class durability fix)
+wait on (a) the operator's credentials re-export — RESOLVED 2026-10-12, the
+push/PR/deploy lane re-opened — and (b) the E-7 pricing decision — now
+delegated to the Lead per the operator's 2026-10-12 message.** Register:
+M-1 the evaporating note/alert record classes (every seat's #1 friction —
+the card copy claims they "ride this project's export chain" while a
+32-second-old attach is lost at a page reload and the FIRED verdict itself
+evaporates); M-2 the citation residue (the persisted deliverable still
+cites lost note-attached events — a citation to evidence the system cannot
+produce on demand); M-3 the direct-submit job record instability (the same
+job's completedAt moved between two chain-valid exports); M-4 the
+alert-fired chain event (session variance — exists in some live sessions,
+never survives a reload); M-5 the Oversight org-pill leak (a stale "active"
+inside the pre-snapshot window, reproduced with export-verified timing from
+7+ seats); M-6 the wizard validation gap (the Preferences silent no-op);
+plus the minors (duplicate alert-declared rows, the waiting-copy
+imprecision, S3's dateless notice rows, Market-World first-frame staleness
+after a switch, the stale-empty Research list, the launch-entry rename, the
+stale toast re-fire, the honest 0.10→"0.1" normalization). NEXT: FW-47
+(the durability + read-model waves) → Round N.
