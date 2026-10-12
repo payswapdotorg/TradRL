@@ -108,6 +108,7 @@
 import {
   canonicalJson,
   deepFreeze,
+  fnv1a32Hex,
   isRecord,
   type ApiService,
   type JobRecord,
@@ -180,9 +181,13 @@ export interface DurableActivation {
    * The per-request machinery tick (R2): the SAME `demoMachineryTick` law
    * the demo backing drives, over THIS seam's hydrated control plane.
    * `null` when no internal credential is configured (nothing animates —
-   * honest under SIMULATED).
+   * honest under SIMULATED). FW-47-B (M-3): the tick is now ASYNC at the
+   * interval — the pre-sync's adoption must land BEFORE this request's
+   * machinery advancement (and before the serve), so the router AWAITS
+   * it; the off-interval path stays synchronous in effect (the returned
+   * promise resolves immediately — `await` on it is a no-op).
    */
-  readonly tick: ((at: number) => void) | null;
+  readonly tick: ((at: number) => void | Promise<void>) | null;
   /**
    * The idempotent boot world (R3 + R4 + R7): seeds the demo world, writes
    * the fixture substance and re-reports the org-status snapshots once per
@@ -449,7 +454,18 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
         const replayed = service.handle({
           method: 'POST',
           path: record.kind === 'research' ? '/v1/jobs/research' : '/v1/jobs/learning',
-          headers: { authorization: `Bearer ${seed.developerToken}`, 'idempotency-key': `idem:durable:hydrate:${record.jobId}` },
+          // FW-47-B (M-3): the replay's idempotency key is PAYLOAD-DERIVED
+          // (jobId + fnv1a32 of the record). The pre-fix jobId-only key
+          // hit the route's idempotency cache on a second replay and
+          // returned the cached STALE response without storing — a warm
+          // instance that had already replayed a job non-terminally could
+          // never adopt its terminal record (the boot hydration's replay
+          // and a later adoption raced one cache slot). With the payload
+          // in the key an UNCHANGED payload stays idempotent (the same
+          // key — the cached answer is the same record) while a CHANGED
+          // one stores (a fresh key — the port serves the preloaded
+          // record verbatim and the store's set REPLACES by jobId).
+          headers: { authorization: `Bearer ${seed.developerToken}`, 'idempotency-key': `idem:durable:hydrate:${record.jobId}:${fnv1a32Hex(canonicalJson(record as never))}` },
           body: { kind: record.kind, projectId: record.project, spec: { hydrated: true } },
         });
         const stored = (replayed.body as { readonly data?: unknown }).data;
@@ -459,6 +475,51 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
       }
     } finally {
       durable.endJobHydration(); // the port mints fresh records again (an unconsumed preload is dropped)
+    }
+  }
+
+  /**
+   * FW-47-B (Round M register M-3 — the direct-submit job record
+   * instability): THE PRE-SYNC (syncDurableJobTruth), the interval's jobs
+   * read factored out and AWAITED by the tick BEFORE the machinery
+   * advancement. ONE fresh tenant-wide jobs read per heal interval (the
+   * W-30 economy — the heal below reuses the SAME rows, never a second
+   * read): TERMINAL divergences (a durable record that is complete/failed
+   * while this instance's store holds it missing or divergent — the
+   * completion landed on ANOTHER instance) are ADOPTED onto this
+   * instance's store UNGATED by design: a TERMINAL import never composes
+   * anything (the machinery tick advances only non-terminal jobs), so the
+   * G-6 projection gate does not apply to it — without the adoption the
+   * very next tick on THIS instance would re-derive the completion at its
+   * OWN request clock and stamp a completedAt the durable truth never saw
+   * (L2-cont's measured two-exports divergence: 17:57:58.371 ->
+   * 18:00:46.991). NON-terminal divergences stay with the heal's
+   * G-6-gated half below (an instance imports a non-terminal job only
+   * onto a projection confirmed to serve the durable truth the job's
+   * composition reads — the FW-38-A law, unchanged). Returns the fresh
+   * rows for the heal to reuse (null when the read or an adoption failed
+   * — the heal's jobs half then skips this interval, honest; the next
+   * interval retries).
+   */
+  async function syncDurableJobTruth(): Promise<readonly JobRecord[] | null> {
+    try {
+      const jobs = await durable.freshJobRecordsOfTenant();
+      if (!jobs.ok) return null;
+      const known = new Map(service.jobs().map((job) => [job.jobId as string, job]));
+      const adoption: JobRecord[] = [];
+      for (const record of jobs.value) {
+        if (record.status !== 'complete' && record.status !== 'failed') continue; // non-terminal — the heal's G-6-gated half owns those
+        const local = known.get(record.jobId);
+        if (local === undefined || canonicalJson(local as never) !== canonicalJson(record as never)) {
+          adoption.push(record); // a TERMINAL divergence (or a missing terminal row) — adopted BEFORE the machinery advancement, ungated
+        }
+      }
+      replayDurableJobs(adoption); // a refused replay throws the typed failure — caught below, skipped this interval (R46)
+      return jobs.value;
+    } catch {
+      // R46: the pre-sync is best-effort — a transient failure never takes
+      // the request down; the next interval retries.
+      return null;
     }
   }
 
@@ -531,10 +592,11 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
    * rejected promise); the next interval retries. The W-30 round-trip law
    * is untouched (the boot projection's reads stay exactly seven; the heal
    * adds at most FIVE fresh reads per interval per instance — the jobs
-   * read, the session-listing JOIN the org half already rides, and the
-   * three derived-truth reads).
+   * read the PRE-SYNC already paid (FW-47-B: the SAME rows, handed in),
+   * the session-listing JOIN the org half already rides, and the three
+   * derived-truth reads).
    */
-  async function healStaleDurableState(at: number): Promise<void> {
+  async function healStaleDurableState(at: number, freshJobs: readonly JobRecord[] | null): Promise<void> {
     try {
       // 1. THE DERIVED-TRUTH HALF (FW-33-A) — FIRST, while the pending
       //    lane is clean: the quiet re-projection's commit guard discards
@@ -644,16 +706,16 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
         projectionReadyForJobs = false;
       }
       // 2. THE JOBS HALF — gated on the derived-truth half's confirmation
-      //    (FW-38-A/G-6): the fresh tenant-wide durable-jobs read (the
-      //    replay's write-through lane queues here; a later request's drain
-      //    confirms it — the W-27 law).
-      if (projectionReadyForJobs) {
-        const jobs = await durable.freshJobRecordsOfTenant();
-        if (jobs.ok) {
-          const known = new Set(service.jobs().map((job) => job.jobId as string));
-          const missing = jobs.value.filter((record) => !known.has(record.jobId));
-          replayDurableJobs(missing);
-        }
+      //    (FW-38-A/G-6): the PRE-SYNC's fresh tenant-wide rows (ONE jobs
+      //    read per interval — the W-30 economy, the same rows the tick's
+      //    awaited pre-sync already paid; null = that read failed, so this
+      //    half skips the interval, honest — the next interval retries).
+      //    The replay's write-through lane queues here; a later request's
+      //    drain confirms it — the W-27 law.
+      if (projectionReadyForJobs && freshJobs !== null) {
+        const known = new Set(service.jobs().map((job) => job.jobId as string));
+        const missing = freshJobs.filter((record) => !known.has(record.jobId));
+        replayDurableJobs(missing);
       }
       // 3. THE ORG HALF — the snapshot pass over the fresh JOIN rows (the
       //    read from step 1 rides again — the same rows, the same interval;
@@ -756,23 +818,40 @@ export function buildDurableActivation(input: DurableActivationInput): DurableAc
   // instance, fire-and-forget (the heal never blocks the request — it only
   // reads the durable truth + replays into the per-instance stores; the
   // serving projection is untouched, per the W-25D mid-instance law).
+  //
+  // FW-47-B (M-3): at the interval the tick FIRST AWAITS THE PRE-SYNC
+  // (syncDurableJobTruth above) — the terminal-divergence adoption must
+  // land BEFORE this request's machinery advancement (and before the
+  // serve: the router awaits the tick), or the very advancement below
+  // would re-derive a completion this instance learned non-terminally at
+  // the REQUEST clock. THE DISCLOSED COST: the pre-sync's ONE fresh
+  // tenant-wide jobs read now blocks the request that pays the interval
+  // (at most once per 10s per instance — the same single read the
+  // fire-and-forget heal already paid, moved ahead of the advancement;
+  // the first tick's arming and every off-interval tick pay nothing). The
+  // REST of the heal stays fire-and-forget, and the pre-sync itself is
+  // best-effort (a failed read adopts nothing and never rejects — the
+  // next interval retries, R46).
   const internalToken = seed.internalToken;
   let lastStalenessHealAt: number | null = null;
   const tick = internalToken === null
     ? null
-    : (at: number) => {
+    : async (at: number): Promise<void> => {
         // FW-31-B (the P02 stall): the bounded staleness heal, BEFORE the
         // compile pass — a healed job store lets THIS tick's advancement
         // see the launch's kickoff job the same request (a healed watch
         // store lets the org-status read observe the compiled org). The
         // instance's FIRST tick only ARMS the interval (the boot world
         // just read the durable truth — a heal at boot adds nothing); a
-        // later tick pays at most one heal per interval.
+        // later tick pays at most one heal per interval. FW-47-B (M-3):
+        // the PRE-SYNC is AWAITED (a terminal adoption lands before the
+        // advancement below); the rest of the heal is fire-and-forget.
         if (lastStalenessHealAt === null) {
           lastStalenessHealAt = at;
         } else if (at - lastStalenessHealAt >= STALENESS_HEAL_INTERVAL_MS) {
           lastStalenessHealAt = at;
-          void healStaleDurableState(at); // best-effort by construction — never a rejection
+          const freshJobs = await syncDurableJobTruth(); // THE PRE-SYNC — awaited (the adoption lands before the advancement)
+          void healStaleDurableState(at, freshJobs); // the rest of the heal — best-effort by construction, never a rejection
         }
         // The context's control plane is the seam's HYDRATED port — the
         // compile pass's projectsOf read works unchanged (R2's law). Since

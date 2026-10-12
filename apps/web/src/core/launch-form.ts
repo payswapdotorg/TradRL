@@ -524,7 +524,14 @@ export function launchFieldValidation(values: LaunchFormValues, field: LaunchFie
     return '';
   }
   if (field === 'executionMode') return (EXECUTION_MODES as readonly string[]).includes(values.executionMode.trim()) ? '' : 'Choose an execution mode.';
-  if (field === 'preferences') return parsePreferencesValue(values.preferences) === null ? 'Preferences are key=value pairs, e.g. rebalance=daily.' : '';
+  // FW-47-B (Round M register M-6, the D-6b convention extended — L3's
+  // silent-no-op find): the preferences message NAMES the typed offender
+  // + teaches the full grammar (the optional/leave-empty contract
+  // included), exactly as the constraints message below names its entry.
+  // The pre-fix grammar-less one-liner taught neither, so the wizard's
+  // refusal read as a silent no-op at the point of refusal (~4 minutes
+  // lost on the deep launch, isolated by bisection).
+  if (field === 'preferences') return parsePreferencesValue(values.preferences) === null ? `Preferences ("${values.preferences}") are malformed — each entry is key=value, e.g. rebalance=daily, report=weekly (optional; leave empty for none).` : '';
   // D-6b (W-25C): the constraint-format message NAMES the offending
   // entry — which one (1-based, among the comma-separated entries) and
   // what it says — plus the expected grammar (UX-DESIGN's error-copy

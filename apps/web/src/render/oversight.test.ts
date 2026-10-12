@@ -686,7 +686,7 @@ describe('FW-47-B (M-5): the org pill + the unknown fact row at the pre-snapshot
       ] },
       ...(snapshotAt === null
         ? [{ kind: 'oversight-read' as const, at: VIEW_AT, read: { projectId: 'prj-a', utilization: utilizationOf('prj-a'), submissions: [], decisions: [], readAt: VIEW_AT } }]
-        : [{ kind: 'oversight-read' as const, at: VIEW_AT, read: { projectId: 'prj-a', utilization: utilizationOf('prj-a'), submissions: [], decisions: [], readAt: VIEW_AT, orgStatus: { organizationRef: 'org:a', tenant: 'tenant-a', project: 'prj-a', status: 'active', at: snapshotAt, instanceRefs: ['ai:director-1'] } } }]),
+        : [{ kind: 'oversight-read' as const, at: VIEW_AT, read: { projectId: 'prj-a', utilization: utilizationOf('prj-a'), submissions: [], decisions: [], readAt: VIEW_AT, orgStatus: { organizationRef: 'org:a', tenant: 'tenant-a', project: 'prj-a', status: 'active' as const, at: snapshotAt, instanceRefs: ['ai:director-1'] } } }]),
     ]);
   };
 
@@ -718,7 +718,8 @@ describe('FW-47-B (M-5): the org pill + the unknown fact row at the pre-snapshot
     expect(withheldCard).not.toContain('no status snapshot is on file'); // the two causes are never conflated
     // the same desk at a view AT-OR-AFTER the snapshot's own instant serves it verbatim (the boundary at the render)
     const state = compiledAlpha(VIEW_AT + 400);
-    const servedBytes = serializeVNode(renderConsoleModel(state, VIEW_AT + 400, { ...defaultShellView(state), simulated: true, accountView: 'oversight' }));
+    const served = reduceAll(state, [{ kind: 'view-timestamp', at: VIEW_AT + 500, timestamp: VIEW_AT + 500 }]);
+    const servedBytes = oversightBytes(served);
     const servedCard = servedBytes.slice(servedBytes.indexOf('data-oversight-desk="prj-a"'), servedBytes.indexOf('data-oversight-desk="prj-b"'));
     expect(servedCard).toContain('<span class="pill-label">active</span>');            // verbatim, the boundary's own instant
     expect(servedCard).toContain('organization status');                               // the fact row serves the status

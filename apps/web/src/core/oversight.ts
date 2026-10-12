@@ -77,7 +77,7 @@
 import type { GatewaySubmissionRecord, OrgStatusSnapshot, OutcomeRecord, ProjectRecord, RiskUtilizationEntryBlocked, RiskUtilizationRead } from '../api/contracts';
 import { blotterTotalsOf } from './blotter';
 import { sumExactDecimals } from './decimals';
-import { availabilityOfOutcome, availabilityOfSubmission, projectToView } from './availability';
+import { availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfSubmission, projectToView } from './availability';
 import { parseInstantUtc } from './format';
 import { standingReadFoldOf, type StandingReadFold } from './standing';
 import { DEMO_PROJECT_ID, isDemoProject, sessionOwnDesksOf } from './tenant';
@@ -134,6 +134,20 @@ export interface OversightDeskRow {
   readonly status: string;
   /** FW-38-B (G-3): the desk's ORG operating status (the bundle's own snapshot: 'active'/'forming'/…, rendered verbatim — an unknown status renders as itself, never re-decided); null = no snapshot on record (the honest "not compiled"). */
   readonly orgStatus: string | null;
+  /**
+   * FW-47-B (Round M register M-5 — the org-pill leak): the withheld
+   * org-status observation's OWN instant. The fold projects the bundle's
+   * org-status snapshot by its OWN observed instant
+   * (availabilityOfOrgSnapshot — the FW-44-A read-absence fold's own
+   * family): a snapshot observed AFTER the view instant does not exist
+   * at it, so `orgStatus` folds null inside that pre-snapshot window and
+   * THIS field names the observation the view is waiting for (null = no
+   * snapshot on record — or nothing withheld at this view; non-null = a
+   * snapshot is on record and withheld before its own instant). The
+   * boundary is the availability law's own: at the instant = exists;
+   * before = does not; after = serves verbatim.
+   */
+  readonly orgStatusObservedAt: number | null;
   /**
    * FW-38-B (G-8's UI half, consumed defensively): the desk-level
    * ENTRY-BLOCKED status the utilization read serves ADDITIVELY (the
@@ -365,12 +379,37 @@ export function oversightRowsOf(state: WorkspaceState, viewAt: number): readonly
           decisions: decisions.length,
           breaches: read.utilization === null ? null : breachesAtView,
         };
+    // FW-47-B (Round M register M-5 — the org-pill leak, 7+ seats with
+    // export-verified timing): the bundle's org-status snapshot projects
+    // by its OWN observed instant (availabilityOfOrgSnapshot — the same
+    // read-absence family every per-desk record above rides). The pre-fix
+    // fold served the bundle's snapshot verbatim at EVERY view, so a scrub
+    // inside the ~1s window between the project record and its
+    // org-snapshot record rendered the pill "active" where the register's
+    // third literal belongs — a status read folded to a positive BEFORE
+    // the record that establishes it exists. The boundary is the
+    // availability law's own: a snapshot observed AT the view instant
+    // exists at it; observed BEFORE it, serves verbatim; observed AFTER
+    // it, DOES NOT EXIST at it — the fold withholds (orgStatus null) and
+    // names the withheld observation's own instant
+    // (orgStatusObservedAt), so the render can distinguish the two
+    // unknown causes (no snapshot on record vs an observation withheld
+    // before its own instant). The bundle's CONFIRMED gate
+    // (confirmedDeskReadOf) is untouched: a snapshot ON RECORD is a
+    // route that answered — the read stays a read on record even at a
+    // view that withholds the snapshot (a projection never fabricates an
+    // absence out of the read-absence law, and never a positive out of a
+    // projection).
+    const orgSnapshot = read?.orgStatus ?? null;
+    const orgSnapshotObservedAt = orgSnapshot === null ? null : availabilityOfOrgSnapshot(orgSnapshot);
+    const orgServesAtView = orgSnapshotObservedAt !== null && orgSnapshotObservedAt <= viewAt;
     return {
       projectId: desk.id,
       name: desk.name,
       demo: isDemoProject(desk.id),
       status: desk.lifecycle.status,
-      orgStatus: read?.orgStatus?.status ?? null,
+      orgStatus: orgServesAtView ? orgSnapshot?.status ?? null : null,
+      orgStatusObservedAt: orgServesAtView || orgSnapshotObservedAt === null ? null : orgSnapshotObservedAt,
       entryBlocked: read?.utilization?.entryBlocked ?? null,
       executionMode: desk.executionMode,
       orgCompiled: desk.lifecycle.organizationRef !== null,
