@@ -38,6 +38,7 @@ import {
 } from './deliverable';
 import {
   DEMO_PROJECT_ID,
+  attachDemoNote,
   demoControlPlane,
   demoDeliverableSourceOf,
   demoExecutionGateway,
@@ -1291,5 +1292,77 @@ describe('deploy/vercel — FW-48: the deliverable discloses the compute\'s actu
     const noFillsSummary = noFills.summary as string;
     expect(noFillsSummary).toContain('no fill records on file');
     expect(noFillsSummary).not.toContain('no session records on file');
+  });
+
+  it('THE WIRING PIN (the third commit\'s own verification): the machinery tick passes noteRecords through — a tick completing a research job over a source serving noteRecordsOf + sessionRecordsOf composes the input set + the note-derived analysis on the job record itself; the demo arm\'s own builder serves the FULL records from the same rows the goal route serves', () => {
+    // THE TICK HARNESS (the F-12 tick pin's own shape): a fake service
+    // capturing the transition the tick drives, over the seeded backing.
+    const handled: { readonly method: string; readonly path: string; readonly body: Record<string, unknown> }[] = [];
+    const job = { jobId: 'job-fw48-tick', kind: 'research', project: 'prj-fw48-wired', tenant: TENANT, status: 'running', submittedAt: AT_NOTE } as never;
+    const service = {
+      jobs: () => [job],
+      handle: (request: { method: string; path: string; body: Record<string, unknown> }) => {
+        handled.push({ method: request.method, path: request.path, body: request.body });
+        return { status: 202, headers: {}, body: {} } as never;
+      },
+      orgStatusSnapshots: () => [],
+    } as never;
+    const ports = seedDemoBacking(TENANT);
+    // A source serving noteRecordsOf + sessionRecordsOf — the wiring the
+    // tick must consume (the durable arm's builder is additionally pinned
+    // end-to-end by the full-handler test; this pin holds the TICK itself).
+    const deliverables: DeliverableSource = {
+      mandateOf: () => DENSE_MANDATE,
+      observedOf: () => ({ markets: DENSE_WORLD.markets, venues: DENSE_WORLD.venues }),
+      promotionOf: () => null,
+      sessionRecordsOf: () => computeSessionRecords(),
+      notesOf: () => [{ noteId: 'note:78705f8a', title: 'M2 Round M desk research priors' }],
+      noteRecordsOf: () => [markerNoteWithDeclaration(), controlNote()],
+    };
+    const context = { ports, deliverables, tenant: TENANT, developerToken: 'tok-fw48', internalToken: 'tok-fw48-internal' } as never;
+    demoMachineryTick(service, context, AT_NOTE + 10_000);
+    expect(handled).toHaveLength(1);
+    expect(handled[0]!.body).toMatchObject({ jobId: 'job-fw48-tick', status: 'complete' });
+    const result = (handled[0]!.body as { readonly result: Record<string, unknown> }).result;
+    // The compute's own output rides the job record's result: the input set
+    // (both notes at their OWN instants, the parsed parameter with its
+    // per-parameter provenance) + the note-derived analysis.
+    expect(result.inputs).toEqual({
+      notes: [
+        { noteId: 'note:78705f8a', attachedAt: AT_NOTE, title: 'M2 Round M desk research priors', contributed: '1 typed parameter' },
+        { noteId: 'note:43b8a354', attachedAt: AT_NOTE + 1_000, title: 'Factset export notes', contributed: 'evidence only' },
+      ],
+      parameters: [{ id: 'c-1', domain: 'outcome', subject: 'order.notional', kind: 'limit.max', bound: '30000', severity: 'blocking', fromNote: 'note:78705f8a' }],
+      disclosure: expect.any(String),
+    } as never);
+    const analysis = result.noteAnalysis as { evaluations: readonly { subject: string; status: string; observed: string | null; verdict: string | null; fromNote: string }[]; statement: string };
+    expect(analysis.evaluations).toHaveLength(1);
+    expect(analysis.evaluations[0]!.subject).toBe('order.notional');
+    expect(analysis.evaluations[0]!.observed).toBe('45750.375'); // the desk's own booked fills — the session records the source served
+    expect(analysis.evaluations[0]!.verdict).toBe('exceeded');
+    expect(analysis.evaluations[0]!.fromNote).toBe('note:78705f8a');
+    expect(analysis.statement).toContain('analysis, never enforcement'); // L20 on the block itself
+    const summary = result.summary as string;
+    expect(summary).toContain('the compute layer read them: 1 typed parameter(s) parsed with per-parameter provenance');
+    expect(summary).toContain('Note-derived analysis: 1 note-declared bound');
+    expect(summary).not.toContain('nothing computes over it here'); // the seam this wave closes
+    // THE DEMO ARM'S OWN BUILDER: noteRecordsOf serves the FULL records
+    // from the SAME capture the goal route serves — one source of truth,
+    // the same rows notesOf cites as refs (the durable arm's builder is
+    // pinned end-to-end by the full-handler test; this holds the demo arm).
+    const created = ports.controlPlane.createProject({
+      ...validCreateProjectRequest(TENANT, 'prj-fw48-wired'),
+      tenantId: TENANT,
+      goal: numbersDenseGoal(),
+      constraintSet: numbersDenseConstraintSet(),
+    } as Parameters<typeof ports.controlPlane.createProject>[0]);
+    expect(created.ok).toBe(true);
+    expect(attachDemoNote(ports.controlPlane, TENANT, 'prj-fw48-wired', markerNoteWithDeclaration()).ok).toBe(true);
+    expect(attachDemoNote(ports.controlPlane, TENANT, 'prj-fw48-wired', controlNote()).ok).toBe(true);
+    const builder = demoDeliverableSourceOf(TENANT, ports, { decisionOfJob: () => null, outcomesOf: () => [] }, ports);
+    expect(builder.noteRecordsOf).toBeDefined();
+    expect(builder.noteRecordsOf!('prj-fw48-wired')).toEqual([markerNoteWithDeclaration(), controlNote()]); // the FULL records — verbatim, round-tripped through the capture
+    expect(builder.noteRecordsOf!('prj-fw48-foreign')).toBeNull(); // nothing on record — the honest absence
+    expect(builder.noteRecordsOf!(DEMO_PROJECT_ID)).toBeNull(); // the demo project carries no notes — never a fabricated row
   });
 });
