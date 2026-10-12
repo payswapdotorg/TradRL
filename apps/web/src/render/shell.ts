@@ -684,13 +684,18 @@ export function settingsPanel(state: WorkspaceState, view: ShellView): VNode {
     // THE PRICING DISCLOSURE (W-19, the S5 CFO finding — "zero pricing
     // information" was a stated adoption blocker; QuantConnect's only
     // rubric win was pricing_fit). Honesty-first, the SIMULATED-badge
-    // register: the CURRENT factual state only — pilot access is free,
-    // commercial pricing is not yet published, no payment is collected
-    // today — and never an invented number or tier.
-    settingsRow('Pricing', 'What access costs today, stated plainly. This is a pilot: access is free while the pilot runs, no payment is collected, and commercial pricing has not been published yet — this card will carry the real numbers the day they exist.', [
-      shellFactRow('pilot access', 'free'),
-      shellFactRow('billing today', 'none — no payment is collected'),
-      shellFactRow('commercial pricing', 'not published yet'),
+    // register: through the pilot this card carried the CURRENT factual
+    // state only — never an invented number or tier. Since the E-7
+    // decision (2026-10-12, the operator-delegate record at
+    // LEAD-E7-DECISION) the price is PUBLISHED: learning free forever,
+    // automation $29 per desk per month, orgs volume on request — the
+    // number is decided and disclosed, never invented, and the
+    // anti-deception law now reads "exactly the decided numbers, never
+    // a tier beyond the decision."
+    settingsRow('Pricing', 'What access costs, stated plainly: learning is free forever — the whole simulated environment (desks, goals, mandates, the audit chain, exports, oversight). Automation is $29 per desk per month — live API surfaces, org-level oversight, priority support — and orgs (the multi-desk seats) get volume pricing on request.', [
+      shellFactRow('learning', 'free forever — the whole simulated environment'),
+      shellFactRow('automation', '$29 per desk per month — live API surfaces, org-level oversight, priority support'),
+      shellFactRow('orgs', 'volume pricing on request'),
     ]),
     // FW-39-2 (identity Wave 2 — docs/design/IDENTITY-MODEL.md §5): THE
     // ACCOUNT ROW. Register/login (passphrase-first), the adoption
