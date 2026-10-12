@@ -1729,6 +1729,111 @@ describe('executed boot: J9 — the offline state (the boot/initial-read total f
 });
 
 // ---------------------------------------------------------------------------
+// FW-51 (the Round N minors) — the transient-404 DEGRADED latch: the
+// CLOSE-with-evidence pin (the E-3 pattern: the verdict recorded with the
+// keep-green pin holding the now-correct design). M2's file-verified
+// finding: "a transient 404 race on the first poll of GET
+// /v1/jobs/job:767942a5 latched the CONNECTION panel 'DEGRADED — last
+// failed read: GET /v1/jobs/:id' for ~4 min before clearing to LIVE (the
+// poll succeeded 200 on the next beat)".
+//
+// THE INVESTIGATION'S VERDICT: the latch is the CONSERVATIVE
+// since-last-refresh degraded-read record — NOT a timed backoff (no
+// constant exists anywhere in the console; the ~4 min was M2's own
+// workflow's next refresh, a desk switch) — and it is LOAD-BEARING:
+//   - the J9 recovery law (W-14c) is ACTIVE by design: the panel's own
+//     'Retry connection' affordance / a scope change / a boot re-run the
+//     bundle whose head (the meta negotiate) restores 'connected' — the
+//     pinned J9 tests above;
+//   - the steady-state cadence deliberately re-runs the full bundle ONLY
+//     on a scope change (the W-22 law) — no timer, no backoff to retune;
+//   - the latch is the N-3 export disclosure's EXACT signal: a failed
+//     read's family's records land ONLY via a refresh (which also resets
+//     the connection), so 'degraded at composition time' is exactly 'the
+//     composition may omit read-derived families' — the condition M2's
+//     own N-3 finding forced FW-50 to disclose. A successful poll does
+//     NOT re-read the failed families, so re-keying the connection on the
+//     last read's outcome would narrow the disclosure and silently
+//     regress the landed N-3 fix for exactly the M2 shape it was built
+//     for. The W-27-disclosed limitation names the 404 class itself (the
+//     demo backing's per-instance stores heal on the host's ~10s pass —
+//     the honest host-side shape, never a console failure).
+// The pin holds the design: a successful steady-state read (the poll
+// succeeding 200 on the next beat, M2's own measure) leaves the honest
+// DEGRADED disclosure standing — the failed read named, the Retry
+// connection affordance present — until the next refresh restores LIVE.
+// ---------------------------------------------------------------------------
+
+/** An ARMABLE fail-once transport: the jobs list serves one RUNNING job; once armed, the NEXT per-id poll answers the typed 404 (the transient cross-instance race — the W-27-disclosed demo-machinery class) and every later poll succeeds. Deterministic: the boot's own polls always succeed (the arm is the test's own act). */
+function transientPollTransport(inner: ApiTransport): { readonly transport: ApiTransport; readonly arm: () => void; readonly jobPolls: { count: number } } {
+  const jobPolls = { count: 0 };
+  let armed = false;
+  let failedOnce = false;
+  const job = { jobId: 'job-latch-1', kind: 'research' as const, tenant: 'tenant-a', project: 'prj-a', status: 'running' as const, submittedAt: T0 + 10 };
+  const transport: ApiTransport = async (request) => {
+    const path = decodeURIComponent(request.path.split('?')[0] ?? request.path);
+    if (request.method === 'GET' && path === '/v1/jobs') return { status: 200, headers: {}, body: { requestId: 'req-1', data: { items: [job] } } };
+    if (request.method === 'GET' && path === '/v1/jobs/job-latch-1') {
+      jobPolls.count += 1;
+      if (armed && !failedOnce) {
+        failedOnce = true; // fail exactly once, at the test's chosen beat
+        return { status: 404, headers: {}, body: { requestId: 'req-1', error: { code: 'not_found', message: 'the job record has not healed to this instance yet (the transient cross-instance race)', status: 404 } } };
+      }
+      return { status: 200, headers: {}, body: { requestId: 'req-1', data: job } };
+    }
+    return inner(request);
+  };
+  return { transport, arm: (): void => { armed = true; }, jobPolls };
+};
+
+describe('executed boot: FW-51 — the transient-404 DEGRADED latch (the CLOSE-with-evidence pin: the conservative latch + the J9 active recovery)', () => {
+  it('a transient 404 on one poll latches DEGRADED; the NEXT poll succeeding 200 (M2\'s own measure) leaves the honest latch standing — the failed read named, the Retry connection affordance present — and the next REFRESH restores LIVE (the J9 law)', async () => {
+    const api = transientPollTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    // the boot bundles are healthy — the connection is LIVE
+    expect(rig.handle.state().connection).toBe('connected');
+    expect(connectionLabelOf(rig)).toBe('LIVE');
+
+    // ARM the transient race: the next poll (the beat's) answers the typed 404
+    api.arm();
+    await rig.handle.beat();
+    await settle();
+    expect(api.jobPolls.count).toBeGreaterThanOrEqual(1); // the poll rode the wire
+    // the honest latch: DEGRADED, the failed read named in the detail line
+    expect(rig.handle.state().connection).toBe('degraded');
+    expect(connectionLabelOf(rig)).toBe('DEGRADED');
+    const detail = elementsOf(rig.root).find((element) => element.hasClass('conn-detail'));
+    if (detail === undefined) throw new Error('the connection panel renders no detail line');
+    expect(textOf(detail)).toContain('last failed read: GET /v1/jobs/:id');
+    // the panel's own recovery affordance (the J9 law's active half)
+    const retry = elementsOf(rig.root).find((element) => element.hasClass('connection-retry'));
+    if (retry === undefined) throw new Error('the connection popover renders no Retry connection affordance');
+
+    // THE PIN'S CORE — M2's measure, held as now-correct: the next beat's
+    // poll SUCCEEDS 200 and the latch stands. The connection is the
+    // since-last-refresh degraded-read record (the N-3 export disclosure's
+    // exact signal), never the last read's outcome — a successful poll
+    // re-reads nothing the failed read owed.
+    const pollsBefore = api.jobPolls.count;
+    await rig.handle.beat();
+    await settle();
+    expect(api.jobPolls.count).toBe(pollsBefore + 1); // the beat polled again
+    expect(rig.handle.state().connection).toBe('degraded'); // the conservative latch — LIVE restores only at a refresh
+    expect(connectionLabelOf(rig)).toBe('DEGRADED');
+
+    // the refresh restores LIVE (the J9 law: the bundle's head — the meta
+    // negotiate — is the recovery), and the transient failure's note stays
+    // ON FILE (the honest record, bounded by DEGRADED_RETENTION)
+    click(rig, retry);
+    await settle();
+    await settle();
+    expect(rig.handle.state().connection).toBe('connected');
+    expect(connectionLabelOf(rig)).toBe('LIVE');
+    expect(rig.handle.state().degraded.length).toBeGreaterThan(0); // the failed read's note survives the recovery
+  });
+});
+
+// ---------------------------------------------------------------------------
 // J6 — the inbox read toggle + the toast lifecycle (the J-catalog's RED
 // half): the per-notice notice-read dispatch (the workspace supported
 // it; NO affordance dispatched it — and the delegated row branch would
@@ -7136,6 +7241,49 @@ describe('executed boot: FW-46 — the price-alert declaration (the S2 market su
     expect(payload?.alert?.market).toBe('BTC-USD');
     expect(payload?.alert?.level).toBe('61500');
     expect(verifyWorkspaceExport(doc)).toEqual({ ok: true }); // the chain laws hold end to end
+  });
+
+  // FW-51 (the Round N minors — the investigate-first verdict CLOSE-not-fix,
+  // the E-3 pattern): the collapse-after-declare is the console's ONE-LAW
+  // pattern for record-entry forms — the research-submit form (console.ts:
+  // 'success closes the form'), the note-attach form (the same law, its own
+  // comment), the alert-declare form (the same law) — each closed card
+  // re-rendering with its clear RE-OPEN affordance. The register's measured
+  // cost is real (M1's three re-opens mid-sequence; M2's between-fills window
+  // cost the FIRED path a desk), but the behavior IS the repo's own
+  // established vocabulary: changing the alert form alone would make it the
+  // ONE inconsistent surface among its three siblings. This pin holds the
+  // now-correct design: after a successful declare, the closed card carries
+  // BOTH the newly-declared row AND the 'Declare a price alert' re-open
+  // affordance — the affordance the seats' re-opens used, one beat away from
+  // the next declaration.
+  it('FW-51 (CLOSE, pinned): the declare form collapses per declaration — the one-law pattern (success closes the form) — and the closed card re-opens in one beat (the re-open affordance renders beside the new row)', async () => {
+    const api = alertsTransport(demoSubstanceTransport().transport);
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, api.transport, 'prj-a');
+    clickNav(rig, 'market-world');
+    clickAction(rig, 'alert-declare-open');
+    expect(findByData(rig.root, 'data-price-alerts', 'open')).not.toBeNull();
+    typeAlertField(rig, 'market', 'BTC-USD');
+    typeAlertField(rig, 'level', '61500');
+    clickAction(rig, 'alert-declare');
+    await settle();
+    expect(api.declares.count).toBe(1); // the declare landed
+    // success closes the form — the FW-46 pin's own law, held here with its
+    // clear-re-open half
+    expect(findByData(rig.root, 'data-price-alerts', 'open')).toBeNull();
+    expect(findByData(rig.root, 'data-price-alerts', 'closed')).not.toBeNull();
+    // the closed card carries the NEW row (the just-declared envelope)…
+    const row = findByData(rig.root, 'data-alert-row', 'alert:fw46-1');
+    if (row === null) throw new Error('the declared alert row never rendered');
+    expect(textOf(row)).toContain('BTC-USD above 61500');
+    // …AND the clear re-open affordance in the same card — the next
+    // declaration is one beat away, never a hunt
+    const reopen = findByData(rig.root, 'data-action', 'alert-declare-open');
+    if (reopen === null) throw new Error('the closed card renders no re-open affordance');
+    expect(textOf(reopen)).toBe('Declare a price alert');
+    // and the re-open works: the form opens again for the next declaration
+    click(rig, reopen);
+    expect(findByData(rig.root, 'data-price-alerts', 'open')).not.toBeNull();
   });
 
   it('the typed validation gate: an empty market or a non-decimal level renders the inline error and NEVER fires the route (the untrusted-input law — fail-closed, never a half-applied alert)', async () => {
