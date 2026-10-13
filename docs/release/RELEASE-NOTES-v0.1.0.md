@@ -766,3 +766,86 @@ roll-outs (M1's eleven desk heads + L1's desk heads this quarter; S3's
 Monday checklist at $0-to-learn/$58-to-automate; L3's supervised pilot
 with the regulator-facing export chain) + the operator items (the
 org-volume tier quantified; the live-API surfaces the day they exist).
+
+### Round O — the post-fix verification round: THE UNANIMOUS YES CONFIRMED (9/9/0, would_pilot 9/9, ALL NINE SWITCH); zero regressions; read_lag_fixed the sole partial
+
+9/9 personas on the post-fix origin (production main @ badb8ec — FW-50
+#109 the read-lag loading states over 13 measured surfaces + the
+multi-line note input + the degraded-export disclosure, FW-50-B #110 the
+D-1 boot-path timeout floor, FW-51 #111 the two real minors + seven
+closed with evidence; deployed tradrl-console-dny3pbbrv, then the
+mid-round Neon 402 incident #2 healed by the precedent runbook —
+tradrl-console-eh85vb49m on the fresh store tradrl-durable-oct13, S3/L3
+measured entirely on the healed store), 51 ledger rows, tasks 227/227
+(100% — the survey rows, the instrument's canonical per-seat counter;
+the ledger's raw column sums read 289/290, the two-vocabulary difference
++ S1's one honestly-disclosed not-done subtask, disclosed in the report),
+friction 37 (survey) / 36 (ledger, the +1 S2 variance reconciled in the
+report), 0 protocol violations — with the round's harness arc disclosed
+in the report's own §0: sandbox rollback #6 (the first Round O run's
+three completed seats' rows destroyed; the round restarted from zero per
+the rollback law, the verdicts preserved in the Lead's context but the
+canonical record counting only the re-run's rows), the Neon 402 incident
+#2 (mid-M2, resolved by the precedent runbook: fresh project in the
+second org, DDL 15/15 single-statement, canary 9/9, the four env vars
+patched, redeployed + verified healed ~08:20 UTC), five worker deaths
+(the S1/S2/M1/M2/L3 continuations — the full-disclosure inheritance,
+zero fabricated rows). **deltas: read_lag_fixed 9 partial (the sole
+partial — the residual class); multiline_notes 9 pass; export_disclosure
+9 pass; durable_records 9 pass; compute_layer 9 pass; pricing_published
+9 pass.** The named builds verified from every seat: N-2 DEAD END-TO-END
+(the decisive re-test — the textarea, ONE multi-line note stored verbatim
+UI-side + file-side byte-exact with both newlines at its own attachedAt,
+the compute layer reading exactly one typed parameter with from-note
+provenance, free text evidence-only, BOTH analysis arms with the
+offending fill itemized by execution id, L20 held); N-1's loading
+vocabulary deployed broadly ("Reading the world…" at every in-flight
+surface, settling ~1-4.5s, the Round N job-list lag dead everywhere) with
+the residual class measured into the register; N-3 DEAD ON BOTH ARMS —
+M2 caught the degraded arm LIVE (its export composed while the connection
+read DEGRADED: the manifest carries the degradedReadsNote VERBATIM naming
+the failed reads route-by-route, the composition carrying 3-of-12 derived
+families disclosed exactly, E-9 still head-exact 2253/2253) while the
+healthy composition stayed head-exact everywhere (19 export chains
+re-verified from the files alone); the FIRED-instant law file-side at
+the observed fill's own filledAt to the millisecond from 8 seats (S1
+honestly disclosed unexercised — zero fabricated firings); pricing
+PUBLISHED verbatim, pricing_fit 4.0 UNIFORM. Main-interface **9/9/0 —
+the unanimous YES CONFIRMED**; would_pilot 9/9; **the recorded decision
+SWITCH at all nine seats**; ZERO regressions (E-1/E-2/E-8/E-9/g1/F-12/
+J-ADOPT all PASS from every seat). TradRL wins ALL TEN dimensions on
+means, the second consecutive round (onboarding 4.89/2.78, TTV
+4.89/2.56, agent_org 4.78/1.00, auditability 5.00/2.44, risk_tooling
+4.78/2.89, time_machine 4.78/2.22, notifications 4.00/2.11, export
+4.67/3.00, discoverability 4.00/3.33, pricing_fit 4.00/3.33); seven
+seats recorded no losing dimension. **THE COMMITTEE'S MESSAGE: the YES
+survives the fixes — the unanimous YES confirmed with the register's
+top three dead, zero regressions, and the decision SWITCH at every
+seat; the remaining seams are the polish register, not blockers.**
+Register: O-1 the read-lag residual class (the Market World alert-card
+empty-state flash — 7 seats recomputed from the raw record, worst ~15s
+with a FIRED verdict on record, the one surface FW-50's 13 missed; the
+first-frame flash class — TM project-history, Inbox notices, Research
+job-list; the counter-zeros first-cold-load class — the Home tiles +
+Inbox badge reading hard 0s ≥6s while reads are in flight; the job-list
+empty-claim under FAILED reads — no failed-read vocabulary on that
+surface) + O-2 the "appears" grammar class (three surfaces, cosmetic) +
+O-3 the launch wizard's missing cancel affordance (an accidentally
+opened draft follows every section and survives reloads) + O-4 the
+export download delivery stall class (four seats observed, substantially
+harness-side per the 4-attempt probe: the product composes/toasts
+instantly, the dedicated download path delivers <1s) + O-5 the
+well-formed-preferences silent discard residual (L3, file-side, carried)
++ O-6 the +676ms horizon start-stamp drift (L1, cosmetic-class, not
+reproduced by L2), plus the carried minors (the 0.10→"0.1"
+normalization; the covered-LIVE-button guard / the 143px horizontal-pan
+overflow; the ~1s job-row completion flicker; the primary-flow entry
+point absent post-first-launch; M2's transient silent alert-declare
+no-op, named at its ledger row). NEXT: the Round O register (FW-52 the
+read-lag residual wave above all) → the pilot roll-outs standing (M1's
+eleven desk heads + L1's desk heads this quarter; M3's research org
+this quarter; S2's co-founder the second desk this quarter; S3's weekly
+ops desk this month at $0-to-learn/$58-to-automate; L3's supervised
+desk-level pilot with the regulator-facing export chain) + the operator
+items standing (the org-volume tier quantified; the live-API surfaces
+the day they exist).
