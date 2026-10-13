@@ -2323,3 +2323,63 @@ describe('FW-45: the research-note ingestion surface (the E-6 MVP — boundary-t
     expect(bytes).toContain('external = accepted and stored as a declaration only — no external data is fetched in this deployment (no live feed exists)');
   });
 });
+
+// ---------------------------------------------------------------------------
+// O-3 (Round O register — the launch wizard's missing cancel affordance,
+// M3's finding + L2 corroborated): "the launch wizard has NO cancel/close
+// affordance at any step — the open draft follows every section and
+// survives reloads (disclosed as 'Draft restored from your last session';
+// the exit is missing)". M3 hunted ~90s on its deliberate probe draft; L2's
+// abandoned FW-51 probe draft persisted per the same disclosed law. THE
+// FIX: a CANCEL affordance at EVERY step — the two-step confirm (§4.11, the
+// repo's own destructive-action shape: the discard destroys typed work that
+// SURVIVES RELOADS — FW-40-B's law, "losing a half-filled launch wizard to
+// a reload is losing WORK, not state"), riding the closed ConfirmAction
+// vocabulary ('discard-draft' — 'Discard this draft?'; the arm button names
+// its own action, the question convention every confirm rides). The draft
+// PERSISTENCE stays untouched (the restored-draft law is honest); the exit
+// is the missing half. The discard itself (launch-reset — the state machine
+// AND the persisted copy, FW-42-B's atomic clear) + the landing on Home are
+// pinned end-to-end in app/console-interactions.test.ts.
+// ---------------------------------------------------------------------------
+
+describe('O-3 (Round O register — the launch wizard\'s cancel affordance): the exit exists at every step and names its own action', () => {
+  /** The wizard open at one step (a committed draft — the restored-persistence class M3 measured). */
+  function wizardAtStep(step: 'goal' | 'budget' | 'markets' | 'world' | 'review'): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'launch-draft-started', at: T0 + 1, draft: blankDraftOfD11() },
+      { kind: 'launch-step-changed', at: T0 + 2, step },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  it('EVERY step carries the discard affordance — the two-step arm, labeled with its own question (M3: "No Cancel/close at any step")', () => {
+    for (const step of ['goal', 'budget', 'markets', 'world', 'review'] as const) {
+      const bytes = serializeConsoleModel(wizardAtStep(step), T0 + 60);
+      expect(bytes, step).toContain('data-action="confirm-arm-discard-draft"'); // RED pre-fix: the exit does not exist
+      expect(bytes, step).toContain('Discard this draft?'); // the arm names its own action (the §4.11 question convention)
+    }
+  });
+
+  it('the armed shape is the §4.11 inline confirm — the question + [Cancel] [Confirm], never a bare confirm()', () => {
+    const state = wizardAtStep('budget');
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), confirm: 'discard-draft' }));
+    expect(bytes).toContain('Are you sure? Discard this draft?');
+    expect(bytes).toContain('data-action="confirm-cancel-discard-draft"'); // the disarm — the draft stands
+    expect(bytes).toContain('data-action="confirm-discard-draft"'); // the confirm — the discard
+  });
+
+  it('the exit co-exists with the review step\'s OWN confirm (the launch arm and the discard arm — one armed slot, two clearly-named questions)', () => {
+    const bytes = serializeConsoleModel(wizardAtStep('review'), T0 + 60);
+    expect(bytes).toContain('data-launch-step="review"');
+    expect(bytes).toContain('data-review="launch"'); // the review summary
+    expect(bytes).toContain('data-action="confirm-arm-launch"'); // the launch confirm
+    expect(bytes).toContain('data-action="confirm-arm-discard-draft"'); // the exit beside it
+  });
+
+  it('the wizard is the only surface that carries the discard arm — a workspace with NO open draft renders no exit (never a dead affordance)', () => {
+    const bytes = serializeConsoleModel(openWorkspace(SCOPE, T0), T0 + 60);
+    expect(bytes).not.toContain('discard-draft');
+    expect(bytes).toContain('data-launch-idle="true"'); // the idle launch panel — its single START action
+  });
+});
