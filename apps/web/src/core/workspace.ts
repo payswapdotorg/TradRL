@@ -1664,10 +1664,13 @@ function launchCompletionHandOff(machine: TimeMachineState, history: HistoryFloo
  * flight, whatever the project read's own latency. The terminal
  * "Not compiled yet" renders ONLY after the read completes empty (the
  * launchpad — no desk exists at all) or off the live edge / degraded
- * connection (the pre-existing laws, unchanged).
+ * connection (the pre-existing laws, unchanged). O-1b (Round O register,
+ * the first-frame flash class): 'connecting' is the SAME seek from the
+ * first paint (see readSeekActive) — the marker never yields frame one
+ * to the terminal copy.
  */
 export function hydrationReadPendingOf(state: WorkspaceState): boolean {
-  if (state.connection !== 'connected' || state.orgSnapshots.length > 0) return false;
+  if (readSeekActive(state) || state.orgSnapshots.length > 0) return false;
   if (state.project !== null) return true;
   return !isLaunchpadScope(state.scope.projectId);
 }
@@ -1686,6 +1689,25 @@ export function readsSettledOf(state: WorkspaceState): boolean {
 }
 
 /**
+ * O-1b (Round O register — the first-frame flash class): the SEEK gate —
+ * the connection states under which the read bundle is IN FLIGHT for a
+ * real desk. 'connected' with an unanswered family is the in-flight
+ * bundle (the N-1 law); 'connecting' is the SAME seek ONE FRAME EARLIER
+ * — the bundle is queued behind a connection being established (the
+ * meta read that flips the status has not landed), which is a seek, not
+ * an answered absence. The first frame after a reload painted while
+ * 'connecting', the pre-fix folds gated on 'connected', and the
+ * empty-state branches won that frame (the TM project-history note, the
+ * Inbox notices, the Research job-list — S2/M1/L1/L2/L3's measured
+ * 0.2-0.7s flashes). The degraded/offline statuses stay OUT: a failed
+ * read answered-with-a-failure and carries its own disclosure (the
+ * CONNECTION panel), never a pending marker (the pre-existing law).
+ */
+function readSeekActive(state: WorkspaceState): boolean {
+  return state.connection !== 'connected' && state.connection !== 'connecting';
+}
+
+/**
  * N-1: ONE family's own pending fold — true while the console is
  * CONNECTED, that family's read has NOT answered, and a real desk exists
  * (a project on hand, or a non-launchpad scope — the launchpad has no
@@ -1694,10 +1716,12 @@ export function readsSettledOf(state: WorkspaceState): boolean {
  * degraded read answered-with-a-failure and carries its OWN disclosure
  * (the CONNECTION panel), never a pending marker. The render composes
  * this with the view instant (readPendingAtView — the pending state is
- * about NOW, never a claim about the past).
+ * about NOW, never a claim about the past). O-1b: 'connecting' is the
+ * same seek (see readSeekActive) — the loading vocabulary from the
+ * FIRST frame.
  */
 export function readPendingOf(state: WorkspaceState, family: ReadFamily): boolean {
-  if (state.connection !== 'connected' || state.readAnswers[family]) return false;
+  if (readSeekActive(state) || state.readAnswers[family]) return false;
   if (state.project !== null) return true;
   return !isLaunchpadScope(state.scope.projectId);
 }
@@ -1705,10 +1729,11 @@ export function readPendingOf(state: WorkspaceState, family: ReadFamily): boolea
 /**
  * N-1: the notices surfaces' pending fold (the Inbox + Home's activity
  * timeline) — the bundle-in-flight gate (see readsSettledOf), the same
- * connection/desk/degraded laws as readPendingOf.
+ * connection/desk/degraded laws as readPendingOf (O-1b: 'connecting'
+ * included — the first frame).
  */
 export function noticesReadPendingOf(state: WorkspaceState): boolean {
-  if (state.connection !== 'connected' || readsSettledOf(state)) return false;
+  if (readSeekActive(state) || readsSettledOf(state)) return false;
   if (state.project !== null) return true;
   return !isLaunchpadScope(state.scope.projectId);
 }

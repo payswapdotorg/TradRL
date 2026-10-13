@@ -128,8 +128,14 @@ describe('render market: FW-46 — the market view (the chart of what exists on 
   });
 
   it('a market with NO observations renders the honest no-prices line — never a fabricated series (the demo scope\'s declared world markets included)', () => {
+    // O-1b: the no-prices line is the ANSWERED read's honest copy — the
+    // state settles the bundle (connected + reads-settled) so the pin is
+    // the terminal shape, not the first-frame seek the O-1b law now
+    // teaches over an in-flight/queued read.
     const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
       { kind: 'goal-loaded', at: T0 + 5, goal: goalRecord(), constraintSet: constraintSetRecord(), world: { markets: ['BTC-USD', 'SOL-USD'], venues: ['BROKER-FIX'], dataSources: [], executionMode: 'simulation', capitalBudget: '500000.00', riskBudget: '40000.00', horizon: { startsAt: T0, endsAt: T0 + 86_400_000 } } },
+      { kind: 'reads-settled', at: T0 + 60 },
       { kind: 'section-selected', at: LIVE_AT, section: 'market-world' },
       { kind: 'view-live', at: LIVE_AT },
     ]);

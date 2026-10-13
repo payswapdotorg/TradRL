@@ -1952,6 +1952,81 @@ describe('O-2 (Round O register — the appears grammar class): the loading voca
 });
 
 // ---------------------------------------------------------------------------
+// O-1b (Round O register — the read-lag residual class, the FIRST-FRAME
+// flash, three surfaces): the Time-Machine project-history note
+// ("No project history is on record yet — the range spans this session":
+// S2 sub-300ms 2-of-4, M1 ~0.2-0.7s 2/2, L2 ~0.4-0.8s 1/1, L3 on the
+// first cold attach), the Inbox notices ("No notices at this view
+// instant." <1s 2/2 from L1, false while 5 notices stood) and the
+// Research job-list ("No research jobs at this view instant." ~0.4-0.8s
+// from L2, while the launch job stood on record). THE MECHANISM (the
+// render-order race the seats measured): the first frame after a
+// reload paints while the console is still CONNECTING — the meta read
+// that flips the connection to 'connected' has not landed — and the
+// pending folds gated on 'connected', so the empty-state branches won
+// the first frame; the loading vocabulary took over only when the
+// connection event arrived. THE LAW: the read is IN FLIGHT FROM THE
+// FIRST PAINT — the bundle is queued behind a connection being
+// established, which is a seek, not an answered absence — so
+// 'connecting' teaches the same "Reading the world…" the in-flight
+// bundle teaches (the desk law unchanged: the launchpad's honest
+// terminal empties stand, exactly the hydrationReadPendingOf law).
+// ---------------------------------------------------------------------------
+
+describe('O-1b (Round O register — the first-frame flash class): the loading vocabulary from the FIRST frame, three surfaces', () => {
+  /** The FIRST FRAME after a reload: the console is still CONNECTING (the meta read has not landed — openWorkspace's own initial state), a real desk scoped, LIVE view. */
+  function firstFrameWorkspace(): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  it('the Time-Machine range note from the FIRST frame teaches the seek — never "No project history is on record yet" (S2/M1/L2/L3\'s first-frame flash)', () => {
+    const bytes = serializeConsoleModel(firstFrameWorkspace(), T0 + 50);
+    expect(bytes).toContain('data-hydration-pending="true"'); // the marker from frame one
+    expect(bytes).toContain('Reading the world… — the project history appears here the moment the read lands'); // RED pre-fix: the connection event had not landed, the empty branch won frame one
+    expect(bytes).not.toContain('No project history is on record yet'); // the first-frame durable claim, dead
+  });
+
+  it('the Inbox from the FIRST frame teaches the seek — never "No notices at this view instant." (L1\'s 2/2 reload flash, false while 5 notices stood)', () => {
+    const first = firstFrameWorkspace();
+    const bytes = serializeVNode(renderConsoleModel(first, T0 + 50, { ...defaultShellView(first), accountView: 'inbox' }));
+    expect(bytes).toContain('data-hydration-pending="true"');
+    expect(bytes).toContain('Reading the world…');
+    expect(bytes).not.toContain('No notices at this view instant.'); // RED pre-fix: the first-frame empty claim over the queued bundle
+  });
+
+  it('the Research job-list from the FIRST frame teaches the seek — never "No research jobs at this view instant." (L2\'s ~0.4-0.8s flash while the launch job stood on record)', () => {
+    const state = reduceAll(firstFrameWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'research' }]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-hydration-pending="true"');
+    expect(bytes).toContain('the research jobs appear here the moment the read lands'); // RED pre-fix: same class
+    expect(bytes).not.toContain('No research jobs at this view instant.');
+  });
+
+  it('the launchpad\'s honest terminal empties still render from the first frame (the desk law — the launchpad has no desk to read; the connecting gate never manufactures a seek there)', () => {
+    const launchpad = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: '(launchpad)' }, T0), [
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+    const bytes = serializeConsoleModel(launchpad, T0 + 50);
+    expect(bytes).toContain('No research jobs at this view instant.'); // the launchpad's honest teaching copy — unchanged
+    expect(bytes).not.toContain('data-hydration-pending');
+  });
+
+  it('the OFFLINE boundary (the failed-read class): an unreachable API keeps the honest durable copy — a failed read is not a seek, and carries its own disclosure (the CONNECTION panel)', () => {
+    const offline = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'offline' },
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+    const bytes = serializeConsoleModel(offline, T0 + 50);
+    expect(bytes).not.toContain('data-hydration-pending');
+    expect(bytes).toContain('No research jobs at this view instant.'); // the pre-existing offline law, unchanged
+  });
+});
+
+// ---------------------------------------------------------------------------
 // FW-45 (the E-6 research-world MVP, M3's decisive item): the research-note
 // ingestion surface. THE LAWS pinned here:
 //   - the boundary teaching renders VERBATIM at the point of ingestion

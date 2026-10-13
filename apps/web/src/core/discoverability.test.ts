@@ -98,12 +98,21 @@ describe('D2 — above-the-fold orientation (H1 + subtitle + badge on every sect
 
 describe('D3 — teaching states (empty/loading/error; exactly ONE action; never blank)', () => {
   it('a fresh workspace teaches in EVERY emptiable section (icon + sentence + exactly ONE action)', () => {
-    // time-machine + risk always render their control/status surfaces (never empty);
+    // O-1b (Round O register — the first-frame flash class): the teaching
+    // empties are the ANSWERED truth — at the LIVE edge the first frames
+    // teach the seek ("Reading the world…"), so the D3 law pins the
+    // empties at a SCRUBBED PAST view (the boundary law: the pending
+    // state is about NOW, never a claim about the past). time-machine +
+    // risk always render their control/status surfaces (never empty);
     // every other section teaches with the EmptyState.
     const teaching = WORKSPACE_SECTIONS.filter((section) => section !== 'time-machine' && section !== 'risk');
     for (const section of teaching) {
-      const state = reduceAll(openWorkspace(SCOPE, T0), [{ kind: 'section-selected', at: T0 + 1, section }]);
-      const bytes = render(state, { accountView: 'section' }, T0 + 1);
+      const state = reduceAll(openWorkspace(SCOPE, T0), [
+        { kind: 'anchor-advanced', at: T0 + 50 }, // the beat advanced the anchor so the view can scrub below it
+        { kind: 'view-timestamp', at: T0 + 51, timestamp: T0 }, // a scrubbed past view — the honest durable empties
+        { kind: 'section-selected', at: T0 + 52, section },
+      ]);
+      const bytes = render(state, { accountView: 'section' }, T0 + 52);
       expect(bytes, section).toContain('class="empty-state"');
       expect(bytes.match(/class="empty-action"/g)?.length ?? 0, section).toBe(1);
       expect(bytes, section).toContain(`data-section="${section}"`); // never a blank region
