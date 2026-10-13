@@ -327,3 +327,70 @@ describe('render market: N-1 — the read-lag class on the market-facing surface
     expect(serializeConsoleModel(settled, LIVE_AT)).toContain('No prices on record yet'); // the read answered — the honest empty
   });
 });
+
+// ---------------------------------------------------------------------------
+// O-1a (Round O register — the read-lag residual class, the round's TOP
+// residual; seven seats: S1 ~1.5s, S2 ~3s, L1 >=6.5s 12/12 frames, L2
+// >=6.1s 13 consecutive frames, M2 twice ~4.5-5.5s and ~15s, S3 >=5.0s,
+// L3 twice): the Market World ALERT-CARD empty-state flash — the one
+// surface FW-50's 13 missed. After a reload (or a cold reload + fast
+// switch), with alerts — even a FIRED verdict — on record, the card
+// renders "No price alerts declared on this project on record yet" for
+// the whole in-flight read before settling to the exact verdicts. The
+// alerts ride the GOAL-BUNDLE read (the goal-loaded event carries them
+// + readAnswers.goalBundle); the empty branch never consulted it. THE
+// LAW: the same FW-50 honest-copy law, extended to this surface — the
+// loading vocabulary while the goal-bundle read is in flight at the
+// LIVE view; the durable empty claim renders ONLY when the read has
+// answered.
+// ---------------------------------------------------------------------------
+
+describe('render market: O-1a — the alert-card empty-state flash (the goal-bundle read gates the empty branch)', () => {
+  /** The reload/switch shape: connected, LIVE view, NO goal bundle yet — the state holds zero alerts while the server's records carry them, a FIRED verdict among them (the in-flight goal-bundle read; the state is blind to the server's records until the read lands). */
+  function bundleReadInFlight(): ReturnType<typeof openWorkspace> {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'section-selected', at: LIVE_AT, section: 'market-world' as const },
+      { kind: 'view-live', at: LIVE_AT },
+    ]);
+  }
+
+  it('with alerts on record and the goal-bundle read IN FLIGHT, the card renders the loading vocabulary — never "No price alerts declared on this project on record yet" (the seven-seat flash)', () => {
+    const state = bundleReadInFlight();
+    const bytes = serializeConsoleModel(state, LIVE_AT);
+    expect(bytes).toContain('data-price-alerts="closed"');
+    expect(bytes).toContain('data-hydration-pending="true"'); // the marker
+    expect(bytes).toContain('Reading the world… — the declared alerts appear here the moment the read lands'); // RED pre-fix: the empty branch never consulted the bundle's read
+    expect(bytes).not.toContain('No price alerts declared on this project on record yet'); // the seven-seat flash, dead
+  });
+
+  it('the settle the seats observed: once the bundle lands the alerts (a FIRED verdict among them), the card settles to the exact verdict — the flash was never a datum loss', () => {
+    const settled = reduceAll(bundleReadInFlight(), [
+      { kind: 'goal-loaded', at: T0 + 60, goal: goalRecord(), constraintSet: constraintSetRecord(), alerts: [priceAlert({ alertId: 'alert:flash-1', market: 'BTC-USD', direction: 'above', level: '61500', declaredAt: T0 + 40 })] },
+      { kind: 'submission-recorded', at: T0 + 70, submission: filledRow({ submissionId: 'sub-flash', instrument: 'BTC-USD', price: '62000.00', routedAt: T0 + 50, filledAt: T0 + 60 }) },
+    ]);
+    const bytes = serializeConsoleModel(settled, LIVE_AT);
+    expect(bytes).toContain('data-alert-row="alert:flash-1"');
+    expect(bytes).toContain('BTC-USD above 61500 — FIRED');
+    expect(bytes).not.toContain('No price alerts declared on this project on record yet');
+    expect(bytes).not.toContain('data-hydration-pending="true"');
+  });
+
+  it('the read ANSWERED with no alerts on record renders the honest empty claim — the terminal copy returns (the teaching copy is legal only over an answered read)', () => {
+    const answered = reduceAll(bundleReadInFlight(), [
+      { kind: 'goal-loaded', at: T0 + 60, goal: goalRecord(), constraintSet: constraintSetRecord() }, // no alerts field — none on record
+      { kind: 'reads-settled', at: T0 + 100 },
+    ]);
+    const bytes = serializeConsoleModel(answered, LIVE_AT);
+    expect(bytes).toContain('No price alerts declared on this project on record yet'); // the honest terminal
+    expect(bytes).not.toContain('data-hydration-pending="true"');
+  });
+
+  it('the boundary law (the FW-41-C precedent): a SCRUBBED PAST view over an in-flight bundle keeps the honest durable copy — the pending state is about NOW, never a claim about the past', () => {
+    const state = bundleReadInFlight();
+    const scrubbed = reduceAll(state, [{ kind: 'view-timestamp', at: LIVE_AT, timestamp: T0 + 40 }]);
+    const bytes = serializeConsoleModel(scrubbed, LIVE_AT);
+    expect(bytes).not.toContain('data-hydration-pending="true"');
+    expect(bytes).toContain('No price alerts declared on this project on record yet'); // the past view's honest empty state — unchanged
+  });
+});
