@@ -145,12 +145,21 @@ export function priceAlertsCard(state: WorkspaceState, view: ShellView, viewAt: 
   const projectedSubmissions = projectToView(state.submissions, viewAt, availabilityOfSubmission);
   const observations = fillPriceObservationsOf(projectedSubmissions);
   const marketsOnRecord = [...new Set([...observations.map((observation) => observation.market), ...state.world?.markets ?? []])];
+  // O-1a (Round O register — the round's TOP residual, seven seats): the
+  // alerts ride the GOAL-BUNDLE read (the goal-loaded event carries them
+  // + readAnswers.goalBundle); while that read is in flight at the LIVE
+  // view the state's empty alerts list is NOT an absence — the durable
+  // empty claim renders only once the read has answered (the FW-50
+  // honest-copy law, extended to the one surface its 13 missed).
+  const bundlePending = readPendingAtView(state, viewAt, 'goalBundle');
   if (view.alertDeclare === null) {
     return v('div', { class: 'card price-alerts', 'data-price-alerts': 'closed' }, [
       v('div', { class: 'card-title' }, ['Price alerts']),
       v('p', { class: 'card-note' }, [PRICE_ALERT_BOUNDARY]),
       ...(projectedAlerts.length === 0
-        ? [v('p', { class: 'card-note' }, ['No price alerts declared on this project on record yet — declare one below; it is stored on this project\'s own record and rides its export chain.'])]
+        ? [bundlePending
+            ? v('p', { class: 'card-note', 'data-hydration-pending': 'true' }, ['Reading the world… — the declared alerts appear here the moment the read lands.'])
+            : v('p', { class: 'card-note' }, ['No price alerts declared on this project on record yet — declare one below; it is stored on this project\'s own record and rides its export chain.'])]
         : projectedAlerts.map((alert) => alertRowOf(alert, observations, readPendingAtView(state, viewAt, 'submissions')))),
       v('div', { class: 'tm-playback' }, [
         v('button', { class: 'tm-button', 'data-action': 'alert-declare-open', type: 'button' }, ['Declare a price alert']),

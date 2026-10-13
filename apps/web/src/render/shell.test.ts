@@ -426,13 +426,20 @@ describe('shell: FW-36-B (E-8, part 3) — the nav bell DEMO marker', () => {
 
   it('the DEMO-scope bell carries the DEMO chip and the aria-label names the shared demo project — the chip is absent on every other scope', () => {
     const demoScope = { tenantId: 'tenant-a', projectId: 'prj-demo-console' } as const;
-    const demoState = reduceAll(openWorkspace(demoScope, T0), [] as readonly WorkspaceEvent[]);
+    // O-1c (Round O register — the counter-zeros class): the count label is
+    // the ANSWERED truth — the reads settle (mid-read the bell teaches the
+    // seek by law, never "no unread notices").
+    const settled = [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'reads-settled', at: T0 + 2 },
+    ] as readonly WorkspaceEvent[];
+    const demoState = reduceAll(openWorkspace(demoScope, T0), settled);
     const demoBytes = render(demoState);
     expect(demoBytes).toContain('class="demo-flag bell-demo" data-demo="true"'); // the chip
     expect(demoBytes).toContain('>DEMO<');
     expect(demoBytes).toContain('aria-label="Inbox — no unread notices (the shared demo project)"');
 
-    const ownBytes = render(demoScopeState()); // proj-a — a real desk
+    const ownBytes = render(stateAt(settled, 'goal')); // proj-a — a real desk, its reads answered
     expect(ownBytes).not.toContain('data-demo="true"');
     expect(ownBytes).toContain('aria-label="Inbox — no unread notices"');
   });

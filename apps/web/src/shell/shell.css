@@ -1060,6 +1060,10 @@ details.list-row > summary::-webkit-details-marker { display: none; }
   display: grid; place-items: center;
   line-height: 1;
 }
+/* O-1c (Round O register — the counter-zeros first-cold-load class, S3 +
+   L3): the badge's READING face — the CONNECTING class's own idle tokens
+   (never a count, never the absent-by-zero face over an in-flight read). */
+.bell-badge.bell-reading { background: var(--tradrl-idle-soft); color: var(--tradrl-idle-text); }
 /* FW-36-B (Round E register E-8, part 3 — the demo-tenant contamination
    marking): the quiet DEMO chip — the sidebar env-badge's own warn
    tokens in a row-level size. Rides the nav bell (the unread badge's

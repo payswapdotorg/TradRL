@@ -7615,6 +7615,48 @@ describe('executed boot: FW-47-B (the minors) — the re-declare dedupe (one rec
 });
 
 // ---------------------------------------------------------------------------
+// O-3 (Round O register — the launch wizard's missing cancel affordance,
+// M3's finding + L2 corroborated): "the open draft follows every section
+// and survives reloads (disclosed as 'Draft restored from your last
+// session'); the exit is missing". THE END-TO-END ARC: the two-step
+// discard (§4.11) at ANY step — arm -> the inline question; Cancel disarms
+// (the draft stands); arm -> Confirm discards the draft AND its PERSISTED
+// copy (launch-reset clears the store, FW-42-B's atomic seam — the reload
+// never resurrects a discarded draft) and lands on Home (the
+// onboarding-completion precedent). The draft PERSISTENCE law is untouched
+// (the restored-draft disclosure stays honest — the exit is the missing
+// half, not a repeal).
+// ---------------------------------------------------------------------------
+
+describe('executed boot: O-3 — the launch wizard\'s cancel affordance (the missing exit, end to end)', () => {
+  it('the two-step discard: arm -> the inline question; Cancel disarms (the draft stands); arm -> Confirm discards the draft, CLEARS the persisted copy and lands on Home', async () => {
+    const shared = new MapStorage(); // the draft store's own seam (the bootRig pins the scope; the write-through persists here)
+    const rig = await bootRig({ tradrl_onboarded: 'true' }, offlineTransport, 'prj-a', { scopeStorage: shared });
+    clickNav(rig, 'goal');
+    clickAction(rig, 'launch-start'); // the wizard opens — the draft is the restored-persistence class (FW-40-B)
+    typeField(rig, 'name', 'Momentum scout');
+    clickAction(rig, 'launch-step-budget'); // the flush commits the edit + the step move persists (the store records INVESTMENT)
+    expect(parseStoredLaunchDraft(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY) ?? null)?.draft.name).toBe('Momentum scout'); // the persisted copy M3 measured surviving reloads
+    // the exit at the CURRENT step (budget — the affordance rides every step, not just step one)
+    clickAction(rig, 'confirm-arm-discard-draft'); // RED pre-fix: the action does not exist
+    expect(findByData(rig.root, 'data-action', 'confirm-cancel-discard-draft')).not.toBeNull(); // the armed inline group
+    expect(findByData(rig.root, 'data-action', 'confirm-arm-discard-draft')).toBeNull(); // one armed slot — the arm is replaced
+    clickAction(rig, 'confirm-cancel-discard-draft'); // Cancel DISARMS — the two-step law
+    expect(rig.handle.state().launch.draft).not.toBeNull(); // the draft STANDS
+    expect(parseStoredLaunchDraft(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY) ?? null)?.draft.name).toBe('Momentum scout'); // and its persisted copy with it
+    expect(findByData(rig.root, 'data-action', 'confirm-arm-discard-draft')).not.toBeNull(); // the arm returns
+    clickAction(rig, 'confirm-arm-discard-draft');
+    clickAction(rig, 'confirm-discard-draft'); // Confirm — the discard
+    expect(rig.handle.state().launch.phase).toBe('idle'); // the machine reset (launch-reset)
+    expect(rig.handle.state().launch.draft).toBeNull(); // the draft is dead
+    expect(shared.map.get(LAUNCH_DRAFT_STORAGE_KEY)).toBe(''); // the PERSISTED copy cleared — the reload never resurrects it
+    expect(findByData(rig.root, 'data-launch-idle', 'true')).not.toBeNull(); // the idle launch panel returns
+    expect(findByData(rig.root, 'data-action', 'launch-start')).not.toBeNull(); // the entry CTA is back (the hero's honest state)
+    expect(findByData(rig.root, 'data-section', 'home')).not.toBeNull(); // lands on Home (M3: the exit returns to Home)
+  });
+});
+
+// ---------------------------------------------------------------------------
 // THE D-1 TIMEOUT FLOOR (FW-50-B): the REAL no-build loader test's
 // per-test timeout is the EXPLICIT BOOT_TEST_TIMEOUT_MS, floor-pinned at
 // the FW-49 documented-safe ceiling — the D-1 class (a boot-shaped test

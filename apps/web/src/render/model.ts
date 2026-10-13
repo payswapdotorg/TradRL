@@ -52,7 +52,7 @@ import {
 import type { SectionId } from '../core/sections';
 import { scopedInbox, unreadCountAt, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
-import { viewAtOf, watchEventsOf, historyFloorOf, hydrationReadPendingOf, noticesReadPendingAtView, readPendingAtView, type WorkspaceState } from '../core/workspace';
+import { viewAtOf, watchEventsOf, historyFloorOf, hydrationReadPendingOf, noticesReadPendingAtView, readPendingAtView, readFailedAtView, type WorkspaceState } from '../core/workspace';
 import { parseInstantUtc } from '../core/format';
 import { standingReadFoldOf, type StandingRow } from '../core/standing';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
@@ -878,7 +878,7 @@ function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
     // N-1: the notices fold rides the record families' own reads (M1's
     // ~6s demo-Inbox flash) — the bundle-in-flight pending card, never the
     // durable copy over reads that have not answered.
-    ...(projected.length === 0 ? [noticesReadPendingAtView(state, viewAt) ? hydrationPendingCard('notices') : sectionEmpty('inbox')] : []),
+    ...(projected.length === 0 ? [noticesReadPendingAtView(state, viewAt) ? hydrationPendingCard('notices', 'appear') : sectionEmpty('inbox')] : []),
     // FW-40-B (H-5): the projection hid notices this desk carries — the
     // panel says so (never a bare empty state over a folded inbox).
     ...beyondViewHint(inbox.notices.length, projected.length, 'notice'),
@@ -974,11 +974,40 @@ function hydrationPendingAtView(state: WorkspaceState, viewAt: number): boolean 
  * titled note, never an EmptyState: there is NOTHING to act on while
  * the read is in flight, so the empty state's exactly-one-action law
  * must not be coerced into a dead button).
+ *
+ * O-2 (Round O register — the "appears" grammar class): the verb
+ * AGREES with the noun (the plural subjects — notices, research jobs,
+ * execution submissions — take "appear"; the register measured "the
+ * notices appears here" / "the research jobs appears here" live at
+ * five seats).
  */
-function hydrationPendingCard(noun: string): VNode {
+function hydrationPendingCard(noun: string, verb: 'appears' | 'appear' = 'appears'): VNode {
   return v('div', { class: 'card', 'data-hydration-pending': 'true' }, [
     v('div', { class: 'card-title' }, ['Reading the world…']),
-    v('p', { class: 'card-note' }, [`The console is reading this desk's records — the ${noun} appears here the moment the read lands.`]),
+    v('p', { class: 'card-note' }, [`The console is reading this desk's records — the ${noun} ${verb} here the moment the read lands.`]),
+  ]);
+}
+
+/**
+ * O-1d (Round O register — the job-list empty-claim under FAILED reads,
+ * M2): the FAILED-read card — the counterpart of hydrationPendingCard
+ * for the reads that answered with a failure. A failed read is not
+ * absence (M2: "the harder cousin of the FW-50 law — the empty-state
+ * copy is legal only when the data is truly absent; a failed read is
+ * not absence") — the surface that folds the family teaches the
+ * failure + the way back, never the durable empty claim (the
+ * CONNECTION panel discloses the failed route + message). THE
+ * VOCABULARY IS THE REPO'S OWN: 'the console could not reach the API'
+ * is the ErrorState's own sentence (J9's surface), 'the connection
+ * read degraded' + 'Refresh re-reads' + the on-file phrasing are the
+ * N-3 degraded-export note's own words — never invented for this card
+ * (the O-2 law: the verb agrees with the noun, 'render' for the plural
+ * subjects).
+ */
+function readFailedCard(noun: string, offline: boolean, verb: 'render' | 'renders' = 'render'): VNode {
+  return v('div', { class: 'card', 'data-read-failed': 'true' }, [
+    v('div', { class: 'card-title' }, ['A read failed']),
+    v('p', { class: 'card-note' }, [`The ${noun} read failed (${offline ? 'the console could not reach the API' : 'the connection read degraded'}) — this is not the empty list it looks like: the ${noun} on file ${verb} here the moment a read lands (Refresh re-reads).`]),
   ]);
 }
 
@@ -1146,11 +1175,27 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
   const unread = unreadCountAt(scopedNotices, viewAt);
   const running = jobs.filter((job) => job.status === 'running').length;
   const snapshot = snapshots.length > 0 ? snapshots[0] : null;
+  // O-1c (Round O register — the counter-zeros first-cold-load class,
+  // S3 + L3): a hard 0 is a durable claim to a 2h/week operator ("from
+  // a compliance seat four zeroed counters read as the books standing
+  // empty") — while a tile's own backing reads are in flight at the
+  // LIVE view the tile teaches the seek, the SAME 'Reading the world…'
+  // the ORGANIZATION value and Instances row already carry (the FW-50
+  // vocabulary, extended to the numeric counters); the honest numbers
+  // render only when the reads have answered, per family — never in
+  // lockstep. The EVIDENCE CAPSULES tile rides the ONE evidence fold,
+  // so its gate is the fold's own five backing families (outcomes,
+  // post-mortems, knowledge, submissions, jobs — the same lanes
+  // evidenceCapsulesOf projects).
+  const jobsReadPending = readPendingAtView(state, viewAt, 'jobs');
+  const outcomesReadPending = readPendingAtView(state, viewAt, 'outcomes');
+  const capsulesReadPending = (['outcomes', 'postMortems', 'knowledge', 'submissions', 'jobs'] as const).some((family) => readPendingAtView(state, viewAt, family));
+  const noticesReadPending = noticesReadPendingAtView(state, viewAt);
   const tiles = statGrid([
-    statCard({ icon: 'pulse', label: 'ACTIVE JOBS', value: String(running), delta: `${jobs.length} total` }),
-    statCard({ icon: 'chart', label: 'OUTCOMES', value: String(outcomes.length) }),
-    statCard({ icon: 'box', label: 'EVIDENCE CAPSULES', value: String(capsuleCount) }),
-    statCard({ icon: 'inbox', label: 'UNREAD NOTICES', value: String(unread), ok: unread === 0 }),
+    statCard({ icon: 'pulse', label: 'ACTIVE JOBS', value: jobsReadPending ? 'Reading the world…' : String(running), ...(jobsReadPending ? {} : { delta: `${jobs.length} total` }) }),
+    statCard({ icon: 'chart', label: 'OUTCOMES', value: outcomesReadPending ? 'Reading the world…' : String(outcomes.length) }),
+    statCard({ icon: 'box', label: 'EVIDENCE CAPSULES', value: capsulesReadPending ? 'Reading the world…' : String(capsuleCount) }),
+    statCard({ icon: 'inbox', label: 'UNREAD NOTICES', value: noticesReadPending ? 'Reading the world…' : String(unread), ...(noticesReadPending ? {} : { ok: unread === 0 }) }),
   ]);
   const organization = richStatCard({
     eyebrow: 'ORGANIZATION',
@@ -1753,9 +1798,15 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...(projected.length === 0
           // N-1: the jobs read in flight (M1's job list ~10s) — the FW-41-C
           // pending card, never the durable teaching copy over an
-          // unanswered read (the honest-copy law).
+          // unanswered read (the honest-copy law). O-1d (M2: the empty
+          // claim rendered over a FAILED read — DEGRADED/UNREACHABLE — while
+          // the launch job stood on record): a failed read is not absence —
+          // the failed-read card teaches the failure + the way back, and
+          // the teaching empty renders only over an ANSWERED read.
           ? [readPendingAtView(state, viewAt, 'jobs')
-              ? hydrationPendingCard('research jobs')
+              ? hydrationPendingCard('research jobs', 'appear')
+              : readFailedAtView(state, viewAt, 'jobs')
+              ? readFailedCard('research jobs', state.connection === 'offline')
               : submitCard === null
               ? sectionEmpty('research')
               // The affordance changes what the teaching sentence must
@@ -1847,7 +1898,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         // N-1: the submissions read in flight (M2's "'No execution
         // submissions at this view instant' ~3 min while the fills HAD
         // booked") — the honest-copy law.
-        ...(submissions.length === 0 ? [readPendingAtView(state, viewAt, 'submissions') ? hydrationPendingCard('execution submissions') : sectionEmpty('execution')] : []),
+        ...(submissions.length === 0 ? [readPendingAtView(state, viewAt, 'submissions') ? hydrationPendingCard('execution submissions', 'appear') : sectionEmpty('execution')] : []),
       ]);
   } else if (selector === 'risk') {
       const rows: VNode[] = [];
@@ -2180,6 +2231,11 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
   if (draftActive && launch.draft !== null) {
     const draft = launch.draft;
     const armed = view.confirm === 'launch';
+    // O-3 (Round O register — the launch wizard's missing cancel affordance,
+    // M3 + L2): the discard confirm's own armed slot (the single confirm
+    // slot is exclusive — arming the exit disarms the launch confirm and
+    // back, one armed question at a time).
+    const discardArmed = view.confirm === 'discard-draft';
     const touched = view.touchedFields;
     // THE J3 WIRING: the rendered field values are the MERGED live
     // form (the draft's committed values + the app layer's pending
@@ -2307,6 +2363,19 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
           v('button', { class: 'tm-button', id: 'launch-next', style: 'pointer-events:auto', 'data-action': `launch-step-${nextStepOf(launch.step)}`, type: 'button' }, [`Next: ${nextStepOf(launch.step)}`]),
           v('button', { class: 'tm-button', id: 'launch-review-button', style: 'pointer-events:auto', 'data-action': 'launch-step-review', type: 'button' }, ['Review']),
         ])]),
+      // O-3 (Round O register — the launch wizard's missing cancel
+      // affordance, M3's finding + L2 corroborated): THE EXIT — every
+      // step carries it, the same place in the card (the bottom row),
+      // riding the two-step confirm (§4.11): the discard destroys typed
+      // work that SURVIVES RELOADS (FW-40-B: "losing a half-filled launch
+      // wizard to a reload is losing WORK, not state"), so one click is
+      // never enough — the arm names its own question, the armed row
+      // carries [Cancel] [Confirm], and the draft's PERSISTENCE law is
+      // untouched (the restored-draft disclosure stays honest; the exit is
+      // the missing half). The confirm itself (launch-reset — the machine
+      // AND the persisted copy, FW-42-B's atomic clear — and the landing
+      // on Home) lives in the console's confirm-discard-draft branch.
+      twoStepConfirm('discard-draft', discardArmed),
     ]));
   }
   if (launch.draft !== null && !draftActive) {

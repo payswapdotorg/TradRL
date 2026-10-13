@@ -527,19 +527,31 @@ export const NOTICE_SENTENCES: Readonly<Record<NoticeKind, string>> = Object.fre
  * badge and the aria-label names the source ("the shared demo project").
  * The sidebar's own environment badge ("SIMULATED · demo data") is the
  * established pattern this extends — the chip uses the same warn tokens.
+ *
+ * O-1c (Round O register — the counter-zeros first-cold-load class, S3 +
+ * L3): `unread: null` is the notices fold's reads IN FLIGHT — the badge
+ * renders its quiet READING face (the idle tokens, an ellipsis — never a
+ * count) and the aria-label teaches the seek, never the durable "no
+ * unread notices" claim (S3: "for an inbox-first operator the badge
+ * reading 'no unread notices' during an in-flight read is the same fear
+ * class").
  */
-export function notificationBell(unread: number, target = 'inbox', demo = false): VNode {
+export function notificationBell(unread: number | null, target = 'inbox', demo = false): VNode {
   return v('button', {
-    class: `nav-item bell${unread > 0 ? ' has-unread' : ''}`,
+    class: `nav-item bell${unread !== null && unread > 0 ? ' has-unread' : ''}`,
     'data-target': target,
     type: 'button',
-    'aria-label': unread > 0
+    'aria-label': unread === null
+      ? `Inbox — reading the world…${demo ? ' (the shared demo project)' : ''}`
+      : unread > 0
       ? `Inbox — ${unread} unread notice${unread === 1 ? '' : 's'}${demo ? ' (the shared demo project)' : ''}`
       : `Inbox — no unread notices${demo ? ' (the shared demo project)' : ''}`,
   }, [
     iconOf('inbox', 'nav-icon'),
     v('span', { class: 'nav-item-label' }, ['Inbox']),
-    ...(unread === 0 ? [] : [v('span', { class: 'bell-badge', 'data-unread': String(unread) }, [String(unread)])]),
+    ...(unread === null
+      ? [v('span', { class: 'bell-badge bell-reading', 'data-unread': 'reading', 'aria-hidden': 'true' }, ['…'])]
+      : unread === 0 ? [] : [v('span', { class: 'bell-badge', 'data-unread': String(unread) }, [String(unread)])]),
     ...(demo ? [v('span', { class: 'demo-flag bell-demo', 'data-demo': 'true' }, ['DEMO'])] : []),
   ]);
 }
@@ -758,14 +770,32 @@ export function reviewStep(summary: readonly (readonly [string, string])[]): VNo
   ]);
 }
 
-/** The two-step inline confirm (§4.11): a closed vocabulary of confirmations. */
-export type ConfirmAction = 'launch' | 'cancel-launch';
+/**
+ * The two-step inline confirm (§4.11): a closed vocabulary of confirmations.
+ * 'cancel-launch' is the vocabulary's dormant entry (kept for the charter's
+ * own shape — nothing renders it); O-3 (Round O register — M3's finding)
+ * adds 'discard-draft' — the launch wizard's EXIT, the two-step confirm
+ * the discard of typed work that survives reloads rides (FW-40-B's law:
+ * "losing a half-filled launch wizard to a reload is losing WORK, not
+ * state").
+ */
+export type ConfirmAction = 'launch' | 'cancel-launch' | 'discard-draft';
 
 /** The confirmation question of each two-step action (the charter's own shape). */
 export const CONFIRM_QUESTIONS: Readonly<Record<ConfirmAction, string>> = Object.freeze({
   launch: 'Launch this organization?',
   'cancel-launch': 'Cancel this launch?',
+  'discard-draft': 'Discard this draft?',
 });
+
+/**
+ * O-3: parse a data-action's confirm suffix into the vocabulary (the
+ * console's generic arm branch) — an unknown suffix disarms (null), never
+ * arms: the closed vocabulary stays closed at the parse seam.
+ */
+export function confirmActionOf(value: string): ConfirmAction | null {
+  return value === 'launch' || value === 'cancel-launch' || value === 'discard-draft' ? value : null;
+}
 
 /**
  * The two-step inline confirm (§4.11): the armed state renders the

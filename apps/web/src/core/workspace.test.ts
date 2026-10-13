@@ -2027,6 +2027,65 @@ describe('N-1: the per-family read answers (the read-lag fold\'s state half)', (
 });
 
 // ---------------------------------------------------------------------------
+// O-1d (Round O register — the job-list empty-claim under FAILED reads,
+// M2): the state half — the per-family FAILED markers, readAnswers\'
+// failure twin. reads-settled answers EVERY family at the bundle\'s end
+// (landed, landed empty, OR degraded-with-its-own-note), so the answered
+// markers cannot tell M2\'s settled-degraded shape (the jobs read failed;
+// the empty list is a failed read, not the host\'s answer) from the
+// honest empty. The law: a degraded-read note on one of a family\'s OWN
+// routes (READ_FAMILY_ROUTES — GET /v1/jobs and GET /v1/jobs/:id feed
+// the jobs family) marks THAT family failed; a note on any other route
+// (the meta read, a write action) marks none; the meta read\'s landing
+// (connection-changed connected — each bundle\'s start) clears every
+// marker; a scope move resets them with the answered markers. The render
+// half (the failed-read card, never the empty claim) is pinned in
+// render/model.test.ts.
+// ---------------------------------------------------------------------------
+
+describe('O-1d: the per-family read-failed markers (the failed fold\'s state half)', () => {
+  it('a fresh scope starts every family NOT failed', () => {
+    const state = openWorkspace(SCOPE, T0);
+    expect(state.readFailed).toEqual({ project: false, goalBundle: false, knowledge: false, outcomes: false, postMortems: false, submissions: false, jobs: false, riskUtilization: false });
+  });
+
+  it('a degraded-read note on a family\'s OWN route marks THAT family failed — reads-settled does not clear it (M2\'s settled-degraded shape: the answered markers say yes, the failure marker says the read never answered)', () => {
+    const settled = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'degraded-read', at: T0 + 3, route: 'GET /v1/jobs', family: 'unavailable', message: 'Neon answered 402' },
+      { kind: 'reads-settled', at: T0 + 5 },
+    ]);
+    expect(settled.readFailed.jobs).toBe(true); // RED pre-fix: the state carries no failure markers — the settled shape fell to the empty claim
+    expect(settled.readFailed.outcomes).toBe(false); // the per-family gate: only the noted route\'s family
+    expect(settled.readAnswers.jobs).toBe(true); // the settled wrinkle — answered AND failed are both true; the render composes them
+  });
+
+  it('a note on a NON-family route (the meta read, a write action) marks NO family — the connection degrades, no list is claimed', () => {
+    const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'degraded-read', at: T0 + 3, route: 'GET /v1/meta', family: 'unavailable', message: 'ECONNREFUSED' },
+      { kind: 'degraded-read', at: T0 + 4, route: 'POST /v1/jobs/job-1/promote', family: 'unavailable', message: 'the write failed' },
+    ]);
+    expect(state.connection).toBe('degraded'); // the failure is on file — the CONNECTION panel\'s own disclosure
+    expect(state.readFailed.jobs).toBe(false); // neither route feeds a family list
+  });
+
+  it('the meta read\'s landing (connection-changed connected — each bundle\'s start) CLEARS every failed marker (an ancient failure never claims the recovered beat\'s answered empty)', () => {
+    const recovered = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'degraded-read', at: T0 + 3, route: 'GET /v1/jobs', family: 'unavailable', message: 'an ancient failure' },
+      { kind: 'connection-changed', at: T0 + 10, status: 'connected' },
+    ]);
+    expect(recovered.readFailed.jobs).toBe(false); // the bundle-start clear
+    expect(recovered.degraded.length).toBe(1); // the CONNECTION panel keeps its own history — the notes stay on file
+  });
+
+  it('a scope move (project-adopted) RESETS the failed markers with the answered markers (the old scope\'s failed read never claims the adopted scope\'s list)', () => {
+    const moved = reduceAll(reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'degraded-read', at: T0 + 3, route: 'GET /v1/jobs', family: 'unavailable', message: 'the read degraded' },
+    ]), [{ kind: 'project-adopted', at: T0 + 20, projectId: 'proj-b' }]);
+    expect(moved.readFailed.jobs).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // N-3 (Round N register — M2's degraded-export composition seam): an
 // export composed while the connection read DEGRADED (M2: 7 of 14
 // derived families silently omitted, still head-exact, still promising

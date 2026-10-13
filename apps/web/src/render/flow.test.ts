@@ -322,6 +322,16 @@ describe('flow §4.10: notifications (bell + toast + the eight event types)', ()
     expect(three).toContain('aria-label="Inbox — 3 unread notices"');
   });
 
+  it('O-1c: the bell badge mid-read (unread: null) renders its READING face — the seek label + the non-committal badge, never a count or the "no unread notices" claim (S3\'s inbox-first operator fear)', () => {
+    const reading = render(notificationBell(null));
+    expect(reading).toContain('aria-label="Inbox — reading the world…"');
+    expect(reading).not.toContain('no unread notices'); // the durable claim, dead mid-read
+    expect(reading).toContain('class="bell-badge bell-reading" data-unread="reading"'); // the quiet reading face
+    expect(reading).not.toContain('has-unread'); // never the unread emphasis either
+    const readingDemo = render(notificationBell(null, 'inbox', true));
+    expect(readingDemo).toContain('aria-label="Inbox — reading the world… (the shared demo project)"'); // the DEMO clause rides the seek label too
+  });
+
   it('the toast record is role=status and carries the icon + title + ONE sentence', () => {
     const bytes = render(toastRecord('failed_evaluation', 'Failed evaluation', NOTICE_SENTENCES.failed_evaluation));
     expect(bytes).toContain('role="status"');

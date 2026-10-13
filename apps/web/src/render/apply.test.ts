@@ -196,9 +196,18 @@ describe('applied §4.12: every section teaches (empty states are first-class)',
   const SECTIONS = ['goal', 'organization', 'market-world', 'research', 'experiments', 'decisions', 'execution', 'evidence', 'outcomes', 'lessons'] as const;
 
   it('a fresh workspace renders the EmptyState (icon + ONE sentence + exactly ONE action) in every section that can be empty', () => {
+    // O-1b (Round O register — the first-frame flash class): the teaching
+    // empties are the ANSWERED truth — at the LIVE edge the first frames
+    // teach the seek ("Reading the world…"), so the §4.12 law pins the
+    // empties at a SCRUBBED PAST view (the boundary law: the pending
+    // state is about NOW, never a claim about the past).
     for (const section of SECTIONS) {
-      const state = reduceAll(openWorkspace(SCOPE, T0), [{ kind: 'section-selected', at: T0 + 1, section }]);
-      const serialized = render(state, { accountView: 'section' }, T0 + 1);
+      const state = reduceAll(openWorkspace(SCOPE, T0), [
+        { kind: 'anchor-advanced', at: T0 + 50 }, // the beat advanced the anchor so the view can scrub below it
+        { kind: 'view-timestamp', at: T0 + 51, timestamp: T0 }, // a scrubbed past view — the honest durable empties
+        { kind: 'section-selected', at: T0 + 52, section },
+      ]);
+      const serialized = render(state, { accountView: 'section' }, T0 + 52);
       expect(serialized, section).toContain('class="empty-state"');
       expect(serialized, section).toContain('empty-circle');
       expect(serialized, section).toContain('class="empty-sentence"');

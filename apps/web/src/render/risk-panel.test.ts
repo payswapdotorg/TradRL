@@ -87,9 +87,14 @@ function utilizationRead(overrides: Partial<RiskUtilizationRead> = {}): RiskUtil
 
 function riskState(read: RiskUtilizationRead | null): ReturnType<typeof openWorkspace> {
   const events: WorkspaceEvent[] = [
+    // O-1b (Round O register — the first-frame flash class): the standing
+    // read's ABSENCE note is the ANSWERED truth — the bundle settles (an
+    // unanswered family over a connecting/connected console teaches the
+    // seek instead, the N-1/O-1b law).
+    { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
     goalLoaded(),
     { kind: 'section-selected', at: T0 + 2, section: 'risk' },
-    ...(read === null ? [] : [{ kind: 'risk-utilization-loaded', at: T0 + 3, read } as WorkspaceEvent]),
+    ...(read === null ? [{ kind: 'reads-settled', at: T0 + 3 } as WorkspaceEvent] : [{ kind: 'risk-utilization-loaded', at: T0 + 3, read } as WorkspaceEvent]),
   ];
   return reduceAll(openWorkspace(SCOPE, T0), events);
 }

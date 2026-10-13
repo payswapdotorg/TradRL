@@ -64,7 +64,7 @@ import {
   skipOnboarding,
   type OnboardingState,
 } from '../core/onboarding';
-import { noticeCopyOf } from '../render/flow';
+import { confirmActionOf, noticeCopyOf } from '../render/flow';
 import { alertFormErrorOf } from '../render/market';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs } from '../core/evidence';
 import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission, projectToView } from '../core/availability';
@@ -568,13 +568,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // verified broken live): `goal-loaded` fired ONLY inside the
       // launch submit path, so after any reload or switch
       // state.goal/state.constraintSet stayed null — the Goal and Risk
-      // sections lost their cards for every session that didn't just
-      // launch. The read rides the bundle's own cadence (boot + every
-      // scope-change refetch). Unlike its siblings it degrades SILENTLY:
-      // the route is HOST-OWNED and demo-backing-only (a typed 404
-      // everywhere else — every launched project included), so on ANY
-      // failure NOTHING dispatches — the honest pre-fix absence (never a
-      // fabricated goal, never a degradation note).
+      // sections lost their cards on every non-launch session. The read
+      // rides the bundle's own cadence (boot + every scope-change
+      // refetch) and, unlike its siblings, degrades SILENTLY: the route
+      // is HOST-OWNED, demo-backing-only (a typed 404 everywhere else —
+      // launched projects included), so on ANY failure NOTHING
+      // dispatches — the honest pre-fix absence (never a fabricated
+      // goal, never a degradation note).
       try {
         const bundle = await client.projects.goal(projectId);
         // D-8 (W-28): the bundle's ADDITIVE `world` (the scope's persisted
@@ -636,11 +636,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
       // state.jobs populated ONLY from session-local events, so on
       // boot/reload/scope-switch it reset to [] and NEVER refilled — the
       // Research section and the palette's JOB group stayed empty forever.
-      // The read follows the bundle's own pattern; each served row dispatches
-      // the EXISTING job-updated event, whose reducer arm merges deduped by
-      // jobId (the launch kickoff rides the same merge — a re-refresh never
-      // duplicates; the read runs BEFORE pollJobs so the served non-terminal
-      // jobs join the poll cadence immediately).
+      // Each served row dispatches the EXISTING job-updated event, whose
+      // reducer arm merges deduped by jobId (the launch kickoff rides the
+      // same merge — a re-refresh never duplicates; the read runs BEFORE
+      // pollJobs so the served non-terminal jobs join the poll cadence
+      // immediately).
       await read('GET /v1/jobs', async () => {
         const page = await client.jobs.list(projectId);
         for (const job of page.items) {
@@ -1144,11 +1144,11 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      * `input` and `change` on a file selection; when the ~1s beat
      * re-projection replaces the input BETWEEN them, the change lands on
      * the FRESH element whose FileList is EMPTY — files=0, the verify
-     * never runs, the re-projected input renders "No file chosen" (the
-     * Round C regression). The input-time selection BUFFERS here (the J3
-     * discipline); the change commit reads the LIVE element's file when
-     * it carries one (a fresh selection always wins) and the BUFFERED
-     * file otherwise, so the commit survives every replacement.
+     * never runs, "No file chosen" renders (the Round C regression). The
+     * input-time selection BUFFERS here (the J3 discipline); the change
+     * commit reads the LIVE element's file when it carries one (a fresh
+     * selection always wins), else the BUFFERED file — the commit
+     * survives every replacement.
      */
     let pendingVerifyFile: SelectedExportFile | null = null;
     // THE SCRUB BUFFER (the J5 wiring — the J3 pointer discipline): a
@@ -1190,13 +1190,12 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
      * D-10 (W-29) — INTERACTIVE FOCUS SURVIVES THE BEAT RE-PROJECTION: the
      * keyboard user's focused affordance (nav item, bell, notice toggle,
      * capsule badge) is replaced by the ~1s beat re-projection, which used
-     * to strand focus on <body> (Tab lands the focus, the beat replaces
-     * the tree, Enter hits a dead document). Mirroring the launch-field +
-     * palette pair below: the focused element's delegated-vocabulary
-     * identity is captured BEFORE the re-projection and the FIRST VISIBLE
-     * equivalent re-focuses after it (a display:none match never steals
-     * the restore; elements without a geometry probe — the test fakes —
-     * count as visible).
+     * to strand focus on <body> (Enter hits a dead document). Mirroring
+     * the launch-field + palette pair below: the focused element's
+     * delegated-vocabulary identity is captured BEFORE the re-projection
+     * and the FIRST VISIBLE equivalent re-focuses after it (a
+     * display:none match never steals the restore; elements without a
+     * geometry probe — the test fakes — count as visible).
      */
     const restoreInteractiveFocusByKey = (key: { readonly attr: string; readonly value: string } | null): void => {
       if (key === null || document.querySelectorAll === undefined) return;
@@ -1530,10 +1529,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
     };
 
     // THE LAUNCH FIELD WIRING (the J3 fix): delegated input/change/focusout
-    // listeners on the document. Edits BUFFER in the view (launchEdits) and
-    // commit on the next action (the flush) — never synchronously on
-    // focusout while a click is in flight (the re-render between mousedown
-    // and mouseup would drop the click).
+    // listeners on the document; the edits BUFFER in the view and commit
+    // on the next action (the flush + pointer-gate laws at the view's own
+    // definition above — never synchronously on focusout while a click is
+    // in flight).
     // THE PENDING PRESS (D-6a, W-25C — the beat-render click race): the
     // beat re-projection rebuilds the WHOLE tree; when it lands between
     // mousedown and mouseup, the browser composes the click on a common
@@ -2257,10 +2256,10 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // 'palette-all-desks' expanders are REMOVED — the switcher and
         // the palette list ONLY this session's own desks (+ the shared
         // demo project), no path back to the whole registry (Round F
-        // ruled the explicit-disclosure design insufficient: L1/L3 each
-        // read another session's full blotter). The state still carries
-        // the whole durable registry (FW-31-B's win stays — just no
-        // longer REACHABLE from the switcher or the palette).
+        // ruled disclosure insufficient: L1/L3 each read another
+        // session's full blotter). The state keeps the whole durable
+        // registry (FW-31-B's win — just no longer REACHABLE from the
+        // switcher or the palette).
         // FW-34-B (§3.1) — THE WIZARD'S BACKDROP = THE MOUSE DISMISSAL
         // (L3: the restart-summoned wizard was an a11y-invisible blocker
         // native clicks could not dismiss): a press on the overlay
@@ -2348,13 +2347,13 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         // §4.11 the primary flow: step navigation + the two-step confirm.
         // FW-40-C (the Round H wizard-race cluster — the inline-validation
         // law): a step-advance from a step whose OWN fields are invalid
-        // REFUSES to advance and TEACHES AT THE FIELDS (the outgoing step's
-        // fields all become touched, so their §4.11 messages render inline
-        // where the user stands — S2/M3: "values can be silently lost ...
-        // with no inline error (only Review reveals the loss)"). A BACKWARD
-        // move (an earlier step — the escape hatch) always advances; the
-        // REVIEW step's own gate (launchDraftProblems — the FIX BEFORE
-        // LAUNCHING card) stays the defense in depth over every field.
+        // REFUSES to advance and TEACHES AT THE FIELDS (the outgoing
+        // fields become touched, so their §4.11 messages render inline —
+        // S2/M3: "values can be silently lost ... with no inline error
+        // (only Review reveals the loss)"). A BACKWARD move (an earlier
+        // step — the escape hatch) always advances; the REVIEW step's own
+        // gate (launchDraftProblems — the FIX BEFORE LAUNCHING card)
+        // stays the defense in depth over every field.
         if (kind !== null && kind.startsWith('launch-step-')) {
           const step = kind.slice('launch-step-'.length);
           if ((LAUNCH_STEPS as readonly string[]).includes(step)) {
@@ -2400,11 +2399,24 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           dispatch({ kind: 'launch-reset', at: instants.nowMs() }); // renders via onState
           view = { ...view, confirm: null, touchedFields: [], launchEdits: {}, openCapsule: view.openCapsule };
         }
-        if (kind === 'confirm-arm-launch') {
-          view = { ...view, confirm: 'launch' };
+        // O-3 (Round O register, M3 + L2): THE WIZARD'S EXIT — the same
+        // machine reset the error card's Start over owns (launch-reset:
+        // the draft AND its persisted copy die together, FW-42-B's atomic
+        // clear), landing on Home, the focus on the content never BODY
+        // (FW-35-B). The view is set BEFORE the dispatch so the reset's
+        // render carries the landing (the WIP's defect, repaired).
+        if (kind === 'confirm-discard-draft') {
+          view = { ...view, confirm: null, touchedFields: [], launchEdits: {}, openCapsule: view.openCapsule, accountView: 'home' };
+          dispatch({ kind: 'launch-reset', at: instants.nowMs() }); // renders via onState (the view carries the landing)
+          focusMainContent();
+        }
+        // O-3: the arm/disarm parse the ConfirmAction vocabulary at the
+        // seam (confirmActionOf — an unknown suffix disarms, never arms).
+        if (kind !== null && kind.startsWith('confirm-arm-')) {
+          view = { ...view, confirm: confirmActionOf(kind.slice('confirm-arm-'.length)) };
           render();
         }
-        if (kind === 'confirm-cancel-launch') {
+        if (kind !== null && kind.startsWith('confirm-cancel-')) {
           view = { ...view, confirm: null };
           render();
         }
@@ -2414,15 +2426,15 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
         }
         // D-12 (W-29 wave 2): THE STANDALONE RESEARCH SUBMIT — the
         // Research section's own affordance (the launch flow was the ONLY
-        // path before). The three actions: open (the closed card's single
+        // path before). Three actions: open (the closed card's single
         // primary action), cancel (close + drop the buffered edits), and
-        // the submit itself — the typed validation gate FIRST (an invalid
+        // the submit — the typed validation gate FIRST (an invalid
         // objective renders inline, never an API call), then the frozen
         // POST /v1/jobs/research route with the CURRENT project's id (the
-        // same plumbing the launch's kickoff job rides). The returned
-        // record dispatches job-updated, so the job lands in the Research
-        // list immediately and the beat's poll cadence advances it
-        // (submitted -> running -> complete) like every other job.
+        // launch kickoff's own plumbing). The returned record dispatches
+        // job-updated, so the job lands in the Research list immediately;
+        // the beat's poll cadence advances it (submitted -> running ->
+        // complete) like every other job.
         if (kind === 'research-submit-open') {
           if (view.researchSubmit === null) {
             view = { ...view, researchSubmit: { edits: {}, error: null } };
@@ -2554,14 +2566,14 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
             try {
               const attached = await client.projects.attachNote(projectId, { title, text });
               // Only the still-current scope receives the record (the reducer's scope gate is the law; defense in depth).
-              // FW-47-B (the minors — S1's duplicate-session-row finding): the host
-              // route is IDEMPOTENT PER CONTENT — a re-attach returns the STORED
-              // record (the first mint stands, durable.ts's own law) — but the console
-              // dispatched note-attached on EVERY answer, so the noteId dedup kept
-              // state.notes at one row while the linked history carried BOTH
-              // attestations. The fix at THIS dispatch site (the fold stays a pure
-              // append-only event log): an already-carried record (by id) is a
-              // NO-OP, no dispatch.
+              // FW-47-B (S1's duplicate-session-row minor): the host route
+              // is IDEMPOTENT PER CONTENT (a re-attach returns the STORED
+              // record — the first mint stands, durable.ts's own law), but
+              // the console dispatched note-attached on EVERY answer, so the
+              // noteId dedup kept state.notes at one row while the linked
+              // history carried BOTH attestations. The fix at THIS dispatch
+              // site (the fold stays a pure append-only event log): an
+              // already-carried record (by id) is a NO-OP, no dispatch.
               if (state.scope.projectId === projectId && !state.notes.some((note) => note.noteId === attached.note.noteId)) {
                 dispatch({ kind: 'note-attached', at: instants.nowMs(), note: attached.note });
               }

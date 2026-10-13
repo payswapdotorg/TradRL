@@ -18,7 +18,7 @@
 //   CONNECTING neutral (gentle pulse, reduced-motion disabled).
 
 import type { ConnectionStatus, ExportVerificationReport, WorkspaceState } from '../core/workspace';
-import { viewAtOf } from '../core/workspace';
+import { viewAtOf, noticesReadPendingAtView } from '../core/workspace';
 import type { ProjectRecord } from '../api/contracts';
 import { scopedInbox, unreadCountAt } from '../core/notices';
 import type { ThemeName } from '../core/theme';
@@ -26,7 +26,7 @@ import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellT
 import { DEMO_PROJECT_ID, isDemoProject, isLaunchpadScope, sessionOwnDesksOf as sessionOwnDesksOfDirectory, otherSessionsDesksOf as otherSessionsDesksOfDirectory } from '../core/tenant';
 import { formatInstantUtc } from '../core/format';
 import type { PlaybackSpeedKey } from '../core/timemachine';
-import { notificationBell, toastRecord } from './flow';
+import { notificationBell, toastRecord, type ConfirmAction } from './flow';
 import { paletteAffordance, paletteOverlay, fuzzyScore } from '../core/palette';
 import { onboardingPanel, onboardingReopenAffordance, type OnboardingState } from '../core/onboarding';
 import { accountPanelOf, accountSettingsBody, rememberedScopeCopy, switcherListScopeCopy } from './account';
@@ -55,8 +55,8 @@ export interface ShellView {
   readonly onboarding: OnboardingState | null;
   /** The newest notice to toast (§4.10; the app layer owns the ~5s timer). */
   readonly toast: { readonly kind: string; readonly title: string; readonly sentence: string } | null;
-  /** The armed two-step confirm (§4.11): 'launch' when the launch confirm is armed. */
-  readonly confirm: 'launch' | null;
+  /** The armed two-step confirm (§4.11, the ConfirmAction vocabulary): 'launch' (the launch confirm) or 'discard-draft' (O-3 — the wizard's exit). */
+  readonly confirm: ConfirmAction | null;
   /** The launch form's touched field names (§4.11 — inline validation renders only after blur). */
   readonly touchedFields: readonly string[];
   /** The launch form's PENDING edits (the J3 wiring): field -> the last typed string, not yet committed into the state machine — the render merges them so a re-render never reverts the user's text. */
@@ -333,8 +333,8 @@ function refreshMark(): VNode {
   return icon([P('M20 12a8 8 0 1 1-2.34-5.66'), P('M20 4v4.25h-4.25')]);
 }
 
-/** One navigation item (a section item ALSO carries data-section for T042's interaction law; the Inbox item is the §4.10 bell with the unread badge — visible from every page). FW-36-B (E-8, part 3): the bell carries the DEMO chip when the workspace's scope is the shared demo project (the badge's counts derive from it). */
-function navItem(target: ShellTarget, active: boolean, unread: number, demo = false): VNode {
+/** One navigation item (a section item ALSO carries data-section for T042's interaction law; the Inbox item is the §4.10 bell with the unread badge — visible from every page). FW-36-B (E-8, part 3): the bell carries the DEMO chip when the workspace's scope is the shared demo project (the badge's counts derive from it). O-1c: the unread rides the badge's own null-reading law. */
+function navItem(target: ShellTarget, active: boolean, unread: number | null, demo = false): VNode {
   if (target === 'inbox') return notificationBell(unread, 'inbox', demo);
   const attrs: Record<string, string> = {
     class: `nav-item${active ? ' active' : ''}`,
@@ -355,13 +355,20 @@ function navItem(target: ShellTarget, active: boolean, unread: number, demo = fa
  * a selected instant (S3's "two surfaces, two truths, same instant").
  * At the LIVE edge the projected count IS the plain count — the live
  * badge is byte-identical to the pre-fix surface.
+ *
+ * O-1c (Round O register — the counter-zeros first-cold-load class, S3
+ * + L3): while the notices fold's reads are in flight AT THE VIEW the
+ * badge reads NULL — the bell's READING face, never the durable
+ * "no unread notices" claim over an unanswered read (the same law at
+ * a scrubbed view keeps the honest count — the pending is about NOW).
  */
-function scopedUnreadCount(state: WorkspaceState): number {
+function scopedUnreadBadge(state: WorkspaceState): number | null {
+  if (noticesReadPendingAtView(state, viewAtOf(state))) return null;
   return unreadCountAt(scopedInbox(state.inbox, state.scope), viewAtOf(state));
 }
 
 /** The grouped navigation (aria-label="Primary", the four charter groups in order; the bell carries the unread count — and, when the scope is the shared demo project, the DEMO disclosure chip). */
-function shellNav(activeTarget: ShellTarget, unread: number, demo = false): VNode {
+function shellNav(activeTarget: ShellTarget, unread: number | null, demo = false): VNode {
   return v('nav', { class: 'shell-nav', 'aria-label': 'Primary' }, NAV_GROUPS.map((group) => v('div', { class: 'nav-group', 'data-nav-group': group.label }, [
     v('div', { class: 'nav-group-label' }, [group.label]),
     ...group.targets.map((target) => navItem(target, target === activeTarget, unread, demo)),
@@ -839,7 +846,7 @@ export function renderAppShell(
       // fresh session's first world) — the DEMO chip marks the
       // contaminated surface (L3's finding: the export discloses the
       // 2-project span; the UI did not).
-      shellNav(activeTarget, scopedUnreadCount(state), isDemoProject(state.scope.projectId)),
+      shellNav(activeTarget, scopedUnreadBadge(state), isDemoProject(state.scope.projectId)),
       connectionZone(state, view, at),
     ]),
     // §6 J12 (the W-17b fix): the content region is the <main> landmark
@@ -862,7 +869,7 @@ export function renderAppShell(
     // §4.14 the palette overlay (the app layer owns keys + Enter).
     // FW-37-B (F-3): no hidden-desks disclosure, no all-desks option —
     // the palette's desk group is the session's own desks only.
-    ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: scopedUnreadCount(state) })]),
+    ...(view.palette === null ? [] : [paletteOverlay({ query: view.palette.query, results: content.paletteResults, selected: view.palette.selected, unread: scopedUnreadBadge(state) ?? 0 })]), // O-1c: the pill renders only over an answered >0 count — mid-read renders no claim either way
     // §4.13 the onboarding wizard — THE ONE COPY: the fixed-position
     // modal overlay directly under the shell root (render/model.ts
     // renders the main content normally behind it; it never renders

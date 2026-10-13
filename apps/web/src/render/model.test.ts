@@ -119,6 +119,30 @@ function populatedWorkspace(): WorkspaceState {
   return reduceAll(openWorkspace(SCOPE, T0), events);
 }
 
+/** One constraint set (the Risk section's standing-note branch needs one on record; the goal-bundle read's own record). */
+function constraints(): ConstraintSetStatement {
+  return { id: 'cs-1', version: 1, tenantId: 'tenant-a', constraints: [], createdAt: T0 };
+}
+
+/** One goal statement (the goal-bundle read's own record). */
+function goalOf(): GoalStatement {
+  return {
+    id: 'goal-1', version: 1, tenantId: 'tenant-a', objective: 'Compound the book inside the risk framework.',
+    horizon: { startsAt: T0, endsAt: T0 + 90_000 }, successCriteria: { criteria: [], requiredSatisfaction: 1 },
+    evaluation: { blindRef: 'ev-blind', walkForwardRef: 'ev-wf', regimeRef: 'ev-reg', adversarialRequired: false }, createdAt: T0,
+  };
+}
+
+/** A desk MID-READ-BUNDLE at the LIVE view: connected, the project record on hand (the bundle's first family answered), every other family's read still in flight (the N-1 suite's own shape — the O-1/O-2/O-3 suites reuse it). */
+function midReadWorkspace(extra: readonly WorkspaceEvent[] = []): WorkspaceState {
+  return reduceAll(openWorkspace(SCOPE, T0), [
+    { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+    { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
+    { kind: 'view-live', at: T0 + 50 },
+    ...extra,
+  ]);
+}
+
 describe('render model: the twelve section panels', () => {
   it('EVERY section renders its panel (data-section keyed, no crash, no empty console)', () => {
     const state = populatedWorkspace();
@@ -941,12 +965,14 @@ function blankDraftOfD11(): LaunchDraft {
 // ---------------------------------------------------------------------------
 
 describe('render model: D-13 — the inbox renders the PROJECT-SCOPED view', () => {
-  /** A two-desk session: desk A (proj-a) folds a notice, the workspace adopts desk B (proj-b), desk B folds its own. */
+  /** A two-desk session: desk A (proj-a) folds a notice, the workspace adopts desk B (proj-b), desk B folds its own. O-1c: the bundle settles (the badge/tile counts are the ANSWERED truth — the adoption resets the per-family markers, the bundle's end answers them). */
   function twoDeskState(): WorkspaceState {
     const events: readonly WorkspaceEvent[] = [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
       { kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-desk-a', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'failed', submittedAt: T0 + 10 } },
       { kind: 'project-adopted', at: T0 + 30, projectId: 'proj-b' },
       { kind: 'job-updated', at: T0 + 40, job: { jobId: 'job-desk-b', kind: 'research', tenant: 'tenant-a', project: 'proj-b', status: 'failed', submittedAt: T0 + 35 } },
+      { kind: 'reads-settled', at: T0 + 45 },
       { kind: 'view-live', at: T0 + 50 },
     ];
     return reduceAll(openWorkspace(SCOPE, T0), events);
@@ -1126,11 +1152,12 @@ describe('render model: D-18 — the copy polish (jargon explained, lessons in w
 // ---------------------------------------------------------------------------
 
 describe('render model: FW-32-B — Home\'s capsule stat is the Evidence section\'s own fold', () => {
-  /** The D-9 fixture shape: the read families' capsules PLUS one completed research job with its release-candidate result. */
+  /** The D-9 fixture shape: the read families' capsules PLUS one completed research job with its release-candidate result. O-1c: the bundle settles (the capsule tile's five-lane gate renders the ANSWERED count). */
   function workspaceWithJobsLane(): WorkspaceState {
     const job: JobRecord = { jobId: 'job:57d1815d', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: T0 + 40, completedAt: T0 + 48, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' } };
     return reduceAll(populatedWorkspace(), [
       { kind: 'job-updated', at: T0 + 40, job },
+      { kind: 'reads-settled', at: T0 + 45 },
       { kind: 'view-live', at: T0 + 50 },
     ]);
   }
@@ -1448,10 +1475,12 @@ describe('FW-36-B (E-8, part 1): the per-row SIMULATED tags on every blotter row
 });
 
 describe('FW-36-B (E-8, part 3): the DEMO marker on the fresh-session Home activity + the nav bell', () => {
-  /** A workspace scoped to the SHARED DEMO PROJECT (every fresh session's first world) with one folded notice. */
+  /** A workspace scoped to the SHARED DEMO PROJECT (every fresh session's first world) with one folded notice. O-1c: the bundle settles (the bell's count label is the ANSWERED truth). */
   function demoScopeState(): WorkspaceState {
     return reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: 'prj-demo-console' }, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
       { kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-demo-1', kind: 'research', tenant: 'tenant-a', project: 'prj-demo-console', status: 'failed', submittedAt: T0 + 10 } },
+      { kind: 'reads-settled', at: T0 + 45 },
       { kind: 'view-live', at: T0 + 50 },
     ]);
   }
@@ -1472,7 +1501,9 @@ describe('FW-36-B (E-8, part 3): the DEMO marker on the fresh-session Home activ
 
   it('a NON-demo scope renders NO markers — never a fabricated disclosure (the export disclosed the span; the UI only marks what IS demo)', () => {
     const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
       { kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-own-1', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'failed', submittedAt: T0 + 10 } },
+      { kind: 'reads-settled', at: T0 + 45 }, // O-1c: the answered count label
       { kind: 'view-live', at: T0 + 50 },
     ]);
     const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
@@ -1761,30 +1792,6 @@ describe('FW-42-B (J-3): the Home tile\'s Project line resolves during the boot-
 // ---------------------------------------------------------------------------
 
 describe('N-1 (Round N register — the read-lag class): "Reading the world…" vs the durable empty-state copy', () => {
-  /** One constraint set (the Risk section's standing-note branch needs one on record). */
-  function constraints(): ConstraintSetStatement {
-    return { id: 'cs-1', version: 1, tenantId: 'tenant-a', constraints: [], createdAt: T0 };
-  }
-
-  /** One goal statement (the goal-bundle read's own record). */
-  function goalOf(): GoalStatement {
-    return {
-      id: 'goal-1', version: 1, tenantId: 'tenant-a', objective: 'Compound the book inside the risk framework.',
-      horizon: { startsAt: T0, endsAt: T0 + 90_000 }, successCriteria: { criteria: [], requiredSatisfaction: 1 },
-      evaluation: { blindRef: 'ev-blind', walkForwardRef: 'ev-wf', regimeRef: 'ev-reg', adversarialRequired: false }, createdAt: T0,
-    };
-  }
-
-  /** A desk MID-READ-BUNDLE at the LIVE view: connected, the project record on hand (the bundle's first family answered), every other family's read still in flight. */
-  function midReadWorkspace(extra: readonly WorkspaceEvent[] = []): WorkspaceState {
-    return reduceAll(openWorkspace(SCOPE, T0), [
-      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
-      { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
-      { kind: 'view-live', at: T0 + 50 },
-      ...extra,
-    ]);
-  }
-
   it('the Research section mid-read teaches PENDING on the notes card AND the jobs empty state — never the durable claims (L3\'s ~6s "No research notes attached … No research jobs" over a desk that carried 3 notes + 2 jobs)', () => {
     const state = reduceAll(midReadWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'research' }]);
     const bytes = serializeConsoleModel(state, T0 + 50);
@@ -1894,14 +1901,318 @@ describe('N-1 (Round N register — the read-lag class): "Reading the world…" 
     expect(bytes).toContain('No research jobs at this view instant.'); // the past view's honest empty state — unchanged
   });
 
-  it('the boundary law: a DEGRADED connection keeps the honest durable copy (the degraded class carries its own disclosure — the CONNECTION panel — never a pending marker over reads that answered with a failure)', () => {
-    const degraded = reduceAll(midReadWorkspace(), [
-      { kind: 'degraded-read', at: T0 + 30, route: 'GET /v1/jobs', family: 'unavailable', message: 'the read degraded' },
+  // (The pre-O-1d degraded boundary test — "a DEGRADED connection keeps
+  // the honest durable copy" — pinned M2's defect as the law: a degraded
+  // read with the jobs family UNANSWERED rendered "No research jobs at
+  // this view instant." over a FAILED read. The Round O register
+  // ratified the inversion (O-1d: "a failed read is not absence"); the
+  // degraded shapes now live in the O-1d suite below, per family.)
+});
+
+// ---------------------------------------------------------------------------
+// O-2 (Round O register — the "appears" grammar class, cosmetic): the
+// loading vocabulary's subject-verb slip, live at three measured
+// surfaces — "the notices appears here the moment the read lands" (the
+// Inbox — S1, M3, S3 five consecutive samples, L3 16/16, L2), "the
+// research jobs appears here the moment the read lands" (M1, L1, L2),
+// and the same slip on the execution-submissions card. THE FIX: the
+// plural subjects take "appear" — the FW-50 vocabulary's shape kept
+// (the singular surfaces keep "appears": "the project history appears",
+// "the organization appears").
+// ---------------------------------------------------------------------------
+
+describe('O-2 (Round O register — the appears grammar class): the loading vocabulary agrees with its subject', () => {
+  it('the Inbox pending card reads "the notices appear here the moment the read lands" — never "the notices appears" (the S1/M3/S3/L3/L2 live instance)', () => {
+    const mid = midReadWorkspace();
+    const bytes = serializeVNode(renderConsoleModel(mid, T0 + 50, { ...defaultShellView(mid), accountView: 'inbox' }));
+    expect(bytes).toContain('the notices appear here the moment the read lands'); // RED pre-fix: "the notices appears here…"
+    expect(bytes).not.toContain('notices appears here');
+  });
+
+  it('the Research jobs pending card reads "the research jobs appear here the moment the read lands" — never "the research jobs appears" (the M1/L1/L2 live instance)', () => {
+    const state = reduceAll(midReadWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'research' }]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('the research jobs appear here the moment the read lands'); // RED pre-fix: "the research jobs appears here…"
+    expect(bytes).not.toContain('research jobs appears here');
+  });
+
+  it('the Execution pending card reads "the execution submissions appear here the moment the read lands" — never "the execution submissions appears" (the same grammar class, unmeasured only because the surface never rendered mid-read in Round O)', () => {
+    const state = reduceAll(midReadWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'execution' }]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('the execution submissions appear here the moment the read lands'); // RED pre-fix: the same slip
+    expect(bytes).not.toContain('execution submissions appears here');
+  });
+
+  it('the SINGULAR surfaces keep "appears" — the vocabulary\'s shape is unchanged (the TM bar\'s "the project history appears", the Organization section\'s "the organization appears")', () => {
+    const preProject = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    expect(serializeConsoleModel(preProject, T0 + 50)).toContain('the project history appears here the moment the read lands');
+    const state = reduceAll(midReadWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'organization' }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section' }));
+    expect(bytes).toContain('the organization appears here the moment the read lands');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O-1b (Round O register — the read-lag residual class, the FIRST-FRAME
+// flash, three surfaces): the Time-Machine project-history note
+// ("No project history is on record yet — the range spans this session":
+// S2 sub-300ms 2-of-4, M1 ~0.2-0.7s 2/2, L2 ~0.4-0.8s 1/1, L3 on the
+// first cold attach), the Inbox notices ("No notices at this view
+// instant." <1s 2/2 from L1, false while 5 notices stood) and the
+// Research job-list ("No research jobs at this view instant." ~0.4-0.8s
+// from L2, while the launch job stood on record). THE MECHANISM (the
+// render-order race the seats measured): the first frame after a
+// reload paints while the console is still CONNECTING — the meta read
+// that flips the connection to 'connected' has not landed — and the
+// pending folds gated on 'connected', so the empty-state branches won
+// the first frame; the loading vocabulary took over only when the
+// connection event arrived. THE LAW: the read is IN FLIGHT FROM THE
+// FIRST PAINT — the bundle is queued behind a connection being
+// established, which is a seek, not an answered absence — so
+// 'connecting' teaches the same "Reading the world…" the in-flight
+// bundle teaches (the desk law unchanged: the launchpad's honest
+// terminal empties stand, exactly the hydrationReadPendingOf law).
+// ---------------------------------------------------------------------------
+
+describe('O-1b (Round O register — the first-frame flash class): the loading vocabulary from the FIRST frame, three surfaces', () => {
+  /** The FIRST FRAME after a reload: the console is still CONNECTING (the meta read has not landed — openWorkspace's own initial state), a real desk scoped, LIVE view. */
+  function firstFrameWorkspace(): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  it('the Time-Machine range note from the FIRST frame teaches the seek — never "No project history is on record yet" (S2/M1/L2/L3\'s first-frame flash)', () => {
+    const bytes = serializeConsoleModel(firstFrameWorkspace(), T0 + 50);
+    expect(bytes).toContain('data-hydration-pending="true"'); // the marker from frame one
+    expect(bytes).toContain('Reading the world… — the project history appears here the moment the read lands'); // RED pre-fix: the connection event had not landed, the empty branch won frame one
+    expect(bytes).not.toContain('No project history is on record yet'); // the first-frame durable claim, dead
+  });
+
+  it('the Inbox from the FIRST frame teaches the seek — never "No notices at this view instant." (L1\'s 2/2 reload flash, false while 5 notices stood)', () => {
+    const first = firstFrameWorkspace();
+    const bytes = serializeVNode(renderConsoleModel(first, T0 + 50, { ...defaultShellView(first), accountView: 'inbox' }));
+    expect(bytes).toContain('data-hydration-pending="true"');
+    expect(bytes).toContain('Reading the world…');
+    expect(bytes).not.toContain('No notices at this view instant.'); // RED pre-fix: the first-frame empty claim over the queued bundle
+  });
+
+  it('the Research job-list from the FIRST frame teaches the seek — never "No research jobs at this view instant." (L2\'s ~0.4-0.8s flash while the launch job stood on record)', () => {
+    const state = reduceAll(firstFrameWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'research' }]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-hydration-pending="true"');
+    expect(bytes).toContain('the research jobs appear here the moment the read lands'); // RED pre-fix: same class
+    expect(bytes).not.toContain('No research jobs at this view instant.');
+  });
+
+  it('the launchpad\'s honest terminal empties still render from the first frame (the desk law — the launchpad has no desk to read; the connecting gate never manufactures a seek there)', () => {
+    const launchpad = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: '(launchpad)' }, T0), [
+      { kind: 'view-live', at: T0 + 50 },
       { kind: 'section-selected', at: T0 + 51, section: 'research' },
     ]);
-    const bytes = serializeConsoleModel(degraded, T0 + 50);
+    const bytes = serializeConsoleModel(launchpad, T0 + 50);
+    expect(bytes).toContain('No research jobs at this view instant.'); // the launchpad's honest teaching copy — unchanged
     expect(bytes).not.toContain('data-hydration-pending');
-    expect(bytes).toContain('No research jobs at this view instant.'); // the degraded state's own honest copy (the pre-existing law, unchanged)
+  });
+
+  it('the OFFLINE boundary (the failed-read class): an unreachable API with the jobs read unanswered renders the FAILED-READ card — never a pending marker, never the bare empty claim (the O-1d law, below)', () => {
+    const offline = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'offline' },
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+    const bytes = serializeConsoleModel(offline, T0 + 50);
+    expect(bytes).not.toContain('data-hydration-pending'); // the offline law unchanged: no pending marker over a failed read
+    expect(bytes).toContain('data-read-failed="true"'); // the O-1d failed-read vocabulary (the suite below owns the detail)
+    expect(bytes).not.toContain('No research jobs at this view instant.'); // the bare empty claim over a failed read, dead
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O-1d (Round O register — the read-lag residual class, the job-list
+// empty-claim under FAILED reads, M2): at 07:58-07:59 with the connection
+// DEGRADED then UNREACHABLE (the Neon 402 window), the Research job list
+// rendered "No research jobs at this view instant." while the launch job
+// stood on record — NO loading/unreachable vocabulary on that surface when
+// the read FAILS rather than lags. THE LAW (M2's own words): "the harder
+// cousin of the FW-50 law — the empty-state copy is legal only when the
+// data is truly absent; a failed read is not absence" — the job list
+// renders its FAILED-READ vocabulary while the jobs read is unanswered OR
+// FAILED over a DEGRADED/UNREACHABLE connection at the LIVE view; the
+// teaching empty renders only over an ANSWERED read. THE SETTLED WRINKLE
+// (the FW-52-cont repair): the console's refresh() ALWAYS dispatches
+// reads-settled in its finally — every family's answered marker flips
+// true at the bundle's end even when the read degraded-with-its-own-note
+// — so a gate reading the answered markers alone MISSES M2's own measured
+// shape (the settled-degraded state, minutes into the 402 window); the
+// state's per-family FAILED markers (workspace.ts readFailed — set by a
+// degraded-read note on the family's own route, cleared by the next
+// bundle's meta-read landing) carry that half, and the healed-beat guard
+// below pins the corner: an ANCIENT failure never claims a recovered
+// beat's answered empty. (The per-family gate: a degraded OTHER family's
+// read never claims the jobs list.)
+// ---------------------------------------------------------------------------
+
+describe('O-1d (Round O register — the job-list empty-claim under failed reads): a failed read is not absence', () => {
+  /** M2's mid-bundle shape: a real desk, the jobs read unanswered, the connection DEGRADED (a read answered with a failure). */
+  function jobsReadFailed(status: 'degraded' | 'offline'): WorkspaceState {
+    return reduceAll(midReadWorkspace(), [
+      status === 'offline'
+        ? { kind: 'connection-changed', at: T0 + 30, status: 'offline' }
+        : { kind: 'degraded-read', at: T0 + 30, route: 'GET /v1/jobs', family: 'unavailable', message: 'the read degraded' },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+  }
+
+  it('the jobs read FAILED over a DEGRADED connection: the job list renders the failed-read vocabulary — never "No research jobs at this view instant." (M2: the empty claim rendered while the launch job stood on record)', () => {
+    const bytes = serializeConsoleModel(jobsReadFailed('degraded'), T0 + 50);
+    expect(bytes).toContain('data-read-failed="true"'); // the marker
+    expect(bytes).toContain('A read failed'); // the failed-read card's own title
+    expect(bytes).toContain('The research jobs read failed (the connection read degraded) — this is not the empty list it looks like: the research jobs on file render here the moment a read lands (Refresh re-reads).'); // RED pre-fix: no failed-read vocabulary on this surface
+    expect(bytes).not.toContain('No research jobs at this view instant.'); // the empty claim over a failed read, dead
+    expect(bytes).not.toContain('data-hydration-pending'); // never a pending marker over a failed read (the pre-existing law)
+  });
+
+  it('the UNREACHABLE shape names itself with the ErrorState\'s own sentence — "the console could not reach the API" (M2: DEGRADED then UNREACHABLE; the vocabulary is the repo\'s own, never invented)', () => {
+    const bytes = serializeConsoleModel(jobsReadFailed('offline'), T0 + 50);
+    expect(bytes).toContain('data-read-failed="true"');
+    expect(bytes).toContain('The research jobs read failed (the console could not reach the API)');
+    expect(bytes).not.toContain('No research jobs at this view instant.');
+  });
+
+  it('M2\'s own SETTLED shape (the FW-52-cont repair): the bundle ran to its end — reads-settled answered every family — with the jobs read FAILED on file; the failed-read card STANDS, never the empty claim (the answered markers alone cannot tell a failed read from the host\'s zero)', () => {
+    const settled = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'degraded-read', at: T0 + 3, route: 'GET /v1/jobs', family: 'unavailable', message: 'Neon answered 402: quota exceeded' }, // the boot bundle's jobs read failed (the marker sets)
+      { kind: 'connection-changed', at: T0 + 4, status: 'offline' }, // the J09 flip — UNREACHABLE with nothing known
+      { kind: 'reads-settled', at: T0 + 5 }, // the bundle's finally — every answered marker flips true (the settled wrinkle)
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+    const bytes = serializeConsoleModel(settled, T0 + 50);
+    expect(bytes).toContain('data-read-failed="true"'); // RED against the readAnswers-only gate: the settled marker hid the failure
+    expect(bytes).toContain('The research jobs read failed (the console could not reach the API)');
+    expect(bytes).not.toContain('No research jobs at this view instant.'); // M2's measured claim, dead in the settled shape too
+    expect(bytes).not.toContain('data-hydration-pending');
+  });
+
+  it('the healed-beat corner guard: an ANCIENT jobs failure never claims a recovered beat\'s ANSWERED EMPTY — the meta read\'s landing (connection-changed connected) clears the failed markers, so the honest empty claim renders over the later beat\'s failed OTHER reads', () => {
+    const healed = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'degraded-read', at: T0 + 3, route: 'GET /v1/jobs', family: 'unavailable', message: 'an ancient failure' }, // the marker sets (beat N)
+      { kind: 'connection-changed', at: T0 + 10, status: 'connected' }, // beat N+1's meta read lands — the bundle-start CLEAR
+      { kind: 'reads-settled', at: T0 + 20 }, // the recovered beat's jobs read answered (empty — only the settle marks it)
+      { kind: 'degraded-read', at: T0 + 30, route: 'GET /v1/organizations/:ref/status', family: 'unavailable', message: 'a later read failed' }, // the beat degrades again — NOT a jobs-route note
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+    const bytes = serializeConsoleModel(healed, T0 + 50);
+    expect(bytes).not.toContain('data-read-failed'); // the ancient failure never claims the answered empty
+    expect(bytes).toContain('No research jobs at this view instant.'); // the host's own answer — the honest terminal copy
+  });
+
+  it('the jobs read ANSWERED over a degraded connection renders the RECORDS themselves — a failed OTHER family read never claims the jobs list (the per-family gate)', () => {
+    const answered = midReadWorkspace([
+      { kind: 'degraded-read', at: T0 + 30, route: 'POST /v1/outcomes/query', family: 'unavailable', message: 'the read degraded' },
+      { kind: 'job-updated', at: T0 + 35, job: job() },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+    const bytes = serializeConsoleModel(answered, T0 + 50);
+    expect(bytes).not.toContain('data-read-failed'); // the jobs family answered — no failure claim on this surface
+    expect(bytes).toContain('data-row="job:job-1"'); // the record renders (the failed outcomes read carries its own disclosure elsewhere)
+    expect(bytes).not.toContain('No research jobs at this view instant.');
+  });
+
+  it('a SCRUBBED PAST view over a failed read keeps the honest durable copy (the boundary law — the failure state is about NOW, never a claim about the past)', () => {
+    const scrubbed = reduceAll(jobsReadFailed('degraded'), [
+      { kind: 'view-timestamp', at: T0 + 52, timestamp: T0 + 45 },
+    ]);
+    const bytes = serializeConsoleModel(scrubbed, T0 + 52);
+    expect(bytes).not.toContain('data-read-failed');
+    expect(bytes).toContain('No research jobs at this view instant.'); // the past view's honest empty state — unchanged
+  });
+
+  it('the launchpad keeps its teaching empty even over a failed connection (the desk law — no desk, no read, no failure claim)', () => {
+    const launchpad = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: '(launchpad)' }, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'offline' },
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+    const bytes = serializeConsoleModel(launchpad, T0 + 50);
+    expect(bytes).not.toContain('data-read-failed');
+    expect(bytes).toContain('No research jobs at this view instant.'); // the launchpad's honest teaching copy — unchanged
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O-1c (Round O register — the read-lag residual class, the COUNTER-ZEROS
+// first-cold-load class, S3 + L3): on the first cold load the four Home
+// summary tiles (ACTIVE JOBS / OUTCOMES / EVIDENCE CAPSULES / UNREAD
+// NOTICES) and the Inbox sidebar badge read hard 0s / "no unread notices"
+// for ~5-6s (S3) and >=6s (L3 — 8 consecutive 40ms samples) while the
+// reads were in flight and RECENT ACTIVITY correctly showed "Reading the
+// world…" — the numeric-counter variant FW-50's 13-surface fix did not
+// cover. THE LAW: a hard 0 is a durable claim to a 2h/week operator
+// (S3: "for an inbox-first operator the badge reading 'no unread
+// notices' during an in-flight read is the same fear class"; L3: "from
+// a compliance seat four zeroed counters read as the books standing
+// empty") — the counters teach the seek while their own backing reads
+// are in flight, the same FW-50 vocabulary the ORGANIZATION value and
+// Instances row already carry, and the honest numbers render only when
+// the reads have answered.
+// ---------------------------------------------------------------------------
+
+describe('O-1c (Round O register — the counter-zeros class): the counters teach the seek, never a hard 0 over an in-flight read', () => {
+  /** The slice of one stat card's serialized bytes (the tile's own truth, extracted by its data-stat key). */
+  function statCardOf(bytes: string, label: string): string {
+    const start = bytes.indexOf(`data-stat="${label}"`);
+    if (start === -1) throw new Error(`the ${label} tile does not render`);
+    return bytes.slice(start, start + 520);
+  }
+
+  it('mid-read, ALL FOUR Home tiles teach the seek — never a hard 0 value or a 0-total delta (S3/L3\'s first-cold-load window; RECENT ACTIVITY already taught the seek)', () => {
+    const mid = midReadWorkspace();
+    const bytes = serializeVNode(renderConsoleModel(mid, T0 + 50, { ...defaultShellView(mid), accountView: 'home' }));
+    for (const label of ['ACTIVE JOBS', 'OUTCOMES', 'EVIDENCE CAPSULES', 'UNREAD NOTICES']) {
+      const card = statCardOf(bytes, label);
+      expect(card, label).toContain('<div class="stat-value">Reading the world…</div>'); // RED pre-fix: <div class="stat-value">0</div>
+      expect(card, label).not.toContain('<div class="stat-value">0</div>'); // the hard 0 is a durable claim
+    }
+    expect(statCardOf(bytes, 'ACTIVE JOBS')).not.toContain('<div class="stat-delta">0 total</div>'); // the total rides the same read
+  });
+
+  it('the per-family granularity: the jobs read ANSWERED (one running job on record) resolves the ACTIVE JOBS tile to its honest count while the other tiles still teach the seek — the counters settle at their own reads, never in lockstep', () => {
+    const state = midReadWorkspace([{ kind: 'job-updated', at: T0 + 10, job: job() }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'home' }));
+    const active = statCardOf(bytes, 'ACTIVE JOBS');
+    expect(active).toContain('<div class="stat-value">1</div>'); // the read answered — the honest count
+    expect(active).toContain('<div class="stat-delta">1 total</div>');
+    expect(statCardOf(bytes, 'OUTCOMES')).toContain('<div class="stat-value">Reading the world…</div>'); // still in flight
+    expect(statCardOf(bytes, 'EVIDENCE CAPSULES')).toContain('<div class="stat-value">Reading the world…</div>'); // the fold's jobs lane answered, its outcomes lane has not
+    expect(statCardOf(bytes, 'UNREAD NOTICES')).toContain('<div class="stat-value">Reading the world…</div>');
+  });
+
+  it('reads-settled resolves EVERY tile to its honest number — zero is the read\'s answer, never a claim over an unanswered read', () => {
+    const settled = reduceAll(midReadWorkspace([{ kind: 'reads-settled', at: T0 + 20 }]), [{ kind: 'view-live', at: T0 + 51 }]);
+    const bytes = serializeVNode(renderConsoleModel(settled, T0 + 50, { ...defaultShellView(settled), accountView: 'home' }));
+    expect(statCardOf(bytes, 'ACTIVE JOBS')).toContain('<div class="stat-value">0</div>'); // the honest answers
+    expect(statCardOf(bytes, 'OUTCOMES')).toContain('<div class="stat-value">0</div>');
+    expect(statCardOf(bytes, 'EVIDENCE CAPSULES')).toContain('<div class="stat-value">0</div>');
+    expect(statCardOf(bytes, 'UNREAD NOTICES')).toContain('<div class="stat-value">0</div>');
+    expect(bytes).not.toContain('stat-value">Reading the world…'); // no lingering seek on the tiles
+  });
+
+  it('the Inbox sidebar badge mid-read teaches the seek — its aria-label NEVER claims "no unread notices" and its badge renders the reading marker, never an absent-by-zero face (S3\'s inbox-first operator fear)', () => {
+    const mid = midReadWorkspace();
+    const bytes = serializeVNode(renderConsoleModel(mid, T0 + 50, { ...defaultShellView(mid), accountView: 'home' }));
+    expect(bytes).toContain('aria-label="Inbox — reading the world…"'); // RED pre-fix: aria-label="Inbox — no unread notices"
+    expect(bytes).not.toContain('no unread notices'); // the durable claim, dead mid-read
+    expect(bytes).toContain('data-unread="reading"'); // the non-committal badge face
+    const settled = reduceAll(midReadWorkspace([{ kind: 'reads-settled', at: T0 + 20 }]), [{ kind: 'view-live', at: T0 + 51 }]);
+    const settledBytes = serializeVNode(renderConsoleModel(settled, T0 + 50, { ...defaultShellView(settled), accountView: 'home' }));
+    expect(settledBytes).toContain('aria-label="Inbox — no unread notices"'); // the reads answered — the honest label
+    expect(settledBytes).not.toContain('data-unread="reading"');
   });
 });
 
@@ -2010,5 +2321,65 @@ describe('FW-45: the research-note ingestion surface (the E-6 MVP — boundary-t
     // the hint names the two vocabularies honestly: what each MEANS in this deployment
     expect(bytes).toContain('research = the internal simulated researcher and your attached research notes');
     expect(bytes).toContain('external = accepted and stored as a declaration only — no external data is fetched in this deployment (no live feed exists)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O-3 (Round O register — the launch wizard's missing cancel affordance,
+// M3's finding + L2 corroborated): "the launch wizard has NO cancel/close
+// affordance at any step — the open draft follows every section and
+// survives reloads (disclosed as 'Draft restored from your last session';
+// the exit is missing)". M3 hunted ~90s on its deliberate probe draft; L2's
+// abandoned FW-51 probe draft persisted per the same disclosed law. THE
+// FIX: a CANCEL affordance at EVERY step — the two-step confirm (§4.11, the
+// repo's own destructive-action shape: the discard destroys typed work that
+// SURVIVES RELOADS — FW-40-B's law, "losing a half-filled launch wizard to
+// a reload is losing WORK, not state"), riding the closed ConfirmAction
+// vocabulary ('discard-draft' — 'Discard this draft?'; the arm button names
+// its own action, the question convention every confirm rides). The draft
+// PERSISTENCE stays untouched (the restored-draft law is honest); the exit
+// is the missing half. The discard itself (launch-reset — the state machine
+// AND the persisted copy, FW-42-B's atomic clear) + the landing on Home are
+// pinned end-to-end in app/console-interactions.test.ts.
+// ---------------------------------------------------------------------------
+
+describe('O-3 (Round O register — the launch wizard\'s cancel affordance): the exit exists at every step and names its own action', () => {
+  /** The wizard open at one step (a committed draft — the restored-persistence class M3 measured). */
+  function wizardAtStep(step: 'goal' | 'budget' | 'markets' | 'world' | 'review'): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'launch-draft-started', at: T0 + 1, draft: blankDraftOfD11() },
+      { kind: 'launch-step-changed', at: T0 + 2, step },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  it('EVERY step carries the discard affordance — the two-step arm, labeled with its own question (M3: "No Cancel/close at any step")', () => {
+    for (const step of ['goal', 'budget', 'markets', 'world', 'review'] as const) {
+      const bytes = serializeConsoleModel(wizardAtStep(step), T0 + 60);
+      expect(bytes, step).toContain('data-action="confirm-arm-discard-draft"'); // RED pre-fix: the exit does not exist
+      expect(bytes, step).toContain('Discard this draft?'); // the arm names its own action (the §4.11 question convention)
+    }
+  });
+
+  it('the armed shape is the §4.11 inline confirm — the question + [Cancel] [Confirm], never a bare confirm()', () => {
+    const state = wizardAtStep('budget');
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), confirm: 'discard-draft' }));
+    expect(bytes).toContain('Are you sure? Discard this draft?');
+    expect(bytes).toContain('data-action="confirm-cancel-discard-draft"'); // the disarm — the draft stands
+    expect(bytes).toContain('data-action="confirm-discard-draft"'); // the confirm — the discard
+  });
+
+  it('the exit co-exists with the review step\'s OWN confirm (the launch arm and the discard arm — one armed slot, two clearly-named questions)', () => {
+    const bytes = serializeConsoleModel(wizardAtStep('review'), T0 + 60);
+    expect(bytes).toContain('data-launch-step="review"');
+    expect(bytes).toContain('data-review="launch"'); // the review summary
+    expect(bytes).toContain('data-action="confirm-arm-launch"'); // the launch confirm
+    expect(bytes).toContain('data-action="confirm-arm-discard-draft"'); // the exit beside it
+  });
+
+  it('the wizard is the only surface that carries the discard arm — a workspace with NO open draft renders no exit (never a dead affordance)', () => {
+    const bytes = serializeConsoleModel(openWorkspace(SCOPE, T0), T0 + 60);
+    expect(bytes).not.toContain('discard-draft');
+    expect(bytes).toContain('data-launch-idle="true"'); // the idle launch panel — its single START action
   });
 });
