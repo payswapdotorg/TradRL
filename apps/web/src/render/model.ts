@@ -52,7 +52,7 @@ import {
 import type { SectionId } from '../core/sections';
 import { scopedInbox, unreadCountAt, type InboxState } from '../core/notices';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs, type EvidenceCapsule } from '../core/evidence';
-import { viewAtOf, watchEventsOf, historyFloorOf, hydrationReadPendingOf, noticesReadPendingAtView, readPendingAtView, type WorkspaceState } from '../core/workspace';
+import { viewAtOf, watchEventsOf, historyFloorOf, hydrationReadPendingOf, noticesReadPendingAtView, readPendingAtView, readFailedAtView, type WorkspaceState } from '../core/workspace';
 import { parseInstantUtc } from '../core/format';
 import { standingReadFoldOf, type StandingRow } from '../core/standing';
 import { playbackProgressOf, type TimeMachineState } from '../core/timemachine';
@@ -989,6 +989,29 @@ function hydrationPendingCard(noun: string, verb: 'appears' | 'appear' = 'appear
 }
 
 /**
+ * O-1d (Round O register — the job-list empty-claim under FAILED reads,
+ * M2): the FAILED-read card — the counterpart of hydrationPendingCard
+ * for the reads that answered with a failure. A failed read is not
+ * absence (M2: "the harder cousin of the FW-50 law — the empty-state
+ * copy is legal only when the data is truly absent; a failed read is
+ * not absence") — the surface that folds the family teaches the
+ * failure + the way back, never the durable empty claim (the
+ * CONNECTION panel discloses the failed route + message). THE
+ * VOCABULARY IS THE REPO'S OWN: 'the console could not reach the API'
+ * is the ErrorState's own sentence (J9's surface), 'the connection
+ * read degraded' + 'Refresh re-reads' + the on-file phrasing are the
+ * N-3 degraded-export note's own words — never invented for this card
+ * (the O-2 law: the verb agrees with the noun, 'render' for the plural
+ * subjects).
+ */
+function readFailedCard(noun: string, offline: boolean, verb: 'render' | 'renders' = 'render'): VNode {
+  return v('div', { class: 'card', 'data-read-failed': 'true' }, [
+    v('div', { class: 'card-title' }, ['A read failed']),
+    v('p', { class: 'card-note' }, [`The ${noun} read failed (${offline ? 'the console could not reach the API' : 'the connection read degraded'}) — this is not the empty list it looks like: the ${noun} on file ${verb} here the moment a read lands (Refresh re-reads).`]),
+  ]);
+}
+
+/**
  * N-1 (Round N register — the read-lag class): ONE family's inline pending
  * line (the FW-41-C 'Reading the world…' vocabulary + the marker, the
  * hydrationPendingCard's own words in a single-line shape) — replaces a
@@ -1775,9 +1798,15 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         ...(projected.length === 0
           // N-1: the jobs read in flight (M1's job list ~10s) — the FW-41-C
           // pending card, never the durable teaching copy over an
-          // unanswered read (the honest-copy law).
+          // unanswered read (the honest-copy law). O-1d (M2: the empty
+          // claim rendered over a FAILED read — DEGRADED/UNREACHABLE — while
+          // the launch job stood on record): a failed read is not absence —
+          // the failed-read card teaches the failure + the way back, and
+          // the teaching empty renders only over an ANSWERED read.
           ? [readPendingAtView(state, viewAt, 'jobs')
               ? hydrationPendingCard('research jobs', 'appear')
+              : readFailedAtView(state, viewAt, 'jobs')
+              ? readFailedCard('research jobs', state.connection === 'offline')
               : submitCard === null
               ? sectionEmpty('research')
               // The affordance changes what the teaching sentence must

@@ -1901,15 +1901,12 @@ describe('N-1 (Round N register — the read-lag class): "Reading the world…" 
     expect(bytes).toContain('No research jobs at this view instant.'); // the past view's honest empty state — unchanged
   });
 
-  it('the boundary law: a DEGRADED connection keeps the honest durable copy (the degraded class carries its own disclosure — the CONNECTION panel — never a pending marker over reads that answered with a failure)', () => {
-    const degraded = reduceAll(midReadWorkspace(), [
-      { kind: 'degraded-read', at: T0 + 30, route: 'GET /v1/jobs', family: 'unavailable', message: 'the read degraded' },
-      { kind: 'section-selected', at: T0 + 51, section: 'research' },
-    ]);
-    const bytes = serializeConsoleModel(degraded, T0 + 50);
-    expect(bytes).not.toContain('data-hydration-pending');
-    expect(bytes).toContain('No research jobs at this view instant.'); // the degraded state's own honest copy (the pre-existing law, unchanged)
-  });
+  // (The pre-O-1d degraded boundary test — "a DEGRADED connection keeps
+  // the honest durable copy" — pinned M2's defect as the law: a degraded
+  // read with the jobs family UNANSWERED rendered "No research jobs at
+  // this view instant." over a FAILED read. The Round O register
+  // ratified the inversion (O-1d: "a failed read is not absence"); the
+  // degraded shapes now live in the O-1d suite below, per family.)
 });
 
 // ---------------------------------------------------------------------------
@@ -2021,15 +2018,130 @@ describe('O-1b (Round O register — the first-frame flash class): the loading v
     expect(bytes).not.toContain('data-hydration-pending');
   });
 
-  it('the OFFLINE boundary (the failed-read class): an unreachable API keeps the honest durable copy — a failed read is not a seek, and carries its own disclosure (the CONNECTION panel)', () => {
+  it('the OFFLINE boundary (the failed-read class): an unreachable API with the jobs read unanswered renders the FAILED-READ card — never a pending marker, never the bare empty claim (the O-1d law, below)', () => {
     const offline = reduceAll(openWorkspace(SCOPE, T0), [
       { kind: 'connection-changed', at: T0 + 1, status: 'offline' },
       { kind: 'view-live', at: T0 + 50 },
       { kind: 'section-selected', at: T0 + 51, section: 'research' },
     ]);
     const bytes = serializeConsoleModel(offline, T0 + 50);
+    expect(bytes).not.toContain('data-hydration-pending'); // the offline law unchanged: no pending marker over a failed read
+    expect(bytes).toContain('data-read-failed="true"'); // the O-1d failed-read vocabulary (the suite below owns the detail)
+    expect(bytes).not.toContain('No research jobs at this view instant.'); // the bare empty claim over a failed read, dead
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O-1d (Round O register — the read-lag residual class, the job-list
+// empty-claim under FAILED reads, M2): at 07:58-07:59 with the connection
+// DEGRADED then UNREACHABLE (the Neon 402 window), the Research job list
+// rendered "No research jobs at this view instant." while the launch job
+// stood on record — NO loading/unreachable vocabulary on that surface when
+// the read FAILS rather than lags. THE LAW (M2's own words): "the harder
+// cousin of the FW-50 law — the empty-state copy is legal only when the
+// data is truly absent; a failed read is not absence" — the job list
+// renders its FAILED-READ vocabulary while the jobs read is unanswered OR
+// FAILED over a DEGRADED/UNREACHABLE connection at the LIVE view; the
+// teaching empty renders only over an ANSWERED read. THE SETTLED WRINKLE
+// (the FW-52-cont repair): the console's refresh() ALWAYS dispatches
+// reads-settled in its finally — every family's answered marker flips
+// true at the bundle's end even when the read degraded-with-its-own-note
+// — so a gate reading the answered markers alone MISSES M2's own measured
+// shape (the settled-degraded state, minutes into the 402 window); the
+// state's per-family FAILED markers (workspace.ts readFailed — set by a
+// degraded-read note on the family's own route, cleared by the next
+// bundle's meta-read landing) carry that half, and the healed-beat guard
+// below pins the corner: an ANCIENT failure never claims a recovered
+// beat's answered empty. (The per-family gate: a degraded OTHER family's
+// read never claims the jobs list.)
+// ---------------------------------------------------------------------------
+
+describe('O-1d (Round O register — the job-list empty-claim under failed reads): a failed read is not absence', () => {
+  /** M2's mid-bundle shape: a real desk, the jobs read unanswered, the connection DEGRADED (a read answered with a failure). */
+  function jobsReadFailed(status: 'degraded' | 'offline'): WorkspaceState {
+    return reduceAll(midReadWorkspace(), [
+      status === 'offline'
+        ? { kind: 'connection-changed', at: T0 + 30, status: 'offline' }
+        : { kind: 'degraded-read', at: T0 + 30, route: 'GET /v1/jobs', family: 'unavailable', message: 'the read degraded' },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+  }
+
+  it('the jobs read FAILED over a DEGRADED connection: the job list renders the failed-read vocabulary — never "No research jobs at this view instant." (M2: the empty claim rendered while the launch job stood on record)', () => {
+    const bytes = serializeConsoleModel(jobsReadFailed('degraded'), T0 + 50);
+    expect(bytes).toContain('data-read-failed="true"'); // the marker
+    expect(bytes).toContain('A read failed'); // the failed-read card's own title
+    expect(bytes).toContain('The research jobs read failed (the connection read degraded) — this is not the empty list it looks like: the research jobs on file render here the moment a read lands (Refresh re-reads).'); // RED pre-fix: no failed-read vocabulary on this surface
+    expect(bytes).not.toContain('No research jobs at this view instant.'); // the empty claim over a failed read, dead
+    expect(bytes).not.toContain('data-hydration-pending'); // never a pending marker over a failed read (the pre-existing law)
+  });
+
+  it('the UNREACHABLE shape names itself with the ErrorState\'s own sentence — "the console could not reach the API" (M2: DEGRADED then UNREACHABLE; the vocabulary is the repo\'s own, never invented)', () => {
+    const bytes = serializeConsoleModel(jobsReadFailed('offline'), T0 + 50);
+    expect(bytes).toContain('data-read-failed="true"');
+    expect(bytes).toContain('The research jobs read failed (the console could not reach the API)');
+    expect(bytes).not.toContain('No research jobs at this view instant.');
+  });
+
+  it('M2\'s own SETTLED shape (the FW-52-cont repair): the bundle ran to its end — reads-settled answered every family — with the jobs read FAILED on file; the failed-read card STANDS, never the empty claim (the answered markers alone cannot tell a failed read from the host\'s zero)', () => {
+    const settled = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'degraded-read', at: T0 + 3, route: 'GET /v1/jobs', family: 'unavailable', message: 'Neon answered 402: quota exceeded' }, // the boot bundle's jobs read failed (the marker sets)
+      { kind: 'connection-changed', at: T0 + 4, status: 'offline' }, // the J09 flip — UNREACHABLE with nothing known
+      { kind: 'reads-settled', at: T0 + 5 }, // the bundle's finally — every answered marker flips true (the settled wrinkle)
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+    const bytes = serializeConsoleModel(settled, T0 + 50);
+    expect(bytes).toContain('data-read-failed="true"'); // RED against the readAnswers-only gate: the settled marker hid the failure
+    expect(bytes).toContain('The research jobs read failed (the console could not reach the API)');
+    expect(bytes).not.toContain('No research jobs at this view instant.'); // M2's measured claim, dead in the settled shape too
     expect(bytes).not.toContain('data-hydration-pending');
-    expect(bytes).toContain('No research jobs at this view instant.'); // the pre-existing offline law, unchanged
+  });
+
+  it('the healed-beat corner guard: an ANCIENT jobs failure never claims a recovered beat\'s ANSWERED EMPTY — the meta read\'s landing (connection-changed connected) clears the failed markers, so the honest empty claim renders over the later beat\'s failed OTHER reads', () => {
+    const healed = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'degraded-read', at: T0 + 3, route: 'GET /v1/jobs', family: 'unavailable', message: 'an ancient failure' }, // the marker sets (beat N)
+      { kind: 'connection-changed', at: T0 + 10, status: 'connected' }, // beat N+1's meta read lands — the bundle-start CLEAR
+      { kind: 'reads-settled', at: T0 + 20 }, // the recovered beat's jobs read answered (empty — only the settle marks it)
+      { kind: 'degraded-read', at: T0 + 30, route: 'GET /v1/organizations/:ref/status', family: 'unavailable', message: 'a later read failed' }, // the beat degrades again — NOT a jobs-route note
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+    const bytes = serializeConsoleModel(healed, T0 + 50);
+    expect(bytes).not.toContain('data-read-failed'); // the ancient failure never claims the answered empty
+    expect(bytes).toContain('No research jobs at this view instant.'); // the host's own answer — the honest terminal copy
+  });
+
+  it('the jobs read ANSWERED over a degraded connection renders the RECORDS themselves — a failed OTHER family read never claims the jobs list (the per-family gate)', () => {
+    const answered = midReadWorkspace([
+      { kind: 'degraded-read', at: T0 + 30, route: 'POST /v1/outcomes/query', family: 'unavailable', message: 'the read degraded' },
+      { kind: 'job-updated', at: T0 + 35, job: job() },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+    const bytes = serializeConsoleModel(answered, T0 + 50);
+    expect(bytes).not.toContain('data-read-failed'); // the jobs family answered — no failure claim on this surface
+    expect(bytes).toContain('data-row="job:job-1"'); // the record renders (the failed outcomes read carries its own disclosure elsewhere)
+    expect(bytes).not.toContain('No research jobs at this view instant.');
+  });
+
+  it('a SCRUBBED PAST view over a failed read keeps the honest durable copy (the boundary law — the failure state is about NOW, never a claim about the past)', () => {
+    const scrubbed = reduceAll(jobsReadFailed('degraded'), [
+      { kind: 'view-timestamp', at: T0 + 52, timestamp: T0 + 45 },
+    ]);
+    const bytes = serializeConsoleModel(scrubbed, T0 + 52);
+    expect(bytes).not.toContain('data-read-failed');
+    expect(bytes).toContain('No research jobs at this view instant.'); // the past view's honest empty state — unchanged
+  });
+
+  it('the launchpad keeps its teaching empty even over a failed connection (the desk law — no desk, no read, no failure claim)', () => {
+    const launchpad = reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: '(launchpad)' }, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'offline' },
+      { kind: 'view-live', at: T0 + 50 },
+      { kind: 'section-selected', at: T0 + 51, section: 'research' },
+    ]);
+    const bytes = serializeConsoleModel(launchpad, T0 + 50);
+    expect(bytes).not.toContain('data-read-failed');
+    expect(bytes).toContain('No research jobs at this view instant.'); // the launchpad's honest teaching copy — unchanged
   });
 });
 

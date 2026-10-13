@@ -170,6 +170,48 @@ const READS_UNANSWERED: ReadAnswers = Object.freeze({ project: false, goalBundle
 /** N-1: the settled shape (the bundle ran to its end — every family answered). */
 const READS_SETTLED: ReadAnswers = Object.freeze({ project: true, goalBundle: true, knowledge: true, outcomes: true, postMortems: true, submissions: true, jobs: true, riskUtilization: true });
 
+/**
+ * O-1d (Round O register — the job-list empty-claim under FAILED reads,
+ * M2): the per-family FAILED markers — the readAnswers fold's failure
+ * twin. reads-settled answers EVERY family "yes" at the bundle's end
+ * (landed, landed empty, OR degraded-with-its-own-note — the N-1 law),
+ * so the answered markers CANNOT tell M2's shape (the jobs read failed;
+ * the empty list is a failed read, not the host's answer) from the
+ * honest empty (the read ran and the host answered zero). These markers
+ * carry that half: a degraded-read note on one of the family's OWN
+ * routes (READ_FAMILY_ROUTES — the same route/family table the export's
+ * N-3 degraded disclosure names routes by) sets the family's marker; a
+ * connection-changed 'connected' clears every marker (the console's
+ * refresh() runs the meta read FIRST — its landing is each bundle's
+ * start, and the bundle re-reads every family, so an ANCIENT failure
+ * never claims a current beat's answered empty); a scope move
+ * (project-adopted) resets them with the answered markers. THE HONEST
+ * LIMIT (stated, never papered over): a beat whose meta read fails
+ * while its jobs read succeeds empty cannot re-open the bundle-start
+ * clear — a stale marker from a prior beat survives it (a corner of
+ * corners: it needs a jobs-failing beat followed by a meta-failing
+ * jobs-succeeding beat; the marker then over-claims one beat's stale
+ * failure over an answered empty).
+ */
+const READ_FAMILY_ROUTES: Readonly<Record<ReadFamily, readonly string[]>> = Object.freeze({
+  project: ['GET /v1/projects/:id'],
+  goalBundle: [], // the goal route is host-owned demo-backing-only — it degrades SILENTLY (no note ever lands for it)
+  knowledge: ['POST /v1/knowledge/query'],
+  outcomes: ['POST /v1/outcomes/query'],
+  postMortems: ['POST /v1/post-mortems/query'],
+  submissions: ['GET /v1/execution/submissions'],
+  jobs: ['GET /v1/jobs', 'GET /v1/jobs/:id'],
+  riskUtilization: [], // the standing read is host-owned — it degrades silently too (its own teaching note is the surface)
+});
+
+/** O-1d: the reverse index (route -> the family whose read failed) — the write routes (POST /v1/jobs/:id/promote) feed no family. */
+const FAILED_FAMILY_OF_ROUTE: Readonly<Record<string, ReadFamily>> = Object.freeze(
+  Object.fromEntries(Object.entries(READ_FAMILY_ROUTES).flatMap(([family, routes]) => routes.map((route) => [route, family]))) as Readonly<Record<string, ReadFamily>>,
+);
+
+/** O-1d: the not-failed shape (no read has failed on file — the fresh-session and post-recovery shapes). */
+const READS_NOT_FAILED: ReadAnswers = READS_UNANSWERED;
+
 /** THE WORKSPACE STATE — one tenant/project scope, the twelve sections' data, the Time Machine, the inbox, the launch flow, the chain. */
 export interface WorkspaceState {
   readonly scope: WorkspaceScope;
@@ -238,6 +280,15 @@ export interface WorkspaceState {
    * never the durable empty-state copy over an in-flight read.
    */
   readonly readAnswers: ReadAnswers;
+  /**
+   * O-1d (the job-list empty-claim under FAILED reads, M2): the
+   * per-family FAILED markers — readAnswers' failure twin (see its
+   * own note at READ_FAMILY_ROUTES). The render teaches the failed-read
+   * vocabulary at the LIVE view while a family's read failed or has
+   * not answered over a failed connection, never the durable
+   * empty-state copy over a read that did not answer.
+   */
+  readonly readFailed: ReadAnswers;
   /** The tenant's project directory (R6c, W-22): every project the credential can read — the scope switcher's list. Cross-project by design (the workspace stays ONE project's world; this is the directory you may switch that world to). */
   readonly projectDirectory: readonly ProjectRecord[];
   /**
@@ -283,6 +334,7 @@ export function openWorkspace(scope: WorkspaceScope, at: number): WorkspaceState
     submissions: [],
     riskUtilization: null,
     readAnswers: READS_UNANSWERED,
+    readFailed: READS_NOT_FAILED,
     projectDirectory: [],
     oversight: [],
     timeMachine: liveTimeMachine(at),
@@ -472,7 +524,15 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
   const withHistory: WorkspaceState = { ...state, history: linkHistory(state, event) };
   const selector = event.kind;
   if (selector === 'connection-changed') {
-      return { ...withHistory, connection: event.status };
+      // O-1d (the job-list empty-claim under FAILED reads, M2): the meta
+      // read's landing is each bundle's START (the console's refresh() runs
+      // it first) — a recovered connection re-reads every family, so the
+      // per-family FAILED markers clear with it (an ancient failure never
+      // claims the recovered beat's answered empty; the degraded notes on
+      // file stay — the CONNECTION panel keeps its own history).
+      return event.status === 'connected'
+        ? { ...withHistory, connection: event.status, readFailed: READS_NOT_FAILED }
+        : { ...withHistory, connection: event.status };
 
   } else if (selector === 'project-adopted') {
       // The launch flow's bridge: the workspace ADOPTS the created
@@ -512,6 +572,9 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
         // scope's reads start unanswered (the settling flash never crosses
         // desks; the console's beat re-runs the bundle for the adopted scope).
         readAnswers: READS_UNANSWERED,
+        // O-1d: the scope move resets the failed markers with them (the
+        // old scope's failed read never claims the adopted scope's list).
+        readFailed: READS_NOT_FAILED,
       };
       return { ...superseded, scope: { tenantId: state.scope.tenantId, projectId: event.projectId } };
   } else if (selector === 'project-loaded') {
@@ -810,7 +873,17 @@ export function reduceWorkspace(state: WorkspaceState, event: WorkspaceEvent): W
 
   } else if (selector === 'degraded-read') {
       const notes = [...withHistory.degraded, { route: event.route, family: event.family, message: event.message, at: event.at }];
-      return { ...withHistory, degraded: Object.freeze(notes.slice(-DEGRADED_RETENTION)), connection: 'degraded' };
+      // O-1d (the job-list empty-claim under FAILED reads, M2): a note on
+      // one of a family's OWN routes (READ_FAMILY_ROUTES) marks THAT
+      // family's read failed — the answered markers cannot carry it
+      // (reads-settled answers every family at the bundle's end, landed OR
+      // degraded-with-its-own-note), so the failure marker is the state's
+      // own record of which reads did not answer. A note on any other
+      // route (the meta read, the directory listing, a write action) marks
+      // no family: the connection degrades, no list is claimed.
+      const failedFamily = FAILED_FAMILY_OF_ROUTE[event.route];
+      const readFailed = failedFamily === undefined ? withHistory.readFailed : { ...withHistory.readFailed, [failedFamily]: true };
+      return { ...withHistory, degraded: Object.freeze(notes.slice(-DEGRADED_RETENTION)), connection: 'degraded', readFailed };
   } else if (selector === 'launch-draft-started') {
       // FW-37-B (Round F register F-5 — the post-switch launch no-op,
       // 5/9 personas): a NEW draft is a FRESH flow. The pre-fix arm kept
@@ -1752,6 +1825,42 @@ export function readPendingAtView(state: WorkspaceState, viewAt: number, family:
 /** N-1: the notices surfaces' LIVE-edge composition (see readPendingAtView). */
 export function noticesReadPendingAtView(state: WorkspaceState, viewAt: number): boolean {
   return viewAt >= state.timeMachine.anchorAt && noticesReadPendingOf(state);
+}
+
+/**
+ * O-1d (Round O register — the job-list empty-claim under FAILED reads,
+ * M2): ONE family's FAILED fold — true while the connection is
+ * DEGRADED/UNREACHABLE (a read answered with a failure — its own
+ * disclosure class, the CONNECTION panel: route + message) AND EITHER
+ * that family's read has not answered OR its per-family FAILED marker
+ * is set (a degraded-read note on one of its own routes — the marker
+ * survives reads-settled, which answers every family at the bundle's
+ * end "landed OR degraded-with-its-own-note": M2's measured shape was
+ * the SETTLED one, the boot bundle's finally dispatching reads-settled
+ * with the launch job standing on record server-side and the list
+ * empty), for a real desk (the launchpad law of readPendingOf: no desk,
+ * no read, no failure claim). A failed read is not absence (M2: "the
+ * harder cousin of the FW-50 law — the empty-state copy is legal only
+ * when the data is truly absent; a failed read is not absence") — the
+ * surfaces that fold the family render their failed-read vocabulary
+ * over it, never the durable empty-state claim (M2: the Research job
+ * list rendered "No research jobs at this view instant." while the
+ * launch job stood on record).
+ */
+export function readFailedOf(state: WorkspaceState, family: ReadFamily): boolean {
+  if (state.connection !== 'degraded' && state.connection !== 'offline') return false;
+  if (state.project !== null) return state.readFailed[family] || !state.readAnswers[family];
+  if (isLaunchpadScope(state.scope.projectId)) return false;
+  return state.readFailed[family] || !state.readAnswers[family];
+}
+
+/**
+ * O-1d: the LIVE-edge composition of the failed fold (the
+ * readPendingAtView law — the failure state is about NOW's seek, never
+ * a claim about a scrubbed past).
+ */
+export function readFailedAtView(state: WorkspaceState, viewAt: number, family: ReadFamily): boolean {
+  return viewAt >= state.timeMachine.anchorAt && readFailedOf(state, family);
 }
 
 /**
