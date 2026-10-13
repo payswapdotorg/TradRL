@@ -2231,6 +2231,11 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
   if (draftActive && launch.draft !== null) {
     const draft = launch.draft;
     const armed = view.confirm === 'launch';
+    // O-3 (Round O register — the launch wizard's missing cancel affordance,
+    // M3 + L2): the discard confirm's own armed slot (the single confirm
+    // slot is exclusive — arming the exit disarms the launch confirm and
+    // back, one armed question at a time).
+    const discardArmed = view.confirm === 'discard-draft';
     const touched = view.touchedFields;
     // THE J3 WIRING: the rendered field values are the MERGED live
     // form (the draft's committed values + the app layer's pending
@@ -2358,6 +2363,19 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
           v('button', { class: 'tm-button', id: 'launch-next', style: 'pointer-events:auto', 'data-action': `launch-step-${nextStepOf(launch.step)}`, type: 'button' }, [`Next: ${nextStepOf(launch.step)}`]),
           v('button', { class: 'tm-button', id: 'launch-review-button', style: 'pointer-events:auto', 'data-action': 'launch-step-review', type: 'button' }, ['Review']),
         ])]),
+      // O-3 (Round O register — the launch wizard's missing cancel
+      // affordance, M3's finding + L2 corroborated): THE EXIT — every
+      // step carries it, the same place in the card (the bottom row),
+      // riding the two-step confirm (§4.11): the discard destroys typed
+      // work that SURVIVES RELOADS (FW-40-B: "losing a half-filled launch
+      // wizard to a reload is losing WORK, not state"), so one click is
+      // never enough — the arm names its own question, the armed row
+      // carries [Cancel] [Confirm], and the draft's PERSISTENCE law is
+      // untouched (the restored-draft disclosure stays honest; the exit is
+      // the missing half). The confirm itself (launch-reset — the machine
+      // AND the persisted copy, FW-42-B's atomic clear — and the landing
+      // on Home) lives in the console's confirm-discard-draft branch.
+      twoStepConfirm('discard-draft', discardArmed),
     ]));
   }
   if (launch.draft !== null && !draftActive) {

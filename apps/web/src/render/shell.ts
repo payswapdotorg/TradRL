@@ -26,7 +26,7 @@ import { NAV_GROUPS, SHELL_SUBTITLES, SHELL_TITLES, isSectionTarget, type ShellT
 import { DEMO_PROJECT_ID, isDemoProject, isLaunchpadScope, sessionOwnDesksOf as sessionOwnDesksOfDirectory, otherSessionsDesksOf as otherSessionsDesksOfDirectory } from '../core/tenant';
 import { formatInstantUtc } from '../core/format';
 import type { PlaybackSpeedKey } from '../core/timemachine';
-import { notificationBell, toastRecord } from './flow';
+import { notificationBell, toastRecord, type ConfirmAction } from './flow';
 import { paletteAffordance, paletteOverlay, fuzzyScore } from '../core/palette';
 import { onboardingPanel, onboardingReopenAffordance, type OnboardingState } from '../core/onboarding';
 import { accountPanelOf, accountSettingsBody, rememberedScopeCopy, switcherListScopeCopy } from './account';
@@ -55,8 +55,8 @@ export interface ShellView {
   readonly onboarding: OnboardingState | null;
   /** The newest notice to toast (§4.10; the app layer owns the ~5s timer). */
   readonly toast: { readonly kind: string; readonly title: string; readonly sentence: string } | null;
-  /** The armed two-step confirm (§4.11): 'launch' when the launch confirm is armed. */
-  readonly confirm: 'launch' | null;
+  /** The armed two-step confirm (§4.11, the ConfirmAction vocabulary): 'launch' (the launch confirm) or 'discard-draft' (O-3 — the wizard's exit). */
+  readonly confirm: ConfirmAction | null;
   /** The launch form's touched field names (§4.11 — inline validation renders only after blur). */
   readonly touchedFields: readonly string[];
   /** The launch form's PENDING edits (the J3 wiring): field -> the last typed string, not yet committed into the state machine — the render merges them so a re-render never reverts the user's text. */

@@ -64,7 +64,7 @@ import {
   skipOnboarding,
   type OnboardingState,
 } from '../core/onboarding';
-import { noticeCopyOf } from '../render/flow';
+import { confirmActionOf, noticeCopyOf } from '../render/flow';
 import { alertFormErrorOf } from '../render/market';
 import { capsuleFromKnowledge, capsuleFromOutcome, capsuleFromPostMortem, capsuleFromSubmission, capsulesFromJobs } from '../core/evidence';
 import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOutcome, availabilityOfPostMortem, availabilityOfSubmission, projectToView } from '../core/availability';
@@ -2400,11 +2400,30 @@ export function bootConsole(options: ConsoleBootOptions): ConsoleHandle {
           dispatch({ kind: 'launch-reset', at: instants.nowMs() }); // renders via onState
           view = { ...view, confirm: null, touchedFields: [], launchEdits: {}, openCapsule: view.openCapsule };
         }
-        if (kind === 'confirm-arm-launch') {
-          view = { ...view, confirm: 'launch' };
+        // O-3 (Round O register — the launch wizard's missing cancel
+        // affordance, M3's finding + L2 corroborated): THE WIZARD'S EXIT.
+        // The discard rides the SAME machine reset the error card's Start
+        // over owns (launch-reset — the draft AND its persisted copy die
+        // together, the plane's afterReduce clear riding FW-42-B's atomic
+        // seam), and the landing is the onboarding-completion precedent:
+        // the view moves to Home, the focus lands on the content, never
+        // BODY (FW-35-B). The view is set BEFORE the dispatch so the
+        // reset's own onState render already carries the landing — the
+        // exit never dead-ends on the section it was opened from (the
+        // WIP's defect, repaired at takeover).
+        if (kind === 'confirm-discard-draft') {
+          view = { ...view, confirm: null, touchedFields: [], launchEdits: {}, openCapsule: view.openCapsule, accountView: 'home' };
+          dispatch({ kind: 'launch-reset', at: instants.nowMs() }); // renders via onState (the view already carries the Home landing)
+          focusMainContent();
+        }
+        // O-3: the arm/disarm parse the ConfirmAction vocabulary at the
+        // seam (confirmActionOf — an unknown suffix disarms, never arms:
+        // the closed vocabulary stays closed at the parse boundary).
+        if (kind !== null && kind.startsWith('confirm-arm-')) {
+          view = { ...view, confirm: confirmActionOf(kind.slice('confirm-arm-'.length)) };
           render();
         }
-        if (kind === 'confirm-cancel-launch') {
+        if (kind !== null && kind.startsWith('confirm-cancel-')) {
           view = { ...view, confirm: null };
           render();
         }
