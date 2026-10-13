@@ -1152,11 +1152,27 @@ function homePanel(state: WorkspaceState, viewAt: number, view: ShellView): VNod
   const unread = unreadCountAt(scopedNotices, viewAt);
   const running = jobs.filter((job) => job.status === 'running').length;
   const snapshot = snapshots.length > 0 ? snapshots[0] : null;
+  // O-1c (Round O register — the counter-zeros first-cold-load class,
+  // S3 + L3): a hard 0 is a durable claim to a 2h/week operator ("from
+  // a compliance seat four zeroed counters read as the books standing
+  // empty") — while a tile's own backing reads are in flight at the
+  // LIVE view the tile teaches the seek, the SAME 'Reading the world…'
+  // the ORGANIZATION value and Instances row already carry (the FW-50
+  // vocabulary, extended to the numeric counters); the honest numbers
+  // render only when the reads have answered, per family — never in
+  // lockstep. The EVIDENCE CAPSULES tile rides the ONE evidence fold,
+  // so its gate is the fold's own five backing families (outcomes,
+  // post-mortems, knowledge, submissions, jobs — the same lanes
+  // evidenceCapsulesOf projects).
+  const jobsReadPending = readPendingAtView(state, viewAt, 'jobs');
+  const outcomesReadPending = readPendingAtView(state, viewAt, 'outcomes');
+  const capsulesReadPending = (['outcomes', 'postMortems', 'knowledge', 'submissions', 'jobs'] as const).some((family) => readPendingAtView(state, viewAt, family));
+  const noticesReadPending = noticesReadPendingAtView(state, viewAt);
   const tiles = statGrid([
-    statCard({ icon: 'pulse', label: 'ACTIVE JOBS', value: String(running), delta: `${jobs.length} total` }),
-    statCard({ icon: 'chart', label: 'OUTCOMES', value: String(outcomes.length) }),
-    statCard({ icon: 'box', label: 'EVIDENCE CAPSULES', value: String(capsuleCount) }),
-    statCard({ icon: 'inbox', label: 'UNREAD NOTICES', value: String(unread), ok: unread === 0 }),
+    statCard({ icon: 'pulse', label: 'ACTIVE JOBS', value: jobsReadPending ? 'Reading the world…' : String(running), ...(jobsReadPending ? {} : { delta: `${jobs.length} total` }) }),
+    statCard({ icon: 'chart', label: 'OUTCOMES', value: outcomesReadPending ? 'Reading the world…' : String(outcomes.length) }),
+    statCard({ icon: 'box', label: 'EVIDENCE CAPSULES', value: capsulesReadPending ? 'Reading the world…' : String(capsuleCount) }),
+    statCard({ icon: 'inbox', label: 'UNREAD NOTICES', value: noticesReadPending ? 'Reading the world…' : String(unread), ...(noticesReadPending ? {} : { ok: unread === 0 }) }),
   ]);
   const organization = richStatCard({
     eyebrow: 'ORGANIZATION',

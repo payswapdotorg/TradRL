@@ -527,19 +527,31 @@ export const NOTICE_SENTENCES: Readonly<Record<NoticeKind, string>> = Object.fre
  * badge and the aria-label names the source ("the shared demo project").
  * The sidebar's own environment badge ("SIMULATED · demo data") is the
  * established pattern this extends — the chip uses the same warn tokens.
+ *
+ * O-1c (Round O register — the counter-zeros first-cold-load class, S3 +
+ * L3): `unread: null` is the notices fold's reads IN FLIGHT — the badge
+ * renders its quiet READING face (the idle tokens, an ellipsis — never a
+ * count) and the aria-label teaches the seek, never the durable "no
+ * unread notices" claim (S3: "for an inbox-first operator the badge
+ * reading 'no unread notices' during an in-flight read is the same fear
+ * class").
  */
-export function notificationBell(unread: number, target = 'inbox', demo = false): VNode {
+export function notificationBell(unread: number | null, target = 'inbox', demo = false): VNode {
   return v('button', {
-    class: `nav-item bell${unread > 0 ? ' has-unread' : ''}`,
+    class: `nav-item bell${unread !== null && unread > 0 ? ' has-unread' : ''}`,
     'data-target': target,
     type: 'button',
-    'aria-label': unread > 0
+    'aria-label': unread === null
+      ? `Inbox — reading the world…${demo ? ' (the shared demo project)' : ''}`
+      : unread > 0
       ? `Inbox — ${unread} unread notice${unread === 1 ? '' : 's'}${demo ? ' (the shared demo project)' : ''}`
       : `Inbox — no unread notices${demo ? ' (the shared demo project)' : ''}`,
   }, [
     iconOf('inbox', 'nav-icon'),
     v('span', { class: 'nav-item-label' }, ['Inbox']),
-    ...(unread === 0 ? [] : [v('span', { class: 'bell-badge', 'data-unread': String(unread) }, [String(unread)])]),
+    ...(unread === null
+      ? [v('span', { class: 'bell-badge bell-reading', 'data-unread': 'reading', 'aria-hidden': 'true' }, ['…'])]
+      : unread === 0 ? [] : [v('span', { class: 'bell-badge', 'data-unread': String(unread) }, [String(unread)])]),
     ...(demo ? [v('span', { class: 'demo-flag bell-demo', 'data-demo': 'true' }, ['DEMO'])] : []),
   ]);
 }

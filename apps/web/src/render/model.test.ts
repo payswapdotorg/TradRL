@@ -965,12 +965,14 @@ function blankDraftOfD11(): LaunchDraft {
 // ---------------------------------------------------------------------------
 
 describe('render model: D-13 — the inbox renders the PROJECT-SCOPED view', () => {
-  /** A two-desk session: desk A (proj-a) folds a notice, the workspace adopts desk B (proj-b), desk B folds its own. */
+  /** A two-desk session: desk A (proj-a) folds a notice, the workspace adopts desk B (proj-b), desk B folds its own. O-1c: the bundle settles (the badge/tile counts are the ANSWERED truth — the adoption resets the per-family markers, the bundle's end answers them). */
   function twoDeskState(): WorkspaceState {
     const events: readonly WorkspaceEvent[] = [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
       { kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-desk-a', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'failed', submittedAt: T0 + 10 } },
       { kind: 'project-adopted', at: T0 + 30, projectId: 'proj-b' },
       { kind: 'job-updated', at: T0 + 40, job: { jobId: 'job-desk-b', kind: 'research', tenant: 'tenant-a', project: 'proj-b', status: 'failed', submittedAt: T0 + 35 } },
+      { kind: 'reads-settled', at: T0 + 45 },
       { kind: 'view-live', at: T0 + 50 },
     ];
     return reduceAll(openWorkspace(SCOPE, T0), events);
@@ -1150,11 +1152,12 @@ describe('render model: D-18 — the copy polish (jargon explained, lessons in w
 // ---------------------------------------------------------------------------
 
 describe('render model: FW-32-B — Home\'s capsule stat is the Evidence section\'s own fold', () => {
-  /** The D-9 fixture shape: the read families' capsules PLUS one completed research job with its release-candidate result. */
+  /** The D-9 fixture shape: the read families' capsules PLUS one completed research job with its release-candidate result. O-1c: the bundle settles (the capsule tile's five-lane gate renders the ANSWERED count). */
   function workspaceWithJobsLane(): WorkspaceState {
     const job: JobRecord = { jobId: 'job:57d1815d', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'complete', submittedAt: T0 + 40, completedAt: T0 + 48, result: { kind: 'release-candidate', specId: 'spec-demo-director', version: 1, project: 'proj-a' } };
     return reduceAll(populatedWorkspace(), [
       { kind: 'job-updated', at: T0 + 40, job },
+      { kind: 'reads-settled', at: T0 + 45 },
       { kind: 'view-live', at: T0 + 50 },
     ]);
   }
@@ -1472,10 +1475,12 @@ describe('FW-36-B (E-8, part 1): the per-row SIMULATED tags on every blotter row
 });
 
 describe('FW-36-B (E-8, part 3): the DEMO marker on the fresh-session Home activity + the nav bell', () => {
-  /** A workspace scoped to the SHARED DEMO PROJECT (every fresh session's first world) with one folded notice. */
+  /** A workspace scoped to the SHARED DEMO PROJECT (every fresh session's first world) with one folded notice. O-1c: the bundle settles (the bell's count label is the ANSWERED truth). */
   function demoScopeState(): WorkspaceState {
     return reduceAll(openWorkspace({ tenantId: 'tenant-a', projectId: 'prj-demo-console' }, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
       { kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-demo-1', kind: 'research', tenant: 'tenant-a', project: 'prj-demo-console', status: 'failed', submittedAt: T0 + 10 } },
+      { kind: 'reads-settled', at: T0 + 45 },
       { kind: 'view-live', at: T0 + 50 },
     ]);
   }
@@ -1496,7 +1501,9 @@ describe('FW-36-B (E-8, part 3): the DEMO marker on the fresh-session Home activ
 
   it('a NON-demo scope renders NO markers — never a fabricated disclosure (the export disclosed the span; the UI only marks what IS demo)', () => {
     const state = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
       { kind: 'job-updated', at: T0 + 20, job: { jobId: 'job-own-1', kind: 'research', tenant: 'tenant-a', project: 'proj-a', status: 'failed', submittedAt: T0 + 10 } },
+      { kind: 'reads-settled', at: T0 + 45 }, // O-1c: the answered count label
       { kind: 'view-live', at: T0 + 50 },
     ]);
     const bytes = serializeVNode(renderConsoleModel(state, T0 + 60, { ...defaultShellView(state), accountView: 'home' }));
@@ -2023,6 +2030,77 @@ describe('O-1b (Round O register — the first-frame flash class): the loading v
     const bytes = serializeConsoleModel(offline, T0 + 50);
     expect(bytes).not.toContain('data-hydration-pending');
     expect(bytes).toContain('No research jobs at this view instant.'); // the pre-existing offline law, unchanged
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O-1c (Round O register — the read-lag residual class, the COUNTER-ZEROS
+// first-cold-load class, S3 + L3): on the first cold load the four Home
+// summary tiles (ACTIVE JOBS / OUTCOMES / EVIDENCE CAPSULES / UNREAD
+// NOTICES) and the Inbox sidebar badge read hard 0s / "no unread notices"
+// for ~5-6s (S3) and >=6s (L3 — 8 consecutive 40ms samples) while the
+// reads were in flight and RECENT ACTIVITY correctly showed "Reading the
+// world…" — the numeric-counter variant FW-50's 13-surface fix did not
+// cover. THE LAW: a hard 0 is a durable claim to a 2h/week operator
+// (S3: "for an inbox-first operator the badge reading 'no unread
+// notices' during an in-flight read is the same fear class"; L3: "from
+// a compliance seat four zeroed counters read as the books standing
+// empty") — the counters teach the seek while their own backing reads
+// are in flight, the same FW-50 vocabulary the ORGANIZATION value and
+// Instances row already carry, and the honest numbers render only when
+// the reads have answered.
+// ---------------------------------------------------------------------------
+
+describe('O-1c (Round O register — the counter-zeros class): the counters teach the seek, never a hard 0 over an in-flight read', () => {
+  /** The slice of one stat card's serialized bytes (the tile's own truth, extracted by its data-stat key). */
+  function statCardOf(bytes: string, label: string): string {
+    const start = bytes.indexOf(`data-stat="${label}"`);
+    if (start === -1) throw new Error(`the ${label} tile does not render`);
+    return bytes.slice(start, start + 520);
+  }
+
+  it('mid-read, ALL FOUR Home tiles teach the seek — never a hard 0 value or a 0-total delta (S3/L3\'s first-cold-load window; RECENT ACTIVITY already taught the seek)', () => {
+    const mid = midReadWorkspace();
+    const bytes = serializeVNode(renderConsoleModel(mid, T0 + 50, { ...defaultShellView(mid), accountView: 'home' }));
+    for (const label of ['ACTIVE JOBS', 'OUTCOMES', 'EVIDENCE CAPSULES', 'UNREAD NOTICES']) {
+      const card = statCardOf(bytes, label);
+      expect(card, label).toContain('<div class="stat-value">Reading the world…</div>'); // RED pre-fix: <div class="stat-value">0</div>
+      expect(card, label).not.toContain('<div class="stat-value">0</div>'); // the hard 0 is a durable claim
+    }
+    expect(statCardOf(bytes, 'ACTIVE JOBS')).not.toContain('<div class="stat-delta">0 total</div>'); // the total rides the same read
+  });
+
+  it('the per-family granularity: the jobs read ANSWERED (one running job on record) resolves the ACTIVE JOBS tile to its honest count while the other tiles still teach the seek — the counters settle at their own reads, never in lockstep', () => {
+    const state = midReadWorkspace([{ kind: 'job-updated', at: T0 + 10, job: job() }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'home' }));
+    const active = statCardOf(bytes, 'ACTIVE JOBS');
+    expect(active).toContain('<div class="stat-value">1</div>'); // the read answered — the honest count
+    expect(active).toContain('<div class="stat-delta">1 total</div>');
+    expect(statCardOf(bytes, 'OUTCOMES')).toContain('<div class="stat-value">Reading the world…</div>'); // still in flight
+    expect(statCardOf(bytes, 'EVIDENCE CAPSULES')).toContain('<div class="stat-value">Reading the world…</div>'); // the fold's jobs lane answered, its outcomes lane has not
+    expect(statCardOf(bytes, 'UNREAD NOTICES')).toContain('<div class="stat-value">Reading the world…</div>');
+  });
+
+  it('reads-settled resolves EVERY tile to its honest number — zero is the read\'s answer, never a claim over an unanswered read', () => {
+    const settled = reduceAll(midReadWorkspace([{ kind: 'reads-settled', at: T0 + 20 }]), [{ kind: 'view-live', at: T0 + 51 }]);
+    const bytes = serializeVNode(renderConsoleModel(settled, T0 + 50, { ...defaultShellView(settled), accountView: 'home' }));
+    expect(statCardOf(bytes, 'ACTIVE JOBS')).toContain('<div class="stat-value">0</div>'); // the honest answers
+    expect(statCardOf(bytes, 'OUTCOMES')).toContain('<div class="stat-value">0</div>');
+    expect(statCardOf(bytes, 'EVIDENCE CAPSULES')).toContain('<div class="stat-value">0</div>');
+    expect(statCardOf(bytes, 'UNREAD NOTICES')).toContain('<div class="stat-value">0</div>');
+    expect(bytes).not.toContain('stat-value">Reading the world…'); // no lingering seek on the tiles
+  });
+
+  it('the Inbox sidebar badge mid-read teaches the seek — its aria-label NEVER claims "no unread notices" and its badge renders the reading marker, never an absent-by-zero face (S3\'s inbox-first operator fear)', () => {
+    const mid = midReadWorkspace();
+    const bytes = serializeVNode(renderConsoleModel(mid, T0 + 50, { ...defaultShellView(mid), accountView: 'home' }));
+    expect(bytes).toContain('aria-label="Inbox — reading the world…"'); // RED pre-fix: aria-label="Inbox — no unread notices"
+    expect(bytes).not.toContain('no unread notices'); // the durable claim, dead mid-read
+    expect(bytes).toContain('data-unread="reading"'); // the non-committal badge face
+    const settled = reduceAll(midReadWorkspace([{ kind: 'reads-settled', at: T0 + 20 }]), [{ kind: 'view-live', at: T0 + 51 }]);
+    const settledBytes = serializeVNode(renderConsoleModel(settled, T0 + 50, { ...defaultShellView(settled), accountView: 'home' }));
+    expect(settledBytes).toContain('aria-label="Inbox — no unread notices"'); // the reads answered — the honest label
+    expect(settledBytes).not.toContain('data-unread="reading"');
   });
 });
 
