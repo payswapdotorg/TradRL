@@ -119,6 +119,30 @@ function populatedWorkspace(): WorkspaceState {
   return reduceAll(openWorkspace(SCOPE, T0), events);
 }
 
+/** One constraint set (the Risk section's standing-note branch needs one on record; the goal-bundle read's own record). */
+function constraints(): ConstraintSetStatement {
+  return { id: 'cs-1', version: 1, tenantId: 'tenant-a', constraints: [], createdAt: T0 };
+}
+
+/** One goal statement (the goal-bundle read's own record). */
+function goalOf(): GoalStatement {
+  return {
+    id: 'goal-1', version: 1, tenantId: 'tenant-a', objective: 'Compound the book inside the risk framework.',
+    horizon: { startsAt: T0, endsAt: T0 + 90_000 }, successCriteria: { criteria: [], requiredSatisfaction: 1 },
+    evaluation: { blindRef: 'ev-blind', walkForwardRef: 'ev-wf', regimeRef: 'ev-reg', adversarialRequired: false }, createdAt: T0,
+  };
+}
+
+/** A desk MID-READ-BUNDLE at the LIVE view: connected, the project record on hand (the bundle's first family answered), every other family's read still in flight (the N-1 suite's own shape — the O-1/O-2/O-3 suites reuse it). */
+function midReadWorkspace(extra: readonly WorkspaceEvent[] = []): WorkspaceState {
+  return reduceAll(openWorkspace(SCOPE, T0), [
+    { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+    { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
+    { kind: 'view-live', at: T0 + 50 },
+    ...extra,
+  ]);
+}
+
 describe('render model: the twelve section panels', () => {
   it('EVERY section renders its panel (data-section keyed, no crash, no empty console)', () => {
     const state = populatedWorkspace();
@@ -1761,30 +1785,6 @@ describe('FW-42-B (J-3): the Home tile\'s Project line resolves during the boot-
 // ---------------------------------------------------------------------------
 
 describe('N-1 (Round N register — the read-lag class): "Reading the world…" vs the durable empty-state copy', () => {
-  /** One constraint set (the Risk section's standing-note branch needs one on record). */
-  function constraints(): ConstraintSetStatement {
-    return { id: 'cs-1', version: 1, tenantId: 'tenant-a', constraints: [], createdAt: T0 };
-  }
-
-  /** One goal statement (the goal-bundle read's own record). */
-  function goalOf(): GoalStatement {
-    return {
-      id: 'goal-1', version: 1, tenantId: 'tenant-a', objective: 'Compound the book inside the risk framework.',
-      horizon: { startsAt: T0, endsAt: T0 + 90_000 }, successCriteria: { criteria: [], requiredSatisfaction: 1 },
-      evaluation: { blindRef: 'ev-blind', walkForwardRef: 'ev-wf', regimeRef: 'ev-reg', adversarialRequired: false }, createdAt: T0,
-    };
-  }
-
-  /** A desk MID-READ-BUNDLE at the LIVE view: connected, the project record on hand (the bundle's first family answered), every other family's read still in flight. */
-  function midReadWorkspace(extra: readonly WorkspaceEvent[] = []): WorkspaceState {
-    return reduceAll(openWorkspace(SCOPE, T0), [
-      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
-      { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
-      { kind: 'view-live', at: T0 + 50 },
-      ...extra,
-    ]);
-  }
-
   it('the Research section mid-read teaches PENDING on the notes card AND the jobs empty state — never the durable claims (L3\'s ~6s "No research notes attached … No research jobs" over a desk that carried 3 notes + 2 jobs)', () => {
     const state = reduceAll(midReadWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'research' }]);
     const bytes = serializeConsoleModel(state, T0 + 50);
@@ -1902,6 +1902,52 @@ describe('N-1 (Round N register — the read-lag class): "Reading the world…" 
     const bytes = serializeConsoleModel(degraded, T0 + 50);
     expect(bytes).not.toContain('data-hydration-pending');
     expect(bytes).toContain('No research jobs at this view instant.'); // the degraded state's own honest copy (the pre-existing law, unchanged)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O-2 (Round O register — the "appears" grammar class, cosmetic): the
+// loading vocabulary's subject-verb slip, live at three measured
+// surfaces — "the notices appears here the moment the read lands" (the
+// Inbox — S1, M3, S3 five consecutive samples, L3 16/16, L2), "the
+// research jobs appears here the moment the read lands" (M1, L1, L2),
+// and the same slip on the execution-submissions card. THE FIX: the
+// plural subjects take "appear" — the FW-50 vocabulary's shape kept
+// (the singular surfaces keep "appears": "the project history appears",
+// "the organization appears").
+// ---------------------------------------------------------------------------
+
+describe('O-2 (Round O register — the appears grammar class): the loading vocabulary agrees with its subject', () => {
+  it('the Inbox pending card reads "the notices appear here the moment the read lands" — never "the notices appears" (the S1/M3/S3/L3/L2 live instance)', () => {
+    const mid = midReadWorkspace();
+    const bytes = serializeVNode(renderConsoleModel(mid, T0 + 50, { ...defaultShellView(mid), accountView: 'inbox' }));
+    expect(bytes).toContain('the notices appear here the moment the read lands'); // RED pre-fix: "the notices appears here…"
+    expect(bytes).not.toContain('notices appears here');
+  });
+
+  it('the Research jobs pending card reads "the research jobs appear here the moment the read lands" — never "the research jobs appears" (the M1/L1/L2 live instance)', () => {
+    const state = reduceAll(midReadWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'research' }]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('the research jobs appear here the moment the read lands'); // RED pre-fix: "the research jobs appears here…"
+    expect(bytes).not.toContain('research jobs appears here');
+  });
+
+  it('the Execution pending card reads "the execution submissions appear here the moment the read lands" — never "the execution submissions appears" (the same grammar class, unmeasured only because the surface never rendered mid-read in Round O)', () => {
+    const state = reduceAll(midReadWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'execution' }]);
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('the execution submissions appear here the moment the read lands'); // RED pre-fix: the same slip
+    expect(bytes).not.toContain('execution submissions appears here');
+  });
+
+  it('the SINGULAR surfaces keep "appears" — the vocabulary\'s shape is unchanged (the TM bar\'s "the project history appears", the Organization section\'s "the organization appears")', () => {
+    const preProject = reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+    expect(serializeConsoleModel(preProject, T0 + 50)).toContain('the project history appears here the moment the read lands');
+    const state = reduceAll(midReadWorkspace(), [{ kind: 'section-selected', at: T0 + 51, section: 'organization' }]);
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), accountView: 'section' }));
+    expect(bytes).toContain('the organization appears here the moment the read lands');
   });
 });
 

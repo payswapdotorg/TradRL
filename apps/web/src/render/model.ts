@@ -878,7 +878,7 @@ function inboxPanel(state: WorkspaceState, viewAt: number): VNode {
     // N-1: the notices fold rides the record families' own reads (M1's
     // ~6s demo-Inbox flash) — the bundle-in-flight pending card, never the
     // durable copy over reads that have not answered.
-    ...(projected.length === 0 ? [noticesReadPendingAtView(state, viewAt) ? hydrationPendingCard('notices') : sectionEmpty('inbox')] : []),
+    ...(projected.length === 0 ? [noticesReadPendingAtView(state, viewAt) ? hydrationPendingCard('notices', 'appear') : sectionEmpty('inbox')] : []),
     // FW-40-B (H-5): the projection hid notices this desk carries — the
     // panel says so (never a bare empty state over a folded inbox).
     ...beyondViewHint(inbox.notices.length, projected.length, 'notice'),
@@ -974,11 +974,17 @@ function hydrationPendingAtView(state: WorkspaceState, viewAt: number): boolean 
  * titled note, never an EmptyState: there is NOTHING to act on while
  * the read is in flight, so the empty state's exactly-one-action law
  * must not be coerced into a dead button).
+ *
+ * O-2 (Round O register — the "appears" grammar class): the verb
+ * AGREES with the noun (the plural subjects — notices, research jobs,
+ * execution submissions — take "appear"; the register measured "the
+ * notices appears here" / "the research jobs appears here" live at
+ * five seats).
  */
-function hydrationPendingCard(noun: string): VNode {
+function hydrationPendingCard(noun: string, verb: 'appears' | 'appear' = 'appears'): VNode {
   return v('div', { class: 'card', 'data-hydration-pending': 'true' }, [
     v('div', { class: 'card-title' }, ['Reading the world…']),
-    v('p', { class: 'card-note' }, [`The console is reading this desk's records — the ${noun} appears here the moment the read lands.`]),
+    v('p', { class: 'card-note' }, [`The console is reading this desk's records — the ${noun} ${verb} here the moment the read lands.`]),
   ]);
 }
 
@@ -1755,7 +1761,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           // pending card, never the durable teaching copy over an
           // unanswered read (the honest-copy law).
           ? [readPendingAtView(state, viewAt, 'jobs')
-              ? hydrationPendingCard('research jobs')
+              ? hydrationPendingCard('research jobs', 'appear')
               : submitCard === null
               ? sectionEmpty('research')
               // The affordance changes what the teaching sentence must
@@ -1847,7 +1853,7 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
         // N-1: the submissions read in flight (M2's "'No execution
         // submissions at this view instant' ~3 min while the fills HAD
         // booked") — the honest-copy law.
-        ...(submissions.length === 0 ? [readPendingAtView(state, viewAt, 'submissions') ? hydrationPendingCard('execution submissions') : sectionEmpty('execution')] : []),
+        ...(submissions.length === 0 ? [readPendingAtView(state, viewAt, 'submissions') ? hydrationPendingCard('execution submissions', 'appear') : sectionEmpty('execution')] : []),
       ]);
   } else if (selector === 'risk') {
       const rows: VNode[] = [];
