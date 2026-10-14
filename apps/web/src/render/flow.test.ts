@@ -347,8 +347,8 @@ describe('flow §4.10: notifications (bell + toast + the eight event types)', ()
     expect(bytes).toContain('class="toast-close"');
   });
 
-  it('ALL EIGHT UX.md event types carry a distinct icon + ONE plain-language sentence', () => {
-    expect(NOTICE_KINDS.length).toBe(8);
+  it('ALL NINE notice kinds (the eight UX.md charter kinds + the FW-53 alert_fired extension) carry a distinct icon + ONE plain-language sentence', () => {
+    expect(NOTICE_KINDS.length).toBe(9);
     const icons = new Set<string>();
     for (const kind of NOTICE_KINDS) {
       const copy = noticeCopyOf(kind);
@@ -357,10 +357,12 @@ describe('flow §4.10: notifications (bell + toast + the eight event types)', ()
       expect(copy.sentence.split('.').length, kind).toBe(2);
       icons.add(copy.icon);
     }
-    expect(icons.size).toBe(8); // distinct
+    expect(icons.size).toBe(9); // distinct (alert_fired gets 'alert' — its own glyph, no collision with training_milestone's 'pulse')
     expect(NOTICE_ICONS.failed_evaluation).toBe('flask');
     expect(NOTICE_ICONS.safety_intervention).toBe('shield');
+    expect(NOTICE_ICONS.alert_fired).toBe('alert');
     expect(NOTICE_SENTENCES.safety_intervention).toBe('A safety gate intervened and stopped a decision.');
+    expect(NOTICE_SENTENCES.alert_fired).toBe('A price alert fired against a recorded fill price.');
   });
 
   it('FW-32-B (b3): the export-download confirmation toast renders on the SAME surface + lifecycle (a closed icon vocabulary, never a broken glyph lookup)', () => {

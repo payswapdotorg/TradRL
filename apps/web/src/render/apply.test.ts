@@ -223,7 +223,15 @@ describe('applied §4.12: every section teaches (empty states are first-class)',
   it('the pinned T042 empty sentences still render (the regression floor copy)', () => {
     const goal = render(openWorkspace(SCOPE, T0), { accountView: 'section' }, T0 + 1);
     expect(goal).toContain('No goal loaded yet.');
-    const outcomes = render(reduceAll(openWorkspace(SCOPE, T0), [{ kind: 'section-selected', at: T0 + 1, section: 'outcomes' }]), { accountView: 'section' }, T0 + 1);
+    // N-2 (Round P — the Outcomes list read-lag residue): the outcomes read must ANSWER
+    // (reads-settled — the bundle ran to its end) before the durable "No outcomes at this
+    // view instant" claim renders. The in-flight face ("Reading the world…") renders while
+    // the outcomes read is unanswered; the settled shape mirrors the alerts-card test's own
+    // answered case (the FW-50 honest-copy grammar, extended to this one surface FW-52 missed).
+    const outcomes = render(reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'section-selected', at: T0 + 1, section: 'outcomes' },
+      { kind: 'reads-settled', at: T0 + 2 },
+    ]), { accountView: 'section' }, T0 + 1);
     expect(outcomes).toContain('No outcomes at this view instant');
     // the charter's own teaching example: experiments -> Research
     const experiments = render(reduceAll(openWorkspace(SCOPE, T0), [{ kind: 'section-selected', at: T0 + 1, section: 'experiments' }]), { accountView: 'section' }, T0 + 1);

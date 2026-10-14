@@ -51,6 +51,7 @@ import type {
   JobRecord,
   OrgStatusSnapshot,
   OutcomeRecord,
+  PriceAlertRecord,
   ProjectRecord,
   ServedKnowledge,
 } from '../api/contracts';
@@ -58,8 +59,28 @@ import { digestOf } from './digest';
 import { CrossTenantRenderError } from './errors';
 import { assertProjectScope, tenantOfRecord, type WorkspaceScope } from './tenant';
 import { availabilityOfJob, availabilityOfKnowledge, availabilityOfOrgSnapshot, availabilityOfOutcome, availabilityOfProject, availabilityOfSubmission, projectToView } from './availability';
+import { alertFiringOf, fillPriceObservationsOf } from './market';
 
-/** The eight UX.md notification event types, in charter order. */
+/**
+ * N-1 (Round P register — fired alerts never reach the Inbox, S3): the
+ * ninth kind — the price-alert FIRING notice. S3 scored notifications
+ * 2/10: "a part-time operator can't rely on a console whose fired
+ * alerts never reach the Inbox". The fold already covered the eight
+ * charter kinds; the price alert's firing — derived from the alert's
+ * own declaration + the recorded fill prices (core/market alertFiringOf,
+ * the same pure fold the alerts-card renders) — never reached the
+ * notices fold. THE LAW (the existing notices contract, extended by one
+ * kind): a fired alert folds to one notice per firing, availability-
+ * stamped at the firing observation's OWN instant (L4 — the fill's
+ * filledAt), provenance-carrying (the alert's alertId), and idempotent
+ * (the same alert + the same observations re-fold to the same noticeId).
+ *
+ * Charter order: 'alert_fired' joins the existing eight at the tail
+ * (the eight are UX.md's own closed list; 'alert_fired' is the round's
+ * extension, named explicitly as such — never confused with the
+ * charter's safety_intervention which is the execution-gate refusal).
+ */
+/** The UX.md notification event types, in charter order, plus the FW-53 alert_fired extension at the tail. */
 export const NOTICE_KINDS = [
   'organization_compiled',
   'training_milestone',
@@ -69,6 +90,7 @@ export const NOTICE_KINDS = [
   'acceptance_criteria_met',
   'shadow_degradation',
   'safety_intervention',
+  'alert_fired',
 ] as const;
 
 /** One notification event type. */
@@ -102,7 +124,7 @@ export interface NoticeRecord {
   readonly facts: readonly NoticeFact[];
 }
 
-/** The closed title table (UX.md's own event names). */
+/** The closed title table (UX.md's own event names + the FW-53 alert_fired extension). */
 export const NOTICE_TITLES: Readonly<Record<NoticeKind, string>> = Object.freeze({
   organization_compiled: 'Organization compiled',
   training_milestone: 'Training milestone',
@@ -112,6 +134,7 @@ export const NOTICE_TITLES: Readonly<Record<NoticeKind, string>> = Object.freeze
   acceptance_criteria_met: 'Acceptance criteria met',
   shadow_degradation: 'Shadow degradation',
   safety_intervention: 'Safety intervention',
+  alert_fired: 'Alert fired',
 });
 
 /** The per-kind fact labels (closed vocabulary). */
@@ -123,7 +146,21 @@ export const NOTICE_FACT_LABELS: Readonly<Record<NoticeKind, readonly string[]>>
   release_candidate: ['job', 'kind'],
   acceptance_criteria_met: ['project', 'status'],
   shadow_degradation: ['outcome', 'outcome-class', 'realized-gap'],
-  safety_intervention: ['submission', 'stage'],
+  // N-3 (Round P — the silent desk halt, L3 + L1): the safety_intervention
+  // notice names the refusal (submission + stage) AND the desk's halt state
+  // (trading-halt). L3: "no notice or UI hint that trading paused or when it
+  // resumes; my will-fire alert stayed waiting 24 min with no explanation";
+  // L1: "desks stop at 2 fills, nothing in the UI produces post-declaration
+  // fills". The halt state is computed at fold time: 'paused' when no newer
+  // routed submission exists after the refusal (the desk is still halted —
+  // the will-fire alert stays waiting); 'resumed' when a newer routed
+  // submission exists (the halt was lifted). The honest-posture law (no
+  // silent halts) now carries into the notice fold itself.
+  safety_intervention: ['submission', 'stage', 'trading-halt'],
+  // N-1: the alert's own envelope (market/direction/level) + the observed
+  // price that crossed the level (the firing fold's own verbatim decimal —
+  // the same value the alerts-card renders, never a re-computed number).
+  alert_fired: ['alert', 'market', 'direction', 'level', 'observed-price'],
 });
 
 /** The reads the notice fold consumes (each entry the API's own read surface). */
@@ -140,6 +177,15 @@ export interface NoticeReads {
   readonly outcomes?: readonly OutcomeRecord[];
   /** The execution submissions (execution reads). */
   readonly submissions?: readonly GatewaySubmissionRecord[];
+  /**
+   * N-1 (Round P — fired alerts never reach the Inbox, S3): the
+   * declared price alerts (the goal-bundle read carries them — FW-46).
+   * The firing fold derives against the SAME submissions' fill
+   * observations (core/market alertFiringOf — the same pure fold the
+   * alerts-card renders); a fired alert folds to one notice per firing,
+   * stamped at the firing observation's OWN instant (L4).
+   */
+  readonly alerts?: readonly PriceAlertRecord[];
 }
 
 /** Build one notice (pure; the id is content-addressed over the derivation). */
@@ -235,12 +281,59 @@ export function foldNotices(scope: WorkspaceScope, reads: NoticeReads): readonly
     }
   }
 
-  for (const submission of reads.submissions ?? []) {
+  // N-3 (Round P — the silent desk halt, L3 + L1): the safety_intervention
+  // notice names the refusal AND the desk's halt state. The halt state is
+  // computed at fold time: 'paused' when no newer routed submission exists
+  // after this refusal (the desk is still halted — the will-fire alert
+  // stays waiting with no fills crossing its level); 'resumed' when a
+  // newer routed submission exists (the halt was lifted — trading resumed).
+  // The honest-posture law (no silent halts) now carries into the notice
+  // fold itself — the user sees "trading-halt: paused" in the notice's
+  // ADVANCED details when they expand the refusal notice.
+  const allSubmissions = reads.submissions ?? [];
+  for (const submission of allSubmissions) {
     if (submission.kind === 'refused') {
-      notices.push(notice(scope, 'safety_intervention', availabilityOfSubmission(submission), { route: '/v1/execution/requests', ref: submission.submissionId }, [
+      const refusalInstant = availabilityOfSubmission(submission);
+      // A newer routed submission means the halt was lifted (trading resumed).
+      const hasNewerRouted = allSubmissions.some((s) => s.kind === 'routed' && availabilityOfSubmission(s) > refusalInstant);
+      const tradingHalt = hasNewerRouted ? 'resumed' : 'paused';
+      notices.push(notice(scope, 'safety_intervention', refusalInstant, { route: '/v1/execution/requests', ref: submission.submissionId }, [
         { label: 'submission', value: submission.submissionId },
         { label: 'stage', value: submission.refusal.stage },
+        { label: 'trading-halt', value: tradingHalt },
       ]));
+    }
+  }
+
+  // N-1 (Round P — fired alerts never reach the Inbox, S3): the alert
+  // FIRING fold. The same pure fold the alerts-card renders
+  // (core/market alertFiringOf — the alert's own declaration + the
+  // recorded fill prices, evaluated forward from the declaration) folds
+  // to ONE notice per firing, availability-stamped at the firing
+  // observation's OWN instant (the fill's filledAt, L4 — never the
+  // reader's clock), provenance-carrying (the alert's alertId, the
+  // content-addressed identity), and idempotent (the same alert + the
+  // same observations re-fold to the same noticeId — content-addressed).
+  // An alert with no crossing observation stays WAITING — never a
+  // fabricated firing notice (the same law the alerts-card rides).
+  const alerts = reads.alerts ?? [];
+  if (alerts.length > 0) {
+    // The observations derive from the SAME submissions the
+    // safety_intervention fold above iterates (the routed rows' fill
+    // economics — the only prices on record, never a live-feed claim).
+    const observations = fillPriceObservationsOf(reads.submissions ?? []);
+    for (const alert of alerts) {
+      assertProjectScope(scope, alert);
+      const firing = alertFiringOf(alert, observations);
+      if (firing.fired && firing.at !== null && firing.observedPrice !== null) {
+        notices.push(notice(scope, 'alert_fired', firing.at, { route: '/v1/projects/:id/goal', ref: alert.alertId }, [
+          { label: 'alert', value: alert.alertId },
+          { label: 'market', value: alert.market },
+          { label: 'direction', value: alert.direction },
+          { label: 'level', value: alert.level },
+          { label: 'observed-price', value: firing.observedPrice },
+        ]));
+      }
     }
   }
 

@@ -18,7 +18,7 @@
 // The notice input shape (mirror of the console's NoticeRecord, delivery side)
 // ---------------------------------------------------------------------------
 
-/** The eight UX.md notification event types (mirror — pinned by test). */
+/** The eight UX.md notification event types + the FW-53 alert_fired extension (mirror — pinned by test). */
 export const NOTICE_KINDS = [
   'organization_compiled',
   'training_milestone',
@@ -28,6 +28,7 @@ export const NOTICE_KINDS = [
   'acceptance_criteria_met',
   'shadow_degradation',
   'safety_intervention',
+  'alert_fired',
 ] as const;
 
 /** One notification event type. */
@@ -64,7 +65,7 @@ export interface NoticeTemplate {
   readonly lead: string;
 }
 
-/** The closed template table (the UX charter's own event names). */
+/** The closed template table (the UX charter's own event names + the FW-53 alert_fired extension). */
 export const NOTICE_TEMPLATES: Readonly<Record<NoticeKind, NoticeTemplate>> = Object.freeze({
   organization_compiled: { kind: 'organization_compiled', subject: 'TradRL: Organization compiled', lead: 'The organization for your project compiled successfully.' },
   training_milestone: { kind: 'training_milestone', subject: 'TradRL: Training milestone', lead: 'A training run for your project reached a milestone.' },
@@ -74,6 +75,7 @@ export const NOTICE_TEMPLATES: Readonly<Record<NoticeKind, NoticeTemplate>> = Ob
   acceptance_criteria_met: { kind: 'acceptance_criteria_met', subject: 'TradRL: Acceptance criteria met', lead: 'Your project met its acceptance criteria.' },
   shadow_degradation: { kind: 'shadow_degradation', subject: 'TradRL: Shadow degradation', lead: 'A shadow outcome for your project degraded beyond its band.' },
   safety_intervention: { kind: 'safety_intervention', subject: 'TradRL: Safety intervention', lead: 'A safety intervention stopped a submission for your project.' },
+  alert_fired: { kind: 'alert_fired', subject: 'TradRL: Alert fired', lead: 'A price alert fired for your project against a recorded fill price.' },
 });
 
 // ---------------------------------------------------------------------------

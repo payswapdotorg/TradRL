@@ -492,7 +492,7 @@ export function timeMachineControls(options: {
 // §4.10 Notifications: the bell + the toast record + the per-kind copy.
 // ---------------------------------------------------------------------------
 
-/** The eight UX.md event types' distinct icons (closed vocabulary). */
+/** The eight UX.md event types' distinct icons (closed vocabulary) + the FW-53 alert_fired extension. */
 export const NOTICE_ICONS: Readonly<Record<NoticeKind, ComponentIcon>> = Object.freeze({
   organization_compiled: 'layers',
   training_milestone: 'pulse',
@@ -502,9 +502,10 @@ export const NOTICE_ICONS: Readonly<Record<NoticeKind, ComponentIcon>> = Object.
   acceptance_criteria_met: 'target',
   shadow_degradation: 'clock',
   safety_intervention: 'shield',
+  alert_fired: 'alert',
 });
 
-/** The eight event types' one plain-language sentence (§4.10 — the shape is law: one sentence, reassurance first). */
+/** The eight event types' one plain-language sentence (§4.10 — the shape is law: one sentence, reassurance first) + the FW-53 alert_fired extension. */
 export const NOTICE_SENTENCES: Readonly<Record<NoticeKind, string>> = Object.freeze({
   organization_compiled: 'Your organization compiled and is now working the goal.',
   training_milestone: 'A learning job reached a training milestone.',
@@ -514,6 +515,7 @@ export const NOTICE_SENTENCES: Readonly<Record<NoticeKind, string>> = Object.fre
   acceptance_criteria_met: 'The goal\'s acceptance criteria were met.',
   shadow_degradation: 'A shadow read drifted from its live expectation.',
   safety_intervention: 'A safety gate intervened and stopped a decision.',
+  alert_fired: 'A price alert fired against a recorded fill price.',
 });
 
 /**
@@ -810,10 +812,44 @@ export function confirmActionOf(value: string): ConfirmAction | null {
  * ride: an element handle resolved against the confirm stays valid
  * across beats, so a press dispatched on it still reaches the
  * document's delegated listener).
+ *
+ * O-3R (Round P register — the 1280×577 wizard action-row overlap class,
+ * L3 + L2 + S3 + L1): the THIRD parameter `sticky` is the GEOMETRY
+ * contract — only the PRIMARY action (the launch confirm) rides the
+ * sticky law (FW-38-B's ride-the-fold); the discard arm (the EXIT,
+ * always present per O-3) rides in NATURAL FLOW beneath it. Pre-fix
+ * BOTH arms shared the SAME sticky slot at `bottom: 12px` z-index: 5
+ * (the shell.css rule covered `.confirm-arm` and `.confirm-inline`
+ * wholesale), and the discard — rendered AFTER the primary in DOM
+ * order — painted ON TOP of the primary's hit area: L3 measured "the
+ * Launch button's left 76% is covered by the discard arm"; L2
+ * reproduced it at all five wizard steps; S3 hit it live ("clicking
+ * Next's center armed the discard confirm instead of advancing"); L1
+ * scored it partial. The discard-draft two-step confirm LAW stays
+ * (FW-40-B's restored-draft law, FW-52's two-step confirm — untouched);
+ * only the GEOMETRY moves: the discard rides in natural flow (no
+ * sticky), so its hit area is structurally DISJOINT from the primary
+ * action's at every viewport >= the design floor. The sticky INLINE
+ * (not the CSS rule — the CSS rule is gone) is what the geometry
+ * regression test reads: a synthetic click at the primary action's
+ * center can never arm the discard confirm because the discard arm's
+ * hit rect sits BELOW the primary's (naturally stacked), never on top
+ * of it.
  */
-export function twoStepConfirm(action: ConfirmAction, armed: boolean): VNode {
+export function twoStepConfirm(action: ConfirmAction, armed: boolean, sticky = false): VNode {
+  // O-3R: the primary action's sticky contract — inline so the geometry
+  // regression test can read it from the rendered bytes (the FW-38-B
+  // ride-the-fold law carries the primary action; the discard arm
+  // keeps its default false and rides natural flow).
+  const stickyStyle = sticky ? 'position:sticky;bottom:12px;z-index:5' : '';
   if (!armed) {
-    return v('button', { class: 'confirm-arm', id: `${action}-confirm-arm`, 'data-action': `confirm-arm-${action}`, type: 'button' }, [CONFIRM_QUESTIONS[action]]);
+    return v('button', {
+      class: 'confirm-arm',
+      id: `${action}-confirm-arm`,
+      'data-action': `confirm-arm-${action}`,
+      type: 'button',
+      ...(sticky ? { style: stickyStyle, 'data-geometry': 'sticky-primary' } : { 'data-geometry': 'natural-flow' }),
+    }, [CONFIRM_QUESTIONS[action]]);
   }
   // FW-41-B (Round I register I-2, M2's occlusion half): the armed row
   // rides the same sticky law as the action row (FW-38-B — its controls
@@ -823,7 +859,20 @@ export function twoStepConfirm(action: ConfirmAction, armed: boolean): VNode {
   // question span and the padding are not affordances), while the
   // buttons keep their full hit areas. Applied inline — the row's own
   // sticky chrome lives in the shell surface's stylesheet.
-  return v('div', { class: 'confirm-inline', style: 'pointer-events:none', 'data-confirm-pending': action, role: 'group', 'aria-label': CONFIRM_QUESTIONS[action] }, [
+  //
+  // O-3R: the sticky contract rides the armed row's INLINE style too
+  // (the primary action's armed row stays sticky; the discard's armed
+  // row rides natural flow — the geometry contract holds across the
+  // arm/disarm transitions, the single confirm slot is exclusive so
+  // only one armed row exists at a time).
+  return v('div', {
+    class: 'confirm-inline',
+    style: `pointer-events:none${sticky ? `;${stickyStyle}` : ''}`,
+    'data-confirm-pending': action,
+    'data-geometry': sticky ? 'sticky-primary' : 'natural-flow',
+    role: 'group',
+    'aria-label': CONFIRM_QUESTIONS[action],
+  }, [
     v('span', { class: 'confirm-question' }, [`Are you sure? ${CONFIRM_QUESTIONS[action]}`]),
     v('button', { class: 'confirm-cancel', style: 'pointer-events:auto', id: `${action}-confirm-cancel`, 'data-action': `confirm-cancel-${action}`, type: 'button' }, ['Cancel']),
     v('button', { class: 'confirm-go', style: 'pointer-events:auto', id: `${action}-confirm-go`, 'data-action': `confirm-${action}`, type: 'button' }, ['Confirm']),

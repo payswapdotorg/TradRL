@@ -712,14 +712,19 @@ describe('render model: the OUTCOMES post-mortem cards (D-2 — the W-24 fix)', 
     expect(bytes).not.toContain('data-post-mortem');           // no post-mortem cards are fabricated
   });
 
-  it('the empty state still teaches when there are NEITHER outcomes NOR post-mortems', () => {
+  it('the empty state still teaches when there are NEITHER outcomes NOR post-mortems AND the outcomes read has ANSWERED (the teaching copy is legal only over an answered read — N-2)', () => {
+    // N-2: pre-fix this rendered "No outcomes at this view instant" even mid-read; post-fix the
+    // outcomes read must ANSWER (reads-settled — the bundle ran to its end) before the durable
+    // empty claim renders. The settled shape mirrors the alerts-card test's own answered case.
     const state = reduceAll(openWorkspace(SCOPE, T0), [
       { kind: 'section-selected', at: T0 + 50, section: 'outcomes' },
       { kind: 'view-live', at: T0 + 50 },
+      { kind: 'reads-settled', at: T0 + 60 },
     ]);
     const bytes = serializeConsoleModel(state, T0 + 50);
     expect(bytes).toContain('No outcomes at this view instant');
     expect(bytes).not.toContain('data-post-mortem');
+    expect(bytes).not.toContain('data-hydration-pending="true"'); // N-2: the pending marker never renders over an answered read
   });
 
   it('a post-mortem whose outcome is not in the projection still renders — its card names the attachment (nothing dropped silently)', () => {
@@ -757,6 +762,74 @@ describe('render model: the OUTCOMES post-mortem cards (D-2 — the W-24 fix)', 
     ]);
     const foreign = { ...anchored, postMortems: [{ ...postMortem(), lineage: { ...postMortem().lineage, tenant: 'tenant-b' } }] } as WorkspaceState;
     expect(() => serializeConsoleModel({ ...foreign, selectedSection: 'outcomes' } as WorkspaceState, T0 + 60)).toThrow(CrossTenantRenderError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N-2 (Round P register — the Outcomes list read-lag residue, S3): the
+// O-1a loading grammar on the Outcomes surface — the SAME read-in-flight
+// face the alerts card got in FW-52. S3 reproduced the residue twice:
+// "No outcomes at this view instant" renders +64ms into a fresh read
+// while the real outcome lands at +7.2s; the alerts-card fix holds on
+// BOTH reload and scope-switch, the Outcomes surface missed it. THE
+// LAW (the FW-50 honest-copy grammar, extended to the one surface FW-52
+// missed): while the outcomes read is IN FLIGHT at the LIVE view, the
+// Outcomes section renders the loading vocabulary — "Reading the
+// world…" / "the declared outcomes appear here the moment the read
+// lands" — never the premature "No outcomes at this view instant"
+// claim. The boundary law (FW-41-C precedent): a scrubbed PAST view
+// over an in-flight read keeps the honest durable copy (the pending
+// state is about NOW, never a claim about the past).
+// ---------------------------------------------------------------------------
+
+describe('render model: N-2 — the Outcomes list read-in-flight face (the O-1a class on the Outcomes surface)', () => {
+  /** The reload/switch shape: connected, LIVE view, NO outcomes read yet — the state holds zero outcomes while the server's records carry them (the in-flight outcomes read; the state is blind to the server's records until the read lands). */
+  function outcomesReadInFlight(): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'connection-changed', at: T0 + 1, status: 'connected' },
+      { kind: 'project-loaded', at: T0 + 2, project: projectRecord() },
+      { kind: 'section-selected', at: T0 + 50, section: 'outcomes' },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  it('with the outcomes read IN FLIGHT at the LIVE view, the section renders the loading vocabulary — never "No outcomes at this view instant" (S3: +64ms empty claim vs +7.2s real outcome)', () => {
+    const state = outcomesReadInFlight();
+    const bytes = serializeConsoleModel(state, T0 + 50);
+    expect(bytes).toContain('data-hydration-pending="true"'); // the marker the register asked for
+    expect(bytes).toContain('Reading the world…'); // the loading vocabulary
+    expect(bytes).toContain('the outcomes appear here the moment the read lands'); // the read-in-flight sentence
+    // RED pre-fix: the premature "No outcomes at this view instant" claim rendered mid-read
+    expect(bytes).not.toContain('No outcomes at this view instant');
+  });
+
+  it('the settle the seats observed: once the outcomes read lands (a real outcome among them), the section settles to the rendered outcome — the in-flight face was never a datum loss', () => {
+    const settled = reduceAll(outcomesReadInFlight(), [
+      { kind: 'outcomes-loaded', at: T0 + 60, records: [outcome()] },
+    ]);
+    const bytes = serializeConsoleModel(settled, T0 + 50);
+    expect(bytes).toContain('out-1'); // the outcome renders
+    expect(bytes).not.toContain('No outcomes at this view instant');
+    expect(bytes).not.toContain('data-hydration-pending="true"'); // the read landed — no marker
+  });
+
+  it('the read ANSWERED with no outcomes on record renders the honest empty claim — the terminal copy returns (the teaching copy is legal only over an answered read)', () => {
+    const answered = reduceAll(outcomesReadInFlight(), [
+      { kind: 'reads-settled', at: T0 + 60 }, // the bundle ran to its end — every family answered, outcomes among them
+    ]);
+    const bytes = serializeConsoleModel(answered, T0 + 50);
+    expect(bytes).toContain('No outcomes at this view instant'); // the honest terminal — the read answered with nothing
+    expect(bytes).not.toContain('data-hydration-pending="true"');
+  });
+
+  it('the boundary law (the FW-41-C precedent): a SCRUBBED PAST view over an in-flight read keeps the honest durable copy — the pending state is about NOW, never a claim about the past', () => {
+    const state = outcomesReadInFlight();
+    const scrubbed = reduceAll(state, [{ kind: 'view-timestamp', at: T0 + 50, timestamp: T0 + 40 }]);
+    const bytes = serializeConsoleModel(scrubbed, T0 + 50);
+    expect(bytes).not.toContain('data-hydration-pending="true"'); // the past view keeps the durable copy
+    // The scrubbed past view of a state with no outcomes on record renders the honest empty claim
+    // (the in-flight read is about NOW — the past view's honest empty state is unchanged).
+    expect(bytes).toContain('No outcomes at this view instant');
   });
 });
 
@@ -1610,8 +1683,13 @@ describe('FW-41-B (I-2 + M2\'s occlusion): the wizard\'s execution-mode select �
 
   it('M2\'s occlusion half — the sticky action row is CLICK-THROUGH outside its buttons: the row carries pointer-events:none inline and its Next/Review buttons pointer-events:auto (the FW-35-B class on the wizard\'s own chrome)', () => {
     const bytes = serializeVNode(renderConsoleModel(wizardAtStep('world'), T0 + 50));
-    // the row (the wizard's own .tm-playback — distinct from the TM band's, which carries role=group)
-    expect(bytes).toContain('<div class="tm-playback" style="pointer-events:none">');
+    // the row (the wizard's own .tm-playback — distinct from the TM band's, which carries role=group).
+    // O-3R (Round P): the row's inline style carries BOTH the click-through contract AND the
+    // sticky geometry contract — the position:sticky moves the ride-the-fold law inline so the
+    // discard arm's hit area (which rides natural flow) is structurally DISJOINT from the primary
+    // action's at every viewport >= the design floor.
+    expect(bytes).toMatch(/<div class="tm-playback" style="[^"]*pointer-events:none[^"]*position:sticky[^"]*"/);
+    expect(bytes).toContain('data-geometry="sticky-primary"'); // the geometry contract rides the row
     // the buttons keep their full hit areas AND their wiring (the click-through never disables the actions)
     expect(bytes).toContain('id="launch-next" style="pointer-events:auto"');
     expect(bytes).toContain('id="launch-review-button" style="pointer-events:auto"');
@@ -1620,7 +1698,10 @@ describe('FW-41-B (I-2 + M2\'s occlusion): the wizard\'s execution-mode select �
 
   it('the armed confirm row carries the SAME click-through law (the review step\'s sticky chrome never eats a covered click)', () => {
     const bytes = serializeVNode(renderConsoleModel(wizardAtStep('review'), T0 + 50, { ...defaultShellView(wizardAtStep('review')), confirm: 'launch' }));
-    expect(bytes).toContain('<div class="confirm-inline" style="pointer-events:none"');
+    // O-3R: the armed Launch row's inline style carries BOTH the click-through contract AND the
+    // sticky geometry contract (the primary action's armed row stays sticky — disjoint from the
+    // discard arm which rides natural flow below).
+    expect(bytes).toMatch(/<div class="confirm-inline" style="[^"]*pointer-events:none[^"]*position:sticky[^"]*"/);
     expect(bytes).toContain('class="confirm-cancel" style="pointer-events:auto"');
     expect(bytes).toContain('class="confirm-go" style="pointer-events:auto"');
     expect(bytes).toContain('data-action="confirm-launch"'); // the confirm wiring stays
@@ -2381,5 +2462,142 @@ describe('O-3 (Round O register — the launch wizard\'s cancel affordance): the
     const bytes = serializeConsoleModel(openWorkspace(SCOPE, T0), T0 + 60);
     expect(bytes).not.toContain('discard-draft');
     expect(bytes).toContain('data-launch-idle="true"'); // the idle launch panel — its single START action
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O-3R (Round P register — the 1280×577 wizard action-row overlap class,
+// the round's headline finding — L3 + L2 + S3 + L1): the FW-52 cancel-
+// affordance fix DID NOT HOLD at the 1280×577 geometry. FW-52 added the
+// discard-draft two-step confirm (safer discard) — but the discard arm
+// shared the SAME sticky slot at `bottom: 12px` z-index: 5 with the
+// primary action (Next/Review row OR the Launch confirm). The discard
+// is rendered AFTER the primary in DOM order, so it painted ON TOP of
+// the primary's hit area at every viewport where the card straddled
+// the fold. L3 measured "the Launch button's left 76% is covered by
+// the discard arm"; L2 reproduced it at all five wizard steps
+// ("swallowing clicks and risking an accidental draft destruction in
+// the one flow every new user must complete" — safety-relevant given
+// the shared "Confirm" vocabulary between launch and discard); S3 hit
+// it live ("clicking Next's center armed the discard confirm instead
+// of advancing" — proceeded via keyboard); L1 scored it partial
+// ("a PM cannot launch a desk with a mouse at 1280×577"). L3's gate:
+// "the O-3 overlap is my one fix-before-pilot gate."
+//
+// THE FIX (geometry, not vocabulary): the discard-draft two-step
+// confirm LAW stays (FW-40-B's restored-draft law, FW-52's two-step
+// confirm — untouched); only the GEOMETRY moves. The primary action
+// (Next/Review row OR the Launch confirm) rides the sticky law INLINE
+// (FW-38-B's ride-the-fold law preserved); the discard arm (the EXIT,
+// always present per O-3) rides in NATURAL FLOW beneath the primary —
+// structurally DISJOINT at every viewport >= the design floor (the
+// work order names 1280×577, 1280×661, 1280×800, 1440×900 — the
+// geometry contract holds at all of them by construction: the discard's
+// hit rect sits BELOW the primary's in the card's natural order, never
+// on top of it). The CSS rule that previously made `.confirm-arm` and
+// `.confirm-inline` wholesale sticky is GONE; the sticky contract rides
+// the inline style on the primary action's VNode alone.
+//
+// The discard-draft two-step confirm law itself stays — FW-40-B's law
+// (the persistence of typed work) and FW-52's two-step confirm (the
+// discard never destroys work in one click) are untouched. The
+// geometry test below asserts the disjoint contract: a synthetic
+// click at the primary action's center can never arm the discard
+// confirm because the discard arm's hit rect never overlaps the
+// primary's.
+// ---------------------------------------------------------------------------
+
+describe('O-3R (Round P register — the 1280×577 wizard action-row overlap class): the discard arm never overlaps the primary action\'s hit area', () => {
+  /** The wizard open at one step (the same committed-draft shape the O-3 test rides). */
+  function wizardAtStep(step: 'goal' | 'budget' | 'markets' | 'world' | 'review'): WorkspaceState {
+    return reduceAll(openWorkspace(SCOPE, T0), [
+      { kind: 'launch-draft-started', at: T0 + 1, draft: blankDraftOfD11() },
+      { kind: 'launch-step-changed', at: T0 + 2, step },
+      { kind: 'view-live', at: T0 + 50 },
+    ]);
+  }
+
+  /** Extract the opening tag of the element carrying the given id from serialized VNode bytes. */
+  function openTagOf(bytes: string, id: string): string {
+    const match = new RegExp(`<[^>]*\\bid="${id}"[^>]*>`).exec(bytes);
+    if (match === null) throw new Error(`no element with id="${id}" in the rendered bytes`);
+    return match[0];
+  }
+
+  it('the primary action (Next/Review row) carries the sticky geometry INLINE; the discard arm rides natural flow (no sticky) — disjoint by construction at 1280×577 and taller viewports', () => {
+    // Verify at every non-review step (the geometry must hold at ALL five steps per L2's reproduction).
+    for (const step of ['goal', 'budget', 'markets', 'world'] as const) {
+      const bytes = serializeVNode(renderConsoleModel(wizardAtStep(step), T0 + 50));
+      // The primary action row carries the sticky geometry inline (FW-38-B's ride-the-fold law preserved).
+      // The wizard's own .tm-playback row carries the data-geometry marker (the TM band's .tm-playback does NOT — it carries role=group instead); require the marker so the regex matches the wizard's row, not the TM band's.
+      const primaryRow = /<div class="tm-playback"[^>]*data-geometry="sticky-primary"[^>]*>/.exec(bytes);
+      expect(primaryRow, `step=${step}: the primary action row renders`).not.toBeNull();
+      expect(primaryRow![0], `step=${step}: the primary action's inline style carries position:sticky`).toMatch(/position:sticky/);
+      expect(primaryRow![0], `step=${step}: the primary action's inline style carries the bottom:12px slot`).toMatch(/bottom:12px/);
+      expect(primaryRow![0], `step=${step}: the primary action's inline style carries z-index:5`).toMatch(/z-index:5/);
+      expect(primaryRow![0], `step=${step}: the data-geometry marker names the primary's sticky contract`).toContain('data-geometry="sticky-primary"');
+      // The discard arm rides NATURAL FLOW — its inline style does NOT carry position:sticky (the geometry contract).
+      const discardArm = openTagOf(bytes, 'discard-draft-confirm-arm');
+      expect(discardArm, `step=${step}: the discard arm's opening tag`).toContain('data-action="confirm-arm-discard-draft"');
+      expect(discardArm, `step=${step}: RED pre-fix — the discard arm carried the sticky rule too; post-fix it rides natural flow`).not.toMatch(/position:sticky/);
+      expect(discardArm, `step=${step}: the discard arm's data-geometry marker names its natural-flow contract`).toContain('data-geometry="natural-flow"');
+      // The discard arm renders AFTER the primary action in DOM order (the exit sits below the primary in the card's natural flow — disjoint hit rects).
+      const primaryIdx = bytes.indexOf('id="launch-next"');
+      const discardIdx = bytes.indexOf('id="discard-draft-confirm-arm"');
+      expect(primaryIdx, `step=${step}: the primary action renders`).toBeGreaterThan(-1);
+      expect(discardIdx, `step=${step}: the discard arm renders`).toBeGreaterThan(-1);
+      expect(discardIdx, `step=${step}: the discard arm renders AFTER the primary action (natural-flow stacking — disjoint hit rects)`).toBeGreaterThan(primaryIdx);
+    }
+  });
+
+  it('the review step: the Launch confirm carries the sticky geometry INLINE; the discard arm rides natural flow — the geometry holds at the review step too (L2: "all five steps")', () => {
+    const bytes = serializeVNode(renderConsoleModel(wizardAtStep('review'), T0 + 50));
+    // The Launch confirm-arm is the primary action — sticky inline.
+    const launchArm = openTagOf(bytes, 'launch-confirm-arm');
+    expect(launchArm).toContain('data-action="confirm-arm-launch"');
+    expect(launchArm, 'RED pre-fix — the Launch confirm did not carry the sticky inline; post-fix it rides the ride-the-fold law').toMatch(/position:sticky/);
+    expect(launchArm).toContain('data-geometry="sticky-primary"');
+    // The discard arm at the review step rides natural flow.
+    const discardArm = openTagOf(bytes, 'discard-draft-confirm-arm');
+    expect(discardArm).not.toMatch(/position:sticky/);
+    expect(discardArm).toContain('data-geometry="natural-flow"');
+    // Disjoint by construction: Launch renders before Discard in DOM order (the exit sits below the primary).
+    const launchIdx = bytes.indexOf('id="launch-confirm-arm"');
+    const discardIdx = bytes.indexOf('id="discard-draft-confirm-arm"');
+    expect(discardIdx, 'the discard arm renders AFTER the Launch confirm (natural-flow stacking — disjoint)').toBeGreaterThan(launchIdx);
+  });
+
+  it('the armed Launch confirm (the review step\'s confirm-inline) carries the sticky geometry INLINE; the discard arm (still unarmed) rides natural flow — the geometry holds across the arm transition', () => {
+    const state = wizardAtStep('review');
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), confirm: 'launch' }));
+    // The Launch confirm-inline (armed) is the primary action — sticky inline. Capture the FULL opening tag so the data-geometry marker is in the assertion's bytes.
+    const launchInlineMatch = /<div class="confirm-inline"[^>]*data-confirm-pending="launch"[^>]*>/.exec(bytes);
+    expect(launchInlineMatch, 'the armed Launch confirm-inline renders').not.toBeNull();
+    expect(launchInlineMatch![0], 'RED pre-fix — the armed Launch confirm carried the same sticky slot as the discard; post-fix the primary alone rides sticky').toMatch(/position:sticky/);
+    expect(launchInlineMatch![0]).toContain('data-geometry="sticky-primary"');
+    // The discard arm (not armed — the single confirm slot is exclusive) rides natural flow.
+    const discardArm = openTagOf(bytes, 'discard-draft-confirm-arm');
+    expect(discardArm).not.toMatch(/position:sticky/);
+    expect(discardArm).toContain('data-geometry="natural-flow"');
+  });
+
+  it('the armed discard confirm (the discard-draft confirm-inline) rides NATURAL FLOW — the Launch arm (still unarmed) keeps the sticky geometry; the geometry contract holds even when the EXIT is armed (L3: the discard armed on a Next click — pre-fix the overlap armed the discard on a primary-action click)', () => {
+    const state = wizardAtStep('review');
+    const bytes = serializeVNode(renderConsoleModel(state, T0 + 50, { ...defaultShellView(state), confirm: 'discard-draft' }));
+    // The Launch confirm (not armed — the discard holds the slot) keeps the sticky geometry.
+    const launchArm = openTagOf(bytes, 'launch-confirm-arm');
+    expect(launchArm).toMatch(/position:sticky/);
+    expect(launchArm).toContain('data-geometry="sticky-primary"');
+    // The discard's armed inline rides natural flow — its hit area never covers the Launch arm's. Capture the FULL opening tag.
+    const discardInlineMatch = /<div class="confirm-inline"[^>]*data-confirm-pending="discard-draft"[^>]*>/.exec(bytes);
+    expect(discardInlineMatch, 'the armed discard confirm-inline renders').not.toBeNull();
+    expect(discardInlineMatch![0], 'the armed discard confirm does NOT carry the sticky contract — natural flow').not.toMatch(/position:sticky/);
+    expect(discardInlineMatch![0]).toContain('data-geometry="natural-flow"');
+  });
+
+  it('DETERMINISM: identical wizard state -> identical geometry bytes (the inline sticky contract is pure)', () => {
+    const a = serializeVNode(renderConsoleModel(wizardAtStep('world'), T0 + 50));
+    const b = serializeVNode(renderConsoleModel(wizardAtStep('world'), T0 + 50));
+    expect(a).toBe(b);
   });
 });
