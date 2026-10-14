@@ -43,3 +43,33 @@ and mechanical joins. Status at 987b1e3: typecheck 0 errors; vitest 1319/1394
 passing (74 failures = cross-version behavioral mismatches, under triage);
 program:check valid (13/50 merged, frontier T012 + T036); governance passed.
 Next: triage the 74 failing tests, then dispatch wave 5 from the frontier.
+
+## Round P close-out + the durable replay (2026-10-14, takeover TL)
+ROUND P IS COMPLETE — 9/9 seats measured, 6 SWITCH + 3 LEANING, would_pilot
+9/9, zero protocol violations (canonical: docs/release/ROUND-P-REPORT.md;
+machine record: the ops vault's ops/round-p/aggregate.json). The FW-52
+verification: read-lag FIXED (one Outcomes-list residue), appears grammar
+FIXED, cancel_affordance DOES NOT HOLD at 1280x577 — FW-53 is mandatory
+before the launch gate (the wizard action-row geometry: the discard arm
+must never cover Next/Launch's center at any viewport; root surface
+apps/web/src/render/flow.ts + model.ts; console.ts 172,639/173,056), plus
+the Inbox alert delivery gap, the Outcomes read-lag residue, and the
+silent desk halt after refusals.
+
+OPERATIONS (the durable replay, post-recycle #10): the replay stack now
+lives INSIDE the durable project root and auto-starts at boot —
+mini-services/replay-core (:3110, Chrome 143 CDP launcher + frame/tabs/
+event core + the 60s login_keeper writing download/zai_session_token.txt
++ sidecar meta), mini-services/replayd (:3100 gateway, socket.io stream),
+and the operator console on :3000 (Replay / Agents / Mission Control;
+same-origin /api/reproxy → :3100). The ops vault is ~/.secrets/env.sh
+(re-seed from the operator's standing batch after any recycle — the
+batch travels in the session context). Seat-work HARVEST is read-only via
+the site API with the durable token: GET /api/v1/chats/{id} → the history
+tree, POST /api/v1/chats/{id}/messages/batch {ids} → the messages
+(content assembles from content_blocks). Dispatch stays through the
+replayed browser (the console's agents flow). The worklog is
+/home/z/my-project/worklog.md.
+
+NEXT: FW-53 (the register above) dispatched through the replay; then the
+three leaning seats (S3/L2/L1) re-poll — the expected 9/9 SWITCH close.
