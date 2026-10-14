@@ -83,3 +83,25 @@ violations. Canonical: docs/release/ROUND-P-RP-REPORT.md. The remaining
 human steps: the operator's launch-gate sign-off, then the live-data
 pilot decision (L1's structural finding: market-world alerts need a live
 feed — a deployment-mode decision, the next REAL frontier).
+
+## The launch-gate sign-off request armed (2026-10-14 ~18:20Z, takeover TL)
+THE HUMAN STEP IS NOW ARMED: docs/release/LAUNCH-GATE-SIGNOFF-REQUEST.md
+(commit of the same name) carries the two operator decisions (the
+sign-off verdict; the live-data pilot), the evidence chain, and the TL's
+own post-recycle #11 re-verification of the live origin run from a fresh
+station: the seven-point smoke 7/7 (api-projects items=43 — the durable
+store serving and grown through the campaign), the C2 plane-separation
+probes green, the FW-53 markers confirmed in the served sources, the
+production alias on the 4d04219 build. D-055's phantom-env trap
+re-confirmed (decrypt=true's JWE values are NOT the runtime credentials —
+the hex generation is; probe-verified 200). Disclosed: the historical
+cut origin trtrl-console-staging.vercel.app (outside this project's
+Vercel scope) answered the typed R46 503 "Neon 402 quota exceeded" at
+~17:58Z and its deployment is since removed — a capacity-planning input
+for the pilot, NOT this project's store (tradrl-durable healthy). The
+durable replay stack survived recycle #11 untouched (auto-recovery at
+boot; the vault re-seeded a third time; the clone restored at 4d04219).
+NEXT: the operator's verdict on the sign-off request; on GO, the
+live-data pilot decision becomes FW-54 candidacy (the live-feed
+integration, with durable-plane provider capacity planning as its first
+work item).
