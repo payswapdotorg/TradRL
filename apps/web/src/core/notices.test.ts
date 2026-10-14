@@ -10,7 +10,7 @@
 //   - L12: a foreign tenant's reads never fold (typed CrossTenantRenderError).
 
 import { describe, expect, it } from 'vitest';
-import type { GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
+import type { GatewaySubmissionRecord, JobRecord, OrgStatusSnapshot, OutcomeRecord, PriceAlertRecord, ProjectRecord, ServedKnowledge } from '../api/contracts';
 import {
   NOTICE_FACT_LABELS,
   NOTICE_KINDS,
@@ -97,16 +97,17 @@ function allEightReads(): NoticeReads {
   };
 }
 
-describe('notices: the eight UX.md event types', () => {
-  it('is exactly the eight, in charter order', () => {
+describe('notices: the eight UX.md event types + the FW-53 alert_fired extension', () => {
+  it('is exactly the eight charter kinds + the FW-53 alert_fired extension at the tail, in charter order', () => {
     expect([...NOTICE_KINDS]).toEqual([
       'organization_compiled', 'training_milestone', 'failed_evaluation', 'capability_gap',
       'release_candidate', 'acceptance_criteria_met', 'shadow_degradation', 'safety_intervention',
+      'alert_fired',
     ]);
-    expect(NOTICE_KINDS).toHaveLength(8);
+    expect(NOTICE_KINDS).toHaveLength(9);
   });
 
-  it('isNoticeKind admits exactly the eight', () => {
+  it('isNoticeKind admits exactly the nine', () => {
     for (const kind of NOTICE_KINDS) expect(isNoticeKind(kind)).toBe(true);
     for (const bad of ['training', 'Training Milestone', '', 'misc', 42]) expect(isNoticeKind(bad), JSON.stringify(bad)).toBe(false);
   });
@@ -114,16 +115,17 @@ describe('notices: the eight UX.md event types', () => {
   it('every kind has its charter title and a closed fact-label table', () => {
     expect(NOTICE_TITLES.organization_compiled).toBe('Organization compiled');
     expect(NOTICE_TITLES.safety_intervention).toBe('Safety intervention');
+    expect(NOTICE_TITLES.alert_fired).toBe('Alert fired');
     for (const kind of NOTICE_KINDS) {
       expect(NOTICE_TITLES[kind].length).toBeGreaterThan(0);
       expect(NOTICE_FACT_LABELS[kind].length).toBeGreaterThan(0);
     }
   });
 
-  it('the fold derives one notice per carried signal — all eight kinds at once', () => {
+  it('the fold derives one notice per carried signal — all eight charter kinds at once (no alerts in this fixture; alert_fired folds only when alerts + crossing fills exist)', () => {
     const folded = foldNotices(SCOPE, allEightReads());
     const kinds = folded.map((notice) => notice.kind);
-    expect(new Set(kinds)).toEqual(new Set(NOTICE_KINDS));
+    expect(new Set(kinds)).toEqual(new Set(NOTICE_KINDS.filter((kind) => kind !== 'alert_fired')));
     expect(folded).toHaveLength(8);
   });
 
@@ -146,7 +148,9 @@ describe('notices: the eight UX.md event types', () => {
     expect(byKind.get('organization_compiled')?.source.route).toBe('/v1/organizations/:ref/status');
     expect(byKind.get('training_milestone')?.facts.map((f) => f.label)).toEqual(['job', 'kind']);
     expect(byKind.get('capability_gap')?.facts.map((f) => f.value)).toContain('0.80');
-    expect(byKind.get('safety_intervention')?.facts.map((f) => f.label)).toEqual(['submission', 'stage']);
+    // N-3: the safety_intervention notice now carries the trading-halt fact (paused when no newer routed fill exists — the desk is still halted).
+    expect(byKind.get('safety_intervention')?.facts.map((f) => f.label)).toEqual(['submission', 'stage', 'trading-halt']);
+    expect(byKind.get('safety_intervention')?.facts.map((f) => f.value)).toContain('paused');
     expect(byKind.get('shadow_degradation')?.facts.map((f) => f.value)).toContain('1.00'); // the realized gap, verbatim decimal
     expect(byKind.get('acceptance_criteria_met')?.at).toBe(T0 + 50); // the project read's availability
   });
@@ -321,13 +325,17 @@ describe('notices: D-13 — the project-scoped inbox view', () => {
     expect(markAllNoticesRead(markAllNoticesRead(inbox, SCOPE_B), SCOPE_B)).toEqual(markAllNoticesRead(inbox, SCOPE_B));
   });
 
-  it('every one of the eight charter kinds folds from PROJECT-SCOPED reads — no legitimately tenant-wide notice class exists to disclose (the audit behind the filter)', () => {
+  it('every one of the nine kinds folds from PROJECT-SCOPED reads — no legitimately tenant-wide notice class exists to disclose (the audit behind the filter)', () => {
     // The fold's every record family passes assertProjectScope (pinned by
     // the L12 tests above), and every notice carries the fold scope's own
     // project stamp — so the project filter drops NOTHING that a desk was
     // ever entitled to see. Should a tenant-level system notice class ever
     // be added, it must carry an explicit scope marker and the view must
     // disclose it (notices.ts's scopedInbox docblock carries the law).
+    // N-1: alert_fired is also project-scoped — the alert's own tenant/project
+    // and the routed fill's own tenant/project both pass assertProjectScope
+    // inside the fold (the firing fold iterates alerts + submissions, both
+    // project-scoped records).
     const folded = foldNotices(SCOPE, allEightReads());
     expect(folded).toHaveLength(8);
     for (const notice of folded) {
@@ -335,6 +343,179 @@ describe('notices: D-13 — the project-scoped inbox view', () => {
       expect(scopedInbox({ notices: folded, readNoticeIds: [] }, SCOPE).notices).toContain(notice);
       expect(scopedInbox({ notices: folded, readNoticeIds: [] }, SCOPE_B).notices).not.toContain(notice);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N-1 (Round P — fired alerts never reach the Inbox, S3): the alert_fired
+// fold. S3 scored notifications 2/10: "a part-time operator can't rely on
+// a console whose fired alerts never reach the Inbox". The fold's eight
+// charter kinds never included a price-alert firing — the alerts-card's
+// FIRED verdict rendered in the Market World section but never reached
+// the notices fold. THE LAW: a fired alert folds to one Inbox notice per
+// firing, availability-stamped at the firing observation's OWN instant
+// (L4 — the fill's filledAt), provenance-carrying (the alert's alertId),
+// idempotent (the same alert + the same observations re-fold to the same
+// noticeId). An alert with no crossing observation stays WAITING — never
+// a fabricated firing (the same law the alerts-card rides).
+// ---------------------------------------------------------------------------
+
+describe('notices: N-1 — fired alerts reach the Inbox (the alert_fired fold)', () => {
+  /** A price alert declared on the project's goal bundle (FW-46). */
+  function priceAlert(alertId: string, market: string, direction: 'above' | 'below', level: string, declaredAt: number, opts: { tenant?: string; project?: string } = {}): PriceAlertRecord {
+    return {
+      alertId,
+      tenant: opts.tenant ?? 'tenant-a',
+      project: opts.project ?? 'proj-a',
+      declaredAt,
+      market,
+      direction,
+      level,
+    } as unknown as PriceAlertRecord;
+  }
+
+  /** A routed submission with a fill that crosses an alert's level. */
+  function filledSubmission(submissionId: string, instrument: string, price: string, routedAt: number, filledAt: number): GatewaySubmissionRecord {
+    return {
+      kind: 'routed',
+      submissionId,
+      decisionId: `dec-${submissionId}`,
+      auditId: `aud-${submissionId}`,
+      requestRef: `req-${submissionId}`,
+      venue: 'venue-x',
+      adapterRef: 'adp-1',
+      channelRef: 'ch-1',
+      routedAt,
+      order: { instrumentId: instrument, side: 'buy', quantity: '1' },
+      fill: { price, quantity: '1', filledAt },
+    } as unknown as GatewaySubmissionRecord;
+  }
+
+  it('a fired alert folds to one Inbox notice, availability-stamped at the firing observation\'s OWN instant (the fill\'s filledAt, L4)', () => {
+    const alert = priceAlert('alert:aaaa1111', 'BTC-USD', 'above', '61000', T0 + 40);
+    const submission = filledSubmission('sub-1', 'BTC-USD', '62000.00', T0 + 50, T0 + 60); // fills at +60 above the level
+    const folded = foldNotices(SCOPE, { alerts: [alert], submissions: [submission] });
+    expect(folded).toHaveLength(1);
+    expect(folded[0]?.kind).toBe('alert_fired');
+    expect(folded[0]?.at).toBe(T0 + 60); // the firing observation's OWN instant (L4)
+    expect(folded[0]?.source.route).toBe('/v1/projects/:id/goal');
+    expect(folded[0]?.source.ref).toBe('alert:aaaa1111');
+    expect(folded[0]?.title).toBe('Alert fired');
+  });
+
+  it('the firing notice carries the alert\'s own envelope (market/direction/level) + the observed price that crossed the level (verbatim decimal — the same value the alerts-card renders)', () => {
+    const alert = priceAlert('alert:aaaa1111', 'BTC-USD', 'above', '61000', T0 + 40);
+    const submission = filledSubmission('sub-1', 'BTC-USD', '62000.00', T0 + 50, T0 + 60);
+    const folded = foldNotices(SCOPE, { alerts: [alert], submissions: [submission] });
+    const facts = folded[0]?.facts.map((f) => `${f.label}=${f.value}`);
+    expect(facts).toEqual([
+      'alert=alert:aaaa1111',
+      'market=BTC-USD',
+      'direction=above',
+      'level=61000',
+      'observed-price=62000.00',
+    ]);
+  });
+
+  it('an alert with NO crossing observation stays WAITING — never a fabricated firing notice (the same law the alerts-card rides)', () => {
+    const alert = priceAlert('alert:aaaa1111', 'BTC-USD', 'above', '61000', T0 + 40);
+    const submission = filledSubmission('sub-1', 'BTC-USD', '50000.00', T0 + 50, T0 + 60); // below the level — never fires
+    const folded = foldNotices(SCOPE, { alerts: [alert], submissions: [submission] });
+    expect(folded).toEqual([]); // the alert waits — never a fabricated firing notice
+  });
+
+  it('the firing notice is idempotent — the same alert + the same observations re-fold to the SAME noticeId (content-addressed)', () => {
+    const alert = priceAlert('alert:aaaa1111', 'BTC-USD', 'above', '61000', T0 + 40);
+    const submission = filledSubmission('sub-1', 'BTC-USD', '62000.00', T0 + 50, T0 + 60);
+    const first = foldNotices(SCOPE, { alerts: [alert], submissions: [submission] });
+    const second = foldNotices(SCOPE, { alerts: [alert], submissions: [submission] });
+    expect(second[0]?.noticeId).toBe(first[0]?.noticeId);
+  });
+
+  it('L12: a foreign-tenant alert reaching the firing fold is the typed CrossTenantRenderError', () => {
+    const foreignAlert = priceAlert('alert:foreign', 'BTC-USD', 'above', '61000', T0 + 40, { tenant: 'tenant-b', project: 'proj-b' });
+    const submission = filledSubmission('sub-1', 'BTC-USD', '62000.00', T0 + 50, T0 + 60);
+    expect(() => foldNotices(SCOPE, { alerts: [foreignAlert], submissions: [submission] })).toThrow(CrossTenantRenderError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N-3 (Round P — the silent desk halt, L3 + L1): the safety_intervention
+// notice names the refusal AND the desk's halt state. L3: "no notice or
+// UI hint that trading paused or when it resumes; my will-fire alert
+// stayed waiting 24 min with no explanation". L1: "desks stop at 2 fills,
+// nothing in the UI produces post-declaration fills". THE LAW: the halt
+// state is computed at fold time: 'paused' when no newer routed submission
+// exists after this refusal (the desk is still halted — the will-fire
+// alert stays waiting); 'resumed' when a newer routed submission exists
+// (the halt was lifted). The honest-posture law (no silent halts) now
+// carries into the notice fold itself.
+// ---------------------------------------------------------------------------
+
+describe('notices: N-3 — the desk halt state rides the safety_intervention notice (no silent halts)', () => {
+  /** A routed submission (a fill) — the "desk resumed" signal. */
+  function routedSubmission(submissionId: string, routedAt: number): GatewaySubmissionRecord {
+    return {
+      kind: 'routed',
+      submissionId,
+      decisionId: `dec-${submissionId}`,
+      auditId: `aud-${submissionId}`,
+      requestRef: `req-${submissionId}`,
+      venue: 'venue-x',
+      adapterRef: 'adp-1',
+      channelRef: 'ch-1',
+      routedAt,
+    } as unknown as GatewaySubmissionRecord;
+  }
+
+  /** A refused submission with a given id + instant (the "desk halted" signal). */
+  function refusedAt(submissionId: string, refusedAt: number): GatewaySubmissionRecord {
+    return {
+      kind: 'refused',
+      submissionId,
+      decisionId: null,
+      auditId: `aud-${submissionId}`,
+      refusal: { stage: 'risk-policy' },
+      refusedAt,
+    } as unknown as GatewaySubmissionRecord;
+  }
+
+  it('a refusal with NO newer routed submission folds trading-halt=paused — the desk has stopped (L3: "no notice or UI hint that trading paused")', () => {
+    const folded = foldNotices(SCOPE, { submissions: [refusedSubmission()] });
+    expect(folded).toHaveLength(1);
+    const haltFact = folded[0]?.facts.find((f) => f.label === 'trading-halt');
+    expect(haltFact?.value).toBe('paused'); // RED pre-fix: the halt state was never surfaced
+  });
+
+  it('a refusal WITH a newer routed submission folds trading-halt=resumed — the halt was lifted (L3: "or when it resumes")', () => {
+    // refusal at T0+40, then a routed submission at T0+50 — the desk resumed.
+    const folded = foldNotices(SCOPE, { submissions: [refusedSubmission(), routedSubmission('sub-routed', T0 + 50)] });
+    expect(folded).toHaveLength(1);
+    const haltFact = folded[0]?.facts.find((f) => f.label === 'trading-halt');
+    expect(haltFact?.value).toBe('resumed'); // the halt was lifted — the desk resumed
+  });
+
+  it('the halt state is computed PER-refusal: two refusals + a routed in between fold the first refusal resumed, the second refusal paused', () => {
+    // refusal1 @ T0+40, routed @ T0+50 (resume), refusal2 @ T0+60 (halt again).
+    const folded = foldNotices(SCOPE, {
+      submissions: [
+        refusedAt('sub-1', T0 + 40),
+        routedSubmission('sub-routed', T0 + 50),
+        refusedAt('sub-2', T0 + 60),
+      ],
+    });
+    expect(folded).toHaveLength(2);
+    const first = folded.find((n) => n.facts.some((f) => f.label === 'submission' && f.value === 'sub-1'));
+    const second = folded.find((n) => n.facts.some((f) => f.label === 'submission' && f.value === 'sub-2'));
+    expect(first?.facts.find((f) => f.label === 'trading-halt')?.value).toBe('resumed'); // a newer routed submission exists after sub-1
+    expect(second?.facts.find((f) => f.label === 'trading-halt')?.value).toBe('paused'); // no newer routed submission after sub-2
+  });
+
+  it('the trading-halt fact is content-addressed into the noticeId — the halt state is part of the notice\'s identity (re-folding the same reads produces the same id)', () => {
+    const reads = { submissions: [refusedSubmission()] };
+    const first = foldNotices(SCOPE, reads);
+    const second = foldNotices(SCOPE, reads);
+    expect(second[0]?.noticeId).toBe(first[0]?.noticeId);
   });
 });
 

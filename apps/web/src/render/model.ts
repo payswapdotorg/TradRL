@@ -2178,7 +2178,23 @@ function sectionPanel(state: WorkspaceState, viewAt: number, view: ShellView = d
           outcomePostMortemCard(scope, postMortem, viewAt),
           capsuleInline(capsuleFromPostMortem(scope, postMortem), viewAt, view.openCapsule),
         ])),
-        ...(projected.length + postMortemProjected.length === 0 ? [sectionEmpty('outcomes')] : []),
+        // N-2 (Round P register — the Outcomes list read-lag residue, S3):
+      // the O-1a loading grammar — the SAME read-in-flight face the
+      // alerts card got in FW-52 ("Reading the world…" / the declared-
+      // outcomes form) — never the premature "No outcomes at this view
+      // instant" claim while the outcomes read is in flight. S3
+      // reproduced the residue twice: "No outcomes at this view
+      // instant" renders +64ms into a fresh read while the real
+      // outcome lands at +7.2s — the O-1a class on the Outcomes
+      // surface; the alerts-card fix holds on BOTH reload and
+      // scope-switch, the Outcomes surface missed it. The fix composes
+      // the SAME per-family pending fold the alerts card rides
+      // (readPendingAtView 'outcomes' — the outcomes-loaded event
+      // answers the family; reads-settled answers the all-empty
+      // bundle). The boundary law (the FW-41-C precedent): a scrubbed
+      // PAST view over an in-flight read keeps the honest durable copy
+      // — the pending state is about NOW, never a claim about the past.
+      ...(projected.length + postMortemProjected.length === 0 ? [readPendingAtView(state, viewAt, 'outcomes') ? hydrationPendingCard('outcomes', 'appear') : sectionEmpty('outcomes')] : []),
       ]);
   } else if (selector === 'lessons') {
       const knowledgeProjected = projectToView(state.knowledge, viewAt, availabilityOfKnowledge);
@@ -2338,7 +2354,10 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
             ['Success criteria', draft.successCriteria.map((criterion) => `${criterion.id}: ${criterion.metric} ${predicatePhraseOf(criterion.predicate)}`).join('; ')],
           ]),
           ...(reviewValid
-            ? [twoStepConfirm('launch', armed)]
+            // O-3R: the Launch confirm rides STICKY=true (the primary action —
+            // FW-38-B's ride-the-fold law carries it; the discard arm at the
+            // card's bottom rides natural flow, structurally disjoint).
+            ? [twoStepConfirm('launch', armed, true)]
             : [v('div', { class: 'review-problems', role: 'alert', 'data-review-problems': String(problems.length) }, [
                 v('div', { class: 'def-eyebrow' }, ['FIX BEFORE LAUNCHING']),
                 ...problems.map(([field, message]) => v('p', { class: 'field-error', 'data-problem-field': field }, [message])),
@@ -2359,7 +2378,7 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
           // areas. The wizard's own fields carry the companion clearance
           // (flow.ts's WIZARD_STICKY_CLEARANCE) so a focus lands them above
           // the pinned row.
-          ...stepFields, v('div', { class: 'tm-playback', style: 'pointer-events:none' }, [
+          ...stepFields, v('div', { class: 'tm-playback', style: 'pointer-events:none;position:sticky;bottom:12px;z-index:5', 'data-geometry': 'sticky-primary' }, [
           v('button', { class: 'tm-button', id: 'launch-next', style: 'pointer-events:auto', 'data-action': `launch-step-${nextStepOf(launch.step)}`, type: 'button' }, [`Next: ${nextStepOf(launch.step)}`]),
           v('button', { class: 'tm-button', id: 'launch-review-button', style: 'pointer-events:auto', 'data-action': 'launch-step-review', type: 'button' }, ['Review']),
         ])]),
@@ -2375,6 +2394,17 @@ function launchPanel(state: WorkspaceState, view: ShellView): VNode {
       // the missing half). The confirm itself (launch-reset — the machine
       // AND the persisted copy, FW-42-B's atomic clear — and the landing
       // on Home) lives in the console's confirm-discard-draft branch.
+      //
+      // O-3R (Round P register — the 1280×577 wizard action-row overlap
+      // class): the discard arm rides in NATURAL FLOW (sticky=false — the
+      // default; the data-geometry marker reads "natural-flow"). Its hit
+      // area sits BELOW the primary action's in the card's natural order —
+      // structurally DISJOINT at every viewport >= the design floor. Pre-
+      // fix BOTH arms shared the SAME sticky slot at `bottom: 12px` and
+      // the discard painted ON TOP of the primary (L3: "the Launch
+      // button's left 76% covered by the discard arm"; L2 at all five
+      // steps; S3 live; L1 partial) — the discard-draft two-step confirm
+      // LAW stays (FW-40-B/FW-52), only the GEOMETRY moves.
       twoStepConfirm('discard-draft', discardArmed),
     ]));
   }

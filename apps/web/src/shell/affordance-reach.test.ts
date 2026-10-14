@@ -111,20 +111,27 @@ function zIndexOf(rule: Rule | undefined): number | null {
 }
 
 describe('FW-38-B (G-7): the primary flow\'s action rows RIDE THE FOLD (the below-fold click point can never no-op)', () => {
-  it('the wizard\'s action affordances are sticky-anchored to the fold: the Next/Review row, the arm button and the armed confirm row', () => {
-    // the comma-group rule carries all three selectors — assert the group itself
-    const group = TOP_LEVEL_RULES.find((rule) => rule.selector.includes('.launch-wizard .tm-playback') && rule.selector.includes('.launch-wizard .confirm-arm') && rule.selector.includes('.launch-wizard .confirm-inline'));
-    expect(group, 'the sticky rule covers the Next/Review row AND the arm button AND the armed confirm row').toBeDefined();
-    expect(group?.body).toContain('position: sticky');
-    expect(group?.body).toContain('bottom: 12px');
-    expect(group?.body).toContain('z-index: 5');
-    // the row's own chrome rule (the single-selector follow-up): an opaque
-    // card background, so the fields scrolling under the pinned row never
-    // show through its gaps
+  it('O-3R (Round P — the 1280×577 wizard action-row overlap class): the primary action\'s chrome rule stays (the .tm-playback row\'s opaque background + border + shadow); the sticky contract moved INLINE on the primary action\'s VNode (render/flow.ts twoStepConfirm(sticky=true) + render/model.ts\'s .tm-playback inline style), and the discard arm rides natural flow — structurally disjoint', () => {
+    // O-3R: pre-fix the CSS rule had THREE selectors (`.tm-playback` + `.confirm-arm` + `.confirm-inline`)
+    // all sharing the SAME sticky slot at `bottom: 12px` z-index: 5; the discard arm (rendered AFTER the
+    // primary in DOM order) painted ON TOP of the primary's hit area at every viewport where the card
+    // straddled the fold (L3: "the Launch button's left 76% covered by the discard arm"; L2 at all five
+    // steps; S3 live). Post-fix: the sticky contract rides the primary action's VNode INLINE (the geometry
+    // regression test in model.test.ts pins it from the rendered bytes); the CSS rule below carries ONLY
+    // the .tm-playback row's chrome (the opaque background + border + shadow that hides the fields
+    // scrolling under the pinned row). The discard arm rides natural flow (no CSS sticky, no inline
+    // sticky) — its hit area sits BELOW the primary's in the card's natural order, never on top of it.
     const chrome = TOP_LEVEL_RULES.find((rule) => rule.selector.trim() === '.launch-wizard .tm-playback');
     expect(chrome, 'the pinned row carries its own opaque chrome').toBeDefined();
     expect(chrome?.body).toContain('background: var(--card)');
     expect(chrome?.body).toContain('border: 1px solid var(--border)');
+    // O-3R: the wholesale sticky rule (the three-selector comma group) is GONE — the discard arm
+    // never shares the primary action's sticky slot. The CSS file carries NO `position: sticky`
+    // for `.launch-wizard .confirm-arm` or `.launch-wizard .confirm-inline` (the inline contract
+    // on the primary action's VNode carries the sticky for the Launch confirm alone; the discard
+    // arm rides natural flow).
+    const discardSticky = TOP_LEVEL_RULES.find((rule) => rule.selector.includes('.launch-wizard .confirm-arm') || rule.selector.includes('.launch-wizard .confirm-inline'));
+    expect(discardSticky, 'RED pre-fix: the wholesale sticky rule covered the discard arm too; post-fix it is GONE (the discard rides natural flow)').toBeUndefined();
   });
 
   it('the plain (non-wizard) Time Machine playback row is UNTOUCHED — the sticky law is scoped to the wizard card only', () => {

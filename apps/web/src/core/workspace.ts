@@ -503,7 +503,7 @@ function linkHistory(state: WorkspaceState, event: WorkspaceEvent): readonly His
 }
 
 /** The notice reads of a state (the fold's input — the state's own records). */
-function noticeReadsOf(state: Pick<WorkspaceState, 'project' | 'orgSnapshots' | 'jobs' | 'knowledge' | 'outcomes' | 'submissions'>): NoticeReads {
+function noticeReadsOf(state: Pick<WorkspaceState, 'project' | 'orgSnapshots' | 'jobs' | 'knowledge' | 'outcomes' | 'submissions' | 'alerts'>): NoticeReads {
   return {
     ...(state.project === null ? {} : { project: state.project }),
     orgSnapshots: state.orgSnapshots,
@@ -511,6 +511,13 @@ function noticeReadsOf(state: Pick<WorkspaceState, 'project' | 'orgSnapshots' | 
     knowledge: state.knowledge,
     outcomes: state.outcomes,
     submissions: state.submissions,
+    // N-1 (Round P — fired alerts never reach the Inbox, S3): the declared
+    // alerts ride the SAME notice fold's reads. The firing fold derives
+    // from these alerts + the routed submissions' fill observations
+    // (core/market alertFiringOf — the same pure fold the alerts-card
+    // renders). A fired alert folds to one Inbox notice, availability-
+    // stamped at the firing observation's OWN instant (L4).
+    alerts: state.alerts,
   };
 }
 
