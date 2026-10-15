@@ -105,3 +105,22 @@ NEXT: the operator's verdict on the sign-off request; on GO, the
 live-data pilot decision becomes FW-54 candidacy (the live-feed
 integration, with durable-plane provider capacity planning as its first
 work item).
+
+## The standing window elapsed; the request stands open (2026-10-15 00:0xZ, takeover TL — D-057)
+The operator's standing deadline (2026-10-14 24:00 Africa/Accra) passed with
+the sign-off verdict UNRECORDED — no login, no chat, no commit through the
+window. The launch-gate request remains armed and open (docs/release/
+LAUNCH-GATE-SIGNOFF-REQUEST.md); a missed window is neither GO nor NO-GO;
+the gate stays closed until the operator records the verdict. The campaign's
+evidence is complete and durable either way. Recycles #12 (~21:32Z) and #13
+(~00:02Z) hit in sequence; the stack auto-recovered both times, but #13
+exposed the STATION SNAPSHOT-ROLLBACK CLASS: /home/z/my-project resets to a
+~15:2xZ snapshot each recycle, so post-snapshot station work evaporates.
+THE STATION LAW: bank station work repo-side or re-arm from
+ops/replay-station/tl-log.md (the recycle ledger + the ~10-minute re-arm
+runbook) after each recycle. The origin was re-verified a second time
+between the recycles (smoke 7/7, items=43, C2 green, meta avg 269ms).
+Provider capacity scans from the sandbox are DNS-blocked (api.neon.tech,
+*.upstash.io — ENOTFOUND); the Neon/Upstash keys on file are unverified
+from this station. NEXT: the operator's verdict whenever it comes; on GO,
+FW-54 candidacy (the live-feed pilot, capacity planning first).
